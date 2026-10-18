@@ -118,6 +118,41 @@ test('prepareOffload refuses a destination it cannot write to with DEST_NOT_WRIT
   assert.equal(plan.plan.length, 1, 'control: writable again, the same destination plans its one copy');
 });
 
+test('a destination on a read-only drive, or one whose write check fails some other way, is refused too, each saying why in words (review F1.10)', {
+  skip: process.platform === 'win32' && 'Windows keeps a folder\'s write permission in an ACL fs.access does not read, so the check is not made there',
+}, async () => {
+  const { proj, dest, scan } = project('codes');
+  // A read-only volume cannot be mounted by a test, so the write check itself is made to answer as one
+  // would — for the destination alone; every other path is asked for real.
+  const realAccess = fs.promises.access;
+  const answer = (code: string): void => {
+    fs.promises.access = (async (p: fs.PathLike, mode?: number) => {
+      if (path.resolve(String(p)) === dest) throw Object.assign(new Error(`${code}: stand-in`), { code });
+      return realAccess(p, mode);
+    }) as typeof fs.promises.access;
+  };
+  try {
+    for (const [code, said] of [
+      ['EROFS', /: it is on a drive that is read-only\./],
+      ['EIO', /: TreeMap could not confirm it may write there \(EIO\)\./],
+    ] as const) {
+      answer(code);
+      await assert.rejects(withOpenFileCheck('clear', () => prepareOffload(scan, [proj], dest)), (e: unknown) => {
+        assert.ok(e instanceof AppError, `${code}: an AppError, not ${String(e)}`);
+        assert.equal(e.code, 'DEST_NOT_WRITABLE', `${code}: refused by its own code`);
+        assert.match(e.message, said, `${code}: says why, in words`);
+        assert.doesNotMatch(e.message, /permission to add files/, `${code}: not said to be a matter of permission`);
+        assert.match(e.message, /Nothing was copied or deleted\./, `${code}: and that nothing happened`);
+        return true;
+      });
+    }
+  } finally {
+    fs.promises.access = realAccess;
+  }
+  const plan = await withOpenFileCheck('clear', () => prepareOffload(scan, [proj], dest));
+  assert.equal(plan.plan.length, 1, 'control: asked for real again, the same destination plans its one copy');
+});
+
 test('POST /api/offload refuses a read-only destination — DEST_NOT_WRITABLE, a dry run and a real run alike, audited, and nothing copied or trashed (H02)', { skip: WHY_SKIP }, async () => {
   const { root, proj, a, dest } = project('route');
   resetRateLimiter();
