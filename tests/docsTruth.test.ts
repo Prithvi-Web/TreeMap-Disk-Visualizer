@@ -710,3 +710,20 @@ test('AGENTS.md lists the offload\'s refusal of a destination TreeMap cannot wri
   const section = agents.slice(agents.indexOf('`POST /api/offload` with `{ scanId, paths, dest }`'), agents.indexOf('`POST /api/cart/commit` with `{ paths }`'));
   assert.match(section, /dry run included \(`400 DEST_NOT_WRITABLE`\); on\s+Windows/, 'AGENTS.md says a dry run refuses it, and names Windows as the exception');
 });
+
+test('AGENTS.md, the README and the OpenAPI document say what an orphan is as packageEcosystemScanner classifies it — its project gone, its interpreter gone, or a superseded Homebrew keg — never that nothing will ever rebuild it (BQG-5 item 15)', () => {
+  const scanner = read('src', 'services', 'packageEcosystemScanner.ts');
+  // The premise: the three ways the scanner calls a folder an orphan.
+  assert.match(scanner, /the project that owned this is gone\./, 'its project is gone');
+  assert.match(scanner, /Its Python interpreter is gone \(\$\{broken\}\) — this environment cannot run\./, 'its interpreter is gone — and its project may still be here');
+  assert.match(scanner, /Superseded — /, 'a superseded Homebrew keg');
+  const agents = read('AGENTS.md');
+  const section = from(agents, '`GET /api/packages/orphans`').split('\n   - ')[0];
+  const readme = read('README.md');
+  const readmeLine = readme.split('\n').find((l) => l.startsWith('**Package orphans**')) ?? '';
+  const summary = String(ENDPOINTS.find((e) => e.path === '/api/packages/orphans')?.summary ?? '');
+  for (const [what, text] of [['AGENTS.md', section], ['the README', readmeLine], ['the OpenAPI summary', summary]] as const) {
+    assert.doesNotMatch(text, /nothing will ever rebuild/, `${what} never says nothing will ever rebuild an orphan`);
+    assert.match(text.replace(/\s+/g, ' '), /project[^.;]*gone[^.;]*interpreter[^.;]*gone[^.;]*superseded/i, `${what} names the three kinds of orphan`);
+  }
+});

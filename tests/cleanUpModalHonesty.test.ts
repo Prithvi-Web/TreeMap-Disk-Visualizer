@@ -1439,7 +1439,11 @@ test('an orphaned folder\'s row names no command as putting it back — its proj
   const { lead } = await renderPackages(pkgReport([
     pkgGroup('npm', [rows[0], cache]), pkgGroup('python', [rows[1], rows[2]]), pkgGroup('cargo', [rows[3]]), pkgGroup('homebrew', [rows[4]]),
   ]));
-  assert.match(lead, /5 orphaned — nothing will rebuild them/, 'control: the header counts the five orphans');
+  // The header is true of every orphan the server reports (BQG-5 item 15): a virtualenv whose interpreter is
+  // gone may sit in a project that is still here, which can make it again, so "nothing will rebuild them" was
+  // false of it; none of the five — project gone, interpreter gone, a superseded keg — can still be used.
+  assert.match(lead, /5 orphaned — nothing can still use them/, 'the header counts the five orphans, and says what is true of each');
+  assert.doesNotMatch(lead, /nothing will rebuild/, 'never that nothing will rebuild a virtualenv whose project is still here');
   const said = Object.fromEntries(pkgRows(lead).map((r) => [
     /class="pth" title="([^"]+)"/.exec(r)![1],
     /<div class="pkg-why">([\s\S]*?)<\/div>/.exec(r)?.[1] ?? '',
@@ -1463,7 +1467,7 @@ test('orphans and caches lead the sheet with their boxes, and a folder whose pro
   assert.equal(first.shown, true, 'something a person can act on was shown');
   assert.deepEqual(pkgRows(first.lead).map((r) => /class="pth" title="([^"]+)"/.exec(r)?.[1]), [orphan.path, cache.path], 'the orphan and the cache lead');
   assert.ok(pkgRows(first.lead).every((r) => /class="pkg-ck"/.test(r) && /<cart /.test(r)), 'each with its box and cart toggle');
-  assert.match(first.lead, /1 orphaned — nothing will rebuild it/, 'the header counts the orphan');
+  assert.match(first.lead, /1 orphaned — nothing can still use it/, 'the header counts the orphan');
   assert.doesNotMatch(first.lead, new RegExp(live.path), 'the folder whose project is here is not among them');
   assert.doesNotMatch(first.lead, /\b1 in use\b|in use/i, 'nor counted in its ecosystem\'s line');
   assert.deepEqual(pkgRows(first.projects).map((r) => /class="pth" title="([^"]+)"/.exec(r)?.[1]), [live.path], 'it is in the fold below the suggestions');

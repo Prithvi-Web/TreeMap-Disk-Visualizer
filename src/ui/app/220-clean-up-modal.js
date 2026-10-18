@@ -525,7 +525,11 @@ async function renderPackageOrphans() {
     <div class="rule-row" style="padding:6px 0;">
       <b style="display:inline-flex;align-items:center;gap:7px;">${icon('box', 15)}Package leftovers</b>
       <span class="muted" style="flex:1;margin-left:8px;">${data.orphanCount
-        ? `${formatCount(data.orphanCount)} orphaned — nothing will rebuild ${data.orphanCount === 1 ? 'it' : 'them'}`
+        // True of every orphan the server reports (BQG-5 item 15): its project
+        // is gone, its interpreter is (a virtualenv that cannot run, though its
+        // project may still be here and could make it again — so never
+        // "nothing will rebuild it"), or it is a superseded Homebrew keg.
+        ? `${formatCount(data.orphanCount)} orphaned — nothing can still use ${data.orphanCount === 1 ? 'it' : 'them'}`
         : 'no orphans; shared caches only'}</span>
       <span class="size-badge num" style="color:${sizeInk(reclaimable)}">${formatBytes(reclaimable)}</span>
     </div>` + leftovers.map(x => ecoHtml(x, [
