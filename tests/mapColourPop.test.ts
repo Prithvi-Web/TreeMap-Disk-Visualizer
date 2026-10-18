@@ -87,6 +87,8 @@ function withAlpha(style: unknown, globalAlpha: number): unknown {
 }
 
 type Stroke = { style: string; width: number; rect: number[] };
+/** One straight segment of a stroked path, as [x0, y0, x1, y1], in the paint it was stroked in. */
+type Line = { style: string; width: number; seg: number[] };
 /** One rectangle filled, or one text written, in the order the painter did it. */
 type Op = { kind: 'rect'; style: unknown; rect: number[] } | { kind: 'text'; text: Text };
 
@@ -100,7 +102,11 @@ function recordingCtx() {
   const fills: unknown[] = [];
   const texts: Text[] = [];
   const strokes: Stroke[] = [];
+  const lines: Line[] = [];
   const ops: Op[] = [];
+  // A path's straight segments, kept until it is stroked (a leaf's top highlight, review F1.6).
+  let pending: number[][] = [];
+  let pen: number[] | null = null;
   const props: Record<string, unknown> = {
     font: '10px sans-serif',
     globalAlpha: 1,
@@ -110,6 +116,10 @@ function recordingCtx() {
       return Object.assign(g, { addColorStop: (o: number, c: string) => { g.stops.push([o, c]); } });
     },
     createPattern: () => null,
+    beginPath: () => { pending = []; pen = null; },
+    moveTo: (x: number, y: number) => { pen = [x, y]; },
+    lineTo: (x: number, y: number) => { if (pen) pending.push([pen[0], pen[1], x, y]); pen = [x, y]; },
+    stroke: () => { for (const seg of pending) lines.push({ style: String(props.strokeStyle), width: Number(props.lineWidth), seg }); },
   };
   const ctx: any = new Proxy(props, {
     get(t, k: string) {
@@ -129,7 +139,7 @@ function recordingCtx() {
     },
     set(t, k: string, v) { t[k] = v; return true; },
   });
-  return { ctx, fills, texts, strokes, ops };
+  return { ctx, fills, texts, strokes, lines, ops };
 }
 
 /* ─────────────────────────── the theme grounds ─────────────────────────── */
@@ -237,6 +247,8 @@ function paint(tiles: Tile[], colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.s
   rec.fills.length = 0;
   rec.texts.length = 0;
   rec.ops.length = 0;
+  rec.strokes.length = 0;
+  rec.lines.length = 0;
   draw();
   return Object.assign(rec, { px: state.treemap.pxRects });
 }
@@ -1076,6 +1088,9 @@ test('G01: each folder is framed by a dark outline — heavier at the top level,
     { name: 'Rim12', path: '/r/rim12', size: 1e7, type: 'dir', depth: 2, expanded: true, x: 70, y: 0, w: 1.2, h: 1.2 },
     { name: 'Rim11', path: '/r/rim11', size: 1e7, type: 'dir', depth: 2, expanded: true, x: 80, y: 0, w: 1.1, h: 1.1 },
     { name: 'Tiny', path: '/r/tiny', size: 1e6, type: 'dir', depth: 3, expanded: true, x: 60, y: 60, w: 0.4, h: 0.4 },
+    // At the fade's edge (review F1.6): nested folders of 40 and 39 px a side.
+    { name: 'Fade40', path: '/r/fade40', size: 5e7, type: 'dir', depth: 2, expanded: true, x: 70, y: 10, w: 4, h: 4 },
+    { name: 'Fade39', path: '/r/fade39', size: 4e7, type: 'dir', depth: 2, expanded: true, x: 80, y: 10, w: 3.9, h: 3.9 },
   ];
   const want: Record<string, { alpha: number; width: number; rim: boolean }> = {
     Top: { alpha: 0.6, width: 1.5, rim: true },
@@ -1085,6 +1100,8 @@ test('G01: each folder is framed by a dark outline — heavier at the top level,
     Rim12: { alpha: 0.25, width: 1, rim: true },   // 12 px: the smallest with a rim
     Rim11: { alpha: 0.25, width: 1, rim: false },  // 11 px: no rim
     Tiny: { alpha: 0.25, width: 1, rim: false },
+    Fade40: { alpha: 0.42, width: 1, rim: true },  // depth 2, 40 px: the smallest that keeps 0.42
+    Fade39: { alpha: 0.25, width: 1, rim: true },  // depth 2, 39 px: faded
   };
   const rec = paint(folders);
   const alphaOf = (style: string) => rgba(style)[3];
@@ -1248,10 +1265,28 @@ test('map density: in a dense corner of the map most pixels are colour, not a bl
   const leaves = dark.px.filter((r) => !r.frame);
   assert.equal(leaves.length, 9 * 16 * 16, 'control: every small file is drawn');
   assert.ok(leaves.every((r) => Math.min(r.w, r.h) < 8), `control: they are dense, under 8 px a side (${leaves[0].w.toFixed(2)} px)`);
-  const d = dark.raster.nearBlack(NEAR_BLACK), l = light.raster.nearBlack(NEAR_BLACK);
-  // Measured here before item 14: 13.5% dark, 2.8% light (QA's own crop: 27.3% and 6.1%). After: 1.4% in both.
-  assert.ok(d < 0.04, `dark: ${(d * 100).toFixed(1)}% of the dense corner is near-black (13.5% before; QA measured 27.3% in a 280 px dense crop)`);
-  assert.ok(l < 0.04, `light: ${(l * 100).toFixed(1)}% is near-black (2.8% before; QA: 6.1%)`);
+  // Measured here before item 14: 13.5% dark, 2.8% light (QA's own crop: 27.3% and 6.1%). After: 1.4% in
+  // both. The bar sits under both themes' old figures, so either theme's regression fails it (review F1.7).
+  const share = { dark: dark.raster.nearBlack(NEAR_BLACK), light: light.raster.nearBlack(NEAR_BLACK) };
+  const over = Object.entries(share).filter(([, v]) => v >= 0.02).map(([theme, v]) => `${theme} ${(v * 100).toFixed(1)}%`);
+  assert.deepEqual(over, [], `near-black in the dense corner, at or over 2%: ${over.join(', ')} (before item 14: dark 13.5%, light 2.8%)`);
+});
+
+test('map density: a leaf 8 px or more on a side keeps its inset box, top highlight and outline, and one under 8 px is filled edge to edge without them (review F1.6)', () => {
+  // Literal sizes about the rule's edge, so raising it — to 24 px, say — fails here.
+  const leaf = (name: string, x: number, px: number): Tile => ({ name, path: `/r/${name}`, size: 2e6, type: 'file', depth: 1, expanded: false, x, y: 50, w: px / 10, h: px / 10 });
+  const tiles = [leaf('seven', 10, 7), leaf('eight', 20, 8), leaf('nine', 30, 9), leaf('twenty', 40, 20)];
+  const rec = paint(tiles);
+  const near = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 0.01);
+  for (const [name, x, side, edged] of [['seven', 100, 7, false], ['eight', 200, 8, true], ['nine', 300, 9, true], ['twenty', 400, 20, true]] as const) {
+    const y = 500;
+    const box = edged ? [x + 0.5, y + 0.5, side - 1, side - 1] : [x, y, side, side];
+    assert.ok(rec.ops.some((op) => op.kind === 'rect' && near(op.rect, box)), `${name} (${side} px): filled ${edged ? 'in its inset box' : 'edge to edge'} (${box.join(' ')})`);
+    const outline = rec.strokes.filter((st) => st.style === 'rgba(0,0,0,0.35)' && near(st.rect, [x + 0.5, y + 0.5, side - 1, side - 1]));
+    assert.equal(outline.length, edged ? 1 : 0, `${name} (${side} px): ${edged ? 'its own 0.35 outline' : 'no outline of its own'}`);
+    const highlight = rec.lines.filter((l) => l.style === 'rgba(255,255,255,0.18)' && near(l.seg, [x + 1, y + 1, x + side - 1, y + 1]));
+    assert.equal(highlight.length, edged ? 1 : 0, `${name} (${side} px): ${edged ? 'its top highlight' : 'no highlight'}`);
+  }
 });
 
 test('map density: the SVG export paints the dense corner as the canvas does — small leaves edge to edge with no outline of their own, faded nested outlines, and no rim in a folder under 12 px (BQG-5 item 14)', () => {
@@ -1260,12 +1295,14 @@ test('map density: the SVG export paints the dense corner as the canvas does —
   // At the edges of the rules: a 7 px leaf (dense, under 8) and an 8 px folder (under the rim's 12).
   const seven: Tile = { name: 'seven.bin', path: '/seven.bin', size: 2e6, type: 'file', depth: 1, expanded: false, x: 80, y: 80, w: 0.7, h: 0.7 };
   const small: Tile = { name: 'small', path: '/small', size: 3e6, type: 'dir', depth: 2, expanded: true, x: 90, y: 0, w: 0.8, h: 0.8 };
-  const tiles = [...denseLayout(0.28), big, seven, small];
+  // And an 8 px leaf, the smallest with edges of its own (review F1.6).
+  const eight: Tile = { name: 'eight.bin', path: '/eight.bin', size: 2e6, type: 'file', depth: 1, expanded: false, x: 80, y: 90, w: 0.8, h: 0.8 };
+  const tiles = [...denseLayout(0.28), big, seven, small, eight];
   const { svg, rec, px } = exportSvg(tiles, (n) => ramp.sizeRgb(n.size), '#0e0e13');
   const rects = [...svg.matchAll(/<rect ([^>]*?)\/?>/g)].map((m) => attrs(m[1]));
   const close = (a: Record<string, string>, box: number[]) => ['x', 'y', 'width', 'height'].every((k, i) => Math.abs(Number(a[k]) - box[i]) < 0.011);
   const leaves = (px as Array<{ x: number; y: number; w: number; h: number; frame: boolean; n: Tile }>).filter((r) => !r.frame);
-  assert.equal(leaves.length, 9 * 16 * 16 + 2, 'control: every leaf is in the map');
+  assert.equal(leaves.length, 9 * 16 * 16 + 3, 'control: every leaf is in the map');
   // The canvas draws no outline of its own on a dense leaf, the 7 px one included.
   const sevenPx = leaves.find((r) => r.n.path === '/seven.bin')!;
   assert.equal(rec.strokes.filter((st) => st.rect.every((v, i) => Math.abs(v - [sevenPx.x + 0.5, sevenPx.y + 0.5, sevenPx.w - 1, sevenPx.h - 1][i]) < 0.011)).length, 0,
