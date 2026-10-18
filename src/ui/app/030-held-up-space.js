@@ -163,7 +163,10 @@ function zhAppName(bundle) {
  * explicit, and it differs honestly by what happens next: a Mac app is
  * reopened automatically; a helper or extension inside an app (Chrome's
  * renderer) is not — it never asks to save, and opening its app, still
- * running, reopens nothing (fourth browser pass, E02); anything else must be
+ * running, reopens nothing (fourth browser pass, E02); nor is an app's own
+ * program that `open` would not bring back as it was — a background app, one
+ * another program or launchd started with arguments — and the server's
+ * sentence says which (sixth browser pass H03); anything else must be
  * started again by hand.
  */
 function confirmZombieRestart(p) {
@@ -188,6 +191,9 @@ function confirmZombieRestart(p) {
   $('confirmText').innerHTML = p.appBundle
     ? `TreeMap will ask <b>${escapeHtml(p.processName)}</b> to quit, then open it again. The space it is holding frees when it quits.` +
       `<br><span style="color:var(--text-3)">If it has unsaved work it may ask you to save first — nothing is ever force-quit.</span>`
+    : p.notReopened
+    ? `TreeMap will ask <b>${escapeHtml(p.processName)}</b> to quit. <b>If it has unsaved work, that work could be lost.</b>` +
+      `<br><span style="color:var(--text-3)">${escapeHtml(p.notReopened)} Start it again yourself if it does not start again by itself.</span>`
     : p.partOf
     ? `TreeMap will ask <b>${escapeHtml(p.processName)}</b> to quit. <b>If it has unsaved work, that work could be lost.</b>` +
       `<br><span style="color:var(--text-3)">It runs inside <b>${escapeHtml(zhAppName(p.partOf))}</b>, and TreeMap does not reopen it — ` +

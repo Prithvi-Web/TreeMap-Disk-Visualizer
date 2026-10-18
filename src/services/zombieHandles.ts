@@ -2,7 +2,7 @@ import { promises as fsp } from 'fs';
 import path from 'path';
 import { setTimeout as delay } from 'timers/promises';
 import { platform } from '../platform';
-import { runText, RunOptions } from '../platform/exec';
+import { runText, RunOptions, CommandFailedError } from '../platform/exec';
 import type { ZombieHandleInfo } from '../platform/types';
 import { AppError } from '../middleware/errorHandler';
 
@@ -34,7 +34,9 @@ export interface ZombieProcess {
   processName: string;
   /**
    * The macOS .app bundle this process IS — its Info.plist names this
-   * executable — the one case where "restart" can genuinely mean
+   * executable — and one `open` really reopens: no background app, started by
+   * launchd with no arguments, as an app a person opens is (sixth browser
+   * pass H03). The one case where "restart" can genuinely mean
    * quit-and-reopen. Null anywhere else, and the UI must then warn that the
    * program has to be started again by hand.
    */
@@ -48,6 +50,14 @@ export interface ZombieProcess {
    * belongs to no app.
    */
   partOf: string | null;
+  /**
+   * Why TreeMap does not reopen this process though it is an app's own
+   * program (sixth browser pass H03): a background app (LSBackgroundOnly or
+   * LSUIElement in its Info.plist), one another program started, one launchd
+   * started with arguments `open` cannot repeat, or one whose start could not
+   * be read — a sentence ending "TreeMap does not reopen it." Null otherwise.
+   */
+  notReopened: string | null;
   /**
    * Whether TreeMap will ask this process to quit (QA D40). False for a
    * program that is part of the operating system, one run by root or another
@@ -285,6 +295,77 @@ async function confirmedRoleOf(executable: string | null, mainOf: (bundle: strin
   return main === path.basename(executable) ? role : { appBundle: null, partOf: role.appBundle };
 }
 
+/**
+ * Whether an app's Info.plist marks it a background app (sixth browser pass H03): LSBackgroundOnly or
+ * LSUIElement, as a boolean or the old string forms ("1", "YES"). Asked only of an app whose Info.plist
+ * was just read for its executable (readBundleExecutable), so plutil's exit 1 here is a key that is not
+ * there: neither set is false. Any other failure — a timeout, no plutil — is null, which promises
+ * nothing.
+ */
+export async function readBundleBackground(bundle: string, run: CommandRunner = runText): Promise<boolean | null> {
+  const plist = path.join(bundle, 'Contents', 'Info.plist');
+  for (const key of ['LSBackgroundOnly', 'LSUIElement']) {
+    try {
+      const out = await run('plutil', ['-extract', key, 'raw', '-o', '-', plist], { timeoutMs: 5_000 });
+      if (/^(?:true|yes|1)$/i.test(out.trim())) return true;
+    } catch (err) {
+      if (!(err instanceof CommandFailedError && err.exitCode === 1)) return null;
+    }
+  }
+  return false;
+}
+
+/** How a process was started (sixth browser pass H03): its parent's pid and its whole command line. */
+export interface LaunchFacts {
+  ppid: number;
+  args: string;
+}
+
+/** One line of `ps -o pid=,ppid=,args=`: both pids right-aligned, ONE space, then the command line. */
+const PS_LAUNCH_LINE = /^\s*(\d+)\s+(\d+)\s(.*)$/;
+
+/**
+ * How each process was started, one `ps` for up to PS_PIDS_PER_CALL pids (H03). A pid missing from the
+ * output, or every pid of a call that fails, is absent: unknown, never a guess.
+ */
+export async function launchFactsOf(pids: readonly number[], run: CommandRunner = runText): Promise<Map<number, LaunchFacts>> {
+  const facts = new Map<number, LaunchFacts>();
+  const asked = [...new Set(pids)].filter((pid) => Number.isSafeInteger(pid) && pid > 0);
+  for (let i = 0; i < asked.length; i += PS_PIDS_PER_CALL) {
+    const chunk = asked.slice(i, i + PS_PIDS_PER_CALL);
+    let out: string;
+    try {
+      out = await run('ps', ['-ww', '-o', 'pid=,ppid=,args=', '-p', chunk.join(',')], { timeoutMs: 5_000 });
+    } catch {
+      continue;
+    }
+    const wanted = new Set(chunk);
+    for (const line of out.split(/\r?\n/)) {
+      const m = PS_LAUNCH_LINE.exec(line);
+      if (!m) continue;
+      const pid = Number(m[1]);
+      if (wanted.has(pid)) facts.set(pid, { ppid: Number(m[2]), args: m[3].trimEnd() });
+    }
+  }
+  return facts;
+}
+
+/**
+ * Why `open` would not bring an app's own program back as it was (sixth browser pass H03), or null when
+ * it would: `open <bundle>` starts the app with no arguments, as a person opening it does. A background
+ * app (its Info.plist says so) is started by something else when it is needed; one another program
+ * started, or launchd started with arguments of its own, would come back without them, if at all. What
+ * could not be read promises nothing either.
+ */
+export function reopenRefusalOf(executable: string, background: boolean | null, launch: LaunchFacts | null): string | null {
+  if (background === true) return 'It is a background app (its Info.plist says so), so TreeMap does not reopen it.';
+  if (background === null) return 'Whether it is a background app could not be read, so TreeMap does not reopen it.';
+  if (launch === null) return 'How it was started could not be read, so TreeMap does not reopen it.';
+  if (launch.ppid !== 1) return 'Another program started it, so TreeMap does not reopen it.';
+  if (launch.args !== executable) return 'It was started with options of its own, which TreeMap cannot repeat, so TreeMap does not reopen it.';
+  return null;
+}
+
 /** An app's name as a person reads it: "Google Chrome" for /Applications/Google Chrome.app. */
 function appNameOf(bundle: string): string {
   return path.basename(bundle).replace(/\.app$/, '');
@@ -324,7 +405,7 @@ export function groupZombies(
     let proc = byPid.get(h.pid);
     if (!proc) {
       proc = {
-        pid: h.pid, processName: h.processName, appBundle: null, partOf: null, restartable: false, restartRefusal: null,
+        pid: h.pid, processName: h.processName, appBundle: null, partOf: null, notReopened: null, restartable: false, restartRefusal: null,
         bytes: 0, unknownSizeCount: 0, handles: [],
       };
       byPid.set(h.pid, proc);
@@ -361,6 +442,8 @@ export interface ZombieReportDeps {
   procFacts?: (pid: number) => Promise<ProcessFacts>;
   /** macOS: the executable an app's Info.plist names (E02). */
   bundleExecutable?: (bundle: string) => Promise<string | null>;
+  /** macOS: whether an app's Info.plist marks it a background app (H03). */
+  bundleBackground?: (bundle: string) => Promise<boolean | null>;
 }
 
 /** The per-process rollup of the platform's raw descriptor list. */
@@ -394,9 +477,30 @@ export async function zombieReport(deps: ZombieReportDeps = {}): Promise<ZombieR
   const roles = os === 'darwin'
     ? await Promise.all(grouped.processes.map((proc) => confirmedRoleOf(facts.get(proc.pid)?.executable ?? null, mainOf)))
     : [];
+  // An app's own program is the one a restart reopens only where `open` really brings it back (H03):
+  // how each was started, one more `ps` for all of them, and each app's Info.plist read once.
+  const appPids = grouped.processes.filter((_, i) => roles[i]?.appBundle).map((proc) => proc.pid);
+  const launches = appPids.length > 0 ? await launchFactsOf(appPids, deps.run) : new Map<number, LaunchFacts>();
+  const readBackground = deps.bundleBackground ?? ((bundle: string) => readBundleBackground(bundle, deps.run));
+  const backgrounds = new Map<string, Promise<boolean | null>>();
+  const backgroundOf = (bundle: string): Promise<boolean | null> => {
+    let known = backgrounds.get(bundle);
+    if (known === undefined) { known = readBackground(bundle); backgrounds.set(bundle, known); }
+    return known;
+  };
+  const reopenRefusals = await Promise.all(grouped.processes.map(async (proc, i) => {
+    const bundle = roles[i]?.appBundle;
+    const executable = facts.get(proc.pid)?.executable;
+    if (!bundle || !executable) return null;
+    return reopenRefusalOf(executable, await backgroundOf(bundle), launches.get(proc.pid) ?? null);
+  }));
   for (const [i, proc] of grouped.processes.entries()) {
     const known = facts.get(proc.pid) ?? { executable: null, uid: null };
-    if (os === 'darwin') Object.assign(proc, roles[i]);
+    if (os === 'darwin') {
+      Object.assign(proc, roles[i]);
+      const notReopened = reopenRefusals[i];
+      if (notReopened !== null) Object.assign(proc, { appBundle: null, partOf: null, notReopened });
+    }
     const refusal = restartRefusal(known, os, ourUid);
     proc.restartable = refusal === null;
     proc.restartRefusal = refusal?.reason ?? null;
@@ -438,6 +542,8 @@ export interface RestartEnv {
   procFacts?: (pid: number) => Promise<ProcessFacts>;
   /** macOS: the executable an app's Info.plist names (E02). */
   bundleExecutable?: (bundle: string) => Promise<string | null>;
+  /** macOS: whether an app's Info.plist marks it a background app (H03). */
+  bundleBackground?: (bundle: string) => Promise<boolean | null>;
 }
 
 /**
@@ -465,7 +571,10 @@ export interface RestartEnv {
  * names the executable), via `open` through `run`, after the exit is
  * confirmed — `open` on a still-running app would merely focus it. A helper
  * or extension inside an app is never "reopened": the result names the app
- * it runs inside and says TreeMap did not reopen it (E02).
+ * it runs inside and says TreeMap did not reopen it (E02). Nor is an app's
+ * own program that `open` would not bring back as it was — a background
+ * app, one another program or launchd started with arguments (H03): it is
+ * quit, and the result says why TreeMap does not reopen it.
  *
  * `waitMs` exists for tests, which prove the still-running path with a child
  * that traps SIGTERM and should not cost five real seconds doing it; `run`
@@ -537,7 +646,13 @@ export async function restartProcess(
   const role = os === 'darwin'
     ? await confirmedRoleOf(executable, env.bundleExecutable ?? ((b) => readBundleExecutable(b, run)))
     : { appBundle: null, partOf: null };
-  const bundle = role.appBundle;
+  // Read before it is asked to quit: once it is gone, nothing says how it was started (H03).
+  const notReopened = role.appBundle === null ? null : reopenRefusalOf(
+    executable,
+    await (env.bundleBackground ?? ((b) => readBundleBackground(b, run)))(role.appBundle),
+    (await launchFactsOf([pid], run)).get(pid) ?? null,
+  );
+  const bundle = notReopened === null ? role.appBundle : null;
 
   try {
     process.kill(pid, 'SIGTERM');
@@ -578,6 +693,16 @@ export async function restartProcess(
         message: `“${expectedName}” quit and its held space is free, but it could not be reopened automatically — start it again yourself.`,
       };
     }
+  }
+
+  if (notReopened !== null) {
+    return {
+      pid,
+      processName: expectedName,
+      terminated: true,
+      relaunched: false,
+      message: `“${expectedName}” quit and the space it was holding is free. ${notReopened} Start it again yourself if it does not start again by itself.`,
+    };
   }
 
   if (role.partOf) {

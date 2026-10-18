@@ -2861,7 +2861,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         'The held-space report',
         obj(
           {
-            processes: opaque('per-process groups: pid, processName, appBundle (the macOS app this process is — its Info.plist names the executable — the only one a restart reopens), partOf (the macOS app a helper, extension or other program inside an app runs in without being it; a restart does not reopen it), restartable, restartRefusal, bytes, unknownSizeCount, handles[] (path, bytes, holders)'),
+            processes: opaque('per-process groups: pid, processName, appBundle (the macOS app this process is — its Info.plist names the executable — the only one a restart reopens), partOf (the macOS app a helper, extension or other program inside an app runs in without being it; a restart does not reopen it), notReopened (why a restart does not reopen an app\u2019s own program — a background app by its Info.plist, one another program started, one launchd started with arguments `open` cannot repeat, or one whose start could not be read — a sentence ending \u201cTreeMap does not reopen it.\u201d; null otherwise), restartable, restartRefusal, bytes, unknownSizeCount, handles[] (path, bytes, holders)'),
             totalBytes: int('Known held bytes, each deleted file counted once however many processes hold it — a floor, not an estimate'),
             unknownSizeCount: int('Held files whose size could not be read, each counted once'),
             fileCount: int('Distinct deleted files held open'),

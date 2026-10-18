@@ -164,20 +164,38 @@ const pidsAskedIn = (call: Call): number[] => call.args[call.args.indexOf('-p') 
 /** The uid the fake `ps` reports unless told otherwise, and the one the report is told is TreeMap's. */
 const OUR_UID = 501;
 
+/** How a process was started, as `ps -o pid=,ppid=,args=` reads it (sixth browser pass H03). */
+type Launch = { ppid: number; args: string };
+
 /**
  * A stand-in for `ps -ww -o pid=,uid=,comm= -p <pids>`: answers the way macOS's
  * does (pid and uid right-aligned, one space, then the whole path), for the
  * pids it knows, and records every call. `uids` overrides the owner per pid.
+ * Asked `-o pid=,ppid=,args=` — how the apps among them were started (H03) —
+ * it answers pid and parent pid the same way, then the command line: by
+ * default launchd's child (parent 1) started with no arguments, as an app a
+ * person opened is; `launches` overrides that per pid.
  */
-function fakePs(paths: ReadonlyMap<number, string>, uids: ReadonlyMap<number, number> = new Map()) {
+function fakePs(paths: ReadonlyMap<number, string>, uids: ReadonlyMap<number, number> = new Map(), launches: ReadonlyMap<number, Launch | null> = new Map()) {
   const calls: Call[] = [];
   const run = async (cmd: string, args: string[]): Promise<string> => {
     const call = { cmd, args };
-    // An app's Info.plist, as plutil reads it: here every app's own executable is named after the app.
-    if (cmd === 'plutil') return `${path.basename(path.dirname(path.dirname(args[args.length - 1])), '.app')}\n`;
+    // An app's Info.plist, as plutil reads it: here every app's own executable is named after the app,
+    // and no key but that one is set — plutil exits 1 for a key that is not there.
+    if (cmd === 'plutil') {
+      if (args[1] !== 'CFBundleExecutable') throw new CommandFailedError('plutil', 'No value at that key path', '', '', 1);
+      return `${path.basename(path.dirname(path.dirname(args[args.length - 1])), '.app')}\n`;
+    }
     calls.push(call);
-    return pidsAskedIn(call)
-      .filter((pid) => paths.has(pid))
+    const asked = pidsAskedIn(call).filter((pid) => paths.has(pid));
+    if (args.includes('pid=,ppid=,args=')) {
+      return asked
+        .map((pid) => [pid, launches.has(pid) ? launches.get(pid)! : { ppid: 1, args: paths.get(pid)! }] as const)
+        .filter(([, launch]) => launch !== null)
+        .map(([pid, launch]) => `${String(pid).padStart(5)} ${String(launch!.ppid).padStart(5)} ${launch!.args}\n`)
+        .join('');
+    }
+    return asked
       .map((pid) => `${String(pid).padStart(5)} ${String(uids.get(pid) ?? OUR_UID).padStart(5)} ${paths.get(pid)}\n`)
       .join('');
   };
@@ -192,9 +210,14 @@ test('fifty processes holding space cost exactly one ps, and each gets its own a
   const pids = range(1000, 50);
   const ps = fakePs(new Map([[1003, '/Applications/My App.app/Contents/MacOS/My App'], [1007, '/usr/local/bin/node']]));
   const report = await zombieReport({ handles: heldBy(pids), run: ps.run, os: 'darwin' });
-  assert.equal(ps.calls.length, 1, 'one ps for the whole report, not one per process');
-  assert.equal(ps.calls[0].cmd, 'ps');
-  assert.deepEqual(ps.calls[0].args, ['-ww', '-o', 'pid=,uid=,comm=', '-p', pids.join(',')], 'every pid asked about in that one call, at full width');
+  const identity = ps.calls.filter((c) => c.args.includes('pid=,uid=,comm='));
+  assert.equal(identity.length, 1, 'one ps for the whole report, not one per process');
+  assert.equal(identity[0].cmd, 'ps');
+  assert.deepEqual(identity[0].args, ['-ww', '-o', 'pid=,uid=,comm=', '-p', pids.join(',')], 'every pid asked about in that one call, at full width');
+  // And at most one more, about the apps among them alone: how each was started (H03).
+  const launch = ps.calls.filter((c) => c.args.includes('pid=,ppid=,args='));
+  assert.deepEqual(launch.map(pidsAskedIn), [[1003]], 'how the one app among fifty was started, in one more call');
+  assert.equal(ps.calls.length, 2, 'nothing else');
   assert.equal(report.processes.length, 50, 'every holder is still listed');
   const bundle = (pid: number) => report.processes.find((p) => p.pid === pid)?.appBundle;
   assert.equal(bundle(1003), '/Applications/My App.app', 'a path with spaces is read whole, not cut at its first space');
@@ -367,7 +390,9 @@ test('the report marks programs that cannot be restarted, and says why (QA D40)'
   assert.equal(proc(1002)?.restartRefusal, null, 'with nothing to explain');
   assert.equal(proc(1003)?.restartable, false, 'a program ps could not name is not offered a restart');
   assert.match(proc(1003)?.restartRefusal ?? '', /could not confirm/i);
-  assert.equal(ps.calls.length, 1, 'still one ps for the whole report');
+  assert.equal(ps.calls.filter((c) => c.args.includes('pid=,uid=,comm=')).length, 1, 'still one ps for the whole report');
+  assert.deepEqual(ps.calls.filter((c) => c.args.includes('pid=,ppid=,args=')).map(pidsAskedIn), [[1002]],
+    'and one more, about how the one app among them was started (H03)');
 
   // Linux reads the executable and owner from /proc, with no ps at all.
   let asked = 0;
@@ -550,8 +575,8 @@ test('restarting a process that already quit reports the space as already free',
 /* ══════════════════ A helper is not its app (fourth browser pass, E02) ══════════════════ */
 
 type Role = { appBundle: string | null; partOf: string | null };
-type ReportDeps = Parameters<typeof zombieReport>[0] & { bundleExecutable?: (bundle: string) => Promise<string | null> };
-type Env = NonNullable<Parameters<typeof restartProcess>[4]> & { bundleExecutable?: (bundle: string) => Promise<string | null> };
+type ReportDeps = Parameters<typeof zombieReport>[0] & { bundleExecutable?: (bundle: string) => Promise<string | null>; bundleBackground?: (bundle: string) => Promise<boolean | null> };
+type Env = NonNullable<Parameters<typeof restartProcess>[4]> & { bundleExecutable?: (bundle: string) => Promise<string | null>; bundleBackground?: (bundle: string) => Promise<boolean | null> };
 
 test('the report says which app a helper runs inside, and calls a process the app only when the app\'s Info.plist names its executable (E02)', async () => {
   const exes = new Map<number, string>([
@@ -613,16 +638,23 @@ async function willingChild(): Promise<ChildProcess> {
  * Restarts a real child that ps is told runs `exe`. Every command goes through the stand-in, so an
  * `open` is recorded, never run: nothing on this Mac is launched.
  */
-async function restartAs(exe: string, mains: Record<string, string | null>): Promise<{ result: Awaited<ReturnType<typeof restartProcess>>; opened: string[][] }> {
+async function restartAs(
+  exe: string,
+  mains: Record<string, string | null>,
+  how: { background?: boolean | null; launch?: Launch | null } = {},
+): Promise<{ result: Awaited<ReturnType<typeof restartProcess>>; opened: string[][] }> {
   assert.equal(fs.existsSync(exe.slice(0, exe.indexOf('.app/') + 4)), false, `the app ${exe} stands for exists nowhere on this disk`);
   const child = await willingChild();
   const opened: string[][] = [];
-  const ps = fakePs(new Map([[child.pid!, exe]]));
+  const ps = fakePs(new Map([[child.pid!, exe]]), new Map(), how.launch !== undefined ? new Map([[child.pid!, how.launch]]) : new Map());
   const run = async (cmd: string, args: string[]): Promise<string> => {
     if (cmd === 'open') { opened.push(args); return ''; }
     return ps.run(cmd, args);
   };
-  const env: Env = { os: 'darwin', uid: OUR_UID, bundleExecutable: async (bundle) => mains[bundle] ?? null };
+  const env: Env = {
+    os: 'darwin', uid: OUR_UID, bundleExecutable: async (bundle) => mains[bundle] ?? null,
+    ...(how.background !== undefined ? { bundleBackground: async () => how.background ?? null } : {}),
+  };
   try {
     const result = await restartProcess(child.pid!, path.basename(exe), undefined, run, env);
     await exited(child);
@@ -923,4 +955,144 @@ test('the report reads each app\'s Info.plist once, however many of its programs
   const report = await zombieReport(deps);
   assert.deepEqual(report.processes.map((p) => p.appBundle).sort(), ['/Applications/Fake.app', CHROME, CHROME], 'control: each is its app');
   assert.deepEqual(asked.sort(), ['/Applications/Fake.app', CHROME], 'one read per app');
+});
+
+/* ══════════════════ Restart only what TreeMap really reopens (sixth browser pass H03) ══════════════════ */
+
+/**
+ * "Restart" was offered for background helper bundles TreeMap cannot really reopen: claude.app
+ * (LSBackgroundOnly, started with arguments by Claude.app), jetbrainsd.app (LSUIElement, started by
+ * launchd), AdobeIPCBroker.app (LSBackgroundOnly, `-launchedbyvulcan`). `open <bundle>` relaunches an
+ * app with no arguments, as a person opening it would; a background app, or one another program or
+ * launchd started with arguments of its own, does not come back that way. Each is its app's own
+ * program, so it is offered "Quit" with the reason, never "then open it again".
+ */
+type Reopen = { appBundle: string | null; partOf: string | null; notReopened: string | null };
+
+test('the report calls an app the one a restart reopens only when it is no background app and launchd started it with no arguments; otherwise it says why TreeMap does not reopen it (H03)', async () => {
+  const PLAIN = '/Applications/Plain.app';
+  const AGENT = '/Library/Application Support/Adobe/IPCBox/AdobeIPCBroker.app';
+  const MENU = '/Users/me/Library/Application Support/JetBrains/jetbrainsd.app';
+  const CLAUDE = '/Users/me/Library/Application Support/Claude/claude-code/claude.app';
+  const LAUNCHED = '/Applications/Launched.app';
+  const UNREAD = '/Applications/Unread.app';
+  const exe = (bundle: string) => `${bundle}/Contents/MacOS/${path.basename(bundle, '.app')}`;
+  const exes = new Map<number, string>([
+    [5001, exe(PLAIN)], [5002, exe(AGENT)], [5003, exe(MENU)], [5004, exe(CLAUDE)], [5005, exe(LAUNCHED)], [5006, exe(UNREAD)], [5007, RENDERER],
+  ]);
+  const launches = new Map<number, Launch | null>([
+    [5004, { ppid: 4242, args: `${exe(CLAUDE)} --output-format stream-json` }], // started by another program, with arguments
+    [5005, { ppid: 1, args: `${exe(LAUNCHED)} --daemon` }], // started by launchd, with arguments
+    [5006, null], // how it was started could not be read
+  ]);
+  const background: Record<string, boolean | null> = { [AGENT]: true, [MENU]: true };
+  const ps = fakePs(exes, new Map(), launches);
+  const deps: ReportDeps = {
+    handles: heldBy([...exes.keys()]), run: ps.run, os: 'darwin', uid: OUR_UID,
+    bundleExecutable: async (bundle) => path.basename(bundle, '.app'),
+    bundleBackground: async (bundle) => background[bundle] ?? false,
+  };
+  const report = await zombieReport(deps);
+  const role = (pid: number): Reopen => {
+    const p = report.processes.find((x) => x.pid === pid) as unknown as Reopen;
+    return { appBundle: p.appBundle, partOf: p.partOf, notReopened: p.notReopened ?? null };
+  };
+  assert.deepEqual(role(5001), { appBundle: PLAIN, partOf: null, notReopened: null }, 'an app a person opened is the one a restart reopens');
+  for (const [pid, why, said] of [
+    [5002, 'a background app (LSBackgroundOnly)', /background app/],
+    [5003, 'a menu-bar agent (LSUIElement)', /background app/],
+    [5004, 'one another program started', /Another program started it/],
+    [5005, 'one launchd started with arguments', /started with options of its own/],
+    [5006, 'one whose start could not be read', /How it was started could not be read/],
+  ] as const) {
+    const r = role(pid);
+    assert.equal(r.appBundle, null, `${why}: never called the app a restart reopens`);
+    assert.equal(r.partOf, null, `${why}: it runs inside no other app — it is its own`);
+    assert.match(r.notReopened ?? '', said, `${why}: the report says why`);
+    assert.match(r.notReopened ?? '', /TreeMap does not reopen it\.$/, `${why}: and that TreeMap does not reopen it`);
+  }
+  assert.deepEqual(role(5007), { appBundle: null, partOf: CHROME, notReopened: null }, 'control: a helper keeps its own wording, the app it runs inside');
+  const launch = ps.calls.filter((c) => c.args.includes('pid=,ppid=,args='));
+  assert.deepEqual(launch.map(pidsAskedIn), [[5001, 5003, 5004, 5005, 5006, 5002].sort((a, b) => a - b)],
+    'one more ps, about the apps\' own programs alone — never a helper\'s');
+});
+
+test('a restart of an app TreeMap does not reopen quits it and opens nothing, saying why; an app a person opened is still reopened (H03)', { skip: !IS_UNIX }, async () => {
+  const app = (name: string) => `/Applications/TreeMap ${name} (no such app).app`;
+  const exeOf = (bundle: string) => `${bundle}/Contents/MacOS/${path.basename(bundle, '.app')}`;
+  for (const [what, bundle, how, said] of [
+    ['a background app', app('Agent'), { background: true }, /background app/],
+    ['an app another program started', app('Child'), { launch: { ppid: 4242, args: `${exeOf(app('Child'))} --child` } }, /Another program started it/],
+    ['an app launchd started with arguments', app('Daemon'), { launch: { ppid: 1, args: `${exeOf(app('Daemon'))} --daemon` } }, /started with options of its own/],
+  ] as const) {
+    const { result, opened } = await restartAs(exeOf(bundle), { [bundle]: path.basename(bundle, '.app') }, how);
+    assert.equal(result.terminated, true, `control: ${what} quit`);
+    assert.deepEqual(opened, [], `${what}: nothing is opened`);
+    assert.equal(result.relaunched, false, `${what}: not reopened`);
+    assert.doesNotMatch(result.message, /reopened\./, `${what}: never "quit and was reopened"`);
+    assert.match(result.message, said, `${what}: says why`);
+    assert.match(result.message, /TreeMap does not reopen it\./, `${what}: and that TreeMap does not reopen it`);
+  }
+  const plain = app('Plain');
+  const { result, opened } = await restartAs(exeOf(plain), { [plain]: path.basename(plain, '.app') }, { background: false });
+  assert.deepEqual(opened, [[plain]], 'control: an app a person opened is opened again');
+  assert.equal(result.relaunched, true);
+});
+
+test('an app\'s Info.plist says it is a background app by LSBackgroundOnly or LSUIElement, as a boolean or the old string forms; none set is no background app (H03)', { skip: process.platform !== 'darwin' && 'plutil is macOS\'s' }, async () => {
+  const read = (zombieHandles as unknown as { readBundleBackground?: (bundle: string) => Promise<boolean | null> }).readBundleBackground;
+  assert.equal(typeof read, 'function', 'zombieHandles exposes readBundleBackground');
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tm-h03-'));
+  const bundle = async (name: string, keys: string): Promise<string> => {
+    const b = path.join(dir, `${name}.app`);
+    await fsp.mkdir(path.join(b, 'Contents'), { recursive: true });
+    await fsp.writeFile(path.join(b, 'Contents', 'Info.plist'), '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
+      `<plist version="1.0"><dict><key>CFBundleExecutable</key><string>${name}</string>${keys}</dict></plist>\n`);
+    return b;
+  };
+  try {
+    assert.equal(await read!(await bundle('Agent', '<key>LSBackgroundOnly</key><true/>')), true, 'LSBackgroundOnly true');
+    assert.equal(await read!(await bundle('Menu', '<key>LSUIElement</key><true/>')), true, 'LSUIElement true');
+    assert.equal(await read!(await bundle('Old', '<key>LSUIElement</key><string>1</string>')), true, 'the old string form "1"');
+    assert.equal(await read!(await bundle('Off', '<key>LSUIElement</key><false/><key>LSBackgroundOnly</key><string>0</string>')), false, 'set false is no background app');
+    assert.equal(await read!(await bundle('Plain', '')), false, 'neither set: an app a person opens');
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a plutil that does not answer — a timeout, no plutil — says nothing about a background app, and a key that is not there (exit 1) says it is not set (H03)', async () => {
+  const read = (zombieHandles as unknown as { readBundleBackground?: (bundle: string, run: (c: string, a: string[]) => Promise<string>) => Promise<boolean | null> }).readBundleBackground;
+  assert.equal(typeof read, 'function', 'zombieHandles exposes readBundleBackground');
+  const killed = async (): Promise<string> => { throw new CommandFailedError('plutil', 'plutil timed out', '', '', null); };
+  assert.equal(await read!('/Applications/X.app', killed), null, 'a timeout (no exit code) is unknown');
+  const unset = async (): Promise<string> => { throw new CommandFailedError('plutil', 'No value at that key path', '', '', 1); };
+  assert.equal(await read!('/Applications/X.app', unset), false, 'exit 1, a key that is not there: not set');
+  const asked: string[] = [];
+  const second = async (_c: string, a: string[]): Promise<string> => { asked.push(a[1]); if (a[1] === 'LSUIElement') return 'YES\n'; throw new CommandFailedError('plutil', 'none', '', '', 1); };
+  assert.equal(await read!('/Applications/X.app', second), true, 'the old "YES" form of LSUIElement');
+  assert.deepEqual(asked, ['LSBackgroundOnly', 'LSUIElement'], 'both keys are read');
+});
+
+test('the sheet and the row for an app TreeMap does not reopen say "Quit", why, and that TreeMap does not reopen it — never "then open it again" (H03)', () => {
+  const base = { pid: 9, bytes: 1_000_000, unknownSizeCount: 0, restartable: true, restartRefusal: null, handles: [] };
+  const agent = { ...base, processName: 'AdobeIPCBroker', appBundle: null, partOf: null,
+    notReopened: 'It is a background app (its Info.plist says so), so TreeMap does not reopen it.' };
+  const sheet = restartSheet(agent);
+  assert.equal(sheet.title, 'Quit AdobeIPCBroker?', 'the sheet asks to quit it');
+  assert.equal(sheet.ok, 'Quit it', 'and its OK says so');
+  assert.match(sheet.text, /It is a background app \(its Info\.plist says so\), so TreeMap does not reopen it\./, 'the sheet says why');
+  assert.match(sheet.text, /that work could be lost/, 'its unsaved work may be lost: nothing asks it to save');
+  assert.doesNotMatch(sheet.text, /open it again|can only reopen Mac apps/, 'no reopen is promised, and it is not called a non-app');
+  const html = paintZombies({
+    processes: [{ ...agent, handles: [{ path: '/tmp/x', bytes: 100, holders: 1 }] }],
+    totalBytes: 100, unknownSizeCount: 0, fileCount: 1, sharedFileCount: 0, scannedAt: 0,
+  });
+  assert.match(html, /<button class="pill" data-zh-restart="0" title="[^"]*TreeMap does not reopen it"[^>]*>Quit<\/button>/, 'the row offers Quit, and its title says TreeMap does not reopen it');
+});
+
+test('the OpenAPI document says why a restart does not reopen an app\'s own program (H03)', async () => {
+  const { buildOpenApiDocument } = await import('../src/api/openapi');
+  const said = JSON.stringify((buildOpenApiDocument() as { paths: Record<string, unknown> }).paths['/api/zombie-handles']);
+  assert.match(said, /notReopened \([^)]*background app[^)]*another program[^)]*arguments[^)]*\)/, 'notReopened is declared, with what it covers');
 });
