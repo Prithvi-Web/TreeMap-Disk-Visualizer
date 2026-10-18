@@ -143,6 +143,11 @@
   transform: scaleY(0); transform-origin: bottom; transition: transform 340ms var(--ease-spring); }
 .bigfile:hover::before, .bigfile:focus-within::before { transform: scaleY(1); }
 .bigfile .meta { flex: 1; min-width: 0; }
+/* What a Largest Folders row folded in (G15), on as many lines as it needs:
+   held to one line it was cut in every row (sixth browser pass H55). */
+.bigfile .bf-fold { font-size: 11px; line-height: 1.35; color: var(--text-2); overflow-wrap: anywhere; }
+/* A heading's note at its right edge: what a card's figures are (H55). */
+.card h2 .h2-aside { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--text-2); letter-spacing: 0; }
 .bigfile .nm { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bigfile .pth { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   direction: rtl; text-align: left; }

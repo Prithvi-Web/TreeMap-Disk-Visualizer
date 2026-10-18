@@ -2087,19 +2087,27 @@ function renderBigFolders() {
   const folders = bigFolderRows(state.bigFolders || []);
   if (!folders.length) { host.innerHTML = '<div class="muted">No folders above 1 MB found.</div>'; return; }
   const max = folders[0].size || 1;
-  // What a row folded in, said once in words and in full in its tooltip.
-  const foldNote = (f) => {
+  // What a row folded in, said once in words and in full in its tooltip —
+  // and in the row's accessible name, so keyboard, touch and screen-reader
+  // users get it too; the note wraps rather than being cut to one line
+  // (sixth browser pass H55). Plain text here, escaped once where written.
+  const foldWords = (f) => {
     if (!f.folded.length) return '';
     const names = f.folded.map((x) => x.name);
     const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
-    // Plain text here, escaped once as the attribute is written below.
-    const title = 'Inside it, not listed again:\n' + f.folded.map((x) => x.path + ' — ' + formatBytes(x.size)).join('\n');
-    return `<div class="muted" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(title)}">` +
-      `Also covers ${escapeHtml(list)} inside it, which ${names.length === 1 ? 'holds' : 'each hold'} nearly all of its size</div>`;
+    return `${list} inside it, which ${names.length === 1 ? 'holds' : 'each hold'} nearly all of its size`;
   };
+  const foldNote = (f) => {
+    if (!f.folded.length) return '';
+    const title = 'Inside it, not listed again:\n' + f.folded.map((x) => x.path + ' — ' + formatBytes(x.size)).join('\n');
+    return `<div class="bf-fold" title="${escapeHtml(title)}">Also covers ${escapeHtml(foldWords(f))}</div>`;
+  };
+  const rowName = (f) => `Open ${f.name} in the treemap` + (f.folded.length ? `. It also covers ${foldWords(f)}.` : '');
+  // The bars and the figures compare the rows shown: a share of the largest.
+  const pct = (f) => Math.round((f.size / max) * 100);
   host.innerHTML = folders.map((f, i) => `
     <div class="bigfile" data-jump="${escapeHtml(f.path)}" style="cursor:var(--cur-hand);" role="button" tabindex="0"
-         aria-label="Open ${escapeHtml(f.name)} in the treemap">
+         aria-label="${escapeHtml(rowName(f))}">
       ${chipFor({ type: 'dir' })}
       <div class="meta">
         <div class="nm" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
@@ -2108,7 +2116,7 @@ function renderBigFolders() {
       </div>
       <span class="cnt muted num" style="white-space:nowrap;">${formatCount(f.fileCount)} file${f.fileCount === 1 ? '' : 's'}</span>
       <div class="bar-track"><div class="fx-bar-fill" data-w="${Math.max(4, (f.size / max) * 100).toFixed(1)}" style="${fxBarStyle(i)}"></div></div>
-      <span class="fx-li-pct num">${Math.round((f.size / max) * 100)}%</span>
+      <span class="fx-li-pct num" title="${pct(f)}% of the size of the largest folder listed">${pct(f)}%</span>
       <span class="size-badge num" style="color:${sizeInk(f.size)};">${formatBytes(f.size)}</span>
     </div>`).join('');
   fxBarsIn(host);

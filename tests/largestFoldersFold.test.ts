@@ -200,7 +200,7 @@ test('G15: a row that folded folders in names them, and its tooltip gives each o
   const xcode = rows.find((r) => r.includes('data-jump="/Applications/Xcode.app"')) as string;
   assert.match(xcode, /Also covers Contents inside it, which holds nearly all of its size/, 'one folded folder, said in the singular');
   // The bars compare the rows shown: the first row is the full bar.
-  assert.match(rows[0], /<span class="fx-li-pct num">100%<\/span>/);
+  assert.match(rows[0], /<span class="fx-li-pct num"[^>]*>100%<\/span>/);
   assert.doesNotMatch(html, /data-jump="\/Applications\/IntelliJ IDEA\.app\/Contents"/, 'Contents has no row of its own');
   // Three or more, as a list (review F1.8): Chrome's whole five-folder chain.
   const chrome = rows.find((r) => r.includes('data-jump="/Applications/Google Chrome.app"')) as string;
@@ -219,4 +219,47 @@ test('G15 review F1.7: a folded folder\'s name and path are escaped in the note 
   const esc = 'a&amp;b&quot;&#39;&lt;x&gt;&lt;img src=1 onerror=alert(1)&gt;';
   assert.ok(html.includes(`>Also covers ${esc} inside it, which holds nearly all of its size</div>`), 'the note names it, escaped once');
   assert.ok(html.includes(`title="Inside it, not listed again:\n/A/App.app/${esc} — 1.0 GB"`), 'the tooltip gives its path, escaped once, inside the attribute');
+});
+
+/* ── Sixth browser pass H55: the fold is readable, and said to everyone ─────── */
+
+/** The declarations every rule naming exactly `selector` makes, in the built stylesheet. */
+function cssFor(selector: string): Map<string, string> {
+  const sheet = INDEX.slice(INDEX.indexOf('<style>') + 7, INDEX.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const out = new Map<string, string>();
+  for (const m of sheet.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+    if (!m[1].split(',').map((s) => s.trim().replace(/\s+/g, ' ')).includes(selector)) continue;
+    for (const d of m[2].split(';')) { const i = d.indexOf(':'); if (i !== -1) out.set(d.slice(0, i).trim(), d.slice(i + 1).trim()); }
+  }
+  return out;
+}
+
+test('H55: the fold note may wrap — it is never held to one line and cut', () => {
+  const { html } = renderCard(apiFolders(cardLimit()));
+  const chrome = html.split('<div class="bigfile"').slice(1).find((r) => r.includes('data-jump="/Applications/Google Chrome.app"')) as string;
+  const note = /<div class="bf-fold"([^>]*)>Also covers/.exec(chrome);
+  assert.ok(note, 'the note is its own element, styled by the stylesheet');
+  assert.doesNotMatch(note![1], /style=/, 'no inline style holds it to one line');
+  const css = cssFor('.bigfile .bf-fold');
+  assert.equal(css.get('font-size'), '11px', 'control: the note keeps its 11 px');
+  assert.notEqual(css.get('white-space'), 'nowrap', 'it wraps');
+  assert.equal(css.get('text-overflow'), undefined, 'and nothing of it is cut off with an ellipsis');
+});
+
+test('H55: a row\'s accessible name says what it folded in — keyboard, touch and screen-reader users get it, not only a hover tooltip', () => {
+  const { html } = renderCard(apiFolders(cardLimit()));
+  const label = (path: string) => new RegExp(`data-jump="${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*aria-label="([^"]*)"`).exec(html)?.[1];
+  assert.equal(label('/Applications/IntelliJ IDEA.app'),
+    'Open IntelliJ IDEA.app in the treemap. It also covers Contents and plugins inside it, which each hold nearly all of its size.');
+  assert.equal(label('/Applications/Xcode.app'), 'Open Xcode.app in the treemap. It also covers Contents inside it, which holds nearly all of its size.');
+  assert.equal(label('/Applications/Blender.app'), 'Open Blender.app in the treemap', 'a row that folded nothing is named as before');
+});
+
+test('H55: the "%" column says what it is a share of — the largest folder listed — in the card\'s heading and on each figure', () => {
+  const card = INDEX.slice(INDEX.indexOf('<span data-icon="folder"></span>Largest Folders'), INDEX.indexOf('id="bigFolders"'));
+  assert.match(card, /% of the largest/, 'the heading says what the percentages are');
+  const { html } = renderCard(apiFolders(cardLimit()));
+  const pcts = [...html.matchAll(/<span class="fx-li-pct num"([^>]*)>(\d+)%<\/span>/g)];
+  assert.equal(pcts.length, 10, 'control: each row has its figure');
+  for (const [, attrs, n] of pcts) assert.match(attrs, new RegExp(`title="${n}% of the size of the largest folder listed"`), `${n}%: said in full on the figure`);
 });
