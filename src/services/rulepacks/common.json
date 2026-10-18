@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "pack": "common",
-  "updated": "2026-10-14",
+  "updated": "2026-10-17",
   "rules": [
     {
       "id": "regen-node-modules",
@@ -30,7 +30,7 @@
       "id": "regen-python-venv",
       "kind": "project-directory",
       "title": "Python virtualenv",
-      "description": "Virtual environment — recreate from the project manifest",
+      "description": "Virtual environment — Python can make it again, but the packages in it must be reinstalled",
       "category": "regenerable",
       "confidence": "high",
       "ecosystem": "python",
@@ -50,7 +50,7 @@
       "evidence": [
         "pyvenv.cfg"
       ],
-      "restoreCommand": "pip install -r requirements.txt"
+      "restoreCommand": "python3 -m venv <folder>, then reinstall the packages it held"
     },
     {
       "id": "regen-pycache",

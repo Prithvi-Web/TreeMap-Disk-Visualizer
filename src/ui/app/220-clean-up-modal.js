@@ -468,8 +468,9 @@ async function renderPackageOrphans() {
     // The server's reason for an `active` entry names the project as "in
     // use"; its row says what that means here instead. Only a cache names its
     // command, which does clear it. No row names one as putting it back: a
-    // virtualenv's (`pip install -r requirements.txt`) makes no `.venv` (G05
-    // review F2.1), an orphan's project or interpreter is gone, and a
+    // virtualenv's makes the environment but not the packages it held (its
+    // rule once named `pip install -r requirements.txt`, which makes no
+    // `.venv` — G05 review F2.1, H08), an orphan's project or interpreter is gone, and a
     // superseded Homebrew keg's (`brew cleanup`) removes it (F3.2).
     const why = e.kind === 'active' ? 'Its project is still here' : e.reason;
     const command = e.kind === 'cache' && e.command
@@ -509,9 +510,9 @@ async function renderPackageOrphans() {
   const projectCount = projects.reduce((n, x) => n + x.entries.length, 0);
   // The line says what is true of every folder in the fold: its project is
   // still here. Never that the command beside it puts it back — a
-  // virtualenv's (the rule pack's `pip install -r requirements.txt`) makes no
-  // `.venv`, and fails in a project with no requirements.txt (G05 review
-  // F1.1) — nor that its project can build it again (F3.3). The summary carries a
+  // virtualenv's makes the environment but not the packages it held (the rule
+  // pack once named `pip install -r requirements.txt`, which makes no `.venv`
+  // — G05 review F1.1, H08) — nor that its project can build it again (F3.3). The summary carries a
   // tabindex so a sheet's Tab trap (modalFocusables) lists it: a bare
   // <summary> matches none of its selectors, and with nothing ticked the
   // fold could be opened only with a mouse (F1.6).

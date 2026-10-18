@@ -472,3 +472,17 @@ test('the Reclaim Score\'s "regenerable" reason names the folder it scored, not 
   assert.equal(claims.byPath.get(path.join(ROOT, 'site', '.svelte-kit'))?.why, 'A folder named .svelte-kit.');
   assert.equal(claims.byPath.get(path.join(ROOT, 'crate', 'target'))?.why, 'A folder named target sitting next to Cargo.toml.');
 });
+
+test('the virtualenv rule says what really makes a virtualenv again — true for .venv, venv and env, with or without a requirements.txt (sixth browser pass H08)', () => {
+  const catalog = loadRuleCatalogFrom(SHIPPED, 'darwin');
+  const venv = catalog.projectDirectory.find((r) => r.id === 'regen-python-venv')!;
+  assert.deepEqual(venv.names, ['.venv', 'venv', 'env'], 'control: one rule for three folder names');
+  assert.ok(venv.requiresSibling?.includes('.python-version'), 'control: a .python-version alone is enough to match — no package list need be there');
+  // `pip install -r requirements.txt` makes no virtualenv (it installs into whichever Python comes first on
+  // PATH) and fails where there is no requirements.txt: the remedy was untrue for a .venv.
+  assert.equal(venv.restoreCommand, 'python3 -m venv <folder>, then reinstall the packages it held',
+    'the command that makes the environment again, named for whichever folder it was, then the step no command can promise');
+  assert.doesNotMatch(venv.restoreCommand, /requirements\.txt/, 'it names no file a project may not have');
+  assert.doesNotMatch(venv.description, /manifest/, 'nor does its description promise a manifest a .python-version alone does not give');
+  assert.match(venv.description, /packages[^.]*reinstalled/, 'and it says the packages are not made again with it');
+});

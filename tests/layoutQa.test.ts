@@ -1831,7 +1831,7 @@ function shippedSmartGroups(): Array<Record<string, unknown>> {
  */
 const REMEDY_CODE: Record<string, string[]> = {
   'npm install': ['npm install'],
-  'pip install -r requirements.txt': ['pip install -r requirements.txt'],
+  'python3 -m venv <folder>, then reinstall the packages it held': ['python3 -m venv <folder>'],
   'automatic on next run': [],
   'cargo build': ['cargo build'],
   'mvn package': ['mvn package'],

@@ -84,7 +84,7 @@ test('a virtualenv is flagged only next to a Python manifest', () => {
   for (const manifest of ['requirements.txt', 'pyproject.toml', 'Pipfile', 'setup.py', 'setup.cfg', '.python-version']) {
     const g = groupById(run(tree([pkg('.venv'), file(manifest)])), 'regen-python-venv');
     assert.ok(g, `.venv beside ${manifest} must be suggested`);
-    assert.equal(g.regenerateCmd, 'pip install -r requirements.txt');
+    assert.equal(g.regenerateCmd, 'python3 -m venv <folder>, then reinstall the packages it held', 'what makes a virtualenv again (H08)');
   }
   for (const name of ['.venv', 'venv', 'env']) {
     assert.ok(groupById(run(tree([pkg(name), file('pyproject.toml')])), 'regen-python-venv'), `${name} is a venv name`);
