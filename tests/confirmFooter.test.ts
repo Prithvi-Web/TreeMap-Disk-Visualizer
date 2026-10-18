@@ -363,3 +363,105 @@ test('every place that opens the shared sheet is accounted for, with the OK labe
   const listed = openers.reduce((n, [, opens]) => n + opens, 0);
   assert.equal(count(INDEX), listed, `every opening of the sheet is one listed here (${count(INDEX)} in the page, ${listed} listed)`);
 });
+
+/* ═══════ a cancelled sheet's "in use" warning reaches no later sheet (sixth browser pass H01) ═══════ */
+
+/**
+ * The open-file panel (#confirmOpenHandles) and the override it arms belong
+ * to the one sheet that asked about its files. Cancelled with a warning up,
+ * the trash sheet left both behind: the next sheet to open — Empty the
+ * Trash, beside "This cannot be undone" — showed "This file is in use" about
+ * files it never named, with the override still armed. Only the openers that
+ * reset the guard themselves were clear; every close now clears both, so no
+ * opener can forget.
+ */
+function sheetWorld() {
+  const els: Record<string, any> = {};
+  const $ = (id: string) => (els[id] ||= (() => {
+    const classes = new Set<string>();
+    return {
+      innerHTML: '', textContent: '', className: '', hidden: false, disabled: false, style: {}, classes,
+      classList: { add: (c: string) => { classes.add(c); }, remove: (c: string) => { classes.delete(c); } },
+    };
+  })());
+  let answer: (v: unknown) => void = () => {};
+  const deps: Record<string, unknown> = {
+    $,
+    api: (url: string) => (url === '/api/files/installed-programs' ? Promise.resolve({ parts: [] }) : new Promise((resolve) => { answer = resolve; })),
+    trashPaths: async () => ({ deleted: [], failed: [] }),
+    ensureNodes: async () => {},
+    nodeFor: () => ({ name: 'a', size: 1 }),
+    icon: (name: string) => `[${name}]`,
+    escapeHtml: (s: string) => s,
+    formatBytes: (n: number) => `${n}B`,
+    formatCount: (n: number) => String(n),
+    cloudProviderOfScan: () => ({ name: 'Drive', trashLabel: 'its trash' }),
+    cloudTrashPaths: async () => {},
+    clearInterval: () => {}, cloudConnectPoll: 0, fxOrbHide: () => {}, cleanFunnelDrop: () => {},
+    FxBeam: { attach: () => {} }, activeJob: null, askSettle: () => {}, toast: () => {},
+    rescan: () => {}, describeMatch: () => 'files', loadAutopilot: () => {}, loadCapsule: () => {},
+    startEncode: () => {}, emptyTrashAction: () => {}, purgeSnapshotsAction: () => {}, runGitGcAction: () => {},
+    state: {
+      trash: { itemCount: 3, totalBytes: 300, complete: true },
+      snapshots: { snapshots: [{}, {}] },
+      capsule: { index: { entries: [{ id: 'c1', name: 'a.zip', sizeBytes: 10 }] } },
+      autopilot: { runs: [{ id: 'r1', policyId: 'p1', bytesMatched: 5 }], policies: [{ id: 'p1', name: 'Old downloads', path: '/d', match: {} }] },
+      games: { report: { libraries: [{ titles: [{ components: [{ kind: 'shaderCache', path: '/g/shaders', bytes: 7 }] }] }] } },
+      capsuleOff: false,
+    },
+  };
+  const gcClick = { target: { closest: (sel: string) => (sel === '[data-gc]' ? { getAttribute: () => '/repos/site' } : null) } };
+  // Every sheet the browser pass opened after the cancelled trash sheet, with the arguments it is opened with.
+  const openers: Array<[string, string, unknown[]]> = [
+    ['Empty the Trash', blockAt("$('emptyTrashBtn').addEventListener('click', () => {"), []],
+    ['Purge local snapshots', blockAt("$('snapPurgeBtn').addEventListener('click', () => {"), []],
+    ['Forget this copy', blockAt('function forgetCapsuleEntry(id) {'), ['c1']],
+    ['Clear shader caches', blockAt('function clearShaderCaches() {'), []],
+    ['Move it somewhere safer', blockAt('function confirmRelocateSecret(finding) {'), [{ name: 'id_rsa', path: '/h/Desktop/id_rsa', suggestedPath: '/h/.ssh' }]],
+    ['the re-encode sheet', blockAt('function confirmEncode(chosen, parts) {'), [[{ path: '/v/a.mov', estimatedSaving: 9 }], []]],
+    ['Run git gc', gitGcListener(), [gcClick]],
+    ['the Autopilot approval', blockAt('function approveAutopilotRun(runId) {'), ['r1']],
+    ['the cart\'s Done', blockAt('function cartCommitSummary(result) {'), [{ runId: 'r1', trashed: ['/r/x'], bytesFreed: 1, skipped: [], failedToTrash: [], unverified: [] }]],
+  ];
+  const asFunction = (block: string): string => {
+    const params = /^(?:async\s+)?function \w+\(([\w, ]*)\)/.exec(block)?.[1] ?? /\((\w*)\) => \{$/.exec(block.slice(0, block.indexOf('{') + 1))?.[1] ?? '';
+    return `function (${params}) {${block.slice(block.indexOf('{') + 1, -1)}\n}`;
+  };
+  const keys = Object.keys(deps);
+  const src = `
+    let openHandleSeq = 0, confirmIgnoreOpenHandles = false, confirmPaths = [], onConfirmTrash = null;
+    ${constOf('TRASH_CHUNK')}
+    ${constOf('OPEN_HANDLE_PREFLIGHT_CHUNKS')}
+    ${constOf('INSTALLED_PROGRAM_CHUNK')}
+    ${['setConfirmButton', 'confirmFooterReset', 'baseName', 'renderOpenHandleWarning', 'checkOpenHandlesFor',
+      'resetOpenHandleWarning', 'tmParentPath', 'outermostPaths', 'installedProgramParts', 'installedProgramWords',
+      'installedProgramRemoval', 'installedProgramWarningHtml', 'confirmTrash', 'closeModal', 'cartSpaceSaid'].map(declOf).join('\n')}
+    const openers = [${openers.map(([, block]) => asFunction(block)).join(',\n')}];
+    return { confirmTrash, closeModal, override: () => confirmIgnoreOpenHandles, openers };`;
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const page = new Function(...keys, src)(...keys.map((k) => deps[k]));
+  return {
+    page, $, answer: (v: unknown) => answer(v),
+    openers: openers.map(([what, , args], i) => ({ what, open: () => page.openers[i](...args) })),
+  };
+}
+
+test('a trash sheet cancelled with its "in use" warning up leaves no warning and no override on any sheet opened after it (sixth browser pass H01)', async () => {
+  const w = sheetWorld();
+  assert.equal(w.openers.length, 9, 'every non-trash sheet of the browser pass is opened here');
+  for (const { what, open } of w.openers) {
+    await w.page.confirmTrash(['/r/held']);
+    w.answer({ checked: true, complete: true, conflicts: [{ path: '/r/held', pid: 7, processName: 'Python', openPath: '/r/held' }] });
+    await turns();
+    assert.equal(w.$('confirmOpenHandles').hidden, false, `control (before ${what}): the trash sheet shows its warning`);
+    assert.equal(w.page.override(), true, `control (before ${what}): and arms its override`);
+    w.page.closeModal('confirmModal'); // Cancel
+    open();
+    assert.ok(w.$('confirmModal').classes.has('open'), `control: ${what} opened the sheet`);
+    assert.equal(w.$('confirmOpenHandles').hidden, true, `${what} shows no "in use" panel about the cancelled sheet's files`);
+    assert.equal(w.$('confirmOpenHandles').innerHTML, '', `${what}: the panel holds nothing either`);
+    assert.equal(w.page.override(), false, `${what}: no override is armed for it`);
+    assert.doesNotMatch(w.$('confirmOk').innerHTML, /anyway/, `${what}: its OK is not an "… anyway"`);
+    w.page.closeModal('confirmModal');
+  }
+});

@@ -30292,23 +30292,32 @@ function setConfirmButton(label, iconName = 'trash') {
  * outlives the dialog that made it — a "Close" label must never sit on the
  * next dialog's OK, whatever that dialog does.
  *
- * It also abandons the open-file check still out for the dialog that closed.
+ * It also abandons the open-file check still out for the dialog that closed,
+ * and takes down that dialog's open-file panel and the override it armed.
  * Answering after a Cancel, that check relabelled OK "Delete anyway" and armed
- * the override for whichever dialog opened next. The override the user chose
- * in THIS dialog is untouched: the OK handler closes the dialog first and
- * reads it afterwards.
+ * the override for whichever dialog opened next; and a warning already up
+ * when the dialog was cancelled stayed on the sheet for the next one — Empty
+ * the Trash showed "This file is in use" about files it never named, with
+ * the override armed (sixth browser pass H01). Every close passes here, so
+ * no opener has to remember to clear them. The override the user chose in
+ * THIS dialog still reaches its action: the OK handler reads it before it
+ * closes the dialog.
  */
 function confirmFooterReset() {
   openHandleSeq++;
+  confirmIgnoreOpenHandles = false;
+  const host = $('confirmOpenHandles');
+  if (host) { host.hidden = true; host.innerHTML = ''; }
   const cancel = $('confirmCancel');
   if (cancel) cancel.hidden = false;
   setConfirmButton('Move to Trash');
 }
 
 $('confirmOk').addEventListener('click', async () => {
-  closeModal('confirmModal');
+  // Read before the close, which clears the override for the next dialog.
   const cb = onConfirmTrash; onConfirmTrash = null;
   const ignoreOpenHandles = confirmIgnoreOpenHandles;
+  closeModal('confirmModal');
   confirmIgnoreOpenHandles = false;
   openHandleSeq++; // any in-flight check belongs to a dialog that is now closed
   // The choice the user just made reaches the callback too. Without this a
