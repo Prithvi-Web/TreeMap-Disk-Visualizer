@@ -85,26 +85,17 @@ function footer(nodes: number, drawn: number, rootSize = 1): string {
   return runTmStatus({ nodes: many(nodes), pxRects: many(drawn), rootSize });
 }
 
-test('the treemap footer says "node" for one and "nodes" for none or many', () => {
-  // One file in the folder is the case that shipped broken. Both halves of the
-  // line are pinned, not just the noun: "1 drawn" needs no plural marker of its
-  // own — its noun is elided and would agree with its own count anyway — so the
-  // fix must not invent one.
-  assert.equal(footer(1, 1), '1 node · 1 drawn · 1 B total',
-    'a single-file folder reads "1 node", never "1 nodes"');
-
-  // Zero takes the plural in English, and so does anything above one.
-  assert.equal(footer(0, 0), '0 nodes · 0 drawn · 1 B total',
-    'an empty folder reads "0 nodes"');
-  assert.equal(footer(12, 9), '12 nodes · 9 drawn · 1 B total',
-    'twelve entries read "12 nodes"');
-
-  // The two counts are independent: a big folder drawn down to one visible cell
-  // must not borrow the node count's plural, and vice versa.
-  assert.equal(footer(7, 1), '7 nodes · 1 drawn · 1 B total',
-    'the drawn count is pluralised on ITS own number, not on the node count');
-  assert.equal(footer(1, 0), '1 node · 0 drawn · 1 B total',
-    'the node count is pluralised on ITS own number, not on the drawn count');
+test('the treemap footer says how many of the folder\'s items are drawn, in plain words — "9 of 12 items drawn" — with the noun agreeing with the count it follows (BQG-5 item 15)', () => {
+  // It read "12,705 nodes · 9,421 drawn": "nodes" is the code's word, and two
+  // bare counts side by side left the reader to work out that the second is
+  // part of the first. One sentence now, its noun after the count it belongs
+  // to: one item, or none or many items.
+  assert.equal(footer(12, 9), '9 of 12 items drawn · 1 B total', 'twelve entries, nine drawn');
+  assert.equal(footer(1, 1), '1 of 1 item drawn · 1 B total', 'a single-file folder reads "1 item", never "1 items"');
+  assert.equal(footer(0, 0), '0 of 0 items drawn · 1 B total', 'an empty folder reads "0 items"');
+  assert.equal(footer(7, 1), '1 of 7 items drawn · 1 B total', 'the noun follows the folder\'s count, not the drawn one');
+  assert.equal(footer(1, 0), '0 of 1 item drawn · 1 B total', 'and agrees with it');
+  assert.equal(footer(12_705, 9_421), '9421 of 12705 items drawn · 1 B total', 'the browser pass\'s folder (the page groups the thousands; this harness does not)');
 });
 
 test('no count in the treemap footer is ever followed by a plural it contradicts', () => {
@@ -119,7 +110,7 @@ test('no count in the treemap footer is ever followed by a plural it contradicts
     assert.ok(!/\b1 \w+s\b/.test(line),
       `a count of one is never followed by a plural noun — got "${line}"`);
     if (n !== 1) {
-      assert.ok(!/\b\d+ node\b/.test(line),
+      assert.ok(!/\b\d+ (node|item)\b/.test(line),
         `a count of ${n} is never followed by a singular noun — got "${line}"`);
     }
   }
@@ -158,6 +149,6 @@ test('a query line names the folder’s size as the folder’s, not as a total o
     assert.doesNotMatch(line, /\btotal\b/, `no bare "total" beside a match count: "${line}"`);
     assert.match(line, /· 8800 B in this folder$/, `the size is the folder’s, said so: "${line}"`);
   }
-  // The plain count line keeps its own wording: nodes and drawn are the folder's.
-  assert.equal(footer(3, 2, 7), '3 nodes · 2 drawn · 7 B total');
+  // The plain count line keeps its own wording: the items drawn are the folder's.
+  assert.equal(footer(3, 2, 7), '2 of 3 items drawn · 7 B total');
 });

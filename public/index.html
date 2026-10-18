@@ -12524,7 +12524,7 @@ let tmCapMemo = { nodes: null, rootSize: -1, floor: -1, note: '' };
  * The rectangle map's admission that the server's cap cut it short (QA D58).
  *
  * A folder of 25,600 files drew 20,000 of them and left a blank rectangle for
- * the rest, under a status line reading "20,000 nodes · 20,000 drawn" — the
+ * the rest, under a status line reading "20,000 of 20,000 items drawn" — the
  * blank read as free space or as a rendering fault. Circles and Voronoi
  * already name what they leave out; this is the same sentence for this map.
  *
@@ -13185,18 +13185,16 @@ function updateTmStatus() {
   // means nothing about a sunburst's rings or §6.2's shapes, and writing it
   // anyway would overwrite a true line with a plausible one.
   if (isSun() || isCells()) return;
-  // The noun has to follow the number. Drilling into a folder holding exactly
-  // one file printed "1 nodes · 1 drawn · 394.0 KB total" — the app's most-read
-  // line disagreeing with itself — because this sentence was the one counted
-  // string that never picked up the house idiom the `match`/`matches` branch
-  // above and every other counted line in the app already use. Each count is
-  // pluralised on ITS OWN number: a big folder drawn down to a single visible
-  // cell must not borrow the node count's "s". "drawn" stays bare on purpose —
-  // its noun is elided, so it already agrees with whatever precedes it.
+  // How many of the folder's items the map drew, in plain words: "9,421 of
+  // 12,705 items drawn" (BQG-5 item 15). It read "12,705 nodes · 9,421 drawn":
+  // "nodes" is the code's word, and two bare counts side by side left the
+  // reader to work out that the second was part of the first. The noun has
+  // to follow the number it belongs to — "1 of 1 item", never "1 nodes" (the
+  // line once said so about a single-file folder).
   const nodeCount = state.treemap.nodes.length;
   $('tmStatus').textContent =
-    `${formatCount(nodeCount)} node${nodeCount === 1 ? '' : 's'}`
-    + ` · ${formatCount(state.treemap.pxRects.length)} drawn · ${formatBytes(state.treemap.rootSize)} total`;
+    `${formatCount(state.treemap.pxRects.length)} of ${formatCount(nodeCount)} item${nodeCount === 1 ? '' : 's'} drawn`
+    + ` · ${formatBytes(state.treemap.rootSize)} total`;
 }
 /* ───────────────────── Shared Canvas 2D toolkit (§3.4) ─────────────────────
    The primitives every canvas panel needs, in one place: DPR-correct sizing,
