@@ -527,12 +527,14 @@ function treemapCanvasHeight(wrap) {
  * Redraw the map when a row around it changed height (QA B26; D59 did this
  * for the time-lapse bar alone). The canvas is sized once per draw, from
  * what sits above and below it, and a row can appear or re-flow AFTER that
- * draw: the query bar (Save view · Stage N files), the time-lapse bar, a
- * toolbar that wraps, a footer that wraps, the room the cart pill reserves at
- * the bottom of <main>. The footer — legend, counts, hint — then fell below
- * the window. A no-op unless the height the map should have differs from the
- * one it was drawn at, and nothing before the first draw, which measures for
- * itself.
+ * draw: the time-lapse bar, a toolbar that wraps, a footer that wraps, the
+ * room the cart pill reserves at the bottom of <main>. The footer — legend,
+ * counts, hint — then fell below the window. A no-op unless the height the
+ * map should have differs from the one it was drawn at, and nothing before
+ * the first draw, which measures for itself. The query bar (Save view ·
+ * Stage matches) is no row any more: since design pass G19 it is a layer
+ * over the foot of the map, which never moves the canvas. It is still
+ * watched below, where a change of its size is one of these no-ops.
  *
  * Voronoi and Circles re-solve through tmCellsSettle, the resize handler's
  * own wait (B26 review F1.1): a corner drag moves the toolbar's width every
