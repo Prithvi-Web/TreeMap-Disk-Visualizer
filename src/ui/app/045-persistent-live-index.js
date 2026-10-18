@@ -300,9 +300,15 @@ async function startScan(path, opts = {}) {
   // trip — measured at 400ms on a large indexed root, and longer again when it
   // goes on to fetch the tree. Doing that first left the button reading "Scan"
   // with no spinner for the whole time, which reads as the app having missed
-  // the click. `quiet` because we do not yet know whether the index will paint;
-  // startScanRequest re-enters with the real value a moment later.
-  beginScanChrome({ quiet: true, message: 'Starting scan…' });
+  // the click. `quiet` while a tree is on screen, because we do not yet know
+  // whether the index will paint over it; startScanRequest re-enters with the
+  // real value a moment later. With none on screen there is nothing to keep:
+  // the full chrome takes the start screen down at once and puts the
+  // Dashboard's Stop on screen. Quiet, the start screen stayed up and
+  // clickable for the whole probe, with Stop in the hidden Dashboard, and a
+  // second click on a choice was told "A scan is already running" (review
+  // F1.2).
+  beginScanChrome({ quiet: !!state.root, message: 'Starting scan…' });
   // That chrome has a Stop, and a Stop pressed while the index below is asked
   // about or read has no scan to cancel: stopScan ends the chrome, and this
   // click starts nothing more — no paint, no scan (final review F1.7). A Scan

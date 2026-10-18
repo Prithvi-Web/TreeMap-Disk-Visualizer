@@ -416,9 +416,14 @@ function renderStartChoices() {
  * A choice pressed: scanned as the folder picker's "Scan this folder" scans
  * — the Scan card's box names it, and startScan runs it as a person's scan
  * (interactive), with the Full Disk Access notice and the "Stay on this
- * drive" setting the Scan button's scans have.
+ * drive" setting the Scan button's scans have. A click that lands while a
+ * scan is starting — the second of a double-click, before the start screen
+ * has gone — starts nothing and leaves the box naming the folder being
+ * scanned: written first, the box went on naming another folder, which a
+ * later Scan or Enter would have walked (review F1.12).
  */
 function scanStartChoice(path) {
+  if (state.scanning) return;
   $('pathInput').value = path;
   maybeShowFastRescan();
   void startScan(path);

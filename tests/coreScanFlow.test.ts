@@ -416,6 +416,34 @@ test('each choice starts the scan the Scan button starts, as a person\'s: the pa
   assert.equal(h.$('emptyState').style.display, 'none', 'the start screen goes while it scans');
 });
 
+test('a choice is answered at once: the start screen goes and the Dashboard\'s Stop is on screen while the index is asked, and a second click as that scan starts neither toasts an error nor rewrites the path box (review F1.2, F1.12)', async () => {
+  // Review F1.2: the quiet chrome left the start screen up, clickable, for the
+  // whole index probe, with Stop in the hidden Dashboard; a double-click on a
+  // choice earned "A scan is already running" in red. F1.12: a click on
+  // another choice then rewrote the path box, which went on naming a folder
+  // other than the one being scanned.
+  let probe: (a: { body: unknown }) => void = () => {};
+  const h = page({ route: (m, url, b) => (url.startsWith('/api/index/status?') ? new Promise((r) => { probe = r; }) : server({ roots: [] })(m, url, b)) });
+  await boot(h);
+  const desktop = h.choice(/^Desktop$/);
+  const documents = h.choice(/^Documents$/);
+  desktop.click();
+  await turns();
+  assert.equal(h.posts.length, 0, 'control: the index is still being asked');
+  assert.equal(h.state.scanning, true, 'control: the scan has begun');
+  assert.equal(h.$('emptyState').style.display, 'none', 'the start screen goes at the click');
+  assert.equal(h.$('scanBtn').painted(), true, 'and the Dashboard\'s Stop is on screen');
+  // A double-click lands its second click in the same instant, before the screen changes.
+  desktop.click();
+  documents.click();
+  await turns();
+  assert.deepEqual(h.toasts, [], 'no "A scan is already running" for a choice clicked again as its scan starts');
+  assert.equal(h.$('pathInput').value, '/Users/x/Desktop', 'the path box names the folder being scanned');
+  probe({ body: { indexed: false, root: null } });
+  await turns();
+  assert.deepEqual(h.posts.map((p) => p.path), ['/Users/x/Desktop'], 'one scan, of the folder clicked first');
+});
+
 /* ══════════════ (C) — a scan works again after a Stop ══════════════ */
 
 /** Start a scan from a choice, as a click would, and let it reach its stream. */
