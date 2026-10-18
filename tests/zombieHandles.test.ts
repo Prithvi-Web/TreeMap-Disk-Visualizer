@@ -1096,3 +1096,25 @@ test('the OpenAPI document says why a restart does not reopen an app\'s own prog
   const said = JSON.stringify((buildOpenApiDocument() as { paths: Record<string, unknown> }).paths['/api/zombie-handles']);
   assert.match(said, /notReopened \([^)]*background app[^)]*another program[^)]*arguments[^)]*\)/, 'notReopened is declared, with what it covers');
 });
+
+/* ══════════════════ Whole process names (sixth browser pass H04) ══════════════════ */
+
+test('a held-space process whose name lsof cut at 31 characters is named by its executable, read in the report\'s one ps — never with a trailing space (H04)', async () => {
+  const cut = 'Google Chrome Helper (Aperitif ';
+  const whole = 'Google Chrome Helper (Aperitif Renderer)';
+  const helper = `${CHROME}/Contents/Frameworks/Google Chrome Framework.framework/Versions/1/Helpers/${whole}.app/Contents/MacOS/${whole}`;
+  const ps = fakePs(new Map([[6001, helper]]));
+  const report = await zombieReport({
+    handles: async () => [
+      { pid: 6001, processName: cut, path: '/tmp/held-a', bytes: 10 },
+      { pid: 6002, processName: cut, path: '/tmp/held-b', bytes: 10 },
+      { pid: 6003, processName: 'node ', path: '/tmp/held-c', bytes: 10 },
+    ],
+    run: ps.run, os: 'darwin', uid: OUR_UID,
+  });
+  const name = (pid: number) => report.processes.find((p) => p.pid === pid)?.processName;
+  assert.equal(name(6001), whole, 'the executable\'s own name, whole');
+  assert.equal(name(6002), 'Google Chrome Helper (Aperitif…', 'no executable read: said to be cut');
+  assert.equal(name(6003), 'node', 'a short name loses its trailing space');
+  assert.equal(ps.calls.filter((c) => c.args.includes('pid=,uid=,comm=')).length, 1, 'read in the report\'s one ps, not another');
+});

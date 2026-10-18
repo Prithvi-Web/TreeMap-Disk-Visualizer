@@ -5,6 +5,7 @@ import { platform } from '../platform';
 import { runText, RunOptions, CommandFailedError } from '../platform/exec';
 import type { ZombieHandleInfo } from '../platform/types';
 import { AppError } from '../middleware/errorHandler';
+import { displayProcessName } from '../platform/macos/lsofGuard';
 
 /**
  * ZombieHandles (B5) — space held by files that were deleted while still open.
@@ -497,6 +498,8 @@ export async function zombieReport(deps: ZombieReportDeps = {}): Promise<ZombieR
   for (const [i, proc] of grouped.processes.entries()) {
     const known = facts.get(proc.pid) ?? { executable: null, uid: null };
     if (os === 'darwin') {
+      // Whole, from the executable the one ps above read: lsof cuts a long name at 31 characters (H04).
+      proc.processName = displayProcessName(proc.processName, known.executable);
       Object.assign(proc, roles[i]);
       const notReopened = reopenRefusals[i];
       if (notReopened !== null) Object.assign(proc, { appBundle: null, partOf: null, notReopened });

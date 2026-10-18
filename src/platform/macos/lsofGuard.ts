@@ -113,6 +113,63 @@ export function parseLsofRecords(stdout: string): LsofRecord[] {
   return out;
 }
 
+/**
+ * The most characters of a command name lsof prints (`c`) on macOS: the kernel's process name, 32
+ * bytes with its terminating NUL (sixth browser pass H04, measured: `lsof -F pc` printed
+ * "Google Chrome Helper (Aperitif " for "Google Chrome Helper (Aperitif Renderer)"). A name this long
+ * may be cut mid-word; Linux's names stop at 15, well short of it.
+ */
+export const LSOF_NAME_MAX = 31;
+
+/**
+ * A process's name as a person reads it (H04). A name shorter than lsof's limit is whole, its trailing
+ * spaces dropped. One as long as the limit may be cut: the executable's own name is used where it
+ * continues it, and otherwise what lsof gave is said to be cut, with an ellipsis — never a name that
+ * stops mid-word on a space, as "Quit Google Chrome Helper (Aperitif ?" did.
+ */
+export function displayProcessName(lsofName: string, executable: string | null): string {
+  const shown = lsofName.trimEnd();
+  if (lsofName.length < LSOF_NAME_MAX) return shown;
+  const own = executable ? executable.slice(executable.lastIndexOf('/') + 1) : '';
+  if (own.startsWith(lsofName)) return own;
+  return `${shown}…`;
+}
+
+/**
+ * `rows` with every process name as `displayProcessName` says it, asking `executablesOf` once about the
+ * pids whose names lsof may have cut, and nothing when none is (H04). An answer that does not come
+ * leaves those names said to be cut.
+ */
+export async function withFullProcessNames<T extends { pid: number; processName: string }>(
+  rows: T[],
+  executablesOf: (pids: number[]) => Promise<Map<number, string | null>> = psExecutables,
+): Promise<T[]> {
+  const cut = [...new Set(rows.filter((r) => r.processName.length >= LSOF_NAME_MAX).map((r) => r.pid))];
+  const executables = cut.length > 0 ? await executablesOf(cut).catch(() => new Map<number, string | null>()) : new Map<number, string | null>();
+  return rows.map((r) => ({ ...r, processName: displayProcessName(r.processName, executables.get(r.pid) ?? null) }));
+}
+
+/** One line of `ps -o pid=,comm=`: the pid right-aligned, ONE space, then the executable — spaces and all. */
+const PS_COMM_LINE = /^\s*(\d+)\s(.*)$/;
+
+/**
+ * Each pid's executable from one `ps -ww -o pid=,comm=` — the full path on macOS (measured; Linux's comm
+ * is its 15-character name, but no Linux name reaches LSOF_NAME_MAX). A pid it does not list is absent.
+ */
+async function psExecutables(pids: number[]): Promise<Map<number, string | null>> {
+  const out = await runText('ps', ['-ww', '-o', 'pid=,comm=', '-p', pids.join(',')], { timeoutMs: 5_000 }).catch((err: unknown) => {
+    // macOS's ps exits 1 when no pid in the list is running, still printing those that are.
+    if (err instanceof CommandFailedError && err.exitCode === 1) return err.stdout;
+    throw err;
+  });
+  const found = new Map<number, string | null>();
+  for (const line of out.split(/\r?\n/)) {
+    const m = PS_COMM_LINE.exec(line);
+    if (m && m[2].trimEnd()) found.set(Number(m[1]), m[2].trimEnd());
+  }
+  return found;
+}
+
 /** Resolve symlinks so lsof's answers and the caller's paths can be compared. */
 async function realpathOrSelf(p: string): Promise<string> {
   try {
@@ -184,7 +241,8 @@ export async function openHandlesFor(paths: string[]): Promise<OpenHandleInfo[]>
 
   const resolved = await Promise.all(paths.map(async (p) => [await realpathOrSelf(p), p] as const));
   const stdout = await runLsof(['-F', 'pcnfsi', '-w'], 30_000, 64 * 1024 * 1024);
-  return intersectHandles(parseLsofRecords(stdout), resolved);
+  // Named whole (H04): the warning lists programs by name, and lsof cuts a long one at 31 characters.
+  return withFullProcessNames(intersectHandles(parseLsofRecords(stdout), resolved));
 }
 
 /**

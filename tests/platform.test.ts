@@ -12,6 +12,7 @@ isolatedDataDir('treemap-platform-data-');
 import { platform, platformNameOf } from '../src/platform';
 import { getCapabilities, invalidateCapabilities } from '../src/platform/capabilities';
 import { parseLsofRecords, resolveZombies, openHandlesFor } from '../src/platform/macos/lsofGuard';
+import * as lsof from '../src/platform/macos/lsofGuard';
 import { parseQuarantine, hostOf } from '../src/platform/macos/provenance';
 import { mapTopology, enrichTopology, wholeDiskOf, isImpossiblyEmpty, volumeTopology } from '../src/platform/macos/diskutil';
 import { parseSnapshotList, parseSnapshotDate } from '../src/platform/macos/tmutil';
@@ -90,6 +91,58 @@ test('parseLsofRecords reads field output, including names containing spaces', (
   assert.equal(rec.size, 4096);
   assert.equal(rec.ino, 991);
   assert.equal(rec.markedDeleted, false);
+});
+
+/* ── Sixth browser pass H04: lsof's 31-character command names ── */
+
+/** The lsofGuard names this fix adds, read loosely so a missing one fails as an assertion. */
+const lsofNames = (lsof as unknown as {
+  LSOF_NAME_MAX?: number;
+  displayProcessName?: (lsofName: string, executable: string | null) => string;
+  withFullProcessNames?: <T extends { pid: number; processName: string }>(rows: T[], executablesOf: (pids: number[]) => Promise<Map<number, string | null>>) => Promise<T[]>;
+});
+// Recorded on this Mac: `lsof -F pc -p 1192` printed the first 31 characters, cut mid-word.
+const APERITIF_CUT = 'Google Chrome Helper (Aperitif ';
+const APERITIF_EXE = '/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/141.0.7390.55/Helpers/Google Chrome Helper (Aperitif Renderer).app/Contents/MacOS/Google Chrome Helper (Aperitif Renderer)';
+
+test('a process name lsof cut at its 31 characters is the executable\'s own name where that continues it, else ellipsized — never with a trailing space (H04)', () => {
+  assert.equal(lsofNames.LSOF_NAME_MAX, 31, 'lsof prints at most 31 characters of a name (the kernel\'s 32 bytes and their NUL)');
+  const show = lsofNames.displayProcessName;
+  assert.equal(typeof show, 'function', 'lsofGuard exposes displayProcessName');
+  assert.equal(APERITIF_CUT.length, 31, 'control: the recorded name is as long as lsof prints');
+  assert.equal(show!(APERITIF_CUT, APERITIF_EXE), 'Google Chrome Helper (Aperitif Renderer)', 'the executable\'s own name, whole');
+  assert.equal(show!(APERITIF_CUT, null), 'Google Chrome Helper (Aperitif…', 'unknown executable: what lsof gave, said to be cut, with no trailing space');
+  assert.equal(show!(APERITIF_CUT, '/usr/local/bin/other'), 'Google Chrome Helper (Aperitif…', 'an executable whose name does not continue it is not borrowed');
+  assert.equal(show!('Google Chrome Helper (Renderer)', '/x/Google Chrome Helper (Renderer)'), 'Google Chrome Helper (Renderer)', 'a whole 31-character name stays as it is');
+  assert.equal(show!('node ', null), 'node', 'a short name is whole: its trailing space goes, and no ellipsis is added');
+  assert.equal(show!('Finder', '/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder'), 'Finder', 'a short name is never replaced');
+});
+
+test('open-file conflicts ask the executable of the cut names alone, in one call, and an unanswered call leaves them ellipsized (H04)', async () => {
+  const full = lsofNames.withFullProcessNames;
+  assert.equal(typeof full, 'function', 'lsofGuard exposes withFullProcessNames');
+  const rows = [
+    { pid: 7, processName: APERITIF_CUT, path: '/a', openPath: '/a' },
+    { pid: 7, processName: APERITIF_CUT, path: '/b', openPath: '/b' },
+    { pid: 8, processName: 'Python', path: '/c', openPath: '/c' },
+  ];
+  const asked: number[][] = [];
+  const named = await full!(rows, async (pids) => { asked.push(pids); return new Map([[7, APERITIF_EXE]]); });
+  assert.deepEqual(asked, [[7]], 'one call, about the cut name\'s pid alone, once');
+  assert.deepEqual(named.map((r) => r.processName), ['Google Chrome Helper (Aperitif Renderer)', 'Google Chrome Helper (Aperitif Renderer)', 'Python']);
+  assert.deepEqual(named.map((r) => r.path), ['/a', '/b', '/c'], 'every other field as it was');
+  const none = await full!(rows, async () => { throw new Error('ps did not answer'); });
+  assert.deepEqual(none.map((r) => r.processName), ['Google Chrome Helper (Aperitif…', 'Google Chrome Helper (Aperitif…', 'Python'], 'unanswered: said to be cut');
+  let calls = 0;
+  await full!([rows[2]], async () => { calls++; return new Map(); });
+  assert.equal(calls, 0, 'no cut name, no call');
+});
+
+test('the open-file check names its conflicts whole: openHandlesFor hands what it intersects to withFullProcessNames (H04)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'macos', 'lsofGuard.ts'), 'utf8');
+  const fn = src.slice(src.indexOf('export async function openHandlesFor('), src.indexOf('export function intersectHandles('));
+  assert.match(fn, /return withFullProcessNames\(intersectHandles\(parseLsofRecords\(stdout\), resolved\)\);/,
+    'every conflict the warning lists passes through the whole-name step');
 });
 
 test('parseLsofRecords honours the Linux (deleted) marker and strips it', () => {
