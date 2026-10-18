@@ -117,7 +117,13 @@ export interface ScanStore {
   /**
    * The path of `child` given its parent's path is already known — O(1) on
    * every implementation, and byte-exact even for wrapped legacy trees whose
-   * stored paths used inconsistent separators.
+   * stored paths used inconsistent separators. `parentPath` is the parent's
+   * path as this store spells it (`rootPath`, `path()`, or `childPath()` of
+   * the parent). An implementation never reads its characters: a path joined
+   * from its folder's is held as the pieces it was joined from until
+   * something reads it, and reading it copies the whole of it, so a caller
+   * that keeps every folder's path on the way down would hold a copy of each
+   * — the square of the depth (CI4).
    */
   childPath(child: number, parentPath: string): string;
   size(id: number): number;
@@ -921,9 +927,16 @@ export class PackedScanStore implements ScanStore {
   /** Overflow for the (never observed) >65535-distinct-extensions case. */
   private extOverflow: Map<number, string> | null = null;
 
+  /** Whether `rootPath` ends with the separator (a root such as "/" or "C:\"): what childPath joins under it. */
+  private readonly rootEndsWithSep: boolean;
+  /** The separator's one byte in a stored name, or -1 when it is not one ASCII character (then childPath reads the path). */
+  private readonly sepByte: number;
+
   constructor(rootPath: string, sep: string, rootFields: NodeInput) {
     this.rootPath = rootPath;
     this.sep = sep;
+    this.rootEndsWithSep = rootPath.endsWith(sep);
+    this.sepByte = sep.length === 1 && sep.charCodeAt(0) < 0x80 ? sep.charCodeAt(0) : -1;
     this.allocate(INITIAL_CAP);
     this.firstChild = new Int32Array(INITIAL_CAP).fill(-1);
     this.lastChild = new Int32Array(INITIAL_CAP).fill(-1);
@@ -1469,8 +1482,37 @@ export class PackedScanStore implements ScanStore {
     return base + segments.join(this.sep);
   }
 
+  /**
+   * The separator is chosen from the store's own record of the parent, never
+   * by reading `parentPath` (CI4): a path joined from its folder's is held as
+   * pieces until something reads it, and endsWith copied the whole of it, so
+   * a caller keeping every folder's path on the way down — the query walk —
+   * held a copy of each, the square of the depth (CI run 39095045009: a
+   * 30,000-deep chain ran a 2 GB heap out). Byte for byte what endsWith
+   * answered for every spelling the store gives a parent (`rootPath`,
+   * `path()`, `childPath()`): the root's path is the one it was given, and
+   * any other folder's ends with its own name, so it ends with the separator
+   * exactly when that name is empty or ends with it.
+   */
   childPath(child: number, parentPath: string): string {
-    return parentPath.endsWith(this.sep) ? parentPath + this.name(child) : parentPath + this.sep + this.name(child);
+    const name = this.name(child);
+    const parent = this.parentArr[child];
+    let endsWithSep: boolean;
+    if (parent === this.rootId) {
+      endsWithSep = this.rootEndsWithSep;
+    } else if (parent < 0 || this.sepByte < 0) {
+      // The record cannot say: the root itself has no parent, and a separator
+      // of more than one character can straddle a name and the separator
+      // before it ("::" + ":"). The path is read.
+      endsWithSep = parentPath.endsWith(this.sep);
+    } else {
+      // The parent's stored name is empty or ends in the separator's byte
+      // (UTF-8: an ASCII byte is never part of a longer character).
+      const from = this.nameOff[parent];
+      const to = this.nameOff[parent + 1];
+      endsWithSep = to === from || this.nameBytes[to - 1] === this.sepByte;
+    }
+    return endsWithSep ? parentPath + name : parentPath + this.sep + name;
   }
 
   size(id: number): number {

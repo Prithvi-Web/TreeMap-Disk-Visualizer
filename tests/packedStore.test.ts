@@ -8,6 +8,7 @@ import { FileNode } from '../src/models/types';
 import { ObjectScanStore, PackedScanStore, ScanStore, Flag, NodeInput } from '../src/services/scanStore';
 import { streamTreeJson } from '../src/services/scanStoreJson';
 import { buildPair, compareStores, comparePrunes, makeRng, mutateBoth } from './fixtures/storeFuzz';
+import { collector, heldBytes } from './fixtures/heapProbe';
 
 /**
  * Differential fuzz: every random tree is built into ObjectScanStore (the
@@ -112,6 +113,85 @@ test('packed store survives a 30k-deep chain without recursion blowups', () => {
 
   const pruned = packed.prune(packed.rootId, { maxNodes: 50 });
   assert.ok(pruned.nodes >= 50 || pruned.prunedDirs === 0);
+});
+
+const folderInput = (name: string): NodeInput => ({ name, isDir: true, size: 0, modifiedAt: 1, isHidden: false });
+
+test('CI4: childPath reads nothing of the parent path it is given — down a deep chain with every folder\'s path kept, the paths hold memory in proportion to the depth, not its square', () => {
+  // CI run 39095045009 (macOS, 2 GB heap): a path joined from its folder's
+  // is held as the pieces it was joined from until something reads it, and
+  // childPath read it — endsWith — to choose the separator, which copies the
+  // whole of it flat. A caller that keeps every folder's path on the way down
+  // (the query walk) then held a copy of each: the depth squared, 2.7 GB at
+  // 30,000 deep. Kept as pieces, each folder adds its name and a join.
+  const DEPTH = 8_000;
+  const gc = collector();
+  const packed = new PackedScanStore('/deep', '/', folderInput('deep'));
+  let parent = packed.rootId;
+  for (let i = 0; i < DEPTH; i++) parent = packed.addNode(parent, folderInput(`d${i}`));
+  packed.finalize();
+  const base = heldBytes(gc);
+  const kept: string[] = [];
+  let path = packed.rootPath;
+  for (let id: number | undefined = packed.childIds(packed.rootId)[0]; id !== undefined; id = packed.childIds(id)[0]) {
+    path = packed.childPath(id, path);
+    kept.push(path);
+  }
+  const held = heldBytes(gc) - base;
+  let deepest = '/deep';
+  for (let i = 0; i < DEPTH; i++) deepest += `/d${i}`;
+  assert.equal(kept.length, DEPTH, 'a path for every folder down the chain');
+  assert.equal(kept[DEPTH - 1], deepest, 'and the deepest is exactly right');
+  assert.ok(
+    held < 1024 * DEPTH,
+    `${(held / 1e6).toFixed(1)} MB held by ${DEPTH} folder paths, ${Math.round(held / DEPTH)} bytes per folder (at most 1024; a whole copy of each is about ${Math.round(deepest.length / 2)})`,
+  );
+});
+
+/** How childPath chose the separator before CI4 — by reading the end of the parent path — kept as the oracle. */
+const joinedByReading = (parentPath: string, sep: string, name: string): string =>
+  parentPath.endsWith(sep) ? parentPath + name : parentPath + sep + name;
+
+test('CI4: childPath answers byte for byte what reading its parent path answered, for every spelling the store gives a parent — names that end in the separator, empty names, roots with and without one', () => {
+  // '::' can straddle a name and the separator before it; '¦' is one
+  // character but two bytes, the last of which ends 'Ʀ' too.
+  const roots: Array<[string, string]> = [['/r', '/'], ['/', '/'], ['/r/', '/'], ['C:\\r', '\\'], ['C:\\', '\\'], ['x', '::'], ['x', '¦']];
+  for (const [rootPath, sep] of roots) {
+    // '' after 'a': an empty name's stored bytes sit after a name that does
+    // not end in the separator, so only its emptiness can say it does.
+    const names = ['a', '', `a${sep}`, 'é', `é${sep}`, 'b\\', 'c/', `${sep}${sep}`, ':', 'b:', 'z::', 'Ʀ'];
+    const packed = new PackedScanStore(rootPath, sep, folderInput('r'));
+    // Every name under the root, under every name, under every name: a parent
+    // of each kind under the root and under a parent of each kind.
+    for (const top of names) {
+      const t = packed.addNode(packed.rootId, folderInput(top));
+      for (const mid of names) {
+        const m = packed.addNode(t, folderInput(mid));
+        for (const low of names) packed.addNode(m, { name: low, isDir: false, size: 1, modifiedAt: 1, isHidden: false });
+      }
+    }
+    packed.finalize();
+    // Each folder's path as reading spelled it, from the root down, and as
+    // path() spells it: childPath shares nothing with either.
+    let checked = 0;
+    const stack: Array<{ id: number; spelled: string }> = [{ id: packed.rootId, spelled: rootPath }];
+    while (stack.length > 0) {
+      const { id, spelled } = stack.pop() as { id: number; spelled: string };
+      for (const child of packed.childIds(id)) {
+        const name = packed.name(child);
+        for (const spelling of [spelled, packed.path(id)]) {
+          assert.equal(packed.childPath(child, spelling), joinedByReading(spelling, sep, name), `${rootPath} (${sep}): ${JSON.stringify(name)} under ${JSON.stringify(spelling)}`);
+          checked++;
+        }
+        if (packed.isDir(child)) stack.push({ id: child, spelled: joinedByReading(spelled, sep, name) });
+      }
+    }
+    assert.equal(checked, 2 * (names.length + names.length ** 2 + names.length ** 3), `${rootPath}: every node, under both spellings`);
+    // The root has no parent; asked for anyway, it answers as reading did.
+    for (const spelling of [rootPath, `q${sep}`, 'q']) {
+      assert.equal(packed.childPath(packed.rootId, spelling), joinedByReading(spelling, sep, packed.name(packed.rootId)), `${rootPath}: the root under ${JSON.stringify(spelling)}`);
+    }
+  }
 });
 
 test('eviction semantics: dropping the store frees it for GC (no registry leaks)', () => {
