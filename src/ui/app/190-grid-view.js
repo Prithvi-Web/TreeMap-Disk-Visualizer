@@ -730,12 +730,23 @@ function renderSecurity() {
   // Every finding is reachable (E09): the server lists them 500 at a time,
   // most serious first, and "Show more" asks for the next page.
   const unshown = Math.max(0, total - findings.length);
+  // A file that ships inside an installed program or the operating system is
+  // where that software put it: listed, never called misplaced (H05). The
+  // server counts them over every finding, as it counts the total.
+  const owned = Math.min(total, report.appOwnedCount || 0);
+  const misplaced = total - owned;
+  const ships = `${owned === 1 ? 'ships' : 'ship'} inside an installed program or the operating system, where that software keeps ${owned === 1 ? 'it' : 'them'}`;
+  const headline = misplaced
+    ? `<b>${formatCount(misplaced)}</b> ${misplaced === 1 ? 'file' : 'files'} sitting outside the folder ${misplaced === 1 ? 'it belongs' : 'they belong'} in` +
+      // Serious and worth fixing are never app-owned: those are always minor.
+      (high ? ` — <b>${formatCount(high)} serious</b>` : '') + (medium ? `${high ? ',' : ' —'} ${formatCount(medium)} worth fixing` : '') + '.' +
+      (owned ? ` ${formatCount(owned)} more ${ships}.` : '')
+    : `Nothing out of place: the ${owned === 1 ? 'file' : `${formatCount(owned)} files`} below ${ships} — listed for awareness, never to move.`;
   // Keyed by scan, like the apps line: a repaint of the same scan rolls the
   // counts (a relocation re-checks), a new scan snaps.
   FxNum.rollHtml($('securityInfo'),
-    `<b>${formatCount(total)}</b> ${total === 1 ? 'file' : 'files'} sitting outside the folder ${total === 1 ? 'it belongs' : 'they belong'} in` +
-    (high ? ` — <b>${formatCount(high)} serious</b>` : '') + (medium ? `, ${formatCount(medium)} worth fixing` : '') +
-    `. <span class="sec-note">Matched on name and location only; no file was opened and nothing leaves this computer.</span>` +
+    headline +
+    ` <span class="sec-note">Matched on name and location only; no file was opened and nothing leaves this computer.</span>` +
     (unshown ? ` <span class="num">(the ${formatCount(findings.length)} most serious shown — ${formatCount(unshown)} more below)</span>` : ''), state.scanId);
 
   host.innerHTML = '<div class="sec-list">' + findings.map((f, i) => `
@@ -786,7 +797,7 @@ async function loadMoreSecurity() {
   try {
     const page = await api(`/api/security/findings?scanId=${scanId}&offset=${from}`);
     if (state.scanId !== scanId || state.security.report !== report) return;
-    state.security.report = { ...report, findings: [...report.findings, ...page.findings], counts: page.counts, total: page.total, truncated: page.truncated };
+    state.security.report = { ...report, findings: [...report.findings, ...page.findings], counts: page.counts, total: page.total, appOwnedCount: page.appOwnedCount, truncated: page.truncated };
     renderSecurity();
     $('securityBody').querySelector(`[data-sec-reveal="${from}"]`)?.focus();
   } catch (e) {

@@ -5,7 +5,7 @@ import { Flag, ScanStore, TreeSource, asStore } from './scanStore';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { appDataPathRefusal, insideAnyScanRoot, safetyRecordRefusal, spillPathRefusal } from '../middleware/pathGuard';
 import { isInside } from '../utils/pathSanitizer';
-import { installedProgramOf } from './installedPrograms';
+import { installedProgramOf, programPhrase } from './installedPrograms';
 
 /**
  * securityHygieneScanner — secrets in the wrong place (§C5).
@@ -251,6 +251,12 @@ export interface SecurityReport {
   counts: { high: number; medium: number; low: number };
   /** How many findings there are in all; more than `findings.length` once the cap bites. */
   total: number;
+  /**
+   * How many of `total` are `appOwned` — they ship inside an installed program or the operating system,
+   * where that software put them — counted over every finding (sixth browser pass H05). The rest are the
+   * ones sitting outside the folder they belong in.
+   */
+  appOwnedCount: number;
   /** True while findings remain after this page, so the UI can say the list is partial and ask for the next. */
   truncated: boolean;
   /** Where this page starts in the whole ordered list (fourth browser pass, E09: every finding is reachable). */
@@ -438,6 +444,8 @@ export function collectSecurityFindings(
       const stakes = syncFolder && pattern.severity === 'medium' ? 'high' : pattern.severity;
       const osOwned = isOsOwned(childPath);
       const appOwned = osOwned || isApplicationOwned(childPath);
+      // The program by name where the shared detector knows it (H05): an app, a program under Program Files.
+      const program = appOwned && !osOwned ? installedProgramOf(childPath) : null;
 
       findings.push({
         patternId: pattern.id,
@@ -453,6 +461,8 @@ export function collectSecurityFindings(
         modifiedAt: store.modifiedAt(child),
         reason: osOwned
           ? `In “${where}”, a folder the operating system manages — this file is part of the system, so moving it would break whatever uses it.`
+          : program !== null && program.kind !== 'package'
+          ? `In “${where}”, part of ${programPhrase(program)} — this file ships with that program, so moving it would break it.`
           : appOwned
           ? `In “${where}”, which belongs to an installed program — this file is part of that software, so moving it would break it.`
           : syncFolder
@@ -488,6 +498,7 @@ export function collectSecurityFindings(
       low: findings.filter((f) => f.severity === 'low').length,
     },
     total: findings.length,
+    appOwnedCount: findings.filter((f) => f.appOwned).length,
     truncated: findings.length > from + MAX_FINDINGS,
     offset: from,
   };

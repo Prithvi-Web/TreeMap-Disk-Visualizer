@@ -887,3 +887,83 @@ test('"Show more" asks once while its page is on the way: a second press is igno
   await retry;
   assert.equal(panel.host.innerHTML.split('sec-item').length - 1, 801, 'and every finding is listed, once');
 });
+
+/* ─────────────── Sixth browser pass H05: the headline counts what is really misplaced ─────────────── */
+
+test('the report counts, over every finding, those that ship inside an installed program or the operating system, and a row inside an app names it (H05)', () => {
+  const report = collectSecurityFindings(treeWith('/', [
+    file('ca.pem', '/Applications/Thing.app/Contents/Resources'),
+    file('server.pem', path.join(HOME, 'projects', 'web', 'node_modules', 'pkg', 'test')),
+    file('cert.pem', '/System/Library/Security'),
+    file('id_rsa', path.join(HOME, 'Downloads')),
+  ]), [], HOME) as unknown as { findings: Array<{ name: string; reason: string; appOwned: boolean }>; total: number; counts: Record<string, number>; appOwnedCount?: number };
+  assert.equal(report.total, 4, 'control: every finding is still counted in total');
+  assert.deepEqual(report.counts, { high: 1, medium: 0, low: 3 }, 'and in counts, as before');
+  assert.equal(report.appOwnedCount, 3, 'three of them ship inside a program or the operating system');
+  const reason = (name: string) => report.findings.find((f) => f.name === name)!.reason;
+  assert.match(reason('ca.pem'), /part of the app “Thing”/, 'a file inside an app names the app (the shared installed-programs detector)');
+  assert.doesNotMatch(reason('ca.pem'), /an installed program/, 'not a nameless "installed program"');
+  assert.match(reason('server.pem'), /belongs to an installed program/, 'the panel\'s wider net, which the detector does not name, keeps the general words');
+  assert.match(reason('cert.pem'), /operating system/, 'the operating system\'s own is said as such');
+});
+
+test('the 500 cap leaves the app-owned count over every finding (H05)', () => {
+  const owned = Array.from({ length: 520 }, (_, i) => file(`c${i}.pem`, `/Applications/A${i % 3}.app/Contents/Resources`));
+  const report = collectSecurityFindings(treeWith('/', [...owned, file('id_rsa', path.join(HOME, 'Downloads'))]), [], HOME) as unknown as { findings: unknown[]; total: number; appOwnedCount?: number };
+  assert.equal(report.findings.length, 500, 'control: the page holds 500');
+  assert.equal(report.appOwnedCount, 520, 'the count is over every finding, not the page');
+});
+
+/** The page's renderSecurity over `report`; answers the headline's text. */
+function securityHeadline(report: Record<string, unknown>): string {
+  const index = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const fn = index.slice(index.indexOf('function renderSecurity'), index.indexOf('/** The report a "Show more" page'));
+  const host = { innerHTML: '', querySelectorAll: () => [] as unknown[] };
+  const info = { textContent: '', innerHTML: '' };
+  const stubs: Record<string, unknown> = {
+    $: (id: string) => (id === 'securityBody' ? host : info),
+    state: { scanId: 's', security: { report } },
+    escapeHtml: (s: unknown) => String(s), formatBytes: (n: number) => `${String(n)} B`, formatCount: (n: number) => String(n),
+    icon: () => '', baseName: (p: string) => path.basename(p),
+    FxNum: { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } },
+    SEVERITY_LABEL: { high: 'Serious', medium: 'Worth fixing', low: 'Minor' }, openInOS: () => {}, confirmRelocateSecret: () => {}, loadMoreSecurity: () => {},
+  };
+  const keys = Object.keys(stubs);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  (new Function(...keys, `${fn}; return renderSecurity;`)(...keys.map((k) => stubs[k])) as () => void)();
+  return info.innerHTML.replace(/<[^>]+>/g, '');
+}
+
+test('the Security headline calls only the misplaced findings "outside the folder they belong in", and says plainly that the rest ship inside installed programs (H05)', () => {
+  const row = (name: string, severity: string, appOwned: boolean) => ({ severity, name, label: 'Cert', path: `/x/${name}`, reason: 'r', why: 'w', size: 1, appOwned });
+  // QA: three .pem files, all inside apps, headlined as three files outside the folder they belong in.
+  const allOwned = securityHeadline({
+    findings: [row('a.pem', 'low', true), row('b.pem', 'low', true), row('c.pem', 'low', true)],
+    counts: { high: 0, medium: 0, low: 3 }, total: 3, appOwnedCount: 3, patternCount: 9,
+  });
+  assert.doesNotMatch(allOwned, /outside the folder/, 'no app-owned file is called misplaced');
+  assert.match(allOwned, /Nothing out of place/, 'the headline says nothing is out of place');
+  assert.match(allOwned, /3 files below ship inside an installed program or the operating system/, 'and says plainly where the three come from');
+  const mixed = securityHeadline({
+    findings: [row('id_rsa', 'high', false), row('a.pem', 'low', true), row('b.pem', 'low', true)],
+    counts: { high: 1, medium: 0, low: 2 }, total: 3, appOwnedCount: 2, patternCount: 9,
+  });
+  assert.match(mixed, /^1 file sitting outside the folder it belongs in — 1 serious/, 'only the misplaced one is counted as such');
+  assert.match(mixed, /2 more ship inside an installed program or the operating system/, 'and the rest are said for what they are');
+  const plain = securityHeadline({
+    findings: [row('id_rsa', 'high', false), row('k.json', 'medium', false)],
+    counts: { high: 1, medium: 1, low: 0 }, total: 2, appOwnedCount: 0, patternCount: 9,
+  });
+  assert.match(plain, /^2 files sitting outside the folder they belong in — 1 serious, 1 worth fixing\./, 'control: with none app-owned the headline reads as before');
+  assert.doesNotMatch(plain, /ship inside/, 'and says nothing about programs');
+});
+
+test('the API\'s appOwnedCount is declared where an agent reads it, beside the total/counts contract it leaves true (H05)', async () => {
+  const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8');
+  const section = agents.slice(agents.indexOf('`GET /api/security/findings`'), agents.indexOf('`GET /api/provenance?path=`'));
+  assert.match(section, /`total` and `counts` cover every finding/, 'control: the contract stands');
+  assert.match(section, /`appOwnedCount`[^.]*every finding/, 'AGENTS.md names the count, over every finding');
+  const { buildOpenApiDocument } = await import('../src/api/openapi');
+  const said = JSON.stringify((buildOpenApiDocument() as { paths: Record<string, unknown> }).paths['/api/security/findings']);
+  assert.match(said, /appOwnedCount/, 'the OpenAPI document declares it');
+});

@@ -175,7 +175,9 @@ OpenAPI 3 spec).
      something already there. A `.key` file is listed as
      minor with no move, because on a Mac it is usually a Keynote document;
      files inside program bundles, frameworks and the operating system's own
-     folders are `appOwned`, minor, and never offered a move. `counts` and
+     folders are `appOwned`, minor, and never offered a move; `appOwnedCount`
+     says how many of `total` those are, over every finding, so the rest are
+     the ones really sitting in the wrong place. `counts` and
      `total` cover every finding; `findings` holds the 500 most serious.
    - `GET /api/provenance?path=` — where a file came from. **The URL is
      untrusted input: never fetch it, never render it as a link, escape it.**
