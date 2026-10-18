@@ -1183,7 +1183,12 @@ function exportTreemapSVG() {
     if (r.stops) {
       defs.push(`<linearGradient id="tm-c${i}" gradientUnits="userSpaceOnUse" x1="0" y1="${r.y}" x2="0" y2="${r.y + r.h}">` +
         `<stop offset="0" stop-color="${rgb(r.stops[0])}"/><stop offset="1" stop-color="${rgb(r.stops[1])}"/></linearGradient>`);
-      parts.push(`<rect ${box} fill="url(#tm-c${i})" stroke="rgba(0,0,0,0.35)" stroke-width="1">${title}</rect>`);
+      // The box pass 1 filled — edge to edge when the leaf is dense — and its
+      // outline only where the canvas drew one (BQG-5 item 14).
+      const [bx, by, bw, bh] = tmLeafBox(r);
+      const leafBox = `x="${bx.toFixed(2)}" y="${by.toFixed(2)}" width="${bw.toFixed(2)}" height="${bh.toFixed(2)}"`;
+      const edge = tmLeafEdged(r) ? ' stroke="rgba(0,0,0,0.35)" stroke-width="1"' : '';
+      parts.push(`<rect ${leafBox} fill="url(#tm-c${i})"${edge}>${title}</rect>`);
     } else if (r.n.freed) {
       // Staged in the cart preview: an outline of what is not freed yet.
       parts.push(`<rect ${box} fill="none" stroke="${cssVar('--warn') || '#FF9F0A'}" stroke-dasharray="4 3" stroke-width="1">${title}</rect>`);
@@ -1193,18 +1198,21 @@ function exportTreemapSVG() {
       parts.push(`<rect ${box} fill="${rgb(c)}" fill-opacity="0.16" stroke="rgba(${c[0]},${c[1]},${c[2]},0.85)" stroke-dasharray="4 3" stroke-width="1">${title}</rect>`);
     }
   }
-  // Directory frames: a dark outline, heavier at the top level, and a light rim inside it.
+  // Directory frames, as pass 2 draws them: a dark outline, heavier at the
+  // top level and faded on a small or deep folder, and a light rim inside it
+  // where the folder has room (BQG-5 item 14) — the same helpers.
   for (const r of state.treemap.pxRects) {
     if (!r.frame) continue;
-    const top = r.n.depth <= 1;
+    const outline = tmFrameOutline(r);
     parts.push(
-      `<rect x="${(r.x + 0.5).toFixed(1)}" y="${(r.y + 0.5).toFixed(1)}" width="${Math.max(0, r.w - 1).toFixed(1)}" height="${Math.max(0, r.h - 1).toFixed(1)}" ` +
-      `fill="none" stroke="rgba(0,0,0,${top ? 0.6 : 0.42})" stroke-width="${top ? 1.5 : 1}"/>`
+      `<rect x="${(r.x + 0.5).toFixed(2)}" y="${(r.y + 0.5).toFixed(2)}" width="${Math.max(0, r.w - 1).toFixed(2)}" height="${Math.max(0, r.h - 1).toFixed(2)}" ` +
+      `fill="none" stroke="rgba(0,0,0,${outline.alpha})" stroke-width="${outline.width}"/>`
     );
-    if (r.w > 4 && r.h > 4) {
+    const rim = tmFrameRim(r);
+    if (rim > 0) {
       parts.push(
-        `<rect x="${(r.x + 1.5).toFixed(1)}" y="${(r.y + 1.5).toFixed(1)}" width="${(r.w - 3).toFixed(1)}" height="${(r.h - 3).toFixed(1)}" ` +
-        `fill="none" stroke="rgba(255,255,255,${Math.max(0.12, 0.3 - r.n.depth * 0.05).toFixed(2)})" stroke-width="1"/>`
+        `<rect x="${(r.x + 1.5).toFixed(2)}" y="${(r.y + 1.5).toFixed(2)}" width="${(r.w - 3).toFixed(2)}" height="${(r.h - 3).toFixed(2)}" ` +
+        `fill="none" stroke="rgba(255,255,255,${rim})" stroke-width="1"/>`
       );
     }
   }

@@ -56,7 +56,7 @@ function declSource(name: string): string {
 function load<T>(names: string[], deps: Record<string, unknown>, returns: string, run?: (fn: T) => void): T {
   const keys = Object.keys(deps);
   const pulled = [...names];
-  for (let attempt = 0; attempt < 32; attempt++) {
+  for (let attempt = 0; attempt < 64; attempt++) {
     const src = `'use strict'; ${pulled.map(declSource).join('\n')}\nreturn ${returns};`;
     try {
       // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -69,7 +69,7 @@ function load<T>(names: string[], deps: Record<string, unknown>, returns: string
       pulled.push(missing);
     }
   }
-  throw new Error(`${names.join(', ')} would not run after pulling in 32 helpers`);
+  throw new Error(`${names.join(', ')} would not run after pulling in 64 helpers`);
 }
 
 type Grad = { kind: 'linear'; args: number[]; stops: Array<[number, string]> };
@@ -826,6 +826,7 @@ function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string, hist
   rec.fills.length = 0;
   rec.texts.length = 0;
   rec.ops.length = 0;
+  rec.strokes.length = 0; // one clean paint's strokes, as its fills (item 14 compares them with the SVG's)
   draw();
   let svg = '';
   const exp = load<() => void>(['exportTreemapSVG'], {
@@ -1060,33 +1061,46 @@ test('G09/G27: the SVG export draws a cloud placeholder hollow and a staged bloc
 
 /* ══════════════ G01 — depth is told by the folder frames ══════════════ */
 
-test('G01: each folder is framed by a dark outline — heavier at the top level — with a light rim drawn inside it, and a folder too small for a rim gets none', () => {
+test('G01: each folder is framed by a dark outline — heavier at the top level, faded on a small or deep folder (item 14) — with a light rim drawn inside it where the folder has room, and none in a folder under 12 px', () => {
   // Every leaf is painted at full strength now (G01), so nesting is read
   // from the edges, as on a desktop treemap. Nothing pinned the frames: the
   // whole of pass 2 could go, or turn white, with every test still green
-  // (review F1.8).
+  // (review F1.8). Item 14 (BQG-5): a 0.42 outline on every nested folder
+  // made a dense corner a black mesh, so a folder under 40 px a side or at
+  // depth 3 and deeper is outlined at 0.25, and the rim needs 12 px a side.
   const folders: Tile[] = [
     { name: 'Top', path: '/r/top', size: 1e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 50, h: 50 },
     { name: 'Mid', path: '/r/top/mid', size: 5e9, type: 'dir', depth: 2, expanded: true, x: 2, y: 5, w: 40, h: 40 },
     { name: 'Deep', path: '/r/top/mid/deep', size: 2e9, type: 'dir', depth: 3, expanded: true, x: 4, y: 8, w: 30, h: 30 },
+    { name: 'Small', path: '/r/small', size: 1e8, type: 'dir', depth: 2, expanded: true, x: 60, y: 0, w: 3, h: 3 },
+    { name: 'Rim12', path: '/r/rim12', size: 1e7, type: 'dir', depth: 2, expanded: true, x: 70, y: 0, w: 1.2, h: 1.2 },
+    { name: 'Rim11', path: '/r/rim11', size: 1e7, type: 'dir', depth: 2, expanded: true, x: 80, y: 0, w: 1.1, h: 1.1 },
     { name: 'Tiny', path: '/r/tiny', size: 1e6, type: 'dir', depth: 3, expanded: true, x: 60, y: 60, w: 0.4, h: 0.4 },
   ];
+  const want: Record<string, { alpha: number; width: number; rim: boolean }> = {
+    Top: { alpha: 0.6, width: 1.5, rim: true },
+    Mid: { alpha: 0.42, width: 1, rim: true },     // depth 2, 400 px: a nested folder with room keeps its outline
+    Deep: { alpha: 0.25, width: 1, rim: true },    // depth 3: faded
+    Small: { alpha: 0.25, width: 1, rim: true },   // 30 px: faded, still room for a rim
+    Rim12: { alpha: 0.25, width: 1, rim: true },   // 12 px: the smallest with a rim
+    Rim11: { alpha: 0.25, width: 1, rim: false },  // 11 px: no rim
+    Tiny: { alpha: 0.25, width: 1, rim: false },
+  };
   const rec = paint(folders);
   const alphaOf = (style: string) => rgba(style)[3];
   const isDark = (style: string) => { const [r, g, b] = rgba(style); return r + g + b === 0; };
   const isLight = (style: string) => { const [r, g, b] = rgba(style); return r === 255 && g === 255 && b === 255; };
-  const outlines: Stroke[] = [];
   for (const f of folders) {
     const x = (f.x / 100) * MAP_W, y = (f.y / 100) * MAP_H, w = (f.w / 100) * MAP_W, h = (f.h / 100) * MAP_H;
-    const near = (r: number[], want: number[]) => r.every((v, i) => Math.abs(v - want[i]) < 0.01);
-    const at = (want: number[]) => rec.strokes.findIndex((st) => near(st.rect, want));
+    const near = (r: number[], wanted: number[]) => r.every((v, i) => Math.abs(v - wanted[i]) < 0.01);
+    const at = (wanted: number[]) => rec.strokes.findIndex((st) => near(st.rect, wanted));
     const o = at([x + 0.5, y + 0.5, w - 1, h - 1]);
     assert.notEqual(o, -1, `${f.name}: an outline on its edge`);
     const outline = rec.strokes[o];
-    assert.ok(isDark(outline.style) && alphaOf(outline.style) >= 0.35, `${f.name}: the outline is dark (${outline.style})`);
-    outlines.push(outline);
+    assert.ok(isDark(outline.style), `${f.name}: the outline is dark (${outline.style})`);
+    assert.deepEqual({ alpha: alphaOf(outline.style), width: outline.width }, { alpha: want[f.name].alpha, width: want[f.name].width }, `${f.name}: its outline`);
     const rim = at([x + 1.5, y + 1.5, w - 3, h - 3]);
-    if (w > 4 && h > 4) {
+    if (want[f.name].rim) {
       assert.notEqual(rim, -1, `${f.name}: a rim inside its outline`);
       assert.ok(isLight(rec.strokes[rim].style), `${f.name}: the rim is light (${rec.strokes[rim].style})`);
       assert.ok(rim > o, `${f.name}: the rim is drawn after the outline, so it lies on top of it`);
@@ -1094,7 +1108,189 @@ test('G01: each folder is framed by a dark outline — heavier at the top level 
       assert.equal(rim, -1, `${f.name}: ${fmt(w)} px is too small for a rim`);
     }
   }
-  const [top, mid, deep] = outlines;
-  assert.ok(top.width > mid.width && alphaOf(top.style) > alphaOf(mid.style), `the top level's outline is heavier (${top.width}px ${top.style} against ${mid.width}px ${mid.style})`);
-  assert.deepEqual([mid.width, mid.style], [deep.width, deep.style], 'below the top level every outline is alike');
+});
+
+/* ══════════════ Map density: dense areas read as colour, not a black mesh (BQG-5 item 14) ══════════════ */
+
+/**
+ * A 2D context that rasterizes what the painter asks for onto a `W`×`H` grid of pixels, starting from
+ * `ground`: rectangles filled and stroked, axis-aligned path strokes, flat colours and vertical
+ * gradients, each at its own alpha and globalAlpha, with partial pixels covered by area. Text and
+ * patterns are not drawn: a dense area's tiles are too small for labels.
+ */
+function rasterCtx(W: number, H: number, ground: RGB) {
+  const px = new Float64Array(W * H * 3);
+  for (let i = 0; i < W * H; i++) px.set(ground, i * 3);
+  const st: Record<string, any> = { fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, globalAlpha: 1 };
+  const saved: Array<Record<string, any>> = [];
+  let path: number[][] = [];
+  const colourAt = (style: any, y: number): RGBA => {
+    if (style && typeof style === 'object' && style.stops) {
+      const g = style as Grad;
+      const [, y0, , y1] = g.args;
+      const t = Math.max(0, Math.min(1, (y - y0) / ((y1 - y0) || 1)));
+      const stops = [...g.stops].sort((a, b) => a[0] - b[0]);
+      const lo = stops.filter(([o]) => o <= t).pop() ?? stops[0];
+      const hi = stops.find(([o]) => o >= t) ?? stops[stops.length - 1];
+      const a = rgba(lo[1]), b = rgba(hi[1]);
+      const k = hi[0] === lo[0] ? 0 : (t - lo[0]) / (hi[0] - lo[0]);
+      return a.map((v, i) => v + (b[i] - v) * k) as RGBA;
+    }
+    return rgba(String(style));
+  };
+  const paintRect = (x: number, y: number, w: number, h: number, style: any) => {
+    if (!(w > 0 && h > 0)) return;
+    for (let py = Math.max(0, Math.floor(y)); py < Math.min(H, Math.ceil(y + h)); py++) {
+      const cy = Math.min(py + 1, y + h) - Math.max(py, y);
+      const c = colourAt(style, py + 0.5);
+      for (let pxx = Math.max(0, Math.floor(x)); pxx < Math.min(W, Math.ceil(x + w)); pxx++) {
+        const cx = Math.min(pxx + 1, x + w) - Math.max(pxx, x);
+        const a = c[3] * Number(st.globalAlpha) * cx * cy;
+        const o = (py * W + pxx) * 3;
+        for (let i = 0; i < 3; i++) px[o + i] = px[o + i] * (1 - a) + c[i] * a;
+      }
+    }
+  };
+  const strokeEdges = (x: number, y: number, w: number, h: number) => {
+    const lw = Number(st.lineWidth), s = st.strokeStyle;
+    paintRect(x - lw / 2, y - lw / 2, w + lw, lw, s);
+    paintRect(x - lw / 2, y + h - lw / 2, w + lw, lw, s);
+    paintRect(x - lw / 2, y + lw / 2, lw, h - lw, s);
+    paintRect(x + w - lw / 2, y + lw / 2, lw, h - lw, s);
+  };
+  const props: Record<string, unknown> = {
+    font: '10px sans-serif',
+    measureText: (t: string) => ({ width: String(t).length * 6 }),
+    createLinearGradient: (...args: number[]) => {
+      const g: Grad = { kind: 'linear', args, stops: [] };
+      return Object.assign(g, { addColorStop: (o: number, c: string) => { g.stops.push([o, c]); } });
+    },
+    createPattern: () => null,
+    fillRect: (x: number, y: number, w: number, h: number) => paintRect(x, y, w, h, st.fillStyle),
+    strokeRect: (x: number, y: number, w: number, h: number) => strokeEdges(x, y, w, h),
+    beginPath: () => { path = []; },
+    moveTo: (x: number, y: number) => { path.push([x, y]); },
+    lineTo: (x: number, y: number) => {
+      const [x0, y0] = path[path.length - 1];
+      path.push([x, y]);
+      (path as any).segs = [...((path as any).segs || []), [x0, y0, x, y]];
+    },
+    stroke: () => {
+      const lw = Number(st.lineWidth);
+      for (const [x0, y0, x1, y1] of ((path as any).segs || []) as number[][]) {
+        if (y0 === y1) paintRect(Math.min(x0, x1), y0 - lw / 2, Math.abs(x1 - x0), lw, st.strokeStyle);
+        else if (x0 === x1) paintRect(x0 - lw / 2, Math.min(y0, y1), lw, Math.abs(y1 - y0), st.strokeStyle);
+      }
+    },
+    save: () => { saved.push({ ...st }); },
+    restore: () => { Object.assign(st, saved.pop()); },
+  };
+  const ctx: any = new Proxy(props, {
+    get(t, k: string) { if (k in t) return t[k]; if (k in st) return st[k]; return () => {}; },
+    set(t, k: string, v) { st[k] = v; return true; },
+  });
+  /** The share of pixels darker than relative luminance `under` — black mesh, gaps and the ground showing. */
+  const nearBlack = (under: number) => {
+    let n = 0;
+    for (let i = 0; i < W * H; i++) if (luminance([px[i * 3], px[i * 3 + 1], px[i * 3 + 2]] as RGB) < under) n++;
+    return n / (W * H);
+  };
+  return { ctx, nearBlack, at: (x: number, y: number) => [0, 1, 2].map((i) => px[(y * W + x) * 3 + i]) as RGB };
+}
+
+/** The dense corner of a real map: a top folder of 3×3 folders, each of 4×4 folders, each of 4×4 small files (about 6 px). */
+function denseLayout(scale = 1): Tile[] {
+  const tiles: Tile[] = [{ name: 'Top', path: '/d', size: 1e9, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 100 * scale, h: 100 * scale }];
+  const split = (x: number, y: number, w: number, h: number, n: number) =>
+    Array.from({ length: n * n }, (_, k) => ({ x: x + (k % n) * (w / n), y: y + Math.floor(k / n) * (h / n), w: w / n, h: h / n }));
+  let seq = 0;
+  for (const a of split(0, 0, 100 * scale, 100 * scale, 3)) {
+    tiles.push({ name: `a${seq}`, path: `/d/a${seq}`, size: 1e8, type: 'dir', depth: 2, expanded: true, ...a });
+    for (const b of split(a.x, a.y, a.w, a.h, 4)) {
+      const folder = `/d/a${seq}/b${tiles.length}`;
+      tiles.push({ name: 'b', path: folder, size: 6e6, type: 'dir', depth: 3, expanded: true, ...b });
+      split(b.x, b.y, b.w, b.h, 4).forEach((c, k) =>
+        tiles.push({ name: `f${k}`, path: `${folder}/f${k}`, size: 1e6 + ((k * 7919 + tiles.length * 104729) % 9) * 5e5, type: 'file', depth: 4, expanded: false, ...c }));
+    }
+    seq++;
+  }
+  return tiles;
+}
+
+const DENSE_PX = 280;
+
+/** The dense layout painted by the real drawTreemap on a 280 px map in `palette`'s theme. */
+function paintDense(palette: Record<string, string>) {
+  const ground = canvasGround(palette);
+  const raster = rasterCtx(DENSE_PX, DENSE_PX, ground);
+  const state = { treemap: { nodes: denseLayout(), hideCloud: false, rootSize: 1e12, history: { active: false, diff: false }, pxRects: [] as any[], colorMode: 'size', mode: 'treemap', query: '' } };
+  const deps = {
+    $: () => ({ clientWidth: DENSE_PX + 20 }), treemapCanvasHeight: () => DENSE_PX, window: { devicePixelRatio: 1 },
+    tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: raster.ctx,
+    // The grid already starts from the map's real ground, so the painter's own fill of it changes nothing.
+    cssVar: (name: string) => (name === '--tm-canvas-bg' ? 'rgba(0,0,0,0)' : palette[name] ?? 'rgba(0,0,0,0)'),
+    state, tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
+    cellRgb: (n: Tile) => ramp.sizeRgb(n.size), tmHatchPattern: () => null, tmPreview: { on: false }, roundRect() {},
+    formatBytes: (n: number) => `${Math.round(n)} B`,
+  };
+  // Resolving the helpers runs the painter; the grid is measured after one clean paint of its own.
+  load<() => void>(['drawTreemap'], { ...deps, tmBufCtx: recordingCtx().ctx }, 'drawTreemap', (draw) => draw());
+  load<() => void>(['drawTreemap'], deps, 'drawTreemap', (draw) => draw());
+  return { raster, px: state.treemap.pxRects as Array<{ x: number; y: number; w: number; h: number; frame: boolean }> };
+}
+
+/** Near-black: no brighter than relative luminance 0.03 — about L* 20, the map's own dark ground and anything close to it. */
+const NEAR_BLACK = 0.03;
+
+test('map density: in a dense corner of the map most pixels are colour, not a black mesh — in the dark theme as in the light (BQG-5 item 14)', () => {
+  const dark = paintDense(DARK);
+  const light = paintDense(LIGHT);
+  const leaves = dark.px.filter((r) => !r.frame);
+  assert.equal(leaves.length, 9 * 16 * 16, 'control: every small file is drawn');
+  assert.ok(leaves.every((r) => Math.min(r.w, r.h) < 8), `control: they are dense, under 8 px a side (${leaves[0].w.toFixed(2)} px)`);
+  const d = dark.raster.nearBlack(NEAR_BLACK), l = light.raster.nearBlack(NEAR_BLACK);
+  // Measured here before item 14: 13.5% dark, 2.8% light (QA's own crop: 27.3% and 6.1%). After: 1.4% in both.
+  assert.ok(d < 0.04, `dark: ${(d * 100).toFixed(1)}% of the dense corner is near-black (13.5% before; QA measured 27.3% in a 280 px dense crop)`);
+  assert.ok(l < 0.04, `light: ${(l * 100).toFixed(1)}% is near-black (2.8% before; QA: 6.1%)`);
+});
+
+test('map density: the SVG export paints the dense corner as the canvas does — small leaves edge to edge with no outline of their own, faded nested outlines, and no rim in a folder under 12 px (BQG-5 item 14)', () => {
+  // The dense corner, 280 px of the 1000 px export map, beside one leaf big enough for its edges.
+  const big: Tile = { name: 'big.bin', path: '/big.bin', size: 5e9, type: 'file', depth: 1, expanded: false, x: 40, y: 0, w: 30, h: 30 };
+  // At the edges of the rules: a 7 px leaf (dense, under 8) and an 8 px folder (under the rim's 12).
+  const seven: Tile = { name: 'seven.bin', path: '/seven.bin', size: 2e6, type: 'file', depth: 1, expanded: false, x: 80, y: 80, w: 0.7, h: 0.7 };
+  const small: Tile = { name: 'small', path: '/small', size: 3e6, type: 'dir', depth: 2, expanded: true, x: 90, y: 0, w: 0.8, h: 0.8 };
+  const tiles = [...denseLayout(0.28), big, seven, small];
+  const { svg, rec, px } = exportSvg(tiles, (n) => ramp.sizeRgb(n.size), '#0e0e13');
+  const rects = [...svg.matchAll(/<rect ([^>]*?)\/?>/g)].map((m) => attrs(m[1]));
+  const close = (a: Record<string, string>, box: number[]) => ['x', 'y', 'width', 'height'].every((k, i) => Math.abs(Number(a[k]) - box[i]) < 0.011);
+  const leaves = (px as Array<{ x: number; y: number; w: number; h: number; frame: boolean; n: Tile }>).filter((r) => !r.frame);
+  assert.equal(leaves.length, 9 * 16 * 16 + 2, 'control: every leaf is in the map');
+  // The canvas draws no outline of its own on a dense leaf, the 7 px one included.
+  const sevenPx = leaves.find((r) => r.n.path === '/seven.bin')!;
+  assert.equal(rec.strokes.filter((st) => st.rect.every((v, i) => Math.abs(v - [sevenPx.x + 0.5, sevenPx.y + 0.5, sevenPx.w - 1, sevenPx.h - 1][i]) < 0.011)).length, 0,
+    'the canvas outlines no 7 px leaf');
+  for (const r of leaves) {
+    const dense = Math.min(r.w, r.h) < 8;
+    const box = dense ? [r.x, r.y, r.w, r.h] : [r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1];
+    const rect = rects.find((a) => /^url\(#tm-c/.test(a.fill ?? '') && close(a, box));
+    assert.ok(rect, `${r.n.path}: its leaf fills ${dense ? 'edge to edge' : 'its inset box'} (${box.map((v) => v.toFixed(2)).join(' ')})`);
+    if (dense) assert.equal(rect!.stroke, undefined, `${r.n.path}: a dense leaf has no outline of its own, as on the canvas`);
+    else assert.equal(rect!.stroke, 'rgba(0,0,0,0.35)', `${r.n.path}: a leaf with room keeps its outline`);
+  }
+  // Every folder's outline and rim, as the canvas stroked them: the canvas strokes on a folder's
+  // outline box or rim box (a leaf's own outline is the stroke on its leaf rect, checked above).
+  const folders = (px as Array<{ x: number; y: number; w: number; h: number; frame: boolean }>).filter((r) => r.frame);
+  const onFolder = (rect: number[]) => folders.some((r) =>
+    [[r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1], [r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3]].some((b) => b.every((v, i) => Math.abs(v - rect[i]) < 0.011)));
+  const frameStrokes = rec.strokes.filter((st) => onFolder(st.rect));
+  const frames = rects.filter((a) => a.fill === 'none');
+  assert.ok(frameStrokes.some((st) => rgba(st.style)[3] === 0.25), 'control: the dense corner has faded outlines');
+  for (const st of frameStrokes) {
+    const [x, y, w, h] = st.rect;
+    const a = frames.find((f) => close(f, [x, y, w, h]) && f.stroke === st.style.replace(/\s+/g, ''));
+    assert.ok(a, `the canvas's ${st.style} stroke at ${st.rect.map((v) => v.toFixed(2)).join(' ')} is in the SVG, in the same colour`);
+    assert.equal(Number(a!['stroke-width']), st.width, 'at the same width');
+  }
+  assert.equal(frames.length, frameStrokes.length, 'and the SVG frames nothing the canvas did not: no rim the canvas left out');
 });

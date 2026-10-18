@@ -665,6 +665,46 @@ function tmSetEmpty(text) {
  * the History diff's washes laid over the tile after it is painted
  * (tmDiffWashes): the label is read through them, so it is judged there.
  */
+/**
+ * Dense areas read as colour, not as a black mesh (BQG-5 item 14). The
+ * owner's rule is that the map pops like the classic desktop treemap; in a
+ * dense corner of the dark map 27% of the pixels were near-black (6% in
+ * light) — a ~1 px gap of the map's ground around every small tile, and a
+ * 0.42-alpha outline on every nested folder. So:
+ *   - a leaf under TM_DENSE_PX on a side is filled edge to edge, with no gap,
+ *     highlight or outline of its own;
+ *   - a nested folder's outline fades to TM_FRAME_FADED where the folder is
+ *     under TM_FRAME_FADE_PX on a side or at depth 3 and deeper;
+ *   - the light rim is drawn only inside a folder at least TM_RIM_MIN_PX on
+ *     each side (which also ends the light theme's white specks).
+ * The top-level outlines and every cushion are kept. The SVG export reads
+ * the same helpers, so it paints what the canvas paints;
+ * tests/mapColourPop.test.ts rasterizes a dense corner in both themes.
+ */
+const TM_DENSE_PX = 8;
+const TM_FRAME_FADE_PX = 40;
+const TM_FRAME_FADED = 0.25;
+const TM_RIM_MIN_PX = 12;
+/** The box a leaf is filled over: edge to edge when it is dense, else inset half a pixel a side. */
+function tmLeafBox(r) {
+  return Math.min(r.w, r.h) < TM_DENSE_PX
+    ? [r.x, r.y, r.w, r.h]
+    : [r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1)];
+}
+/** Whether a leaf gets its own top highlight and dark outline: only one with room for them. */
+function tmLeafEdged(r) {
+  return Math.min(r.w, r.h) >= TM_DENSE_PX;
+}
+/** A folder's dark outline: heavier at the top level, faded on a small or deep folder. */
+function tmFrameOutline(r) {
+  if (r.n.depth <= 1) return { alpha: 0.6, width: 1.5 };
+  return { alpha: Math.min(r.w, r.h) < TM_FRAME_FADE_PX || r.n.depth >= 3 ? TM_FRAME_FADED : 0.42, width: 1 };
+}
+/** The alpha of a folder's light rim, or 0 for a folder too small for one. */
+function tmFrameRim(r) {
+  return Math.min(r.w, r.h) >= TM_RIM_MIN_PX ? Math.max(0.12, 0.3 - r.n.depth * 0.05) : 0;
+}
+
 const TM_CUSHION_LIGHT = 0.16;   // the white mixed into the top edge
 const TM_CUSHION_SHADE = 0.22;   // the black mixed into the bottom edge
 const TM_CUSHION_FULL_H = 60;    // px: a tile this tall or taller gets the whole cushion
@@ -918,10 +958,10 @@ function drawTreemap() {
     const washedBy = tmWashesOver(r, washes);
     r.stops = tmLeafStops(base, r.h, r.label.map((l) => ({ off: l.y - r.y, px: l.px })), washedBy);
     ctx.fillStyle = tmLeafFill(ctx, r.stops, r.y, r.h);
-    ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
+    ctx.fillRect(...tmLeafBox(r)); // edge to edge when dense (item 14)
     r.fillRgb = base; // the colour itself; r.stops is the cushion painted here
     r.seen = tmSeenThrough(r.stops, washedBy); // and as pass 4 writes the label on it, through pass 2.5 (G09, F2.1)
-    if (r.w > 6 && r.h > 6) {
+    if (tmLeafEdged(r)) {
       ctx.strokeStyle = 'rgba(255,255,255,0.18)';
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -933,16 +973,18 @@ function drawTreemap() {
   }
   // Pass 2: directory frames. Every leaf is painted at full strength now, so
   // nesting is read from the edges, as on a desktop treemap: each folder gets
-  // a dark outline — heavier at the top level — inside which a light rim
-  // catches the cushion's light (G01).
+  // a dark outline — heavier at the top level, faded on a small or deep
+  // folder — inside which a light rim catches the cushion's light where the
+  // folder has room for one (G01; item 14).
   for (const r of px) {
     if (!r.frame) continue;
-    const top = r.n.depth <= 1;
-    ctx.strokeStyle = `rgba(0,0,0,${top ? 0.6 : 0.42})`;
-    ctx.lineWidth = top ? 1.5 : 1;
+    const outline = tmFrameOutline(r);
+    ctx.strokeStyle = `rgba(0,0,0,${outline.alpha})`;
+    ctx.lineWidth = outline.width;
     ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
-    if (r.w > 4 && r.h > 4) {
-      ctx.strokeStyle = `rgba(255,255,255,${Math.max(0.12, 0.3 - r.n.depth * 0.05)})`;
+    const rim = tmFrameRim(r);
+    if (rim > 0) {
+      ctx.strokeStyle = `rgba(255,255,255,${rim})`;
       ctx.lineWidth = 1;
       ctx.strokeRect(r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3);
     }
