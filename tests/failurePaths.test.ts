@@ -282,6 +282,9 @@ function stopHarness(cancel: () => Promise<unknown>, settledScanId: string | nul
     // tests/coreScanFlow.test.ts's (the owner, 17 Oct 2026).
     noteLastFolder: () => {},
     focusStartScreen: () => {},
+    // A refused cancel is also toasted, and the start screen takes back its "You stopped": tests/coreScanFlow.test.ts's (review F1.3).
+    toast: () => {},
+    noteStopUnconfirmed: () => {},
     cancelScanById: cancel,
     // Stop means stop: folders dropped behind this one are waiting in the scan
     // queue, and starting the next of them would be the opposite of what the

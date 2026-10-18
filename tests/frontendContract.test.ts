@@ -2675,7 +2675,11 @@ test('a stopped scan reads as a choice, not as a failure', () => {
   assert.ok(fn.length > 200, 'the stopScan slice is non-empty');
   assert.match(fn, /Scan stopped by user/, 'the status says exactly what happened');
   assert.match(fn, /status\.classList\.remove\('error'\)/, 'and it is not painted as an error');
-  assert.ok(!/toast\([^)]*'error'/.test(fn), 'stopping never raises an error toast');
+  // Only a cancel the server refuses is an error, and is toasted: the walk may
+  // still be running (review F1.3, tests/coreScanFlow.test.ts).
+  const stopping = fn.slice(0, fn.indexOf('catch (e)'));
+  assert.ok(stopping.length > 200 && stopping.length < fn.length, 'the part before the cancel\'s catch is non-empty');
+  assert.ok(!/toast\([^)]*'error'/.test(stopping), 'stopping never raises an error toast');
 });
 
 test('a stopped scan does not leave the dashboard showing skeletons forever', () => {

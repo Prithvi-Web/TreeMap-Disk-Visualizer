@@ -158,7 +158,7 @@ const LIFTED = [
   'function closeEventSource(', 'function setScanButtonMode(', 'function cancelScanById(', 'function abandonIfStopped(',
   'async function stopScan(', 'function beginScanChrome(', 'async function indexStatusFor(',
   'async function startScan(', 'async function startScanRequest(', 'function followScanProgress(',
-  'function endScanChrome(', 'function failScan(', 'function noteLastFolder(',
+  'function endScanChrome(', 'function failScan(', 'function noteLastFolder(', 'function noteStopUnconfirmed(',
   'function browseWholeDrives(', 'function topologyAnswer(',
   'function startChoiceList(', 'function startFolderName(', 'function startLastLine(', 'function renderStartChoices(', 'function scanStartChoice(', 'async function startNameDrives(',
   'function requestedPath(', 'async function restoreLastSession(', 'function showRestoredPath(', 'async function reopenScan(',
@@ -488,6 +488,90 @@ test('(iii) start → Stop → a quick choice scans that folder', async () => {
   assert.equal(h.choices()[0], 'Scan Macintosh HD again', 'the whole drive named as the startup disk');
   await startFrom(h, /^Downloads$/);
   assert.deepEqual(h.posts.map((p) => p.path), ['/', '/Users/x/Downloads'], 'one new scan, of the folder chosen');
+});
+
+/** A server whose cancel of scan-1 answers `status` — or is held until the test answers it. */
+function cancelAnswers(status: number | 'held', held?: { answer: (a: { status: number; body: unknown }) => void }, scanAnswer?: (n: number) => Answer): Route {
+  const base = server({ roots: [], scanAnswer });
+  return (m, url, b) => {
+    if (url !== '/api/scan/scan-1/cancel') return base(m, url, b);
+    if (status === 'held') return new Promise((r) => { held!.answer = r; });
+    return { status, body: status === 404 ? { error: 'Unknown or expired scanId', code: 'SCAN_NOT_FOUND' } : { error: 'Internal server error', code: 'INTERNAL' } };
+  };
+}
+
+test('a Stop whose cancel the server refuses says so where the person is looking: the scan may still be running, its folder is offered nowhere, the failure is toasted, and focus lands on Choose a folder… (review F1.3, F1.13)', async () => {
+  // Review F1.3: the start screen said "You stopped the scan of …" and
+  // offered a focused "Scan … again" before the cancel answered; when it
+  // failed, the only true words went to the Dashboard's status line, hidden
+  // under the start screen, and "Scan … again" started a second walk.
+  const h = page({ route: cancelAnswers(500) });
+  await boot(h);
+  await startFrom(h, /^Desktop$/);
+  await pressStop(h);
+  assert.ok(h.requests.includes('POST /api/scan/scan-1/cancel'), 'control: the cancel was asked for');
+  assert.equal(h.$('emptyState').style.display, 'flex', 'control: the start screen is up');
+  assert.equal(h.$('startLast').textContent, 'TreeMap could not stop the scan of /Users/x/Desktop, so it may still be running: Internal server error.');
+  assert.deepEqual(offering(h, '/Users/x/Desktop').map((b) => b.textContent), [], `the folder still being walked is offered nowhere — neither "Scan Desktop again" nor Desktop (${h.choices().join(' | ')})`);
+  assert.deepEqual(h.toasts, [['Could not stop the scan: Internal server error', 'error']], 'and the failure is said where it is heard, over every view');
+  assert.equal(h.dom.activeElement, h.$('emptyBrowseBtn'), 'focus leaves the "Scan Desktop again" that went for Choose a folder…, never <body>');
+  assert.equal(h.posts.length, 1, 'nothing more was walked');
+
+  const gone = page({ route: cancelAnswers(404) });
+  await boot(gone);
+  await startFrom(gone, /^Desktop$/);
+  await pressStop(gone);
+  assert.equal(gone.$('startLast').textContent, 'You stopped the scan of /Users/x/Desktop.', 'a 404: the record was already gone, so it IS stopped');
+  assert.equal(gone.choices()[0], 'Scan Desktop again');
+  assert.deepEqual(gone.toasts, []);
+});
+
+test('a refused cancel that answers after "Scan … again" was pressed leaves the new scan alone — its screen, its status line, its stream — and is still toasted (review F1.3)', async () => {
+  const held = { answer: (_a: { status: number; body: unknown }) => {} };
+  const h = page({ route: cancelAnswers('held', held) });
+  await boot(h);
+  await startFrom(h, /^Desktop$/);
+  h.$('scanBtn').focus();
+  void h.stopScan(); // its cancel is held
+  await turns();
+  assert.equal(h.$('startLast').textContent, 'You stopped the scan of /Users/x/Desktop.', 'control: said at once');
+  h.$('startAgainBtn').click();
+  await turns();
+  assert.deepEqual(h.openStreams().map((s) => s.url), ['/api/scan/scan-2/progress'], 'control: the new scan is followed');
+  held.answer({ status: 500, body: { error: 'Internal server error', code: 'INTERNAL' } });
+  await turns();
+  assert.equal(h.state.scanning, true, 'the new scan runs on');
+  assert.equal(h.$('emptyState').style.display, 'none', 'with no start screen over it');
+  assert.deepEqual(h.openStreams().map((s) => s.url), ['/api/scan/scan-2/progress'], 'still followed');
+  assert.doesNotMatch(h.$('scanStatus').innerHTML, /Could not stop/, 'its status line is its own');
+  assert.deepEqual(h.toasts, [['Could not stop the scan: Internal server error', 'error']], 'the first walk may still be running, and that is said');
+
+  // A scan begun since that has already ended said its own words: those stand.
+  const said = { answer: (_a: { status: number; body: unknown }) => {} };
+  const f = page({ route: cancelAnswers('held', said, (n) => (n === 1 ? { status: 202, body: { scanId: 'scan-1', incremental: false } } : { status: 500, body: { error: 'The disk is busy.', code: 'INTERNAL' } })) });
+  await boot(f);
+  await startFrom(f, /^Desktop$/);
+  void f.stopScan();
+  await turns();
+  f.$('startAgainBtn').click();
+  await turns();
+  assert.equal(f.$('startLast').textContent, 'The scan of /Users/x/Desktop failed: The disk is busy.', 'control: the second scan failed');
+  said.answer({ status: 500, body: { error: 'Internal server error', code: 'INTERNAL' } });
+  await turns();
+  assert.equal(f.$('startLast').textContent, 'The scan of /Users/x/Desktop failed: The disk is busy.', 'the start screen goes on describing the newer scan');
+});
+
+test('a rescan stopped over an older tree whose cancel is refused says so on the Dashboard, where it is seen, and tells the start screen nothing (review F1.3)', async () => {
+  const tree = { name: 'x', path: '/Users/x/old', size: 1, type: 'dir', children: [] };
+  const h = page({ route: cancelAnswers(500), root: tree, settledScanId: 'scan-old' });
+  h.switchView('dashboard');
+  await h.startScan('/Users/x/Desktop');
+  await turns();
+  await pressStop(h);
+  assert.equal(h.$('emptyState').style.display, 'none', 'control: the older tree stays on screen');
+  assert.match(h.$('scanStatus').innerHTML, /Could not stop the scan: Internal server error/, 'the Dashboard\'s status line says it');
+  assert.deepEqual(h.toasts, [['Could not stop the scan: Internal server error', 'error']]);
+  assert.equal(h.state.lastFolder, null, 'and the start screen is told nothing');
 });
 
 test('(vii) a Stop that left focus on <body> — a mouse click that focuses nothing — still lands it on "Scan … again"', async () => {

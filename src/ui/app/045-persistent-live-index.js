@@ -707,7 +707,7 @@ function failScan(message, err = null) {
  */
 function noteLastFolder(outcome, reason = '', offered = true) {
   const p = state.scanningPath;
-  if (!p || p.startsWith('cloud://')) return;
+  if (!p || p.startsWith('cloud://')) return null;
   const prev = state.lastFolder && state.lastFolder.path === p ? state.lastFolder : null;
   // A folder the server refused is offered nowhere on the start screen
   // (startChoiceList), until a scan of it is taken: one that ran since — and
@@ -715,6 +715,22 @@ function noteLastFolder(outcome, reason = '', offered = true) {
   const others = (state.refusedPaths || []).filter((x) => x !== p);
   state.refusedPaths = offered ? others : [...others, p];
   state.lastFolder = { path: p, outcome, reason, offered, size: prev ? prev.size : null, at: prev ? prev.at : 0 };
+  return state.lastFolder;
+}
+
+/**
+ * A Stop whose cancel the server refused — anything but a 404 — so the walk
+ * may still be running. The start screen said "You stopped the scan of …" the
+ * moment Stop was pressed. While it still says that of this Stop — `noted`,
+ * what noteLastFolder recorded for it, with nothing started or said since —
+ * it says instead that TreeMap could not stop it, and offers that folder
+ * nowhere: "Scan … again" would start a second walk of a folder still being
+ * walked (review F1.3). Focus on a choice that went moves on (withFocusKept).
+ */
+function noteStopUnconfirmed(noted, reason) {
+  if (!noted || state.lastFolder !== noted) return;
+  state.lastFolder = { ...noted, outcome: 'unstopped', reason, offered: false };
+  withFocusKept(() => { renderStartChoices(); });
 }
 
 /**

@@ -373,6 +373,7 @@ function startLastLine(last) {
   if (!last || !last.path) return '';
   const sentence = (s) => (/[.!?…]$/.test(s) ? s : s + '.');
   if (last.outcome === 'stopped') return `You stopped the scan of ${last.path}.`;
+  if (last.outcome === 'unstopped') return `TreeMap could not stop the scan of ${last.path}, so it may still be running: ${sentence(last.reason || 'the server did not say why')}`;
   if (last.outcome === 'failed') return `The scan of ${last.path} failed: ${sentence(last.reason || 'it did not finish')}`;
   if (!last.offered) return `Your last scan was of ${last.path}, which cannot be opened now: ${sentence(last.reason || 'TreeMap could not open it')}`;
   if (last.outcome === 'unreadable') return `Couldn’t reopen your last scan of ${last.path} (${last.reason}).`;

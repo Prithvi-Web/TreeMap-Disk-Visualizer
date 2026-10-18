@@ -156,7 +156,9 @@ async function stopScan() {
   // was being scanned, "Scan … again" first among its choices (the owner,
   // 17 Oct 2026: "a scan should work again after being stopped"). A tree
   // still on screen — a rescan stopped — stays, with its own scan behind it.
-  if (!state.root) noteLastFolder('stopped');
+  // What is said here is said before the cancel answers; `noted` is kept to
+  // take it back if the cancel is refused (noteStopUnconfirmed).
+  const noted = state.root ? null : noteLastFolder('stopped');
 
   const status = $('scanStatus');
   status.classList.remove('error'); // stopping is a choice, not a failure
@@ -181,8 +183,17 @@ async function stopScan() {
     // The walk is still running server-side, and saying "stopped" would be a
     // lie. 404 is not one of these: the record was already gone, so it is.
     if (e.status !== 404) {
-      status.classList.add('error');
-      status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml('Could not stop the scan: ' + e.message) + '</span>';
+      const why = 'Could not stop the scan: ' + e.message;
+      // Said where it is heard and seen: with nothing on screen the status
+      // line below sits in the Dashboard the start screen hides (review
+      // F1.3). And there only while no scan has begun since — a "Scan …
+      // again" pressed before this answered — whose line it is now.
+      toast(why, 'error');
+      if (!state.scanning) {
+        status.classList.add('error');
+        status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml(why) + '</span>';
+      }
+      noteStopUnconfirmed(noted, e.message);
     }
   }
 }

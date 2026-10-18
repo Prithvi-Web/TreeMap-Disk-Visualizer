@@ -9430,7 +9430,9 @@ async function stopScan() {
   // was being scanned, "Scan … again" first among its choices (the owner,
   // 17 Oct 2026: "a scan should work again after being stopped"). A tree
   // still on screen — a rescan stopped — stays, with its own scan behind it.
-  if (!state.root) noteLastFolder('stopped');
+  // What is said here is said before the cancel answers; `noted` is kept to
+  // take it back if the cancel is refused (noteStopUnconfirmed).
+  const noted = state.root ? null : noteLastFolder('stopped');
 
   const status = $('scanStatus');
   status.classList.remove('error'); // stopping is a choice, not a failure
@@ -9455,8 +9457,17 @@ async function stopScan() {
     // The walk is still running server-side, and saying "stopped" would be a
     // lie. 404 is not one of these: the record was already gone, so it is.
     if (e.status !== 404) {
-      status.classList.add('error');
-      status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml('Could not stop the scan: ' + e.message) + '</span>';
+      const why = 'Could not stop the scan: ' + e.message;
+      // Said where it is heard and seen: with nothing on screen the status
+      // line below sits in the Dashboard the start screen hides (review
+      // F1.3). And there only while no scan has begun since — a "Scan …
+      // again" pressed before this answered — whose line it is now.
+      toast(why, 'error');
+      if (!state.scanning) {
+        status.classList.add('error');
+        status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml(why) + '</span>';
+      }
+      noteStopUnconfirmed(noted, e.message);
     }
   }
 }
@@ -10350,7 +10361,7 @@ function failScan(message, err = null) {
  */
 function noteLastFolder(outcome, reason = '', offered = true) {
   const p = state.scanningPath;
-  if (!p || p.startsWith('cloud://')) return;
+  if (!p || p.startsWith('cloud://')) return null;
   const prev = state.lastFolder && state.lastFolder.path === p ? state.lastFolder : null;
   // A folder the server refused is offered nowhere on the start screen
   // (startChoiceList), until a scan of it is taken: one that ran since — and
@@ -10358,6 +10369,22 @@ function noteLastFolder(outcome, reason = '', offered = true) {
   const others = (state.refusedPaths || []).filter((x) => x !== p);
   state.refusedPaths = offered ? others : [...others, p];
   state.lastFolder = { path: p, outcome, reason, offered, size: prev ? prev.size : null, at: prev ? prev.at : 0 };
+  return state.lastFolder;
+}
+
+/**
+ * A Stop whose cancel the server refused — anything but a 404 — so the walk
+ * may still be running. The start screen said "You stopped the scan of …" the
+ * moment Stop was pressed. While it still says that of this Stop — `noted`,
+ * what noteLastFolder recorded for it, with nothing started or said since —
+ * it says instead that TreeMap could not stop it, and offers that folder
+ * nowhere: "Scan … again" would start a second walk of a folder still being
+ * walked (review F1.3). Focus on a choice that went moves on (withFocusKept).
+ */
+function noteStopUnconfirmed(noted, reason) {
+  if (!noted || state.lastFolder !== noted) return;
+  state.lastFolder = { ...noted, outcome: 'unstopped', reason, offered: false };
+  withFocusKept(() => { renderStartChoices(); });
 }
 
 /**
@@ -39943,6 +39970,7 @@ function startLastLine(last) {
   if (!last || !last.path) return '';
   const sentence = (s) => (/[.!?…]$/.test(s) ? s : s + '.');
   if (last.outcome === 'stopped') return `You stopped the scan of ${last.path}.`;
+  if (last.outcome === 'unstopped') return `TreeMap could not stop the scan of ${last.path}, so it may still be running: ${sentence(last.reason || 'the server did not say why')}`;
   if (last.outcome === 'failed') return `The scan of ${last.path} failed: ${sentence(last.reason || 'it did not finish')}`;
   if (!last.offered) return `Your last scan was of ${last.path}, which cannot be opened now: ${sentence(last.reason || 'TreeMap could not open it')}`;
   if (last.outcome === 'unreadable') return `Couldn’t reopen your last scan of ${last.path} (${last.reason}).`;
