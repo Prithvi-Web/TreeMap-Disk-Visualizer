@@ -256,7 +256,7 @@ A policy can also match a **query** — the same search language as the treemap 
 <td width="50%" valign="top">
 
 ### ⏰ Scheduled scans + 🚫 Ignore list
-Re-scan folders on a schedule with **growth-threshold alerts** and **disk-full forecast warnings** (native desktop notifications; the forecast horizon is configurable in Settings, default 30 days). Tell it what to skip with paths, names, or globs like `*.iso` and `~/projects/**/dist`.
+Re-scan folders on a schedule with **growth-threshold alerts** and **disk-full forecast warnings** (native desktop notifications; the forecast horizon is configurable in Settings, default 30 days). A scan that came due while TreeMap was closed runs about 10 minutes after it opens, never the moment it opens. Tell it what to skip with paths, names, or globs like `*.iso` and `~/projects/**/dist`.
 
 </td>
 </tr>

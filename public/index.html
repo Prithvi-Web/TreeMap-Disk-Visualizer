@@ -4765,6 +4765,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           <span data-icon="clock"></span><label for="apCooldown">Run at most once every</label>
           <input type="number" id="apCooldown" value="7" min="1" max="365" aria-label="Cooldown in days"> <span class="muted">days</span>
         </div>
+        <div class="muted" id="apLaunchHold" style="margin-top:4px;">A run that came due while TreeMap was closed runs about 10 minutes after it opens, not the moment it opens.</div>
         <div class="rule-row" style="margin-top:10px;">
           <input type="checkbox" id="apDryRunFirst" checked>
           <label for="apDryRunFirst">Only ever preview — never actually delete</label>
@@ -5117,7 +5118,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       </div>
 
       <div class="set-h" style="margin-top:22px;"><span data-icon="calendar"></span>Scheduled scans</div>
-      <div class="muted" style="margin-bottom:10px;">TreeMap re-scans these folders on a schedule while the app is running, and alerts you when a folder grows past your threshold since the previous scan. Every run is also saved to Trends.</div>
+      <div class="muted" style="margin-bottom:10px;">TreeMap re-scans these folders on a schedule while the app is running, and alerts you when a folder grows past your threshold since the previous scan. Every run is also saved to Trends. A scan that came due while TreeMap was closed runs about 10 minutes after it opens, not the moment it opens.</div>
       <div id="schedList"></div>
       <button class="btn" id="schedAddBtn"><span data-icon="plus"></span>Add scheduled scan</button>
 

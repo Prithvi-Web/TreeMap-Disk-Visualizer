@@ -51,7 +51,7 @@ import {
 } from '../src/services/engineBudget';
 import { allScans, cancelAllScans, cancelScan, createScanRecord, evictExpiredScans, getScan, startScan } from '../src/services/diskScanner';
 import { gduScanIntoStore, runGdu, trackShard, type ShardControls } from '../src/services/gduScanner';
-import { startScheduler, stopScheduler } from '../src/services/scheduler';
+import { setSchedulerForTests, startScheduler, stopScheduler } from '../src/services/scheduler';
 import { loadMain } from './fixtures/desktop/electronStub';
 import type { EngineBudgetSetting, ScanResult } from '../src/models/types';
 
@@ -1214,6 +1214,8 @@ test('a scheduled scan runs Eco whatever the setting says', async () => {
       engineBudget: { preset: 'turbo', cpuPercent: null },
       schedules: [{ id: 'budget-sched', path: root, intervalHours: 24, enabled: true }],
     });
+    // No launch hold here: the hold is tests/schedulerLaunchHold.test.ts's, and this asks only what budget a scheduled scan runs under.
+    setSchedulerForTests({ launchHoldMs: 0 });
     startScheduler();
     const due = (): ScanResult | undefined => allScans().find((s) => s.rootPath === root && !before.has(s.scanId));
     await waitFor(() => due() !== undefined, 'the scheduler starting the due scan', 20);
@@ -1228,6 +1230,7 @@ test('a scheduled scan runs Eco whatever the setting says', async () => {
     await settle(user.scanId);
   } finally {
     stopScheduler();
+    setSchedulerForTests(null);
     await updateSettings({ engineBudget: { preset: 'auto', cpuPercent: null }, schedules: [] });
     await fsp.rm(root, { recursive: true, force: true });
   }

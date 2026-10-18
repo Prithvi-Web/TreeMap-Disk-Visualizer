@@ -56,9 +56,9 @@ const NOT_A_RACE: Record<string, string> = {
   'services/timeCapsule.ts::pruneExpired': 'retention sweep on a timer; owned by no request',
   'services/timeCapsule.ts::reconcileCapsule': 'startup reconciliation; owned by no request',
   'services/timeCapsule.ts::sweepRestoreLeftovers': 'startup sweep of what restores left when TreeMap last stopped; owned by no request',
-  'services/scheduler.ts::tick': 'the scheduler daemon itself',
-  'services/scheduler.ts::runDuePolicies': 'scheduler daemon',
-  'services/scheduler.ts::runScheduled': 'scheduler daemon',
+  // Called through the scheduler's test seam (setSchedulerForTests), so a test counts them rather than runs them.
+  'services/scheduler.ts::deps.runDuePolicies': 'scheduler daemon',
+  'services/scheduler.ts::deps.runScheduled': 'scheduler daemon',
   'services/watcher.ts::onRawEvent': 'filesystem event fan-in; its effect is an SSE push, not a stored read',
   'services/emptyFolderCheck.ts::restOfDeadline':
     'the rest of a call\'s 2 s deadline its request\'s budget cut short (U-4c review F3.1): it writes no file, only the in-memory turn and silence that the next look reads by design, and it settles at the call\'s own answer or that deadline — both of which a test passes by hand, never by polling; tracking it would have settled() wait on a call that may never answer',

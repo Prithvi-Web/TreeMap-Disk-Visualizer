@@ -18,6 +18,7 @@ import { formatBytes } from '../utils/formatBytes';
  *
  * Scans only happen while the app is running — on the desktop the app sits
  * in the tray, so "daily" effectively means "first tick after 24h elapsed".
+ * None starts in the first LAUNCH_HOLD_MS after the app opens (below).
  * Alerts go to the in-memory notification list (polled by the web UI) and to
  * any registered handler (the Electron main process shows a native
  * Notification).
@@ -27,7 +28,48 @@ const TICK_MS = 60_000;
 const SCAN_TIMEOUT_MS = 30 * 60_000;
 const MAX_NOTIFICATIONS = 100;
 
+/**
+ * How long after the scheduler starts — the server starts it as it starts
+ * listening, so as TreeMap opens — before any scheduled scan or Autopilot run
+ * may start. The owner, 17 Oct 2026: "When you open TreeMap it automatically
+ * runs a scan". A schedule that came due while the app was closed is the
+ * person's own setting, but its catch-up run started the moment the app
+ * opened; it now runs at the first tick after this hold, and so does any run
+ * that falls due inside it. Autopilot rides the same tick and is held too: its
+ * cooldown says a policy is due, never when TreeMap opened, so a policy whose
+ * cooldown ran out while the app was closed ran at launch as well. The
+ * settings sheet says this in its own words (110-modal-settings.html).
+ */
+export const LAUNCH_HOLD_MS = 10 * 60_000;
+
+/** What a tick reads the time with and what it runs: the real ones, unless a test brings its own. */
+interface SchedulerDeps {
+  now: () => number;
+  launchHoldMs: number;
+  runScheduled: (sched: ScheduleConfig) => Promise<void>;
+  runDuePolicies: () => Promise<unknown>;
+}
+const REAL_DEPS: SchedulerDeps = {
+  now: () => Date.now(),
+  launchHoldMs: LAUNCH_HOLD_MS,
+  runScheduled: (sched) => runScheduled(sched),
+  runDuePolicies: () => runDuePolicies(),
+};
+let deps: SchedulerDeps = REAL_DEPS;
+
+/**
+ * Tests: a clock, a hold and the two kinds of run of their own (any left out
+ * stay real); null puts every real one back. Counted, never timed.
+ */
+export function setSchedulerForTests(over: Partial<SchedulerDeps> | null): void {
+  deps = over ? { ...REAL_DEPS, ...over } : REAL_DEPS;
+}
+
 let timer: NodeJS.Timeout | null = null;
+/** Nothing runs before this moment (deps.now()): LAUNCH_HOLD_MS after the scheduler last started. */
+let heldUntil = 0;
+/** The tick most recently begun, for a test to wait on. */
+let lastTick: Promise<void> = Promise.resolve();
 const inFlight = new Set<string>();
 const notifications: GrowthNotification[] = [];
 
@@ -46,9 +88,10 @@ export function listNotifications(since = 0): GrowthNotification[] {
 
 export function startScheduler(): void {
   if (timer) return;
-  timer = setInterval(() => void tick(), TICK_MS);
+  heldUntil = deps.now() + deps.launchHoldMs; // nothing runs as TreeMap opens (LAUNCH_HOLD_MS)
+  timer = setInterval(() => { lastTick = tick(); }, TICK_MS);
   timer.unref(); // never keep the process alive on its own
-  void tick();
+  lastTick = tick();
 }
 
 export function stopScheduler(): void {
@@ -58,11 +101,25 @@ export function stopScheduler(): void {
   }
 }
 
+/** Tests: one tick now, resolved once it has decided what to start (what it starts runs on). */
+export function tickForTests(): Promise<void> {
+  lastTick = tick();
+  return lastTick;
+}
+
+/** Tests: the tick most recently begun — startScheduler's own first one, say — once it has decided. */
+export function lastTickForTests(): Promise<void> {
+  return lastTick;
+}
+
 async function tick(): Promise<void> {
+  // Held as TreeMap opens: a run that came due while it was closed waits for
+  // the first tick after LAUNCH_HOLD_MS, Autopilot's included.
+  if (deps.now() < heldUntil) return;
   // Autopilot policies ride this same tick rather than starting a second timer
   // (§B1: extend the Scheduler, don't duplicate it). Its own cooldown decides
   // when a policy is actually due, so checking every minute costs nothing.
-  void runDuePolicies().catch((err: unknown) => console.error('[treemap] autopilot tick failed:', err));
+  void deps.runDuePolicies().catch((err: unknown) => console.error('[treemap] autopilot tick failed:', err));
 
   let schedules: ScheduleConfig[];
   try {
@@ -70,13 +127,13 @@ async function tick(): Promise<void> {
   } catch {
     return;
   }
-  const now = Date.now();
+  const now = deps.now();
   for (const sched of schedules) {
     if (!sched.enabled || inFlight.has(sched.id)) continue;
     const due = !sched.lastRunAt || now - sched.lastRunAt >= sched.intervalHours * 3_600_000;
     if (!due) continue;
     inFlight.add(sched.id);
-    void runScheduled(sched)
+    void deps.runScheduled(sched)
       .catch((err: unknown) => console.error('[treemap] scheduled scan failed:', err))
       .finally(() => inFlight.delete(sched.id));
   }

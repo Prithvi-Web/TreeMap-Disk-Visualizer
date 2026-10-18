@@ -93,6 +93,7 @@
           <span data-icon="clock"></span><label for="apCooldown">Run at most once every</label>
           <input type="number" id="apCooldown" value="7" min="1" max="365" aria-label="Cooldown in days"> <span class="muted">days</span>
         </div>
+        <div class="muted" id="apLaunchHold" style="margin-top:4px;">A run that came due while TreeMap was closed runs about 10 minutes after it opens, not the moment it opens.</div>
         <div class="rule-row" style="margin-top:10px;">
           <input type="checkbox" id="apDryRunFirst" checked>
           <label for="apDryRunFirst">Only ever preview — never actually delete</label>

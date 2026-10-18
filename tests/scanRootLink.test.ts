@@ -16,7 +16,7 @@ import { findGduBinary } from '../src/services/gduScanner';
 import { nativeScanModule } from '../src/services/scan/native';
 import { storeOf } from '../src/services/scanStore';
 import { updateSettings } from '../src/services/settings';
-import { listNotifications, startScheduler, stopScheduler } from '../src/services/scheduler';
+import { listNotifications, setSchedulerForTests, startScheduler, stopScheduler } from '../src/services/scheduler';
 import { listSnapshots } from '../src/services/snapshots';
 import { settled } from '../src/utils/backgroundWrites';
 import { insideAnyScanRoot } from '../src/middleware/pathGuard';
@@ -365,6 +365,8 @@ test('a scheduled scan of a link to a folder compares with that folder’s histo
       stopScheduler();
     }
   };
+  // No launch hold here: the hold is tests/schedulerLaunchHold.test.ts's, and this asks what a scheduled scan of a link compares with.
+  setSchedulerForTests({ launchHoldMs: 0 });
   try {
     await due();
     await tickUntil(async () => (await listSnapshots(f.real)).length === 1, 'the first scheduled scan saving the folder’s snapshot');
@@ -377,6 +379,7 @@ test('a scheduled scan of a link to a folder compares with that folder’s histo
     assert.equal(alert.delta, 5000, 'the folder grew by the new file, against its own last snapshot');
     await settled();
   } finally {
+    setSchedulerForTests(null);
     await updateSettings({ schedules: [] });
   }
 });
