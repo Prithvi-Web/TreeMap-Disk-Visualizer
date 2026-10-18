@@ -236,3 +236,11 @@ test('every route the idempotency middleware wraps declares the Idempotency-Key 
   }
   assert.deepEqual(missing, []);
 });
+
+test('the offload declares the 400 its plan answers for a destination it cannot write to, as prepareOffload throws it (sixth browser pass H02)', () => {
+  const offload = source('src/services/offload.ts');
+  assert.match(offload, /new AppError\(\s*400,\s*'DEST_NOT_WRITABLE'/, 'the premise: the plan refuses it with a 400 of its own');
+  const prepare = offload.slice(offload.indexOf('export async function prepareOffload('), offload.indexOf('export async function startOffload('));
+  assert.match(prepare, /await assertDestWritable\(destDir\);/, 'asked where a dry run and a real run both plan');
+  assert.match(said('post', '/api/offload', '400'), /\bDEST_NOT_WRITABLE\b[^;]*a dry run too/, 'and the document declares it, for a dry run too');
+});

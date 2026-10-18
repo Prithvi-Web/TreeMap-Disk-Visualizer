@@ -537,7 +537,11 @@ OpenAPI 3 spec).
      judged by the device each really is on, and on a Mac by the APFS
      container, whose volumes are separate devices sharing one pool of free
      space): there the copies take as much space again and the originals
-     keep theirs in the Trash, so it frees nothing. A selected
+     keep theirs in the Trash, so it frees nothing. So is a destination
+     TreeMap cannot write into — a read-only drive, a folder this user may
+     not add files to — dry run included (`400 DEST_NOT_WRITABLE`); on
+     Windows, where `fs.access` does not read a folder's ACL, it is not
+     checked, and the real run's first copy finds it and rolls back. A selected
      folder is trashed whole, so one holding anything the scan did not list
      (a "Don't scan" match, a folder it could not read, a drive it did not
      enter, a file made since) is refused before anything is copied, dry run

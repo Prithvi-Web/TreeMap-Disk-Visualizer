@@ -762,7 +762,8 @@ export function buildMcpServer(): McpServer {
         'dryRun: true, which returns the exact copy plan (files, bytes, destinations) without touching anything ' +
         '— always dry-run first. Sources must live inside a completed scan; pass jobId instead to keep waiting ' +
         'on a started job. A destination on the same drive as a source is refused (DEST_SAME_VOLUME): there an ' +
-        'offload frees nothing.',
+        'offload frees nothing. So is one TreeMap cannot write into — a read-only drive, a folder this user may not ' +
+        'add files to (DEST_NOT_WRITABLE) — a dry run too.',
       inputSchema: {
         scanId: z.string().min(1).optional().describe('The completed scan the source paths belong to'),
         paths: z.array(z.string().min(1)).max(MAX_PATHS).optional().describe('Files/folders to offload (inside the scanned root)'),

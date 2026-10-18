@@ -654,6 +654,38 @@ async function assertAnotherDrive(topPaths: readonly string[], destDir: string):
   }
 }
 
+/**
+ * Refuses a destination this process may not write into (sixth browser pass H02): a sealed or
+ * read-only volume, or a folder whose permissions do not let this user add to it. The dry run planned
+ * such a destination and said "Copy, verify, then trash", and the real run failed at its first copy —
+ * where AGENTS.md promises a dry run that succeeds means the real run would act. Asked of the folder
+ * itself (write and search, which adding an entry needs), nothing written. Any other failure of the
+ * ask refuses too, saying it could not be confirmed: refusing is the safe answer to "cannot tell".
+ *
+ * Not on Windows: a folder's write permission there is an ACL, which fs.access does not read — it
+ * reports every folder writable, read-only drives' included — so the check would promise what it
+ * cannot know. There the real run's first copy finds it, and the job rolls back with nothing trashed.
+ */
+async function assertDestWritable(destDir: string): Promise<void> {
+  if (process.platform === 'win32') return;
+  try {
+    await fsp.access(destDir, fs.constants.W_OK | fs.constants.X_OK);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    const why = code === 'EROFS'
+      ? 'it is on a drive that is read-only'
+      : code === 'EACCES' || code === 'EPERM'
+        ? 'you do not have permission to add files to it'
+        : `TreeMap could not confirm it may write there (${code ?? (err instanceof Error ? err.message : String(err))})`;
+    throw new AppError(
+      400,
+      'DEST_NOT_WRITABLE',
+      `"${path.basename(destDir) || destDir}" cannot be written to: ${why}. An offload copies every file into the destination ` +
+        'before anything is moved to the Trash, so this one could copy nothing. Pick a folder you can write to. Nothing was copied or deleted.',
+    );
+  }
+}
+
 /** The exact manifest an offload would execute — what dryRun reports. */
 export interface PreparedOffload {
   plan: PlannedCopy[];
@@ -799,6 +831,9 @@ export async function prepareOffload(
   // On the drive the selection is on, an offload frees nothing (E01) — asked before anything is
   // planned, so a dry run refuses it as surely as a real run.
   await assertAnotherDrive(topPaths, destDir);
+  // Nor into a destination nothing can be copied into (H02), asked the same way. After the drive:
+  // a folder on the same drive is refused for what the offload would cost, whoever may write there.
+  await assertDestWritable(destDir);
 
   // What's already on the drive, so a repeat offload renames around it instead
   // of failing every copy with EEXIST.

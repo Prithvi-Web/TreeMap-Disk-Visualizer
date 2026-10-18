@@ -699,3 +699,14 @@ test('the Track U plan calls a test a reader of AGENTS.md only where it reads it
   assert.ok(held.includes('docsTruth:reads'), `the row names the test that reads AGENTS.md (held: ${held.join(', ')})`);
   assert.ok(held.some((h) => h.endsWith(':comment')), `the row's correction is held to the tests it names (held: ${held.join(', ')})`);
 });
+
+test('AGENTS.md lists the offload\'s refusal of a destination TreeMap cannot write to among the refusals a dry run makes too, as prepareOffload does, and says where it is not checked (sixth browser pass H02)', () => {
+  const offload = read('src', 'services', 'offload.ts');
+  const prepare = from(offload, 'export async function prepareOffload(');
+  assert.ok(prepare.indexOf('await assertDestWritable(destDir);') !== -1 && prepare.indexOf('await assertDestWritable(destDir);') < prepare.indexOf('planOffload('),
+    'the premise: the plan asks before anything is planned, for a dry run and a real run alike');
+  assert.match(from(offload, 'async function assertDestWritable('), /if \(process\.platform === 'win32'\) return;/, 'and does not ask on Windows');
+  const agents = read('AGENTS.md');
+  const section = agents.slice(agents.indexOf('`POST /api/offload` with `{ scanId, paths, dest }`'), agents.indexOf('`POST /api/cart/commit` with `{ paths }`'));
+  assert.match(section, /dry run included \(`400 DEST_NOT_WRITABLE`\); on\s+Windows/, 'AGENTS.md says a dry run refuses it, and names Windows as the exception');
+});
