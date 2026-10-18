@@ -341,9 +341,9 @@ async function startScan(path, opts = {}) {
 
 /** The actual scan request, split out so the index path can run it quietly. */
 async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
+  beginScanChrome({ quiet });
+  const gen = state.scanGen; // this request's identity, for both outcomes below
   try {
-    beginScanChrome({ quiet });
-    const gen = state.scanGen; // this request's identity for the abandon check below
     // U-11: a notice beside the scan, never a question in front of it — its
     // answer is asked for alongside the scan request, not awaited before it.
     void scanAccessNotice(path, gen);
@@ -366,8 +366,14 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
     });
     if (abandonIfStopped(resp.scanId, gen)) return;
     followScanProgress(resp.scanId, path, resp.incremental === true, t0);
+  // A request a Stop ended, or one another scan has replaced since, has
+  // nothing to report when it fails — abandonIfStopped's check, for the other
+  // outcome. Reported, its failure tore down the scan running now: the start
+  // screen came back over it saying its folder failed, with this request's
+  // reason, and Stop could no longer reach it (review F1.1). A failed
+  // background refresh keeps the indexed tree on screen.
   } catch (e) {
-    // A failed background refresh keeps the indexed tree on screen.
+    if (!state.scanning || state.scanGen !== gen) return;
     if (quiet) { quietRescanFailed(e); return; }
     failScan(e.message, e); // the error: a folder the server refused is not offered again
   }
@@ -621,9 +627,9 @@ async function startCloudScan(providerId, providerName) {
   state.scanningPath = 'cloud://' + providerId; // named nowhere if it stops (noteLastFolder)
   closeEventSource();
   disableLive({ keepWanted: false }); // watching makes no sense on a cloud tree
+  beginScanChrome();
+  const gen = state.scanGen; // this request's identity, for both outcomes below
   try {
-    beginScanChrome();
-    const gen = state.scanGen; // this request's identity for the abandon check below
     $('scanStatus').innerHTML = `<span>Listing ${escapeHtml(providerName)}…</span>`;
     const t0 = performance.now();
     const resp = await api('/api/cloud/scan', {
@@ -633,7 +639,9 @@ async function startCloudScan(providerId, providerName) {
     });
     if (abandonIfStopped(resp.scanId, gen)) return;
     followScanProgress(resp.scanId, 'cloud://' + providerId, false, t0);
+  // Stopped, or replaced by another scan since: nothing to report (startScanRequest, review F1.1).
   } catch (e) {
+    if (!state.scanning || state.scanGen !== gen) return;
     failScan(e.message);
   }
 }

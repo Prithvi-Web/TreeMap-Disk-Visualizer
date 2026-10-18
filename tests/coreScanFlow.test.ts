@@ -53,6 +53,8 @@ class El {
   title = '';
   textContent = '';
   focused = 0;
+  /** Taken out of the document by a rewrite of its parent's innerHTML: a browser paints it no more, and focus on it falls to <body>. */
+  detached = false;
   style: Record<string, string> = {};
   dataset: Record<string, string> = {};
   attrs: Record<string, string> = {};
@@ -70,7 +72,10 @@ class El {
   get innerHTML(): string { return this.html; }
   /** Buttons written into it become children, found by id, class and attribute, as a browser's would. */
   set innerHTML(v: string) {
-    for (const c of this.children) if (c.id && this.dom.els.get(c.id) === c) this.dom.els.delete(c.id);
+    for (const c of this.children) {
+      c.detached = true;
+      if (c.id && this.dom.els.get(c.id) === c) this.dom.els.delete(c.id);
+    }
     this.children = [];
     this.html = v;
     for (const m of v.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)) {
@@ -87,6 +92,7 @@ class El {
   }
   /** Painted: shown itself and inside something shown. The empty state paints only as `display: flex`. */
   painted(): boolean {
+    if (this.detached) return false;
     if (this.id === 'emptyState') return this.style.display === 'flex';
     if (this.hidden || this.style.display === 'none') return false;
     return this.parent ? this.parent.painted() : true;
@@ -156,6 +162,7 @@ const LIFTED = [
   'function browseWholeDrives(', 'function topologyAnswer(',
   'function startChoiceList(', 'function startFolderName(', 'function startLastLine(', 'function renderStartChoices(', 'function scanStartChoice(', 'async function startNameDrives(',
   'function requestedPath(', 'async function restoreLastSession(', 'function showRestoredPath(', 'async function reopenScan(',
+  'async function startCloudScan(',
 ];
 const OWN = new Set(LIFTED.map((d) => /function (\w+)\(/.exec(d)![1]));
 
@@ -177,6 +184,8 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
   const posts: Array<Record<string, unknown>> = [];
   const toasts: Array<[string, string?]> = [];
   const finished: unknown[] = [];
+  /** Each failure of a quiet rescan behind an index paint the page reported (quietRescanFailed). */
+  const quietFailed: unknown[] = [];
   const tourCalls: string[] = [];
   /** Every EventSource the page opened, and whether each is still open. */
   const streams: Array<{ url: string; readyState: number; close: () => void; onmessage: ((ev: { data: string }) => void) | null; onerror: (() => void) | null }> = [];
@@ -231,7 +240,7 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     restoreDashboardPanels: noop, renderIndexBadge: noop, renderIndexLine: noop, disableLive: noop, clearDonut: noop,
     fxStateBeam: noop, fxOrbShow: noop, fxOrbHide: noop, fxScanHeroSync: noop, fxDonutLoadingSync: noop, fxEmptyCtaSync: noop, fxViewEnter: noop,
     hideTooltip: noop, hideCtxMenu: noop, selectionBarFollowView: noop, renderCapabilityNotice: noop,
-    scanAccessNotice: async () => false, clearScanQueue: noop, drainScanQueue: noop, quietRescanFailed: noop,
+    scanAccessNotice: async () => false, clearScanQueue: noop, drainScanQueue: noop, quietRescanFailed: (e: unknown) => { quietFailed.push(e); },
     openFromIndex: async () => false,
     activeViewControl: () => null, tourCardControl: () => null,
     tourScanStarted: () => tourCalls.push('started'), tourScanFailed: () => tourCalls.push('failed'),
@@ -243,9 +252,10 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     set: (t, k, v) => { t[k as string] = v; return true; },
   });
   const src = LIFTED.map(pageFn).join('\n');
-  const fns = new Function('scope', `with (scope) { ${src}\n return { switchView, restoreLastSession, startScan, stopScan, failScan, renderStartChoices }; }`)(scope) as {
+  const fns = new Function('scope', `with (scope) { ${src}\n return { switchView, restoreLastSession, startScan, stopScan, failScan, renderStartChoices, startCloudScan }; }`)(scope) as {
     switchView: (v: string) => void; restoreLastSession: () => Promise<void>; startScan: (p: string, o?: unknown) => Promise<void>;
     stopScan: () => Promise<void>; failScan: (m: string, e?: unknown) => void; renderStartChoices: () => void;
+    startCloudScan: (id: string, name: string) => Promise<void>;
   };
   /** The start screen's choices as a person sees them: each button's words, in order. */
   const choices = () => $('startChoices').children.map((b) => b.textContent);
@@ -255,12 +265,12 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     return b!;
   };
   const openStreams = () => streams.filter((s) => s.readyState !== 2);
-  return { ...fns, dom, $, state, requests, posts, toasts, finished, tourCalls, streams, openStreams, intervals, choices, choice, given };
+  return { ...fns, dom, $, state, requests, posts, toasts, finished, quietFailed, tourCalls, streams, openStreams, intervals, choices, choice, given };
 }
 
 /** A server: the history and the folders a test names, a scan request answered with the next id, and its cancel. */
 function server(opts: {
-  scans?: unknown[]; roots?: unknown[] | Error; missing?: string[]; topology?: unknown;
+  scans?: unknown[]; roots?: unknown[] | Error; missing?: string[]; topology?: unknown; indexed?: string[];
   scanAnswer?: (n: number, body: Record<string, unknown>) => Answer;
 } = {}): Route {
   let n = 0;
@@ -276,7 +286,12 @@ function server(opts: {
         : { body: { path: p, parent: null, dirs: [], total: 0 } };
     }
     if (method === 'GET' && url === '/api/platform/topology') return { body: opts.topology ?? TOPO_MAC };
-    if (method === 'GET' && url.startsWith('/api/index/status?')) return { body: { indexed: false, root: null } };
+    if (method === 'GET' && url.startsWith('/api/index/status?path=')) {
+      const p = decodeURIComponent(url.slice('/api/index/status?path='.length));
+      return (opts.indexed ?? []).includes(p)
+        ? { body: { path: p, indexed: true, root: { path: p, state: 'ready', live: true } } }
+        : { body: { indexed: false, root: null } };
+    }
     if (method === 'POST' && url === '/api/scan') return opts.scanAnswer ? opts.scanAnswer(++n, body!) : { status: 202, body: { scanId: `scan-${++n}`, incremental: false } };
     if (method === 'POST' && /^\/api\/scan\/[\w-]+\/cancel$/.test(url)) return { body: { cancelled: true } };
     return undefined;
@@ -499,6 +514,77 @@ test('(v) Stop pressed before POST /api/scan answers, then Scan again: the late 
   await turns();
   assert.deepEqual(h.openStreams().map((s) => s.url), ['/api/scan/scan-new/progress'], 'the new scan is followed, alone');
   assert.equal(h.state.scanId, 'scan-new');
+});
+
+test('(v) a Stopped request that FAILS late is no one\'s to report: a new scan begun since stays followed, on screen and stoppable, and a Stop with nothing after it stays a Stop (review F1.1, F1.4)', async () => {
+  // Review F1.1: the success half of the race was guarded (abandonIfStopped),
+  // the failure half was not — scan A's late 403 ran failScan against scan B:
+  // the start screen came back over B, saying B's folder "failed" with A's
+  // reason, and Stop could no longer reach B.
+  const held: Array<(a: { status: number; body: unknown }) => void> = [];
+  const h = page({ route: server({ roots: [], scanAnswer: () => new Promise((r) => { held.push(r); }) }) });
+  await boot(h);
+  await startFrom(h, /^Desktop$/);
+  await pressStop(h);
+  await startFrom(h, /^Documents$/);
+  held[1]({ status: 202, body: { scanId: 'scan-b', incremental: false } });
+  await turns();
+  assert.deepEqual(h.openStreams().map((s) => s.url), ['/api/scan/scan-b/progress'], 'control: the new scan is followed');
+  held[0]({ status: 403, body: { error: 'A could not be started.', code: 'FORBIDDEN' } });
+  await turns();
+  assert.equal(h.state.scanning, true, 'the new scan is still running');
+  assert.deepEqual(h.openStreams().map((s) => s.url), ['/api/scan/scan-b/progress'], 'and still followed');
+  assert.equal(h.$('emptyState').style.display, 'none', 'the start screen stays down over it');
+  assert.deepEqual(h.toasts, [], 'no red toast for a scan the person already stopped');
+  assert.equal(typeof h.state.abortScan, 'function', 'Stop can still reach it');
+  await pressStop(h);
+  assert.ok(h.requests.includes('POST /api/scan/scan-b/cancel'), 'and does');
+  assert.equal(h.$('startLast').textContent, 'You stopped the scan of /Users/x/Documents.', 'the start screen names the scan the person stopped');
+
+  // Stopped, nothing started since, and then the request fails: it was stopped.
+  const late: Array<(a: { status: number; body: unknown }) => void> = [];
+  const lone = page({ route: server({ roots: [], scanAnswer: () => new Promise((r) => { late.push(r); }) }) });
+  await boot(lone);
+  await startFrom(lone, /^Desktop$/);
+  await pressStop(lone);
+  late[0]({ status: 500, body: { error: 'Internal server error', code: 'INTERNAL' } });
+  await turns();
+  assert.equal(lone.$('startLast').textContent, 'You stopped the scan of /Users/x/Desktop.', 'a late failure does not rewrite the person\'s Stop as a failure');
+  assert.equal(lone.choices()[0], 'Scan Desktop again');
+  assert.deepEqual(lone.toasts, []);
+});
+
+test('(v) the same for a quiet rescan behind an index paint, and for a cloud account\'s scan: a late failure after Stop reports nothing (review F1.1, F1.4)', async () => {
+  const held: Array<(a: { status: number; body: unknown }) => void> = [];
+  const h = page({
+    route: server({ roots: [], indexed: ['/Users/x/Desktop'], scanAnswer: (n) => (n === 1 ? new Promise((r) => { held.push(r); }) : { status: 202, body: { scanId: `scan-${n}`, incremental: false } }) }),
+  });
+  h.given.openFromIndex = async (p: string) => { h.state.root = { name: 'Desktop', path: p, size: 1, type: 'dir', children: [] }; return true; };
+  await boot(h);
+  await startFrom(h, /^Desktop$/);
+  assert.equal(held.length, 1, 'control: painted from the index, its quiet rescan is out');
+  await pressStop(h);
+  await h.startScan('/Users/x/Documents');
+  await turns();
+  assert.deepEqual(h.openStreams().map((s) => s.url), ['/api/scan/scan-2/progress'], 'control: a new scan is followed');
+  held[0]({ status: 500, body: { error: 'Internal server error', code: 'INTERNAL' } });
+  await turns();
+  assert.deepEqual(h.quietFailed, [], 'the stopped rescan\'s failure is not reported as "the refresh failed"');
+  assert.equal(h.state.scanning, true, 'and the new scan runs on');
+
+  const cloud: Array<(a: { status: number; body: unknown }) => void> = [];
+  const c = page({ route: (m, url, b) => (m === 'POST' && url === '/api/cloud/scan' ? new Promise((r) => { cloud.push(r); }) : server({ roots: [] })(m, url, b)) });
+  await boot(c);
+  void c.startCloudScan('gdrive', 'Google Drive');
+  await turns();
+  assert.equal(cloud.length, 1, 'control: the cloud listing is asked for');
+  await pressStop(c);
+  await startFrom(c, /^Desktop$/);
+  cloud[0]({ status: 500, body: { error: 'Google Drive did not answer.', code: 'INTERNAL' } });
+  await turns();
+  assert.deepEqual(c.openStreams().map((s) => s.url), ['/api/scan/scan-1/progress'], 'the disk scan begun since is still followed');
+  assert.equal(c.$('emptyState').style.display, 'none');
+  assert.deepEqual(c.toasts, []);
 });
 
 test('(vi) a failed scan offers "Scan … again" the same way; a folder the server refused is named with the reason, not offered', async () => {
