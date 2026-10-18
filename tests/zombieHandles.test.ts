@@ -666,6 +666,16 @@ test('an app\'s Info.plist is read for the executable it names, XML or binary, a
   }
 });
 
+/** Whether a pid is a process right now, as `ps -p` sees it: signal 0 reaches it. */
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** A child that quits on SIGTERM, standing for the program ps is told it is. */
 async function willingChild(): Promise<ChildProcess> {
   const child = spawn(process.execPath, ['-e', 'console.log("up");setInterval(()=>{},1000);'], { stdio: ['ignore', 'pipe', 'ignore'] });
@@ -691,6 +701,9 @@ async function restartAs(
   const ps = fakePs(new Map([[child.pid!, exe]]), new Map(), how.launch !== undefined ? new Map([[child.pid!, how.launch]]) : new Map());
   const run = async (cmd: string, args: string[]): Promise<string> => {
     if (cmd === 'open') { opened.push(args); return ''; }
+    // As the real ps: nothing about a program that has quit, so how it was started can be read only
+    // before it is asked to quit (review F1.5).
+    if (cmd === 'ps' && !isRunning(child.pid!)) return '';
     return ps.run(cmd, args);
   };
   const env: Env = {
@@ -1018,21 +1031,22 @@ test('the report calls an app the one a restart reopens only when it is no backg
   const CLAUDE = '/Users/me/Library/Application Support/Claude/claude-code/claude.app';
   const LAUNCHED = '/Applications/Launched.app';
   const UNREAD = '/Applications/Unread.app';
+  const UNSURE = '/Applications/Unsure.app'; // its Info.plist could not be read (review F1.9)
   const exe = (bundle: string) => `${bundle}/Contents/MacOS/${path.basename(bundle, '.app')}`;
   const exes = new Map<number, string>([
-    [5001, exe(PLAIN)], [5002, exe(AGENT)], [5003, exe(MENU)], [5004, exe(CLAUDE)], [5005, exe(LAUNCHED)], [5006, exe(UNREAD)], [5007, RENDERER],
+    [5001, exe(PLAIN)], [5002, exe(AGENT)], [5003, exe(MENU)], [5004, exe(CLAUDE)], [5005, exe(LAUNCHED)], [5006, exe(UNREAD)], [5007, RENDERER], [5008, exe(UNSURE)],
   ]);
   const launches = new Map<number, Launch | null>([
     [5004, { ppid: 4242, args: `${exe(CLAUDE)} --output-format stream-json` }], // started by another program, with arguments
     [5005, { ppid: 1, args: `${exe(LAUNCHED)} --daemon` }], // started by launchd, with arguments
     [5006, null], // how it was started could not be read
   ]);
-  const background: Record<string, boolean | null> = { [AGENT]: true, [MENU]: true };
+  const background: Record<string, boolean | null> = { [AGENT]: true, [MENU]: true, [UNSURE]: null };
   const ps = fakePs(exes, new Map(), launches);
   const deps: ReportDeps = {
     handles: heldBy([...exes.keys()]), run: ps.run, os: 'darwin', uid: OUR_UID,
     bundleExecutable: async (bundle) => path.basename(bundle, '.app'),
-    bundleBackground: async (bundle) => background[bundle] ?? false,
+    bundleBackground: async (bundle) => (bundle in background ? background[bundle] : false),
   };
   const report = await zombieReport(deps);
   const role = (pid: number): Reopen => {
@@ -1046,6 +1060,7 @@ test('the report calls an app the one a restart reopens only when it is no backg
     [5004, 'one another program started', /Another program started it/],
     [5005, 'one launchd started with arguments', /started with options of its own/],
     [5006, 'one whose start could not be read', /How it was started could not be read/],
+    [5008, 'one whose Info.plist could not be read', /Whether it is a background app could not be read/],
   ] as const) {
     const r = role(pid);
     assert.equal(r.appBundle, null, `${why}: never called the app a restart reopens`);
@@ -1055,7 +1070,7 @@ test('the report calls an app the one a restart reopens only when it is no backg
   }
   assert.deepEqual(role(5007), { appBundle: null, partOf: CHROME, notReopened: null }, 'control: a helper keeps its own wording, the app it runs inside');
   const launch = ps.calls.filter((c) => c.args.includes('pid=,ppid=,args='));
-  assert.deepEqual(launch.map(pidsAskedIn), [[5001, 5003, 5004, 5005, 5006, 5002].sort((a, b) => a - b)],
+  assert.deepEqual(launch.map(pidsAskedIn), [[5001, 5003, 5004, 5005, 5006, 5002, 5008].sort((a, b) => a - b)],
     'one more ps, about the apps\' own programs alone — never a helper\'s');
 });
 
@@ -1066,6 +1081,7 @@ test('a restart of an app TreeMap does not reopen quits it and opens nothing, sa
     ['a background app', app('Agent'), { background: true }, /background app/],
     ['an app another program started', app('Child'), { launch: { ppid: 4242, args: `${exeOf(app('Child'))} --child` } }, /Another program started it/],
     ['an app launchd started with arguments', app('Daemon'), { launch: { ppid: 1, args: `${exeOf(app('Daemon'))} --daemon` } }, /started with options of its own/],
+    ['an app whose Info.plist could not be read', app('Unsure'), { background: null }, /Whether it is a background app could not be read/],
   ] as const) {
     const { result, opened } = await restartAs(exeOf(bundle), { [bundle]: path.basename(bundle, '.app') }, how);
     assert.equal(result.terminated, true, `control: ${what} quit`);
