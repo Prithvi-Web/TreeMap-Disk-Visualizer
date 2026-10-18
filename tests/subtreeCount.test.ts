@@ -80,7 +80,11 @@ test('an empty folder is 0 files — and a file is 1, never 0', () => {
 test('a deep chain does not overflow the stack', () => {
   // Recursion is the obvious implementation and it dies on real input: a
   // node_modules chain or a Time Machine backup nests far deeper than this.
-  const store = new ObjectScanStore('/root', '/', dirIn('root'));
+  // Built on the packed store, as a scan is (CI4): the reference store keeps
+  // every node's whole path, about 1.2 GB down a 20,000-deep chain — over
+  // half the 2 GB heap GitHub's macOS runner gives Node, and nothing to do
+  // with the count, which reads only isDir and forEachChild.
+  const store = new PackedScanStore('/root', '/', dirIn('root'));
   let cursor = store.rootId;
   const DEPTH = 20_000;
   for (let i = 0; i < DEPTH; i++) cursor = store.addNode(cursor, dirIn(`d${String(i)}`));
