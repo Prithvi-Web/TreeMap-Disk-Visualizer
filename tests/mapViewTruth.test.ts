@@ -236,9 +236,34 @@ test('B37: a .dmg on screen previews like a plain file — the server cannot lis
     'a disc image the server can list still opens through the container route');
 });
 
+/** The page's showTooltip over stubs, with the cart preview `previewOn`; answers the tooltip and a function that shows a node. */
+function tooltipWorld(previewOn = false) {
+  const tip = { innerHTML: '', style: {} as Record<string, string>, dataset: {} as Record<string, string>, offsetWidth: 0, offsetHeight: 0 };
+  const show = load<(x: number, y: number, node: unknown) => void>(['showTooltip', 'containerListable', 'sizeInk'], {
+    $: () => tip, icon: () => '', escapeHtml: (s: unknown) => String(s), formatBytes: (n: number) => `${n} B`, sizeColor: () => '#fff',
+    formatDate: () => 'then', state: { view: 'treemap', grid: {}, treemap: {} }, kindFor: () => ({ tint: '#000', icon: 'file' }),
+    resolveAllocation() {}, resolveScore() {}, resolveHumanScale() {},
+    allocationTooltipLine: () => '', reclaimTooltipLine: () => '', humanScaleTooltipLine: () => '', noteTooltipLine: () => '',
+    window: { innerWidth: 1000, innerHeight: 800 }, tmPreview: { on: previewOn },
+  }, 'showTooltip');
+  return { tip, show };
+}
+
+test('the tooltip does not invite a click "to look inside" an archive while the cart preview is up — a click does nothing then — and says when it can be (BQG-5 item 15)', () => {
+  const zip = { name: 'a.zip', path: '/r/a.zip', type: 'file', size: 5, modifiedAt: 0, container: 'zip' };
+  const during = tooltipWorld(true);
+  during.show(1, 1, zip);
+  assert.doesNotMatch(during.tip.innerHTML, /click to look inside/, 'no click to promise during the preview');
+  assert.match(during.tip.innerHTML, / · you can look inside it after the preview/, 'it says when it can be looked inside, as the key does');
+  const after = tooltipWorld(false);
+  after.show(1, 1, zip);
+  assert.match(after.tip.innerHTML, / · click to look inside/, 'control: outside the preview the click is offered');
+});
+
 test('B37: the tooltip never invites a click "to look inside" a .dmg', () => {
   const tip = { innerHTML: '', style: {} as Record<string, string>, dataset: {} as Record<string, string>, offsetWidth: 0, offsetHeight: 0 };
   const show = load<(x: number, y: number, node: unknown) => void>(['showTooltip', 'containerListable', 'sizeInk'], { // sizeInk: the size line's readable ink (B21), over the sizeColor below
+    tmPreview: { on: false },
     $: () => tip,
     icon: () => '',
     escapeHtml: (s: unknown) => String(s),
