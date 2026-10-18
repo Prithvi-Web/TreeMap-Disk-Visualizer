@@ -36919,16 +36919,42 @@ async function loadEmptyFolders() {
   }
 }
 $('emptyIgnoreJunk').addEventListener('change', () => { emptyFolders = []; loadEmptyFolders(); });
-/* Delegated once: this list is the app's longest (structural empties run to
-   the thousands), so per-row listeners made every rebuild a stutter. */
-$('emptyResults').addEventListener('change', (e) => {
-  if (e.target.id === 'emptyAll') {
-    $('emptyResults').querySelectorAll('.empty-ck').forEach(ck => { ck.checked = e.target.checked; });
-    updateCleanSummary();
-    return;
-  }
-  if (e.target.classList.contains('empty-ck')) updateCleanSummary();
-});
+
+/**
+ * A "Select all" box that follows its rows (sixth browser pass H09): ticked
+ * when every row is, clear when none is, and indeterminate between — as the
+ * browser profiles' boxes always did. Custom Rules and Empty Folders left it
+ * ticked after a row was unticked. An empty list ticks nothing.
+ */
+function syncSelectAll(all, boxes) {
+  if (!all) return;
+  const ticked = boxes.filter(b => b.checked).length;
+  all.checked = boxes.length > 0 && ticked === boxes.length;
+  all.indeterminate = ticked > 0 && ticked < boxes.length;
+}
+
+/**
+ * A list's "Select all" box (`allId`) and its rows (`rowClass`), wired once on
+ * the list's host, which outlives every rebuild of the list: the box ticks or
+ * clears every row, a row's change sets the box to follow its rows, and each
+ * refreshes the summary (`onChange`). Delegated — one listener however many
+ * rows: Empty Folders is the app's longest list (structural empties run to
+ * the thousands), and per-row listeners made every rebuild a stutter.
+ */
+function wireSelectAll(host, allId, rowClass, onChange) {
+  host.addEventListener('change', (e) => {
+    if (e.target.id === allId) {
+      host.querySelectorAll(`.${rowClass}`).forEach(ck => { ck.checked = e.target.checked; });
+      e.target.indeterminate = false;
+      onChange();
+      return;
+    }
+    if (!e.target.classList.contains(rowClass)) return;
+    syncSelectAll($(allId), [...host.querySelectorAll(`.${rowClass}`)]);
+    onChange();
+  });
+}
+wireSelectAll($('emptyResults'), 'emptyAll', 'empty-ck', updateCleanSummary);
 
 /* ── Smart Suggestions pane ── */
 /* Feature 13 — git repositories section + git gc. */
@@ -37177,7 +37203,7 @@ async function renderBrowserProfiles() {
     const p = ck.dataset.p;
     const all = host.querySelector(`.bp-all[data-p="${p}"]`);
     const cks = [...host.querySelectorAll(`.bp-ck[data-p="${p}"]`)];
-    if (all) { all.checked = cks.every(c => c.checked); all.indeterminate = !all.checked && cks.some(c => c.checked); }
+    syncSelectAll(all, cks);
     updateCleanSummary();
   }));
   refreshCartButtons();
@@ -37669,11 +37695,7 @@ async function runCleanFind(fetcher) {
         ${cartButtonHtml(f.path, f.name)}
       </div>`).join('') + '</div>';
   refreshCartButtons(); // v4 §4.2
-  $('cleanAll').addEventListener('change', (e) => {
-    host.querySelectorAll('.clean-ck').forEach(ck => { ck.checked = e.target.checked; });
-    updateCleanSummary();
-  });
-  host.querySelectorAll('.clean-ck').forEach(ck => ck.addEventListener('change', updateCleanSummary));
+  // "Select all" and the rows are wired once, on #cleanResults (wireSelectAll, H09).
   updateCleanSummary();
   // Then what the matched files take on the disk (F09), and the summary again
   // from it: until it lands the footer says the claimed size, "up to". Never
@@ -37686,6 +37708,10 @@ async function runCleanFind(fetcher) {
   cleanOnDisk = onDisk;
   updateCleanSummary();
 }
+
+/* The Custom Rules list's "Select all" and rows, wired once on its host: every
+   Find rebuilds the rows inside it (sixth browser pass H09). */
+wireSelectAll($('cleanResults'), 'cleanAll', 'clean-ck', updateCleanSummary);
 
 /** How many paths one onDisk question carries: the fact route's own limit. */
 const CLEAN_ON_DISK_CHUNK = 2000;

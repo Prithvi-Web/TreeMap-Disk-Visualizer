@@ -1641,3 +1641,73 @@ test('the fold\'s summary is a stop the sheet\'s Tab trap lists, so a keyboard r
   // …and its filter keeps it: a stop has tabIndex >= 0.
   assert.ok(Number(attrs.get('tabindex')) >= 0, `the summary is a Tab stop, not taken out of the order: ${tag}`);
 });
+
+/* ═══════ "Select all" follows its rows, in every list of the sheet (sixth browser pass H09) ═══════ */
+
+/** A checkbox, as the lists' rows and "Select all" boxes are. */
+type Box = { id?: string; className: string; checked: boolean; indeterminate: boolean; classList: { contains(c: string): boolean } };
+const box = (className: string, checked: boolean, id?: string): Box => ({
+  id, className, checked, indeterminate: false, classList: { contains: (c: string) => className.split(' ').includes(c) },
+});
+
+/** A list host as the page wires it: delegated change listeners, its rows and its "Select all" box. */
+function selectAllList(allId: string, rowClass: string, ticks: boolean[]) {
+  const all = box('', true, allId);
+  const rows = ticks.map((t) => box(rowClass, t));
+  const listeners: Array<(e: { target: Box }) => void> = [];
+  const host = {
+    addEventListener: (type: string, fn: (e: { target: Box }) => void) => { assert.equal(type, 'change'); listeners.push(fn); },
+    querySelectorAll: (q: string) => (q === `.${rowClass}` ? rows : []),
+  };
+  let summaries = 0;
+  const fns = new Function('$', `${['syncSelectAll', 'wireSelectAll'].map((n) => {
+    const at = INDEX.indexOf(`function ${n}(`);
+    assert.notEqual(at, -1, `${n} is in the built page`);
+    const open = INDEX.indexOf('{', at);
+    let depth = 0;
+    for (let i = open; i < INDEX.length; i++) {
+      if (INDEX[i] === '{') depth++;
+      else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(at, i + 1);
+    }
+    return assert.fail(`${n} never closes`);
+  }).join('\n')}\nreturn { syncSelectAll, wireSelectAll };`)((id: string) => (id === allId ? all : null)) as {
+    syncSelectAll(all: Box, rows: Box[]): void; wireSelectAll(host: unknown, allId: string, rowClass: string, onChange: () => void): void;
+  };
+  fns.wireSelectAll(host, allId, rowClass, () => { summaries++; });
+  const change = (target: Box) => { for (const fn of listeners) fn({ target }); };
+  return { all, rows, change, summaries: () => summaries, listeners: () => listeners.length, sync: fns.syncSelectAll };
+}
+
+test('a list\'s "Select all" box is ticked, clear or indeterminate exactly as its rows are, as the browser profiles\' boxes are (H09)', () => {
+  for (const [allId, rowClass] of [['cleanAll', 'clean-ck'], ['emptyAll', 'empty-ck']] as const) {
+    const l = selectAllList(allId, rowClass, [true, true, true]);
+    assert.equal(l.listeners(), 1, `${allId}: one delegated listener, however many rows`);
+    l.rows[1].checked = false; l.change(l.rows[1]);
+    assert.deepEqual([l.all.checked, l.all.indeterminate], [false, true], `${allId}: one row unticked — the box is indeterminate, not still ticked`);
+    for (const r of l.rows) r.checked = false;
+    l.change(l.rows[0]);
+    assert.deepEqual([l.all.checked, l.all.indeterminate], [false, false], `${allId}: no row ticked — the box is clear`);
+    for (const r of l.rows) r.checked = true;
+    l.change(l.rows[2]);
+    assert.deepEqual([l.all.checked, l.all.indeterminate], [true, false], `${allId}: every row ticked — the box is ticked`);
+    l.rows[0].checked = false; l.change(l.rows[0]);
+    l.all.checked = true; l.change(l.all); // pressing "Select all" from indeterminate
+    assert.deepEqual(l.rows.map((r) => r.checked), [true, true, true], `${allId}: "Select all" ticks every row`);
+    assert.equal(l.all.indeterminate, false, `${allId}: and is no longer indeterminate`);
+    l.all.checked = false; l.change(l.all);
+    assert.deepEqual(l.rows.map((r) => r.checked), [false, false, false], `${allId}: and clears every row`);
+    assert.equal(l.summaries(), 6, `${allId}: every change, row or box, refreshes the summary`);
+  }
+});
+
+test('both lists and the browser profiles share the one helper, and the Custom Rules list is wired once, not again on every Find (H09)', () => {
+  assert.match(INDEX, /wireSelectAll\(\$\('cleanResults'\), 'cleanAll', 'clean-ck', updateCleanSummary\);/, 'Custom Rules');
+  assert.match(INDEX, /wireSelectAll\(\$\('emptyResults'\), 'emptyAll', 'empty-ck', updateCleanSummary\);/, 'Empty Folders');
+  const find = INDEX.slice(INDEX.indexOf('async function runCleanFind('), INDEX.indexOf('/** How many paths one onDisk question carries'));
+  assert.doesNotMatch(find, /addEventListener\('change'/, 'runCleanFind adds no listeners of its own: a delegated one on the host would pile up on every Find');
+  assert.match(INDEX, /syncSelectAll\(all, cks\)/, 'the browser profiles\' boxes follow their rows through the same helper');
+  // The helper itself, on an empty list: nothing to tick is not "all ticked".
+  const l = selectAllList('cleanAll', 'clean-ck', []);
+  l.sync(l.all, []);
+  assert.deepEqual([l.all.checked, l.all.indeterminate], [false, false], 'an empty list ticks nothing');
+});
