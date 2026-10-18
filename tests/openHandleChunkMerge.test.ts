@@ -120,7 +120,7 @@ function harness(reply: (paths: string[], index: number) => Reply | Promise<Repl
 
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const factory = new Function(
-    'api', '$', 'icon', 'escapeHtml', 'formatCount', 'setConfirmButton', 'TRASH_CHUNK',
+    'api', '$', 'icon', 'escapeHtml', 'formatCount', 'setConfirmButton', 'TRASH_CHUNK', 'nodeFor',
     `'use strict';
      ${guardSource()}
      return {
@@ -145,6 +145,7 @@ function harness(reply: (paths: string[], index: number) => Reply | Promise<Repl
     pageFormatCount,
     (label: string) => { buttons.push(label); },
     CHUNK,
+    () => null, // the page's nodeFor: nothing here is in a scan's tree (H07)
   );
   built.onReport((r) => { reports.push(r); });
 
@@ -200,7 +201,7 @@ test('conflicts found before the checker gave out survive into the report', asyn
     `the panel names how much of the set the answer covers, said: ${said}`);
   assert.match(said, /lsof is not installed\./,
     'and why the rest could not be reached, in the machine’s own words');
-  assert.ok(h.buttons.includes('Delete anyway'),
+  assert.ok(h.buttons.includes('Move to Trash anyway'),
     'the button admits what it does, because something really is in use');
 });
 

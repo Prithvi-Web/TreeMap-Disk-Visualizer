@@ -118,7 +118,7 @@ async function checkOpenHandlesFor(paths) {
   // believing the panel is its own. #confirmOpenHandles is one element shared
   // by every confirm dialog, and this is worse than a stray repaint:
   // `renderOpenHandleWarning` also arms `confirmIgnoreOpenHandles` and relabels
-  // the button "Delete anyway", so a loser can hand a NEWER dialog an override
+  // the button "Move to Trash anyway", so a loser can hand a NEWER dialog an override
   // for a warning its user never saw, and that dialog's next confirm sends
   // `ignoreOpenHandles: true` for an unrelated selection.
   if (seq !== openHandleSeq) return; // a newer dialog owns the panel now
@@ -139,7 +139,7 @@ async function checkOpenHandlesFor(paths) {
     // reached nothing reports itself as unchecked; once some chunk has answered,
     // what it found stays, and the part nobody could look at is admitted below
     // as the reason the answer is partial.
-    if (!checkedCount) { renderOpenHandleWarning(unavailable, paths.length); return; }
+    if (!checkedCount) { renderOpenHandleWarning(unavailable, paths.length, nodeFor); return; }
     complete = false;
     if (unavailable.reason && unavailable.reason !== serverReason) {
       serverReason = serverReason ? `${serverReason} ${unavailable.reason}` : unavailable.reason;
@@ -162,10 +162,17 @@ async function checkOpenHandlesFor(paths) {
     checked: true,
     complete,
     ...(reasons.length ? { reason: reasons.join(' ') } : {}),
-  }, paths.length);
+  }, paths.length, nodeFor);
 }
 
-function renderOpenHandleWarning(report, pathCount) {
+/**
+ * Paint the open-file panel for one sheet. `nodeOf` is the page's own lookup
+ * (nodeFor): what the scan knows of a path, so the panel can say what is
+ * really open — a folder, a file, or an item the scan does not know — and
+ * mention space only where an open file may hold some (sixth browser pass
+ * H07).
+ */
+function renderOpenHandleWarning(report, pathCount, nodeOf = () => null) {
   const host = $('confirmOpenHandles');
   const conflicts = report.conflicts || [];
   // "The probe could not cover the whole set" is true whether or not it found
@@ -216,34 +223,45 @@ function renderOpenHandleWarning(report, pathCount) {
 
   // What is actually in use decides the wording. Telling someone "this file is
   // in use" when they selected a folder — the commonest case, since the open
-  // file is usually buried inside it — describes something they didn't do.
+  // file is usually buried inside it — describes something they didn't do;
+  // and a folder held open itself (a program's working folder) is a folder
+  // (H07). What the scan does not know is called an item.
+  const kindOf = (p) => { const node = nodeOf(p); return node ? (node.type === 'dir' ? 'folder' : 'file') : 'item'; };
   const insideAFolder = conflicts.some(c => c.openPath && c.openPath !== c.path);
-  const openFileCount = new Set(conflicts.map(c => c.openPath || c.path)).size;
+  const openPaths = [...new Set(conflicts.map(c => c.openPath || c.path))];
+  const n = openPaths.length;
+  const allFiles = openPaths.every(p => kindOf(p) === 'file');
   const subject = pathCount > 1
     ? 'Some of these items are in use right now.'
     : insideAFolder
-      ? `${openFileCount === 1 ? 'A file' : `${openFileCount} files`} inside this folder ${openFileCount === 1 ? 'is' : 'are'} in use right now.`
-      : 'This file is in use right now.';
-  // The consequence follows what is *open*, not what was selected: it is the
-  // open file that keeps holding the space, and one open file inside a folder
-  // still reads as "it".
-  const consequence = openFileCount === 1
-    ? `Deleting it may not free the space until ${byProcess.size === 1 ? 'that program closes' : 'those programs close'} it.`
-    : `Deleting them may not free the space until ${byProcess.size === 1 ? 'that program closes' : 'those programs close'} them.`;
+      ? `${n === 1 ? (allFiles ? 'A file' : 'Something') : `${n} ${allFiles ? 'files' : 'items'}`} inside this folder ${n === 1 ? 'is' : 'are'} in use right now.`
+      : `This ${kindOf(conflicts[0].path)} is in use right now.`;
+  // The consequence follows what is *open*, not what was selected: an open
+  // FILE keeps its blocks until it is closed, so its space may not come back
+  // even once the Trash is emptied. A folder held open holds no space of its
+  // own, and a file of 0 bytes holds none: neither is promised space there is
+  // not (H07). An item the scan does not know may hold some.
+  const holding = openPaths.filter(p => { const node = nodeOf(p); return !node || (node.type !== 'dir' && node.size > 0); });
+  const closes = byProcess.size === 1 ? 'that program closes' : 'those programs close';
+  const consequence = !holding.length ? ''
+    : holding.length > 1 ? ` Their space may not come back, even once you empty the Trash, until ${closes} them.`
+    : n === 1 ? ` Its space may not come back, even once you empty the Trash, until ${closes} it.`
+    : ` One of them may keep its space, even once you empty the Trash, until ${closes} it.`;
 
   host.className = '';
   host.hidden = false;
   host.innerHTML =
-    `<div class="oh-head">${icon('alert', 15)}<div><b>${subject}</b> ${consequence}</div></div>` +
+    `<div class="oh-head">${icon('alert', 15)}<div><b>${subject}</b>${consequence}</div></div>` +
     `<ul>${rows}${hiddenCount > 0 ? `<li class="oh-file">and ${hiddenCount} other program${hiddenCount === 1 ? '' : 's'}</li>` : ''}</ul>` +
     // A truncated probe that found something is still truncated, and this is
     // the case it matters most in — the list below may be part of a longer one.
     (partial ? `<div class="oh-file" style="margin-top:6px;">${escapeHtml(partial)}</div>` : '');
 
-  // The button now says what it actually does. The user has read the warning;
-  // taking the choice away would just send them to Finder to do it unguarded.
+  // The button now says what it actually does — a move to the Trash, never
+  // "Delete" (H07). The user has read the warning; taking the choice away
+  // would just send them to Finder to do it unguarded.
   confirmIgnoreOpenHandles = true;
-  setConfirmButton('Delete anyway');
+  setConfirmButton('Move to Trash anyway');
 }
 
 /** Last path segment, for naming a file without the full path. */
@@ -272,7 +290,7 @@ function setConfirmButton(label, iconName = 'trash') {
  *
  * It also abandons the open-file check still out for the dialog that closed,
  * and takes down that dialog's open-file panel and the override it armed.
- * Answering after a Cancel, that check relabelled OK "Delete anyway" and armed
+ * Answering after a Cancel, that check relabelled OK "Move to Trash anyway" and armed
  * the override for whichever dialog opened next; and a warning already up
  * when the dialog was cancelled stayed on the sheet for the next one — Empty
  * the Trash showed "This file is in use" about files it never named, with
@@ -299,7 +317,7 @@ $('confirmOk').addEventListener('click', async () => {
   confirmIgnoreOpenHandles = false;
   openHandleSeq++; // any in-flight check belongs to a dialog that is now closed
   // The choice the user just made reaches the callback too. Without this a
-  // callback-based confirm silently drops "Delete anyway", and the server
+  // callback-based confirm silently drops "Move to Trash anyway", and the server
   // refuses the same batch for the same reason for ever.
   if (cb) { await cb({ ignoreOpenHandles }); return; }
   await trashPaths(confirmPaths, { ignoreOpenHandles });
@@ -401,7 +419,7 @@ async function reofferBlockedTrash(paths, err) {
     : `<b>${paths.length} items</b> weren’t moved to the Trash.`;
   $('confirmModal').classList.add('open');
   openHandleSeq++; // this panel is painted directly, not by the async check
-  renderOpenHandleWarning({ conflicts: err.conflicts || [], checked: true }, paths.length);
+  renderOpenHandleWarning({ conflicts: err.conflicts || [], checked: true }, paths.length, nodeFor);
 }
 /* `opts` goes to startScan. A rescan a person asks for — ⌘R, Rescan, a delete
    they just confirmed — passes none and is sent as theirs. The end of a job

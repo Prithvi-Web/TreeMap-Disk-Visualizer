@@ -266,7 +266,7 @@ function renderDock() {
 
 async function dockDrop(volPath) {
   // The shared confirm is repainted from a clean slate — a stale open-handle
-  // warning panel (and its "Delete anyway" button) must never bleed into the
+  // warning panel (and its "Move to Trash anyway" button) must never bleed into the
   // offload dialog (review RD3).
   resetOpenHandleWarning();
   if (activeJob) { toast('An offload is already running — let it finish first', 'error'); return; }

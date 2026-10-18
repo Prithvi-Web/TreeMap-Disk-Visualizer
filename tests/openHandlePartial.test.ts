@@ -107,7 +107,7 @@ function harness(reply: (paths: string[], index: number) => Reply | Promise<Repl
 
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const factory = new Function(
-    'api', '$', 'icon', 'escapeHtml', 'formatCount', 'setConfirmButton', 'TRASH_CHUNK',
+    'api', '$', 'icon', 'escapeHtml', 'formatCount', 'setConfirmButton', 'TRASH_CHUNK', 'nodeFor',
     `'use strict';
      ${guardSource()}
      return { checkOpenHandlesFor, resetOpenHandleWarning };`,
@@ -121,6 +121,7 @@ function harness(reply: (paths: string[], index: number) => Reply | Promise<Repl
     pageFormatCount,
     (label: string) => { buttons.push(label); },
     CHUNK,
+    () => null, // the page's nodeFor: nothing here is in a scan's tree (H07)
   );
 
   return {
@@ -173,7 +174,7 @@ test('a file in use past the first request still reaches the dialog', async () =
 
   assert.equal(h.panel.hidden, false, 'a set with an open file in it never renders as clear');
   assert.match(h.text(), /Blender/, 'the program holding the file is named');
-  assert.ok(h.buttons.includes('Delete anyway'),
+  assert.ok(h.buttons.includes('Move to Trash anyway'),
     'the button admits what it does once the warning is on screen');
 });
 
@@ -205,7 +206,7 @@ test('a selection past the preflight budget is bounded, and says how far it got'
   assert.ok(said.includes(pageFormatCount(seen)) && said.includes(pageFormatCount(set.length)),
     `the panel names both counts, said: ${said}`);
   assert.deepEqual(h.buttons, [],
-    'nothing was found, so the button is not escalated to "Delete anyway"');
+    'nothing was found, so the button is not escalated to "Move to Trash anyway"');
 });
 
 /* ═════════════════ what must not change ═════════════════ */

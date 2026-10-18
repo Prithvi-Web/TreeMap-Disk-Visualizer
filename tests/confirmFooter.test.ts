@@ -228,13 +228,13 @@ function okBody(): string {
 /** Let a resolved request's continuations run: event-loop turns, not a clock. */
 const turns = async (n = 3) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
 
-test('an open-file answer that arrives after Cancel neither relabels the dialog nor arms "Delete anyway"', async () => {
+test('an open-file answer that arrives after Cancel neither relabels the dialog nor arms its "… anyway" override', async () => {
   const h = lateAnswerHarness();
   await h.page.confirmTrash(['/r/a']);
   h.page.closeModal('confirmModal'); // Cancel, while the check is still out
   h.answer({ checked: true, complete: true, conflicts: [{ path: '/r/a', pid: 7, processName: 'Editor' }] });
   await turns();
-  assert.doesNotMatch(h.$('confirmOk').innerHTML, /Delete anyway/, 'the next dialog to open would show this label');
+  assert.doesNotMatch(h.$('confirmOk').innerHTML, /anyway/, 'the next dialog to open would show this label');
   assert.equal(h.page.override(), false, 'and no override is armed for it');
 });
 
@@ -243,12 +243,12 @@ test('an answer that arrives while the dialog is open still warns', async () => 
   await h.page.confirmTrash(['/r/a']);
   h.answer({ checked: true, complete: true, conflicts: [{ path: '/r/a', pid: 7, processName: 'Editor' }] });
   await turns();
-  assert.match(h.$('confirmOk').innerHTML, /Delete anyway/, 'the warning the user is looking at');
+  assert.match(h.$('confirmOk').innerHTML, /Move to Trash anyway/, 'the warning the user is looking at');
   assert.equal(h.page.override(), true);
   // Pressing it: the dialog closes first (which abandons checks), and the
   // choice the user made in it still reaches the delete.
   await h.page.ok();
-  assert.deepEqual(h.trashed, [{ paths: ['/r/a'], opts: { ignoreOpenHandles: true } }], '"Delete anyway" is what was sent');
+  assert.deepEqual(h.trashed, [{ paths: ['/r/a'], opts: { ignoreOpenHandles: true } }], '"Move to Trash anyway" is what was sent');
 });
 
 /* ═══════ each sheet's OK says what that sheet does (review F3.2 of QA third pass) ═══════ */
@@ -464,4 +464,83 @@ test('a trash sheet cancelled with its "in use" warning up leaves no warning and
     assert.doesNotMatch(w.$('confirmOk').innerHTML, /anyway/, `${what}: its OK is not an "… anyway"`);
     w.page.closeModal('confirmModal');
   }
+});
+
+/* ═══════ the in-use warning says what is really open, and what OK really does (sixth browser pass H07) ═══════ */
+
+type NodeFact = { type: 'dir' | 'file'; size: number; name?: string };
+
+/**
+ * The trash sheet for `paths`, its open-file answer `conflicts`, over a tree that knows `nodes`
+ * (path → node; a path not in it is not in the scan). Answers the panel's words, tags removed, and
+ * the OK button's label.
+ */
+async function inUseWarning(paths: string[], conflicts: Array<{ path: string; openPath?: string; processName: string; pid?: number }>, nodes: Record<string, NodeFact>): Promise<{ text: string; ok: string }> {
+  const els: Record<string, any> = {};
+  const $ = (id: string) => (els[id] ||= (() => {
+    const classes = new Set<string>();
+    return { innerHTML: '', textContent: '', className: '', hidden: false, disabled: false, style: {}, classes,
+      classList: { add: (c: string) => { classes.add(c); }, remove: (c: string) => { classes.delete(c); } } };
+  })());
+  let answer: (v: unknown) => void = () => {};
+  const deps: Record<string, unknown> = {
+    $,
+    api: (url: string) => (url === '/api/files/installed-programs' ? Promise.resolve({ parts: [] }) : new Promise((resolve) => { answer = resolve; })),
+    ensureNodes: async () => {},
+    nodeFor: (p: string) => (nodes[p] ? { name: p.split('/').pop(), ...nodes[p] } : null),
+    icon: () => '', escapeHtml: (s: string) => s, formatBytes: (n: number) => `${n}B`, formatCount: (n: number) => String(n),
+    cloudProviderOfScan: () => ({ name: 'Drive', trashLabel: 'its trash' }), cloudTrashPaths: async () => {},
+  };
+  const keys = Object.keys(deps);
+  const src = `
+    let openHandleSeq = 0, confirmIgnoreOpenHandles = false, confirmPaths = [], onConfirmTrash = null;
+    ${constOf('TRASH_CHUNK')}
+    ${constOf('OPEN_HANDLE_PREFLIGHT_CHUNKS')}
+    ${constOf('INSTALLED_PROGRAM_CHUNK')}
+    ${['setConfirmButton', 'baseName', 'renderOpenHandleWarning', 'checkOpenHandlesFor', 'resetOpenHandleWarning', 'tmParentPath',
+      'outermostPaths', 'installedProgramParts', 'installedProgramWords', 'installedProgramRemoval', 'installedProgramWarningHtml', 'confirmTrash'].map(declOf).join('\n')}
+    return { confirmTrash };`;
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const page = new Function(...keys, src)(...keys.map((k) => deps[k]));
+  await page.confirmTrash(paths);
+  answer({ checked: true, complete: true, conflicts: conflicts.map((c) => ({ pid: 7, ...c })) });
+  await turns();
+  return { text: String($('confirmOpenHandles').innerHTML).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(), ok: String($('confirmOk').innerHTML) };
+}
+
+test('a folder held open is "This folder is in use", with no promise of space it does not hold, and OK says it moves it to the Trash (H07)', async () => {
+  // QA: an empty folder held open by Python — "This file is in use right now. Deleting it may not free the space…", OK "Delete anyway".
+  const w = await inUseWarning(['/r/Empty'], [{ path: '/r/Empty', openPath: '/r/Empty', processName: 'Python' }], { '/r/Empty': { type: 'dir', size: 0 } });
+  assert.match(w.text, /^This folder is in use right now\./, 'a folder is called a folder');
+  assert.doesNotMatch(w.text, /This file/, 'never "This file" for a folder');
+  assert.doesNotMatch(w.text, /space/, 'a folder held open holds no space of its own: nothing is said about freeing it');
+  assert.match(w.text, /Python/, 'control: the program is named');
+  assert.equal(w.ok, 'Move to Trash anyway', 'OK names the action actually taken');
+  assert.doesNotMatch(w.ok, /Delete/, 'never "Delete anyway" for a move to the Trash');
+});
+
+test('what is open inside a folder is named for what it is: a file, or something TreeMap cannot call a file; and space is mentioned only where an open file may hold some (H07)', async () => {
+  const file = await inUseWarning(['/r/logs'], [{ path: '/r/logs', openPath: '/r/logs/x.log', processName: 'node' }],
+    { '/r/logs': { type: 'dir', size: 5000 }, '/r/logs/x.log': { type: 'file', size: 4000 } });
+  assert.match(file.text, /^A file inside this folder is in use right now\./);
+  assert.match(file.text, /Its space may not come back, even once you empty the Trash, until that program closes it\./, 'an open file with bytes: its space may be held');
+  const sub = await inUseWarning(['/r/proj'], [{ path: '/r/proj', openPath: '/r/proj/sub', processName: 'zsh' }],
+    { '/r/proj': { type: 'dir', size: 9000 }, '/r/proj/sub': { type: 'dir', size: 0 } });
+  assert.match(sub.text, /^Something inside this folder is in use right now\./, 'a folder open inside it is not "a file"');
+  assert.doesNotMatch(sub.text, /space/, 'and holds no space of its own');
+  const two = await inUseWarning(['/r/logs'], [
+    { path: '/r/logs', openPath: '/r/logs/a.log', processName: 'node' }, { path: '/r/logs', openPath: '/r/logs/b.log', processName: 'node' },
+  ], { '/r/logs': { type: 'dir', size: 5000 }, '/r/logs/a.log': { type: 'file', size: 1 }, '/r/logs/b.log': { type: 'file', size: 1 } });
+  assert.match(two.text, /^2 files inside this folder are in use right now\. Their space may not come back, even once you empty the Trash, until that program closes them\./);
+});
+
+test('a file held open says "This file"; one of 0 bytes makes no promise about space, and one TreeMap has no size for may still hold some (H07)', async () => {
+  const empty = await inUseWarning(['/r/a.txt'], [{ path: '/r/a.txt', processName: 'Editor' }], { '/r/a.txt': { type: 'file', size: 0 } });
+  assert.match(empty.text, /^This file is in use right now\./);
+  assert.doesNotMatch(empty.text, /space/, '0 B: nothing to free');
+  const big = await inUseWarning(['/r/b.mov'], [{ path: '/r/b.mov', processName: 'QuickTime Player' }], { '/r/b.mov': { type: 'file', size: 9_000_000 } });
+  assert.match(big.text, /^This file is in use right now\. Its space may not come back, even once you empty the Trash, until that program closes it\./);
+  const unknown = await inUseWarning(['/r/c.bin'], [{ path: '/r/c.bin', processName: 'Tool' }], {});
+  assert.match(unknown.text, /^This item is in use right now\. Its space may not come back/, 'not in the tree: called an item, and it may hold space');
+  for (const w of [empty, big, unknown]) assert.equal(w.ok, 'Move to Trash anyway');
 });

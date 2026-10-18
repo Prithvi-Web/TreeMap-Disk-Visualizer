@@ -744,7 +744,7 @@ async function confirmTrash(paths) {
   onConfirmTrash = null;
   confirmPaths = paths;
   // Reset the B2 panel before anything can return early below — otherwise a
-  // previous dialog's warning, and its "Delete anyway" button, would still be
+  // previous dialog's warning, and its "Move to Trash anyway" button, would still be
   // sitting there for an unrelated set of files.
   resetOpenHandleWarning();
   // These sizes are what the user is told they're freeing, so they must be

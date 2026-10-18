@@ -1672,7 +1672,7 @@ test('the button says what it will actually do', () => {
   const code = appCode();
   const fn = code.slice(code.indexOf('function renderOpenHandleWarning'), code.indexOf('function baseName'));
   assert.match(fn, /confirmIgnoreOpenHandles = true/);
-  assert.match(fn, /setConfirmButton\('Delete anyway'\)/);
+  assert.match(fn, /setConfirmButton\('Move to Trash anyway'\)/, 'a move to the Trash past the warning, said as one (H07)');
 });
 
 test('the panel and button reset before every new confirmation', () => {

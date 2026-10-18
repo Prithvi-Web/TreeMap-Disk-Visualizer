@@ -1329,7 +1329,7 @@ function renderCleanFunnel(freed) {
  *
  * Runs only from the shared dialog's OK (see confirmCleanTrash), with the
  * selection that dialog was opened for and the user's answer to its open-file
- * warning: `options.ignoreOpenHandles` is "Delete anyway".
+ * warning: `options.ignoreOpenHandles` is "Move to Trash anyway".
  */
 async function runCleanTrash(selection, options) {
   const { paths, sizes, onDiskSizes, onlyEmptyFolders, ignoreJunk } = selection;
