@@ -709,6 +709,11 @@ function noteLastFolder(outcome, reason = '', offered = true) {
   const p = state.scanningPath;
   if (!p || p.startsWith('cloud://')) return;
   const prev = state.lastFolder && state.lastFolder.path === p ? state.lastFolder : null;
+  // A folder the server refused is offered nowhere on the start screen
+  // (startChoiceList), until a scan of it is taken: one that ran since — and
+  // was stopped, or failed some other way — is offered again (review F1.5).
+  const others = (state.refusedPaths || []).filter((x) => x !== p);
+  state.refusedPaths = offered ? others : [...others, p];
   state.lastFolder = { path: p, outcome, reason, offered, size: prev ? prev.size : null, at: prev ? prev.at : 0 };
 }
 

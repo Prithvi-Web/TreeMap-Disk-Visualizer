@@ -610,6 +610,10 @@ const state = {
   // Whether this person has scanned before — a scan the server holds, or a
   // folder in the history (restoreLastSession). The tour reads it.
   scannedBefore: false,
+  // The folders the server refused a scan of this page load (400, 403, 404),
+  // until a scan of one is taken: the start screen offers none of them, under
+  // any name (noteLastFolder, startChoiceList; review F1.5).
+  refusedPaths: [],
   pathIndex: new Map(),
   // Nodes resolved from the server for paths the pruned tree doesn't carry.
   // A path that isn't in the scan is cached as null — a real answer, not a miss.

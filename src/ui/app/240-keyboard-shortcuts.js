@@ -343,9 +343,15 @@ function startFolderName(p, drives) {
  * picker names it (browseWholeDrives). A folder is offered once, where it
  * comes first.
  */
-function startChoiceList(sys, last, drives) {
+function startChoiceList(sys, last, drives, refused = []) {
   const out = [];
-  const add = (c) => { if (c.path && !out.some((x) => x.path === c.path)) out.push(c); };
+  // A folder that answers an error is offered nowhere, under any name: every
+  // folder the server refused a scan of (`refused`), and the folder `last`
+  // names where it is not offered. "Documents" one row below "The scan of
+  // …/Documents failed: …" would only hear the same refusal (review F1.5).
+  const skip = new Set(refused);
+  if (last && last.path && !last.offered) skip.add(last.path);
+  const add = (c) => { if (c.path && !skip.has(c.path) && !out.some((x) => x.path === c.path)) out.push(c); };
   if (last && last.offered && last.path) {
     const sized = typeof last.size === 'number' && last.at > 0;
     add({ path: last.path, name: `Scan ${startFolderName(last.path, drives)} again`, icon: 'refresh', again: true,
@@ -389,7 +395,7 @@ function renderStartChoices() {
   const words = startLastLine(last);
   line.textContent = words;
   line.hidden = !words;
-  const list = startChoiceList(sys, last, drives);
+  const list = startChoiceList(sys, last, drives, state.refusedPaths);
   const retry = !!last && (last.outcome === 'stopped' || last.outcome === 'failed');
   const html = list.map((c, i) => `<button class="btn start-choice${c.again ? ` start-again${retry ? ' start-retry' : ''}` : ''}"` +
     `${c.again ? ' id="startAgainBtn"' : ''} data-start-ix="${i}" title="${escapeHtml(c.drive ? `${c.path} — the whole drive` : c.path)}">` +

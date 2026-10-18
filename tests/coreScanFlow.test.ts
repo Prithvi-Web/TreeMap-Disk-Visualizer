@@ -643,6 +643,57 @@ test('(vi) a failed scan offers "Scan … again" the same way; a folder the serv
   assert.equal(gone.dom.activeElement, gone.$('emptyBrowseBtn'), 'focus lands on the one primary, Choose a folder…');
 });
 
+/** The start screen's buttons that carry the path `p`: whichever name a choice gives it, its title names its path. */
+const offering = (h: ReturnType<typeof page>, p: string) => h.$('startChoices').children.filter((b) => b.title === p || b.title === `${p} — the whole drive`);
+
+test('(vi) a folder the server refused — 400, 403 or 404 — is named and offered nowhere, under any name, with focus on Choose a folder…; refusals add up, and a folder taken since is offered again (review F1.5, F1.8)', async () => {
+  // Review F1.5: a refused folder lost its "Scan … again", and came straight
+  // back one row below under its quick-choice name — "Documents" under "The
+  // scan of …/Documents failed: That folder is outside the folders TreeMap
+  // may scan." F1.8: only the 404 of FOLDER_REFUSED_STATUSES was tested.
+  for (const [status, code, error] of [
+    [400, 'PATH_BLOCKED', 'That path cannot be scanned.'],
+    [403, 'POLICY_ROOT_NOT_ALLOWED', 'That folder is outside the folders TreeMap may scan.'],
+    [404, 'PATH_NOT_FOUND', 'Path does not exist'],
+  ] as const) {
+    const h = page({ route: server({ roots: [], scanAnswer: () => ({ status, body: { error, code } }) }) });
+    await boot(h);
+    await startFrom(h, /^Documents$/);
+    assert.equal(h.$('startLast').textContent, `The scan of /Users/x/Documents failed: ${error.endsWith('.') ? error : `${error}.`}`, `${status}: named, with the reason`);
+    assert.deepEqual(offering(h, '/Users/x/Documents').map((b) => b.textContent), [], `${status}: offered nowhere — neither "Scan Documents again" nor Documents (${h.choices().join(' | ')})`);
+    assert.ok(h.choices().includes('Desktop'), `${status}: control: the other choices stay`);
+    assert.equal(h.dom.activeElement, h.$('emptyBrowseBtn'), `${status}: focus on the one primary, Choose a folder…`);
+  }
+  // The control: a server error says nothing about the folder, which is offered again.
+  const down = page({ route: server({ roots: [], scanAnswer: () => ({ status: 500, body: { error: 'Internal server error', code: 'INTERNAL' } }) }) });
+  await boot(down);
+  await startFrom(down, /^Documents$/);
+  assert.deepEqual(offering(down, '/Users/x/Documents').map((b) => b.textContent), ['Scan Documents again'], 'a 500 is offered again, once');
+
+  const refuse = { status: 403, body: { error: 'That folder is outside the folders TreeMap may scan.', code: 'POLICY_ROOT_NOT_ALLOWED' } };
+  const both = page({ route: server({ roots: [], scanAnswer: () => refuse }) });
+  await boot(both);
+  await startFrom(both, /^Documents$/);
+  await startFrom(both, /^Downloads$/);
+  assert.deepEqual(both.choices(), ['Desktop', 'Home folder', 'Macintosh HD Whole drive'], 'two folders refused: neither comes back');
+
+  const later = page({ route: server({ roots: [], scanAnswer: (n) => (n === 1 ? refuse : { status: 202, body: { scanId: `scan-${n}`, incremental: false } }) }) });
+  await boot(later);
+  await startFrom(later, /^Documents$/);
+  assert.deepEqual(offering(later, '/Users/x/Documents'), [], 'control: refused');
+  await later.startScan('/Users/x/Documents'); // as Choose a folder… scans it
+  await turns();
+  await pressStop(later);
+  assert.equal(later.choices()[0], 'Scan Documents again', 'a folder the server has taken since is offered again');
+});
+
+test('a last folder from the history that cannot be opened now is offered nowhere, not even under its quick-choice name (review F1.5)', async () => {
+  const h = page({ route: server({ roots: [{ rootPath: '/Users/x/Documents', count: 2, latestAt: 1_700_000_000_000, latestSize: 5 }], missing: ['/Users/x/Documents'] }) });
+  await boot(h);
+  assert.equal(h.$('startLast').textContent, 'Your last scan was of /Users/x/Documents, which cannot be opened now: Path does not exist.');
+  assert.deepEqual(h.choices(), ['Desktop', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'], 'no Documents beside the sentence that says it cannot be opened');
+});
+
 test('stopping a rescan while an older tree is on screen keeps today\'s behaviour: the older results stay, no start screen', async () => {
   const tree = { name: 'x', path: '/Users/x/old', size: 1, type: 'dir', children: [] };
   const h = page({ route: server({ roots: [] }), root: tree, settledScanId: 'scan-old' });
