@@ -413,20 +413,25 @@ class QueryNode implements EvalNode {
   readonly childCount: number | undefined;
   private nameRead: string | undefined;
   private pathRead: string | undefined;
+  /** What this folder's children join their paths onto: made as they are pushed. */
+  private within: FolderPath | null = null;
 
   constructor(
     private readonly store: ScanStore,
     readonly id: number,
     /**
-     * Held only to build this node's path, and let go once it is built (CI4):
-     * kept after, a node held every folder above it alive, and each folder's
-     * path with it — a whole copy once a path term had read it — so a walk
-     * down a deep chain held the square of its depth. Null for the root, and
-     * for a node whose path is known.
+     * The path of the folder this node is in, as its nodes join theirs onto
+     * it — never the folder's node (CI4 review F1.2). A node waiting on the
+     * walk's stack holds this; holding the folder's node instead held the
+     * folder's own path, which a path term had read whole, so a file listed
+     * before its subfolder kept that copy alive while the walk went down —
+     * the square of the depth down a chain where every folder holds one.
+     * Null for the root.
      */
-    private folder: QueryNode | null,
+    private readonly folder: FolderPath | null,
     readonly depth: number,
     childlessKnown: boolean,
+    private readonly walk: WalkProgress,
   ) {
     this.isDir = store.isDir(id);
     this.size = store.size(id);
@@ -439,24 +444,71 @@ class QueryNode implements EvalNode {
   }
 
   /**
-   * Built down from the nearest folder whose path is known, never by asking
-   * the folder's own getter: a query that reads no path while it walks leaves
-   * every folder's unbuilt, and a stack frame per level of a 30k-deep chain
-   * overflows (review F1.2; the store's own rule, tests/packedStore.test.ts).
+   * Built from its folder's path, which is built down from the nearest
+   * folder whose path is known, never by asking a folder's own getter: a
+   * query that reads no path while it walks leaves every folder's unbuilt,
+   * and a stack frame per level of a 30k-deep chain overflows (review F1.2;
+   * the store's own rule, tests/packedStore.test.ts).
+   *
+   * While the walk runs, a folder's path and the one its children join onto
+   * are two strings, though they spell the same path: whatever reads this one
+   * copies it whole, and that copy must not be what the nodes waiting in the
+   * folder hold. Once the walk is over nothing waits, and a folder's path is
+   * the one its children join onto, so a folder among the hits shares one
+   * string with the hits beneath it and each folder's path is still built
+   * once for the page (G07 review F2.3, F3.1).
    */
   get path(): string {
     if (this.pathRead !== undefined) return this.pathRead;
-    const unbuilt: QueryNode[] = [];
-    let known: QueryNode = this;
-    while (known.pathRead === undefined && known.folder !== null) {
-      unbuilt.push(known);
-      known = known.folder;
+    if (this.walk.over && this.within !== null) return (this.pathRead = this.within.path(this.store));
+    return (this.pathRead = this.folder === null ? this.store.rootPath : this.store.childPath(this.id, this.folder.path(this.store)));
+  }
+
+  /** The folder its children's paths join onto — made once, as the walk pushes them. */
+  folderForChildren(): FolderPath {
+    return (this.within ??= this.folder === null
+      ? new FolderPath(this.id, null, this.store.rootPath)
+      : new FolderPath(this.id, this.folder, undefined));
+  }
+}
+
+/** Shared by every node of one walk: whether it is over, so nothing waits on its stack any more. */
+interface WalkProgress {
+  over: boolean;
+}
+
+/**
+ * A folder's path as the paths of the nodes in it are joined onto it (CI4
+ * review F1.2). While the walk runs it is handed only to `childPath`, which
+ * reads none of it, so it stays the pieces it was joined from — its folder's,
+ * shared, and its own name with a separator — and a chain of them costs a few
+ * bytes a folder however deep it goes. Nothing that reads a path is handed
+ * it until the walk is over, because reading copies a path whole, and every
+ * node waiting on the walk's stack holds its folder's: a folder's path read
+ * whole there would stay whole as long as anything in that folder waited.
+ */
+class FolderPath {
+  constructor(
+    private readonly id: number,
+    /** The folder this one is in, until this one's path is joined. */
+    private folder: FolderPath | null,
+    private joined: string | undefined,
+  ) {}
+
+  /** Joined down from the nearest folder whose path is, without a stack frame per folder (review F1.2). */
+  path(store: ScanStore): string {
+    if (this.joined !== undefined) return this.joined;
+    const unjoined: FolderPath[] = [];
+    let known: FolderPath = this;
+    while (known.joined === undefined) {
+      unjoined.push(known);
+      known = known.folder as FolderPath; // the root's is joined from the start
     }
-    let path = (known.pathRead ??= this.store.rootPath); // known, or the root
-    for (let i = unbuilt.length - 1; i >= 0; i--) {
-      const node = unbuilt[i];
-      path = node.pathRead = this.store.childPath(node.id, path);
-      node.folder = null;
+    let path = known.joined;
+    for (let i = unjoined.length - 1; i >= 0; i--) {
+      const folder = unjoined[i];
+      path = folder.joined = store.childPath(folder.id, path);
+      folder.folder = null;
     }
     return path;
   }
@@ -490,14 +542,15 @@ class PassOneWalk implements SlicedWalk {
   readonly doubted = new WeakSet<EvalNode>();
   readonly kept: { offer(item: QueryNode): void; sorted(): QueryNode[] };
   private readonly stack: QueryNode[];
+  private readonly progress: WalkProgress = { over: false };
 
   constructor(private readonly store: ScanStore, private readonly ctx: PassOneContext) {
     this.kept = firstK<QueryNode>(ctx.keep, ctx.sort);
-    this.stack = [new QueryNode(store, store.rootId, null, 0, ctx.childlessKnown)];
+    this.stack = [new QueryNode(store, store.rootId, null, 0, ctx.childlessKnown, this.progress)];
   }
 
   step(budget: number): boolean {
-    const { store, stack, ctx } = this;
+    const { store, stack, ctx, progress } = this;
     for (let left = budget; stack.length > 0; left--) {
       if (left <= 0) return false;
       if (ctx.signal.aborted) { this.aborted = true; return true; }
@@ -522,10 +575,17 @@ class PassOneWalk implements SlicedWalk {
 
       if (node.isDir) {
         const depth = node.depth + 1;
-        store.forEachChild(node.id, (child) => { stack.push(new QueryNode(store, child, node, depth, ctx.childlessKnown)); });
+        store.forEachChild(node.id, (child) => {
+          stack.push(new QueryNode(store, child, node.folderForChildren(), depth, ctx.childlessKnown, progress));
+        });
       }
     }
     return true;
+  }
+
+  /** Called once the walk is over, finished or stopped: nothing waits on its stack any more. */
+  end(): void {
+    this.progress.over = true;
   }
 }
 
@@ -613,6 +673,7 @@ export async function executeAgainstScan(
     opts.slices ?? {},
     QUERY_SLICE_NODES,
   );
+  pass.end();
   const { candidates, kept, doubted, examined, capped } = pass;
   let { matched, undecided, childlessUndecided, aborted } = pass;
 

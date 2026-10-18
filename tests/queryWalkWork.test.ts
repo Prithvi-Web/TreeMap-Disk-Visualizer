@@ -269,11 +269,18 @@ test('G07: a tree that changes during a slice\'s turn is walked again from the s
   assert.ok(!out.hits.some((h) => h.path === victim), 'the deleted file is not among the hits');
 });
 
-/** A completed scan of `depth` folders, one inside the next under /deep, with one file at the bottom. */
-function deepChain(depth: number): { scan: ScanResult; store: PackedScanStore; leaf: number; leafPath: string } {
+/**
+ * A completed scan of `depth` folders, one inside the next under /deep, with
+ * one file at the bottom. With `fileBeside`, every folder on the way also
+ * holds a file, f<i>.bin, listed before its subfolder.
+ */
+function deepChain(depth: number, fileBeside = false): { scan: ScanResult; store: PackedScanStore; leaf: number; leafPath: string } {
   const store = new PackedScanStore('/deep', '/', { name: 'deep', isDir: true, size: 0, modifiedAt: 1, isHidden: false });
   let parent = store.rootId;
-  for (let i = 0; i < depth; i++) parent = store.addNode(parent, { name: `d${i}`, isDir: true, size: 0, modifiedAt: 1, isHidden: false });
+  for (let i = 0; i < depth; i++) {
+    if (fileBeside) store.addNode(parent, { name: `f${i}.bin`, isDir: false, size: 1, modifiedAt: 1, isHidden: false, extension: 'bin' });
+    parent = store.addNode(parent, { name: `d${i}`, isDir: true, size: 0, modifiedAt: 1, isHidden: false });
+  }
   store.addNode(parent, { name: 'leaf.bin', isDir: false, size: 7, modifiedAt: 1, isHidden: false, extension: 'bin' });
   store.finalize();
   store.sumSizes();
@@ -283,7 +290,10 @@ function deepChain(depth: number): { scan: ScanResult; store: PackedScanStore; l
   scan.engine = 'walker';
   // Found by walking down after finalize, which may renumber.
   let leaf = store.rootId;
-  while (store.isDir(leaf)) leaf = store.childIds(leaf)[0];
+  while (store.isDir(leaf)) {
+    const kids = store.childIds(leaf);
+    leaf = kids.find((k) => store.isDir(k)) ?? kids[0];
+  }
   let deepest = '/deep';
   for (let i = 0; i < depth; i++) deepest += `/d${i}`;
   return { scan, store, leaf, leafPath: `${deepest}/leaf.bin` };
@@ -305,12 +315,64 @@ test('G07 review F1.2: a hit at the bottom of a 30k-deep chain is answered, its 
 
 /**
  * What a deep hit's path may hold while it is built: a few hundred bytes per
- * folder on its way down (the node the walk holds, and the folder's share of
- * a path joined from its folder's) — never a whole copy of every folder's
- * path, which costs half the deep path's length per folder: 26 KB at 8,000
- * folders deep.
+ * folder on its way down (the nodes the walk holds — a file waiting beside
+ * the folder too — and the folder's share of a path joined from its
+ * folder's) — never a whole copy of every folder's path, which costs half the
+ * deep path's length per folder: 23 KB at 8,000 folders deep.
  */
 const HELD_PER_FOLDER = 2048;
+
+/**
+ * Run `q` and read the heap each time `probe`'s path is built, and each time
+ * a path of a node in `watch` is — the most the walk holds at once is at the
+ * bottom: as the deepest node's path is built, and as the deepest folder's is
+ * joined, the last of a chain joined in one go — after a full collection: a
+ * byte count, never a time. Answers the most held, and how often `probe`'s
+ * path was built.
+ */
+async function heldAsPathIsBuilt(
+  scan: ScanResult, store: PackedScanStore, probe: number, q: string, gc: () => void, opts: { limit?: number; watch?: number[] } = {},
+): Promise<{ out: QueryOutcome; probes: number; held: number }> {
+  const limit = opts.limit ?? 1000;
+  const watched = new Set([probe, ...(opts.watch ?? [])]);
+  await run(scan, q, { limit }); // whatever the first query loads is not the walk's
+  let probes = 0;
+  let held = -1;
+  const base = heldBytes(gc);
+  scan.store = new Proxy(store, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== 'function') return value;
+      if (prop !== 'childPath') return (value as (...a: unknown[]) => unknown).bind(target);
+      return (child: number, parentPath: string): string => {
+        const built = (value as (c: number, p: string) => string).call(target, child, parentPath);
+        if (child === probe) probes++;
+        if (watched.has(child)) held = Math.max(held, heldBytes(gc) - base);
+        return built;
+      };
+    },
+  }) as ScanStore;
+  const out = await run(scan, q, { limit });
+  scan.store = store;
+  return { out, probes, held };
+}
+
+const heldMessage = (q: string, held: number, depth: number, deepPath: string): string =>
+  `${q}: ${(held / 1e6).toFixed(1)} MB held as the deep path is built, ${Math.round(held / depth)} bytes per folder of ${depth} (at most ${HELD_PER_FOLDER}; a whole copy of every folder's path is about ${Math.round(deepPath.length / 2)})`;
+
+/** The deep chain's one file found by `q`, its path exactly right and built once, and the walk's heap held to a few hundred bytes a folder as it is. */
+async function heldAsTheDeepPathIsBuilt(depth: number, fileBeside: boolean, q: string, gc: () => void): Promise<void> {
+  const { scan, store, leaf, leafPath } = deepChain(depth, fileBeside);
+  if (fileBeside) {
+    const top = store.childIds(store.rootId);
+    assert.ok(top.length === 2 && !store.isDir(top[0]) && store.isDir(top[1]), 'each folder lists its file before its subfolder');
+  }
+  const { out, probes, held } = await heldAsPathIsBuilt(scan, store, leaf, q, gc, { watch: [store.parent(leaf)] });
+  assert.equal(out.total, 1, `${q}: the one file matches`);
+  assert.equal(out.hits[0].path, leafPath, `${q}: its path, all ${depth} folders of it`);
+  assert.equal(probes, 1, `${q}: the deep path is built once, from its folder's`);
+  assert.ok(held < HELD_PER_FOLDER * depth, heldMessage(q, held, depth, leafPath));
+}
 
 test('CI4: a deep hit costs memory in proportion to its depth, not its square — with a path term or without, no folder on its way down keeps a whole copy of its path', async () => {
   // CI run 39095045009: the 30k-deep chain above ran macOS's 2 GB heap out
@@ -320,34 +382,63 @@ test('CI4: a deep hit costs memory in proportion to its depth, not its square �
   // copy of its own path: the depth squared, about 2.7 GB at 30k. A path
   // term reads every node's path whole anyway, and a folder kept reachable
   // from below after its path was built then held that copy alive.
-  // Measured where the deep path is built: the most the walk holds at once.
-  const DEPTH = 8_000;
   const gc = collector();
-  for (const q of ['name:leaf', 'path:leaf']) {
-    const { scan, store, leaf, leafPath } = deepChain(DEPTH);
-    await run(scan, q); // whatever the first query loads is not the walk's
-    let probes = 0;
-    let held = -1;
-    const base = heldBytes(gc);
-    scan.store = new Proxy(store, {
-      get(target, prop, receiver) {
-        const value = Reflect.get(target, prop, receiver);
-        if (typeof value !== 'function') return value;
-        if (prop !== 'childPath') return (value as (...a: unknown[]) => unknown).bind(target);
-        return (child: number, parentPath: string): string => {
-          const built = (value as (c: number, p: string) => string).call(target, child, parentPath);
-          if (child === leaf) { probes++; held = heldBytes(gc) - base; }
-          return built;
-        };
-      },
-    }) as ScanStore;
-    const out = await run(scan, q);
-    assert.equal(out.total, 1, `${q}: the one file matches`);
-    assert.equal(out.hits[0].path, leafPath, `${q}: its path, all ${DEPTH} folders of it`);
-    assert.equal(probes, 1, `${q}: the deep path is built once, from its folder's`);
-    assert.ok(
-      held < HELD_PER_FOLDER * DEPTH,
-      `${q}: ${(held / 1e6).toFixed(1)} MB held as the deep path is built, ${Math.round(held / DEPTH)} bytes per folder of ${DEPTH} (at most ${HELD_PER_FOLDER}; a whole copy of every folder's path is about ${Math.round(leafPath.length / 2)})`,
-    );
+  for (const q of ['name:leaf', 'path:leaf']) await heldAsTheDeepPathIsBuilt(8_000, false, q, gc);
+});
+
+test('CI4 review F1.2: a file waiting beside every folder of a deep chain keeps no folder\'s whole path alive — with a path term or an in: term reading every path, or neither', async (t) => {
+  // Every folder holds a file listed before its subfolder. The walk pushes a
+  // folder's children in order and takes the last first, so each file waits
+  // on its stack while everything under its folder is walked, and it needs
+  // its folder's path for its own. It held the folder's node for that, and
+  // with it the folder's path, which a path: or in: term had read whole: the
+  // depth squared again — 185 MB at 8,000 deep, and a 2 GB heap run out at
+  // 30,000 — though the chain without the files held a few bytes a folder.
+  const gc = collector();
+  for (const q of ['path:leaf', 'in:/deep/d0 name:leaf', 'name:leaf']) {
+    await t.test(q, () => heldAsTheDeepPathIsBuilt(8_000, true, q, gc));
   }
+});
+
+/**
+ * deepChain(depth, true) with its sizes set by hand, two folders at a time:
+ * d0 and d1 hold 1 byte, d2 and d3 hold 2, and so on; every file holds none.
+ */
+function pairedChain(depth: number): { scan: ScanResult; store: PackedScanStore; deepest: number; keptPath: string } {
+  const store = new PackedScanStore('/deep', '/', { name: 'deep', isDir: true, size: 0, modifiedAt: 1, isHidden: false });
+  let parent = store.rootId;
+  for (let i = 0; i < depth; i++) {
+    store.addNode(parent, { name: `f${i}.bin`, isDir: false, size: 0, modifiedAt: 1, isHidden: false, extension: 'bin' });
+    parent = store.addNode(parent, { name: `d${i}`, isDir: true, size: Math.floor(i / 2) + 1, modifiedAt: 1, isHidden: false });
+  }
+  store.addNode(parent, { name: 'leaf.bin', isDir: false, size: 0, modifiedAt: 1, isHidden: false, extension: 'bin' });
+  store.finalize();
+  const scan = createScanRecord('/deep');
+  scan.store = store;
+  scan.status = 'complete';
+  scan.engine = 'walker';
+  let deepest = store.rootId;
+  for (let next = store.rootId; next !== -1; next = store.childIds(next).find((k) => store.isDir(k)) ?? -1) deepest = next;
+  let keptPath = '/deep';
+  for (let i = 0; i < depth - 1; i++) keptPath += `/d${i}`;
+  return { scan, store, deepest, keptPath };
+}
+
+test('CI4 review F1.2: a sort tie that reads a kept folder\'s path while its file still waits leaves the path that file holds in pieces', async () => {
+  // Folders only, the largest kept, one: each even folder is kept as it is
+  // met, being larger than the one kept before, and the odd folder inside it
+  // is the same size — a tie, broken by path, so the kept folder's path is
+  // read after its children were pushed, while its file still waits. Were
+  // its own path and the one its children join onto one string while the
+  // walk runs, that read would copy the joined one whole, and every second
+  // folder's would stay whole on the stack: the depth squared.
+  const DEPTH = 8_000; // even, so the deepest folder ties with the one above it as it is met
+  const gc = collector();
+  const { scan, store, deepest, keptPath } = pairedChain(DEPTH);
+  assert.equal(store.size(deepest), DEPTH / 2, 'the deepest folder is the size of the one above it');
+  const { out, probes, held } = await heldAsPathIsBuilt(scan, store, deepest, 'type:dir', gc, { limit: 1 });
+  assert.equal(out.total, DEPTH + 1, 'every folder matches, the scanned one too');
+  assert.deepEqual(out.hits.map((h) => h.path), [keptPath], 'the largest, the tie broken by path: the folder above the deepest');
+  assert.equal(probes, 1, 'the deepest folder\'s path is built once, for its tie');
+  assert.ok(held < HELD_PER_FOLDER * DEPTH, heldMessage('type:dir', held, DEPTH, keptPath));
 });
