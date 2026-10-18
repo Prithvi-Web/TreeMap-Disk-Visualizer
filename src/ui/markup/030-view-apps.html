@@ -9,11 +9,13 @@
              were unlabelled and the log axis read "4.5 GB / 1.0 MB / 1.0 KB /
              0 B" with no word for what it measured. The hover is the chart
              kit's own tooltip: the app's name, its files, its size. -->
-        <div class="as-note muted">Each dot is one application — point at a dot to see its name, file count and size.</div>
-        <!-- The canvas keeps its own wrapper: the chart kit anchors tooltips to the canvas parent. -->
+        <div class="as-note muted">Each dot is one application — point at one, or tab to the chart and use the arrow keys, to see its name, file count and size.</div>
+        <!-- The canvas keeps its own wrapper: the chart kit anchors tooltips to the canvas parent.
+             A widget with keys of its own (sixth browser pass H54): the chart kit makes it a tab
+             stop, walks the dots with the arrow keys and says each one aloud. -->
         <div class="as-plot">
           <span class="as-y">Size</span>
-          <div class="as-wrap"><canvas id="appsScatterChart" height="200" aria-label="Scatter of application size against how many files each keeps" role="img"></canvas></div>
+          <div class="as-wrap"><canvas id="appsScatterChart" height="200" aria-label="Application size against how many files each keeps — use the arrow keys to move between the applications" role="application" aria-roledescription="scatter chart"></canvas></div>
         </div>
         <div class="as-x">Number of files</div>
       </div>

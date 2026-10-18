@@ -2166,6 +2166,44 @@ const FxCharts = (() => {
     life.on(canvas, 'mousemove', onMove);
     life.on(canvas, 'mouseleave', onLeave);
 
+    /* The keyboard's way in (sixth browser pass H54): the dots were mouse-
+       only, a canvas with no tab stop. The chart is one tab stop; the arrow
+       keys walk its dots in the order of their x (then y) — Right or Down to
+       the next, Left or Up to the one before, Home and End to the ends — and
+       each dot lights as a hover does, shows its tooltip, and is said aloud
+       through a polite live region in the tooltip's own words: its label,
+       its x and its y, and where it is in the walk. Only those keys are
+       taken from the page: Tab still leaves. */
+    canvas.tabIndex = 0;
+    const live = document.createElement('div');
+    live.className = 'sr-only';
+    live.setAttribute('aria-live', 'polite');
+    host.appendChild(live);
+    const WALK = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1, Home: 0, End: 0 };
+    function onKey(e) {
+      if (!(e.key in WALK)) return;
+      const f = frame();
+      const m = model(f);
+      if (!m.pts.length) return;
+      e.preventDefault();
+      const order = m.pts.map((_, i) => i).sort((a, b) => m.pts[a].x - m.pts[b].x || m.pts[a].y - m.pts[b].y || a - b);
+      const at = order.indexOf(hover);
+      const k = e.key === 'Home' ? 0
+        : e.key === 'End' ? order.length - 1
+        : at === -1 ? (WALK[e.key] > 0 ? 0 : order.length - 1)
+        : Math.max(0, Math.min(order.length - 1, at + WALK[e.key]));
+      const i = order[k];
+      life.stopRaf();
+      hover = i;
+      progress = 1;
+      render(f, m);
+      const p = m.pts[i];
+      tip.show(p.label || '', [{ color: dotColor(m, p), name: m.fmtX(p.x), value: m.fmtY(p.y) }], m.X.to(p.x), m.Y.to(p.y));
+      live.textContent = `${p.label ? `${p.label}: ` : ''}${m.fmtX(p.x)}, ${m.fmtY(p.y)} (${k + 1} of ${order.length})`;
+    }
+    life.on(canvas, 'keydown', onKey);
+    life.on(canvas, 'blur', onLeave);
+
     render();
     animate(life, 1100, (p) => { progress = p; render(); }, math.easeMaster);
 
@@ -2180,6 +2218,7 @@ const FxCharts = (() => {
         if (moveRaf) { cancelAnimationFrame(moveRaf); moveRaf = 0; }
         dimLayer = null;
         tip.destroy();
+        live.remove();
         life.destroy();
       },
     };
