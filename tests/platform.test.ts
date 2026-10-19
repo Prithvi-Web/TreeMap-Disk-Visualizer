@@ -234,22 +234,26 @@ test('a whole name of 30 bytes — one short of what lsof prints — is never sa
 /*
  * Review F2.1, recorded on this Mac with `lsof -F n` under no locale, as the Dock and launchd start TreeMap
  * (LC_ALL=C prints the same): lsof writes a backslash as `\\` under every locale, a tab and a newline as `\t`
- * and `\n`, DEL and each byte past ASCII as `\xNN`; under en_US.UTF-8 it writes É and é as their bytes but
- * the backslash still as `\\`. A control byte is `^A`, exactly as a caret followed by an A is, so `^X`
- * cannot be undone and is left as written.
+ * and `\n` — a backspace, form feed and carriage return as `\b`, `\f` and `\r` (review F3.4, measured under
+ * no locale and en_US.UTF-8) — DEL and each byte past ASCII as `\xNN`; under en_US.UTF-8 it writes É and é
+ * as their bytes but the backslash still as `\\`. Another control byte is `^A`, exactly as a caret followed
+ * by an A is, so `^X` cannot be undone and is left as written.
  */
 const LSOF_N_RECORDED: readonly (readonly [lsofText: string, name: string])[] = [
   [String.raw`\xc3\x89cran Partag\xc3\xa9.txt`, 'Écran Partagé.txt'],
   [String.raw`back\\slash.txt`, String.raw`back\slash.txt`],
   [String.raw`tab\there.txt`, 'tab\there.txt'],
   [String.raw`nl\nline.txt`, 'nl\nline.txt'],
+  [String.raw`bs\bx.txt`, 'bs\bx.txt'],
+  [String.raw`ff\fx.txt`, 'ff\fx.txt'],
+  [String.raw`cr\rx.txt`, 'cr\rx.txt'],
   [String.raw`del\x7fz.txt`, 'del\x7fz.txt'],
   [String.raw`lit\\x41.txt`, String.raw`lit\x41.txt`],
   [String.raw`lit\\\\n.txt`, String.raw`lit\\n.txt`],
   ['caret^Atext.txt', 'caret^Atext.txt'],
 ];
 
-test('parseLsofRecords reads a path back from every escape lsof writes in it — a backslash, a tab, a newline, DEL and each byte past ASCII — and leaves its ambiguous ^X as written (review F2.1)', () => {
+test('parseLsofRecords reads a path back from every escape lsof writes in it — a backslash, a tab, a newline, a backspace, a form feed, a carriage return, DEL and each byte past ASCII — and leaves its ambiguous ^X as written (review F2.1, F3.4)', () => {
   for (const [written, name] of LSOF_N_RECORDED) {
     const [rec] = parseLsofRecords(['p41', 'csleep', 'f3', 's1', 'i9', `n/Users/me/f21/${written}`].join('\n'));
     assert.equal(rec?.path, `/Users/me/f21/${name}`, `lsof's "${written}" is the file "${name}"`);
