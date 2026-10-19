@@ -1008,9 +1008,12 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/policy',
-    summary: 'The active agent policy and the file to edit it (read-only by design)',
+    summary: 'The active agent policy and the file to edit it (read-only by design); with scanRoot, whether a scan may start at each folder named',
     tag: 'meta',
     destructive: false,
+    parameters: [
+      queryParam('scanRoot', 'A folder to judge, repeatable, at most 64: the answer then says of each, in the order asked, whether the rules let a scan start there, as POST /api/scan applies them before it walks \u2014 the path rules, the policy, its allowedRoots where the folder lives and, for a link, where it leads. Whether the folder is there and readable is not judged: a scan of it says so. Without it the answer is unchanged'),
+    ],
     responses: {
       '200': jsonResponse(
         'The policy, or — when the file exists and will not parse — `policy: null` with `unreadable: true` and a reason. ' +
@@ -1022,10 +1025,23 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             file: str('Absolute path of agent-policy.json'),
             unreadable: bool('Present and true when the file could not be parsed; `policy` is then null'),
             reason: str('Why it could not be parsed'),
+            scanRoots: arr(
+              obj(
+                {
+                  path: str('The folder, as asked'),
+                  allowed: bool('Whether the rules let a scan start there'),
+                  code: str('When not: the code POST /api/scan would answer \u2014 POLICY_ROOT_NOT_ALLOWED, POLICY_UNREADABLE, PATH_INVALID, PATH_BLOCKED, \u2026'),
+                  error: str('When not: the words POST /api/scan would answer'),
+                },
+                ['path', 'allowed'],
+              ),
+              'Present only with scanRoot: one verdict per folder named, in the order asked',
+            ),
           },
           ['file'],
         ),
       ),
+      '400': errorResponse('TOO_MANY_PATHS past 64 folders in scanRoot'),
     },
   },
   {

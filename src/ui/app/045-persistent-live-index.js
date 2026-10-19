@@ -370,6 +370,7 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
       // 2026.) The rest are a person's click, drop or request.
       body: JSON.stringify({ path, incremental: !!opts.incremental, interactive: !opts.unattended }),
     });
+    startNoteAllowed(path); // accepted: the start screen need not ask the rules about it (review F3.2)
     if (abandonIfStopped(resp.scanId, gen, path)) return;
     followScanProgress(resp.scanId, path, resp.incremental === true, t0);
   // A request a Stop ended, or one another scan has replaced since, has

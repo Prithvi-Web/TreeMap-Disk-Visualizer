@@ -3,9 +3,9 @@ import path from 'path';
 import { buildOpenApiDocument, ENDPOINTS } from './openapi';
 import { clampInt, requireScan } from './scanRoutes';
 import { readAudit } from '../services/audit';
-import { getPolicy, POLICY_FILE } from '../services/policy';
+import { assertScanAllowed, getPolicy, POLICY_FILE } from '../services/policy';
 import { appDataDir } from '../services/storage';
-import { collectLargestFiles, collectLargestFolders } from '../services/diskScanner';
+import { collectLargestFiles, collectLargestFolders, scanRootRefusal } from '../services/diskScanner';
 import { cleanupSuggestionsFor } from '../services/cleanupMemo';
 import { loadRuleCatalog } from '../services/rulePacks';
 import { suppressedNoteRoots } from '../services/notes';
@@ -14,6 +14,8 @@ import { getForecast } from '../services/forecast';
 import { storeOf } from '../services/scanStore';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
+import { PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
+import { AgentPolicy } from '../models/types';
 import { rateLimitLanes } from '../middleware/rateLimiter';
 import { getCapabilities } from '../platform/capabilities';
 // The list alone, from the file that imports nothing: '../mcp/server' would
@@ -44,24 +46,72 @@ metaRouter.get('/audit', async (req: Request, res: Response) => {
   res.json({ entries: await readAudit(limit) });
 });
 
+/** The most folders one GET /api/policy judges for a scan: the start screen's choices, every drive letter among them. */
+const MAX_SCAN_ROOTS = 64;
+
+/** One folder's verdict: whether a scan may start there, or the refusal POST /api/scan would answer. */
+type ScanRootVerdict = { path: string; allowed: true } | { path: string; allowed: false; code: string; error: string };
+
+/** `?scanRoot=` as asked (repeatable, in order), or undefined when none is. */
+function scanRootsAsked(raw: unknown): unknown[] | undefined {
+  if (raw === undefined) return undefined;
+  const roots = Array.isArray(raw) ? raw : [raw];
+  if (roots.length > MAX_SCAN_ROOTS) throw new AppError(400, 'TOO_MANY_PATHS', `At most ${MAX_SCAN_ROOTS} folders in "scanRoot"`);
+  return roots;
+}
+
 /**
- * GET /api/policy — the active agent policy and where to edit it.
+ * Whether the rules let a scan start at `raw`, as POST /api/scan applies them before it walks —
+ * the same calls in the same order: the path rules (`guardBodyPath`'s sanitizePath), the policy
+ * (a file that will not parse, `policy` here, refuses every scan), its allowedRoots where the
+ * folder lives (`assertScanAllowed`), then startScan's own check of where a link root leads
+ * (`scanRootRefusal`). One rule, so the start screen offers no folder a scan would be refused, and
+ * never judges one itself (review F3.2). Whether the folder is there and readable is its own
+ * state, not a rule: a scan of it says so in its own words.
+ */
+async function scanRootVerdict(policy: AgentPolicy | AppError, raw: unknown): Promise<ScanRootVerdict> {
+  const asked = String(raw);
+  try {
+    const root = sanitizePath(raw);
+    if (policy instanceof AppError) throw policy;
+    assertScanAllowed(policy, root);
+    const refusal = await scanRootRefusal(root);
+    if (refusal) throw refusal;
+    return { path: asked, allowed: true };
+  } catch (err) {
+    if (err instanceof AppError || err instanceof PathRejectedError) return { path: asked, allowed: false, code: err.code, error: err.message };
+    throw err;
+  }
+}
+
+/**
+ * GET /api/policy[?scanRoot=<folder>…] — the active agent policy and where to edit it.
  * Deliberately read-only: a policy an agent could rewrite for itself would
  * be theatre. The human edits the JSON file.
+ *
+ * With `scanRoot` (repeatable, at most 64), it also says of each folder, in
+ * the order asked, whether a scan may start there (scanRootVerdict). Without
+ * it, the answer is what it always was.
  */
-metaRouter.get('/policy', async (_req: Request, res: Response) => {
+metaRouter.get('/policy', async (req: Request, res: Response) => {
   const file = path.join(appDataDir(), POLICY_FILE);
+  const roots = scanRootsAsked(req.query.scanRoot);
   // This is the one endpoint that tells a person WHERE the policy file is, so
   // it must keep answering when that file is the thing that is broken.
   // `getPolicy` now refuses on an unparseable policy — correct for every
   // enforcement path, and exactly wrong here, where failing would hide the
   // path the user needs in order to fix it.
+  let policy: AgentPolicy | AppError;
   try {
-    res.json({ policy: await getPolicy(), file });
+    policy = await getPolicy();
   } catch (err) {
     if (!(err instanceof AppError) || err.code !== 'POLICY_UNREADABLE') throw err;
-    res.json({ policy: null, unreadable: true, reason: err.message, file });
+    policy = err;
   }
+  const judged = roots ? { scanRoots: await Promise.all(roots.map((r) => scanRootVerdict(policy, r))) } : {};
+  res.json(policy instanceof AppError
+    ? { policy: null, unreadable: true, reason: policy.message, file, ...judged }
+    : { policy, file, ...judged });
 });
 
 /**

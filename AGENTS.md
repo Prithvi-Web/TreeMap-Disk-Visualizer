@@ -981,7 +981,13 @@ read-what-you-saw) permission to act.
   policy is deliberately not writable through the API. It governs local paths
   only: a connected cloud account's scan and `POST /api/cloud/trash` are not
   held to it. A policy file that is there but will not parse refuses every
-  operation it governs (`500 POLICY_UNREADABLE`).
+  operation it governs (`500 POLICY_UNREADABLE`). To ask before scanning,
+  `GET /api/policy?scanRoot=<folder>` (repeatable, at most 64) adds
+  `scanRoots`: for each folder, in the order asked, `allowed`, or the `code`
+  and `error` `POST /api/scan` would answer — judged by the scan's own gates
+  (the path rules, the policy, `allowedRoots` where the folder lives and,
+  for a link, where it leads), not by whether the folder is there or
+  readable. The TreeMap window's start screen offers only folders it allows.
 - **Audit.** Every destructive request that touches **files** and reaches
   its endpoint — executed, dry-run, or refused there — is appended to
   `audit.jsonl` (timestamp, action, source http/mcp, token id, paths, bytes,

@@ -10082,6 +10082,7 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
       // 2026.) The rest are a person's click, drop or request.
       body: JSON.stringify({ path, incremental: !!opts.incremental, interactive: !opts.unattended }),
     });
+    startNoteAllowed(path); // accepted: the start screen need not ask the rules about it (review F3.2)
     if (abandonIfStopped(resp.scanId, gen, path)) return;
     followScanProgress(resp.scanId, path, resp.incremental === true, t0);
   // A request a Stop ended, or one another scan has replaced since, has
@@ -39992,6 +39993,18 @@ let startDrivesAsked = false;
 /** The choices on screen, and the markup they were painted from: a paint that would change nothing leaves the buttons in place. */
 let startShown = [];
 let startPainted = null;
+/**
+ * Whether the rules let a scan start at each folder the start screen would
+ * offer, as the server judges it — GET /api/policy?scanRoot=, the gates
+ * POST /api/scan applies before it walks (agent-policy.json's allowedRoots,
+ * where a link leads, the path rules): folder → { allowed, error }, the
+ * refusal's words when not (review F3.2). A folder is offered once it is
+ * judged allowed; one the server could not be asked about is offered as the
+ * server found it, as before (startJudge).
+ */
+let startVerdicts = new Map();
+/** The folders asked about whose answer has not come. */
+let startAsking = new Set();
 
 /** A folder's name on the start screen: a whole drive by the folder picker's name for it — the startup disk's own, "Macintosh HD" — anything else by its last name. */
 function startFolderName(p, drives) {
@@ -40035,14 +40048,20 @@ function startChoiceList(sys, last, drives, refused = []) {
   return out;
 }
 
-/** The sentence above the choices about the folder `last` names, or '' when there is nothing to say. */
-function startLastLine(last) {
+/**
+ * The sentence above the choices about the folder `last` names, or '' when
+ * there is nothing to say. `refusal`: the server's words when the rules do
+ * not let a scan start at a last folder the history names — it is offered
+ * nowhere, and said why (review F3.2).
+ */
+function startLastLine(last, refusal = '') {
   if (!last || !last.path) return '';
   const sentence = (s) => (/[.!?…]$/.test(s) ? s : s + '.');
   if (last.outcome === 'stopped') return `You stopped the scan of ${last.path}.`;
   if (last.outcome === 'unstopped') return `TreeMap could not stop the scan of ${last.path}, so it may still be running: ${sentence(last.reason || 'the server did not say why')}`;
   if (last.outcome === 'failed') return `The scan of ${last.path} failed: ${sentence(last.reason || 'it did not finish')}`;
   if (!last.offered) return `Your last scan was of ${last.path}, which cannot be opened now: ${sentence(last.reason || 'TreeMap could not open it')}`;
+  if (refusal) return `Your last scan was of ${last.path}, which TreeMap may not scan now: ${sentence(refusal)}`;
   if (last.outcome === 'unreadable') return `Couldn’t reopen your last scan of ${last.path} (${last.reason}).`;
   return '';
 }
@@ -40060,10 +40079,16 @@ function renderStartChoices() {
   const sys = state.system || {};
   const last = state.lastFolder;
   const drives = browseDrivesSeen || browseWholeDrives(sys.platform, null, sys.homeDir);
-  const words = startLastLine(last);
+  // Each folder is offered once the server has said a scan may start there —
+  // never one a scan would be refused, nor one still being asked about
+  // (startJudge, review F3.2).
+  const candidates = startChoiceList(sys, last, drives, state.refusedPaths);
+  const verdict = (p) => startVerdicts.get(p);
+  const list = candidates.filter((c) => { const v = verdict(c.path); return !!v && v.allowed; });
+  const lastRefused = last && last.path && verdict(last.path) && !verdict(last.path).allowed ? verdict(last.path).error : '';
+  const words = startLastLine(last, lastRefused);
   line.textContent = words;
   line.hidden = !words;
-  const list = startChoiceList(sys, last, drives, state.refusedPaths);
   const retry = !!last && (last.outcome === 'stopped' || last.outcome === 'failed');
   const html = list.map((c, i) => `<button class="btn start-choice${c.again ? ` start-again${retry ? ' start-retry' : ''}` : ''}"` +
     `${c.again ? ' id="startAgainBtn"' : ''} data-start-ix="${i}" title="${escapeHtml(c.drive ? `${c.path} — the whole drive` : c.path)}">` +
@@ -40083,7 +40108,48 @@ function renderStartChoices() {
     const again = held ? list.findIndex((c) => c.path === held.path) : -1;
     if (again !== -1) buttons[again].focus({ preventScroll: true });
   }
+  void startJudge(candidates.map((c) => c.path));
   void startNameDrives();
+}
+
+/**
+ * Ask the server, in one request, whether the rules let a scan start at each
+ * of `paths` not yet judged nor being asked about — the gates POST /api/scan
+ * applies, which only the server reads rightly (`~`, links, the Data
+ * volume's spelling) — then paint the choices with the answer (review F3.2).
+ * Each folder is asked about once a page load. A folder the answer does not
+ * judge — the request failed, or left it out — is offered as the server
+ * found it, as before:
+ * a scan of it then answers with the rules' refusal, and the start screen
+ * names it and offers it nowhere (failScan). Never asked again, so a server
+ * that cannot answer is not asked in a loop.
+ */
+async function startJudge(paths) {
+  const ask = [...new Set(paths)].filter((p) => !startVerdicts.has(p) && !startAsking.has(p));
+  if (!ask.length) return;
+  startAsking = new Set([...startAsking, ...ask]);
+  let judged = new Map();
+  try {
+    const body = await api('/api/policy?' + ask.map((p) => 'scanRoot=' + encodeURIComponent(p)).join('&'));
+    judged = new Map((body && Array.isArray(body.scanRoots) ? body.scanRoots : []).map((v) => [v.path, v]));
+  } catch (e) {
+    console.warn('[treemap] could not ask which folders a scan may start at:', e.message);
+  }
+  startAsking = new Set([...startAsking].filter((p) => !ask.includes(p)));
+  startVerdicts = new Map([...startVerdicts, ...ask.map((p) => {
+    const v = judged.get(p);
+    return [p, !v || v.allowed === true ? { allowed: true, error: '' } : { allowed: false, error: String(v.error || '') }];
+  })]);
+  withFocusKept(() => { renderStartChoices(); });
+}
+
+/**
+ * The server has just accepted a scan of `path` (POST /api/scan answered with
+ * its id): the rules let a scan start there, so "Scan … again" for it after a
+ * Stop is offered at once, focus landing on it, without asking (review F3.2).
+ */
+function startNoteAllowed(path) {
+  startVerdicts = new Map([...startVerdicts, [path, { allowed: true, error: '' }]]);
 }
 
 /**

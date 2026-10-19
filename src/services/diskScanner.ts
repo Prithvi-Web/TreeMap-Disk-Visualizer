@@ -40,7 +40,7 @@ import { memoryRoomFor, noRestartRefusal } from './scan/nativeMemory';
 import { formatCount } from '../utils/formatCount';
 import { newScanStorageMode } from './storageMode';
 import { SlicedWalk, SliceOptions, walkInSlices } from './slices';
-import { aliasNamespaceOf, canonicalDirOf, isSpillFolderName, isSpillPath, sanitizePath } from '../utils/pathSanitizer';
+import { aliasNamespaceOf, canonicalDirOf, isSpillFolderName, isSpillPath, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
 import { meansGone } from '../utils/errno';
 import { lastFdaState } from '../utils/fdaState';
 
@@ -765,6 +765,22 @@ async function placeOfRoot(given: string, stat: Stats): Promise<string> {
  */
 export async function scanRootPathOf(given: string): Promise<string> {
   return (await scanRootOf(given)).rootPath;
+}
+
+/**
+ * What startScan refuses a scan of `given` for before it looks at the folder itself — the agent policy where
+ * a link root leads or where the root really is (assertWalkAllowed), the path rules where a link root leads —
+ * found as startScan finds it (scanRootOf), without walking (GET /api/policy?scanRoot=, review F3.2). A root
+ * that cannot be looked at (gone, not readable) is the folder's own state, not a refusal: null, and a scan of
+ * it says why in its own words.
+ */
+export async function scanRootRefusal(given: string): Promise<AppError | PathRejectedError | null> {
+  try {
+    await scanRootOf(given);
+    return null;
+  } catch (err) {
+    return err instanceof AppError || err instanceof PathRejectedError ? err : null;
+  }
 }
 
 /**

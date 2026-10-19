@@ -80,7 +80,7 @@ const META_PATHS = new Set([
   '/notifications',      // the in-memory notification ring
   '/openapi.json',       // generated from a constant, no I/O
   '/platform/portable',  // process state
-  '/policy',             // one small JSON file
+  '/policy',             // one small JSON file, and with ?scanRoot= a few lookups of each folder named (at most 64), no walk
   '/queries',            // the saved-query store
   '/query/fields',       // the static grammar
   '/scans',              // the in-memory scan registry

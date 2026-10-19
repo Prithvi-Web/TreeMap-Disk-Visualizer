@@ -161,6 +161,7 @@ const LIFTED = [
   'function endScanChrome(', 'function failScan(', 'function noteLastFolder(', 'function noteStopUnconfirmed(',
   'function browseWholeDrives(', 'function topologyAnswer(',
   'function startChoiceList(', 'function startFolderName(', 'function startLastLine(', 'function renderStartChoices(', 'function scanStartChoice(', 'async function startNameDrives(',
+  'async function startJudge(', 'function startNoteAllowed(',
   'function requestedPath(', 'async function restoreLastSession(', 'function showRestoredPath(', 'async function reopenScan(',
   'async function startCloudScan(', 'async function loadSystem(',
 ];
@@ -231,7 +232,7 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     clearInterval: (id: number) => { intervals.delete(id); },
     console: { warn: noop, error: noop, log: noop },
     VIEW_BY_ID, tabs: [], mountedView: null, indexLineGen: 0, indexAutoMaxEntries: null, browseDrivesSeen: null, topologyShared: null,
-    startDrivesAsked: false, startShown: [], startPainted: null, START_FOLDERS, FOLDER_REFUSED_STATUSES,
+    startDrivesAsked: false, startShown: [], startPainted: null, startVerdicts: new Map(), startAsking: new Set(), START_FOLDERS, FOLDER_REFUSED_STATUSES,
     TOPOLOGY_SHARE_MS: 3000, REDUCED: true, INSTANT_OPEN_NODES: 25000,
     EMPTY_VIEW_LEADS: {}, EMPTY_VIEW_LEAD_DEFAULT: 'Once a folder is scanned, this view fills in.', // another view's empty state (G02)
     formatBytes, formatDate, formatCount: String, icon: () => '', skeletonRows: () => '',
@@ -275,9 +276,20 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
 function server(opts: {
   scans?: unknown[]; roots?: unknown[] | Error; missing?: string[]; topology?: unknown; indexed?: string[];
   scanAnswer?: (n: number, body: Record<string, unknown>) => Answer;
+  /** The rules' refusal of a scan of each folder, in POST /api/scan's words, or null: GET /api/policy?scanRoot= judges by it. */
+  refuse?: (p: string) => string | null;
+  /** GET /api/policy?scanRoot= answered otherwise: held, or failing. */
+  policyAnswer?: (asked: string[]) => Answer;
 } = {}): Route {
   let n = 0;
   return (method, url, body) => {
+    if (method === 'GET' && url.startsWith('/api/policy?')) {
+      const asked = url.slice('/api/policy?'.length).split('&').map((kv) => decodeURIComponent(kv.slice('scanRoot='.length)));
+      if (opts.policyAnswer) return opts.policyAnswer(asked);
+      const refuse = opts.refuse ?? (() => null);
+      return { body: { policy: { allowedRoots: [], protectedPaths: [], maxBytesPerOperation: null }, file: '/data/agent-policy.json',
+        scanRoots: asked.map((p) => (refuse(p) ? { path: p, allowed: false, code: 'POLICY_ROOT_NOT_ALLOWED', error: refuse(p) } : { path: p, allowed: true })) } };
+    }
     if (method === 'GET' && url === '/api/scans') return { body: { scans: opts.scans ?? [] } };
     if (method === 'GET' && url === '/api/snapshots') {
       return opts.roots instanceof Error ? { status: 500, body: { error: opts.roots.message, code: 'INTERNAL' } } : { body: { roots: opts.roots ?? [] } };
@@ -388,6 +400,67 @@ test('the start screen offers only folders that exist: a missing Downloads is no
   await boot(first);
   assert.deepEqual(first.choices(), ['Desktop', 'Documents', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'], 'a first run: the choices, nothing named');
   assert.equal(first.state.scannedBefore, false, 'and nobody has scanned before');
+});
+
+/** The words POST /api/scan refuses a folder outside agent-policy.json's allowedRoots with. */
+const outsideRoots = (p: string) => `"${p}" is outside the allowed roots — edit agent-policy.json (allowedRoots) to widen them`;
+/** A policy whose allowedRoots hold Downloads and a projects folder: every other folder a scan is refused. */
+const onlyDownloads = (p: string) => (p === '/Users/x/Downloads' || p === '/Users/x/Projects' ? null : outsideRoots(p));
+const policyAsks = (h: ReturnType<typeof page>) => h.requests.filter((r) => r.startsWith('GET /api/policy?'));
+
+test('with an agent policy whose allowedRoots hold only Downloads, the start screen offers Downloads alone — never a folder a scan would refuse — and names the last folder with the server\'s reason (review F3.2)', async () => {
+  // Review F3.2: the choices came from GET /api/system's commonDirs and the
+  // drives, which no policy reads, so every one outside allowedRoots answered
+  // 403 POLICY_ROOT_NOT_ALLOWED — offered, and refused only once clicked.
+  const first = page({ route: server({ roots: [], refuse: onlyDownloads }) });
+  await boot(first);
+  assert.deepEqual(first.choices(), ['Downloads'], 'a first run: only the folder a scan may start at');
+  assert.deepEqual(policyAsks(first), ['GET /api/policy?scanRoot=%2FUsers%2Fx%2FDesktop&scanRoot=%2FUsers%2Fx%2FDocuments&scanRoot=%2FUsers%2Fx%2FDownloads&scanRoot=%2FUsers%2Fx&scanRoot=%2F'],
+    'the server judged every folder the start screen would offer, in one request');
+  assert.equal(first.posts.length, 0, 'and nothing was walked to find out');
+
+  const back = page({ route: server({ roots: [ROOT_HISTORY], refuse: onlyDownloads }) });
+  await boot(back);
+  assert.deepEqual(back.choices(), ['Downloads'], 'a returning person: no "Scan Macintosh HD again" either');
+  assert.equal(back.$('startLast').textContent, `Your last scan was of /, which TreeMap may not scan now: ${outsideRoots('/')}.`, 'the last folder is still named, with the server\'s reason');
+  assert.equal(back.$('startLast').hidden, false);
+});
+
+test('a folder is offered only once the server has said a scan may start there: nothing while it is asked, every folder when no policy limits them, each folder asked about once a page load (review F3.2)', async () => {
+  let answer: (a: Answer) => void = () => {};
+  const asking = server({ roots: [] });
+  const h = page({ route: server({ roots: [], policyAnswer: (asked) => new Promise((r) => { answer = (a) => r(a); void asked; }) }) });
+  h.switchView('dashboard');
+  await turns();
+  assert.deepEqual(h.choices(), [], 'nothing offered while the server is asked');
+  assert.equal(policyAsks(h).length, 1, 'control: asked');
+  answer(await asking('GET', policyAsks(h)[0].slice('GET '.length), null)!);
+  await turns();
+  assert.deepEqual(h.choices(), ['Desktop', 'Documents', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'], 'no policy: every folder the server found');
+  for (const v of ['grid', 'dashboard', 'grid', 'dashboard']) h.switchView(v);
+  await turns();
+  assert.equal(policyAsks(h).length, 1, 'repaints ask nothing more about folders already judged');
+});
+
+test('when the server cannot be asked, the folders are offered as the server found them, as before — asked once, never in a loop (review F3.2)', async () => {
+  const h = page({ route: server({ roots: [], policyAnswer: () => ({ status: 500, body: { error: 'Internal server error', code: 'INTERNAL' } }) }) });
+  await boot(h);
+  assert.deepEqual(h.choices(), ['Desktop', 'Documents', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'], 'the scan\'s own answer still judges each');
+  for (const v of ['grid', 'dashboard']) h.switchView(v);
+  await turns();
+  assert.equal(policyAsks(h).length, 1, 'asked once');
+});
+
+test('a folder a scan was just accepted for needs no asking: after a Stop of a folder chosen in the picker, under a policy, "Scan … again" is there at once and takes focus (review F3.2)', async () => {
+  const h = page({ route: server({ roots: [], refuse: onlyDownloads }) });
+  await boot(h);
+  assert.deepEqual(h.choices(), ['Downloads'], 'control: the policy holds');
+  await h.startScan('/Users/x/Projects'); // as Choose a folder… scans it
+  await turns();
+  await pressStop(h);
+  assert.equal(h.choices()[0], 'Scan Projects again', 'offered at once');
+  assert.equal(h.dom.activeElement, h.$('startAgainBtn'), 'and focus lands on it, never on Choose a folder… for want of an answer');
+  assert.ok(!policyAsks(h).some((r) => r.includes('Projects')), 'the server, which accepted the scan, was not asked again');
 });
 
 test('the whole drive is named as the folder picker names it: "Startup disk" until the disk layout answers, drive letters on Windows, / on Linux', async () => {
@@ -1162,7 +1235,7 @@ test('the start screen\'s page-level bindings are declared before the boot paint
   // `let` and `const` do not.
   const boot = INDEX.indexOf("/* ───────────────────────────── Boot ───────────────────────────── */\nswitchView('dashboard');");
   assert.notEqual(boot, -1, 'the boot\'s first switchView is where this test thinks it is');
-  for (const decl of ['const START_FOLDERS = ', 'let startDrivesAsked = ', 'let startShown = ', 'let startPainted = ', 'const FOLDER_REFUSED_STATUSES = ', 'let browseDrivesSeen = ']) {
+  for (const decl of ['const START_FOLDERS = ', 'let startDrivesAsked = ', 'let startShown = ', 'let startPainted = ', 'let startVerdicts = ', 'let startAsking = ', 'const FOLDER_REFUSED_STATUSES = ', 'let browseDrivesSeen = ']) {
     const at = INDEX.indexOf(decl);
     assert.notEqual(at, -1, `${decl.trim()} is in the page`);
     assert.ok(at < boot, `${decl.trim()} is declared before the boot paints the first view`);
