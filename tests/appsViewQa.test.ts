@@ -82,9 +82,15 @@ test('the scatter has axis titles and says what a dot is, and its hover says jus
 type StubEl = {
   tagName: string; className: string; textContent: string; style: Record<string, string>; attrs: Record<string, string>;
   children: StubEl[]; removed?: boolean; clientWidth: number; offsetWidth: number; offsetHeight: number;
-  classList: { add(c: string): void; remove(c: string): void };
+  classes: Set<string>; classList: { add(c: string): void; remove(c: string): void };
   setAttribute(k: string, v: string): void; getAttribute(k: string): string | undefined; appendChild(c: StubEl): void; remove(): void;
 };
+
+/** The words an element shows: its own text, or its children's, leaf by leaf, joined with " | ". */
+function shownWords(e: StubEl): string {
+  if (!e.children.length) return e.textContent;
+  return e.children.map(shownWords).filter(Boolean).join(' | ');
+}
 
 /**
  * The page's own FxCharts.scatter over a stub canvas, with the Apps view's formatters: answers the
@@ -96,9 +102,14 @@ function keyboardScatter(points: Array<{ x: number; y: number; label: string }>)
   const b = INDEX.indexOf('/* ═══ end FX: Charts ═══ */', a);
   assert.ok(a !== -1 && b > a, 'the chart kit is in the built page');
   const el = (tagName: string): StubEl => {
+    // As in the DOM: setting textContent replaces the children, and classList is the element's own set.
+    let text = '';
+    const classes = new Set<string>();
     const e: StubEl = {
-      tagName, className: '', textContent: '', style: {}, attrs: {}, children: [], clientWidth: 600, offsetWidth: 120, offsetHeight: 40,
-      classList: { add() {}, remove() {} },
+      tagName, className: '', style: {}, attrs: {}, children: [], clientWidth: 600, offsetWidth: 120, offsetHeight: 40,
+      get textContent() { return text; },
+      set textContent(v: string) { text = v; e.children.length = 0; },
+      classes, classList: { add(c) { classes.add(c); }, remove(c) { classes.delete(c); } },
       setAttribute(k, v) { e.attrs[k] = v; }, getAttribute(k) { return e.attrs[k]; },
       appendChild(c) { e.children.push(c); }, remove() { e.removed = true; },
     };
@@ -127,8 +138,12 @@ function keyboardScatter(points: Array<{ x: number; y: number; label: string }>)
   });
   const live = host.children.find((c) => c.attrs['aria-live'] === 'polite');
   const prevented: string[] = [];
-  const press = (key: string) => listeners.keydown?.({ key, preventDefault: () => { prevented.push(key); } });
-  return { canvas, listeners, live, press, prevented, chart, host };
+  type Mods = { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; shiftKey?: boolean };
+  const press = (key: string, mods: Mods = {}) => listeners.keydown?.({ key, ...mods, preventDefault: () => { prevented.push(key); } });
+  // The chart's own tooltip, the one makeTip puts in the host: shown or not, its words, and where it stands.
+  const tipEl = host.children.find((c) => c.className === 'fx-tip');
+  const tip = () => ({ shown: !!tipEl?.classes.has('on'), words: tipEl ? shownWords(tipEl) : '', at: tipEl?.style.transform ?? '' });
+  return { canvas, listeners, live, press, prevented, chart, host, tip, hasTip: !!tipEl };
 }
 
 const APPS = [
@@ -164,6 +179,31 @@ test('the scatter is one tab stop, and the arrow keys walk its dots in file-coun
   assert.equal(s.live!.textContent, 'Xcode: 4000 files, 9000000 B (3 of 3)', 'after leaving, Up starts again from the last dot');
   s.chart.destroy();
   assert.equal(s.live!.removed, true, 'the live region goes with the chart');
+});
+
+test('each step of the keyboard walk shows the dot\'s own tooltip — its name, file count and size — beside that dot, and leaving the chart hides it (review F1.8)', () => {
+  // For a sighted keyboard user the tooltip is the only visible name of the dot: the live region is read aloud, not shown.
+  const s = keyboardScatter(APPS);
+  assert.ok(s.hasTip, 'the chart made its tooltip');
+  assert.equal(s.tip().shown, false, 'control: nothing is shown before a key is pressed');
+  s.press('ArrowRight');
+  const notes = s.tip();
+  assert.equal(notes.shown, true, 'the first step shows the tooltip');
+  assert.equal(notes.words, 'Notes | 12 files | 3000 B', 'the dot\'s name, then its file count and its size');
+  s.press('ArrowRight');
+  const slack = s.tip();
+  assert.equal(slack.shown, true);
+  assert.equal(slack.words, 'Slack | 900 files | 120000 B', 'the next dot\'s words replace the last one\'s');
+  assert.match(slack.at, /^translate\(-?\d+px, -?\d+px\)$/, `it is placed (${slack.at})`);
+  assert.notEqual(slack.at, notes.at, 'and it moves to the dot it names');
+  s.press('End');
+  assert.equal(s.tip().words, 'Xcode | 4000 files | 9000000 B');
+  s.listeners.blur?.({});
+  assert.equal(s.tip().shown, false, 'Tab away and the tooltip goes, as it does when the pointer leaves');
+  s.press('ArrowUp');
+  assert.equal(s.tip().shown, true, 'back on the chart, a key shows it again');
+  assert.equal(s.tip().words, 'Xcode | 4000 files | 9000000 B');
+  s.chart.destroy();
 });
 
 test('the Apps scatter says it can be walked by keyboard, and its note is true for keyboard users too (H54)', () => {
