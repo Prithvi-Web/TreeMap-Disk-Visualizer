@@ -1030,7 +1030,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
                 {
                   path: str('The folder, as asked'),
                   allowed: bool('Whether the rules let a scan start there'),
-                  code: str('When not: the code POST /api/scan would answer \u2014 POLICY_ROOT_NOT_ALLOWED, POLICY_UNREADABLE, PATH_INVALID, PATH_BLOCKED, \u2026'),
+                  code: str('When not: the code POST /api/scan would answer \u2014 POLICY_ROOT_NOT_ALLOWED, POLICY_UNREADABLE, or PATH_BLOCKED for a link that leads where the path rules refuse'),
                   error: str('When not: the words POST /api/scan would answer'),
                 },
                 ['path', 'allowed'],
@@ -1041,7 +1041,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
           ['file'],
         ),
       ),
-      '400': errorResponse('TOO_MANY_PATHS past 64 folders in scanRoot'),
+      '400': errorResponse('TOO_MANY_PATHS past 64 folders in scanRoot; PATH_INVALID or PATH_BLOCKED when a folder in scanRoot is refused by the path rules, as POST /api/scan refuses it'),
     },
   },
   {

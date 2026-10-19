@@ -1137,6 +1137,7 @@ function probes(): Probe[] {
     { key: 'POST /api/facts body.paths', send: (al) => request('POST', '/api/facts', { scanId: id(), paths: [al(a)], providers: ['size'] }) },
     { key: 'GET /api/fs/list query.path', send: (al) => request('GET', `/api/fs/list?path=${enc(al(T))}`) },
     { key: 'GET /api/volumes query.from', send: (al) => request('GET', `/api/volumes?from=${enc(al(T))}`) },
+    { key: 'GET /api/policy query.scanRoot', send: (al) => request('GET', `/api/policy?scanRoot=${enc(al(T))}`) },
     // Paths inside a body's own objects, which the registry describes as one opaque field.
     { key: 'PUT /api/settings body.schedules[].path', send: (al) => request('PUT', '/api/settings', { schedules: [{ id: 's', path: al(T), intervalHours: 24, enabled: false }] }) },
     { key: 'PUT /api/settings body.budgets[].path', send: (al) => request('PUT', '/api/settings', { budgets: [{ path: al(T), maxBytes: 1 }] }) },

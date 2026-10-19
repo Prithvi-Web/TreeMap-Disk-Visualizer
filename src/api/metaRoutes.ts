@@ -52,27 +52,30 @@ const MAX_SCAN_ROOTS = 64;
 /** One folder's verdict: whether a scan may start there, or the refusal POST /api/scan would answer. */
 type ScanRootVerdict = { path: string; allowed: true } | { path: string; allowed: false; code: string; error: string };
 
-/** `?scanRoot=` as asked (repeatable, in order), or undefined when none is. */
-function scanRootsAsked(raw: unknown): unknown[] | undefined {
+/**
+ * `?scanRoot=` as asked (repeatable, in order) beside each folder as the path rules read it, or
+ * undefined when none is asked about. A folder those rules refuse by its spelling refuses the whole
+ * request — 400 PATH_INVALID or PATH_BLOCKED, POST /api/scan's own first refusal (`guardBodyPath`),
+ * as on every route that takes a path (GET /api/volumes' `from`).
+ */
+function scanRootsAsked(raw: unknown): { asked: string; root: string }[] | undefined {
   if (raw === undefined) return undefined;
   const roots = Array.isArray(raw) ? raw : [raw];
   if (roots.length > MAX_SCAN_ROOTS) throw new AppError(400, 'TOO_MANY_PATHS', `At most ${MAX_SCAN_ROOTS} folders in "scanRoot"`);
-  return roots;
+  return roots.map((r) => ({ asked: String(r), root: sanitizePath(r) })); // PathRejectedError -> the error handler's 400
 }
 
 /**
- * Whether the rules let a scan start at `raw`, as POST /api/scan applies them before it walks —
- * the same calls in the same order: the path rules (`guardBodyPath`'s sanitizePath), the policy
- * (a file that will not parse, `policy` here, refuses every scan), its allowedRoots where the
- * folder lives (`assertScanAllowed`), then startScan's own check of where a link root leads
- * (`scanRootRefusal`). One rule, so the start screen offers no folder a scan would be refused, and
- * never judges one itself (review F3.2). Whether the folder is there and readable is its own
- * state, not a rule: a scan of it says so in its own words.
+ * Whether the rules let a scan start at `root` (asked as `asked`), as POST /api/scan applies them
+ * after the path rules and before it walks — the same calls in the same order: the policy (a file
+ * that will not parse, `policy` here, refuses every scan), its allowedRoots where the folder lives
+ * (`assertScanAllowed`), then startScan's own check of where a link root leads (`scanRootRefusal`,
+ * the path rules there included). One rule, so the start screen offers no folder a scan would be
+ * refused, and never judges one itself (review F3.2). Whether the folder is there and readable is
+ * its own state, not a rule: a scan of it says so in its own words.
  */
-async function scanRootVerdict(policy: AgentPolicy | AppError, raw: unknown): Promise<ScanRootVerdict> {
-  const asked = String(raw);
+async function scanRootVerdict(policy: AgentPolicy | AppError, { asked, root }: { asked: string; root: string }): Promise<ScanRootVerdict> {
   try {
-    const root = sanitizePath(raw);
     if (policy instanceof AppError) throw policy;
     assertScanAllowed(policy, root);
     const refusal = await scanRootRefusal(root);

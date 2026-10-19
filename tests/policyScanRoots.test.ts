@@ -162,13 +162,16 @@ test('a policy file that will not parse refuses every folder, as every scan is r
   assert.deepEqual(await scanAnswer(gone), { allowed: false, status: 500, code: 'POLICY_UNREADABLE', error: verdicts[2].error });
 });
 
-test('a folder the path rules refuse is refused with their code, as the scan refuses it; past 64 folders the request is refused', async () => {
+test('a folder the path rules refuse by its spelling refuses the request, as it refuses the scan and every route that takes a path; past 64 folders the request is refused', async () => {
   withPolicy(null);
   const bad = 'a\0b';
   const r = await policyFor([DOWNLOADS, bad]);
-  const verdicts = r.body.scanRoots as Array<Record<string, unknown>>;
-  assert.deepEqual(verdicts.map((v) => [v.path, v.allowed, v.code ?? null]), [[DOWNLOADS, true, null], [bad, false, 'PATH_INVALID']]);
-  assert.deepEqual(await scanAnswer(bad), { allowed: false, status: 400, code: 'PATH_INVALID', error: verdicts[1].error });
+  const scan = await scanAnswer(bad);
+  assert.deepEqual([r.status, r.body.code, r.body.error], [400, 'PATH_INVALID', (scan as { error: string }).error], 'the scan\'s own refusal, for the whole request');
+  assert.deepEqual(scan, { allowed: false, status: 400, code: 'PATH_INVALID', error: r.body.error });
+  withPolicy('{ not json');
+  assert.deepEqual([(await policyFor([bad])).status, (await policyFor([bad])).body.code], [400, 'PATH_INVALID'], 'before the policy is read, as the scan judges it');
+  withPolicy(null);
 
   const many = await policyFor(Array.from({ length: 65 }, (_, i) => path.join(HOME, `f${i}`)));
   assert.deepEqual([many.status, many.body.code], [400, 'TOO_MANY_PATHS']);

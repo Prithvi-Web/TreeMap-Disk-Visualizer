@@ -985,9 +985,11 @@ read-what-you-saw) permission to act.
   `GET /api/policy?scanRoot=<folder>` (repeatable, at most 64) adds
   `scanRoots`: for each folder, in the order asked, `allowed`, or the `code`
   and `error` `POST /api/scan` would answer — judged by the scan's own gates
-  (the path rules, the policy, `allowedRoots` where the folder lives and,
-  for a link, where it leads), not by whether the folder is there or
-  readable. The TreeMap window's start screen offers only folders it allows.
+  (the policy, `allowedRoots` where the folder lives and, for a link, where
+  it leads), not by whether the folder is there or readable. A folder the
+  path rules refuse by its spelling refuses the request, as it refuses the
+  scan (`400 PATH_INVALID` / `PATH_BLOCKED`). The TreeMap window's start
+  screen offers only folders it allows.
 - **Audit.** Every destructive request that touches **files** and reaches
   its endpoint — executed, dry-run, or refused there — is appended to
   `audit.jsonl` (timestamp, action, source http/mcp, token id, paths, bytes,
