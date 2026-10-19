@@ -137,6 +137,9 @@ async function stopScan() {
   // for "this scan has a stream, and state.scanId is its id". If it is null we
   // are still inside POST /api/scan; startScanRequest cancels that one.
   const scanId = state.abortScan ? state.scanId : null;
+  // The scan this Stop ends, by generation: a scan begun before the cancel
+  // answers owns the status line and the live region (stopNotConfirmed).
+  const gen = state.scanGen;
   if (state.abortScan) state.abortScan();
   closeEventSource();
   endScanChrome();
@@ -183,22 +186,38 @@ async function stopScan() {
   try {
     await cancelScanById(scanId);
   } catch (e) {
-    // The walk is still running server-side, and saying "stopped" would be a
-    // lie. 404 is not one of these: the record was already gone, so it is.
-    if (e.status !== 404) {
-      const why = 'Could not stop the scan: ' + e.message;
-      // Said where it is heard and seen: with nothing on screen the status
-      // line below sits in the Dashboard the start screen hides (review
-      // F1.3). And there only while no scan has begun since — a "Scan …
-      // again" pressed before this answered — whose line it is now.
-      toast(why, 'error');
-      if (!state.scanning) {
-        status.classList.add('error');
-        status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml(why) + '</span>';
-      }
-      noteStopUnconfirmed(noted, e.message);
-    }
+    stopNotConfirmed(e, gen, noted);
   }
+}
+
+/**
+ * A cancel that failed after a Stop had already said "stopped": the walk may
+ * still be running server-side, and saying "stopped" would be a lie.
+ *
+ * Said where it is heard and seen: a toast, over every view — with nothing on
+ * screen the status line sits in the Dashboard the start screen hides (review
+ * F1.3). The status line, and the live region that said "Scan stopped." or
+ * the start screen's sentence, only while no scan has begun since `gen`, the
+ * generation the Stop ended: a scan begun since owns both — running, or
+ * already ended with words of its own (review F2.9). Where they are this
+ * Stop's, the live region is emptied, so no screen reader finds "stopped"
+ * beside the toast, whether or not a start screen named a folder (review
+ * F2.1). And the start screen takes back what it said, while it still says it
+ * (noteStopUnconfirmed).
+ */
+function stopNotConfirmed(e, gen, noted) {
+  // 404 is not one of these: the record was already gone, so it is stopped.
+  const refused = e.status !== 404;
+  if (!refused) return;
+  const why = 'Could not stop the scan: ' + e.message;
+  toast(why, 'error');
+  if (state.scanGen === gen) {
+    const status = $('scanStatus');
+    status.classList.add('error');
+    status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml(why) + '</span>';
+    $('stopAnnounce').textContent = '';
+  }
+  noteStopUnconfirmed(noted, e.message);
 }
 function skeletonRows(n, h = 38, label = '') {
   const rows = Array.from({ length: n }, () => `<div class="skeleton" style="height:${h}px;margin:8px 0;"></div>`).join('');

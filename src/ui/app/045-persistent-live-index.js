@@ -726,14 +726,13 @@ function noteLastFolder(outcome, reason = '', offered = true) {
  * it says instead that TreeMap could not stop it, and offers that folder
  * nowhere: "Scan … again" would start a second walk of a folder still being
  * walked (review F1.3). Focus on a choice that went moves on (withFocusKept).
+ * The live region that said "You stopped …" is stopNotConfirmed's, for every
+ * refused cancel, a folder named or not (review F1.14, F2.1).
  */
 function noteStopUnconfirmed(noted, reason) {
   if (!noted || state.lastFolder !== noted) return;
   state.lastFolder = { ...noted, outcome: 'unstopped', reason, offered: false };
   withFocusKept(() => { renderStartChoices(); });
-  // Nor is "You stopped …" left in the live region for a screen reader to
-  // find: the toast has said what happened (review F1.14).
-  $('stopAnnounce').textContent = '';
 }
 
 /**

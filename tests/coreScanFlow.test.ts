@@ -156,7 +156,7 @@ const LIFTED = [
   'function viewBlockedReason(', 'function renderEmptyState(', 'function switchView(',
   'function startLanding(', 'function focusLanding(', 'function withFocusKept(', 'function focusStartScreen(',
   'function closeEventSource(', 'function setScanButtonMode(', 'function cancelScanById(', 'function abandonIfStopped(',
-  'async function stopScan(', 'function beginScanChrome(', 'async function indexStatusFor(',
+  'async function stopScan(', 'function stopNotConfirmed(', 'function beginScanChrome(', 'async function indexStatusFor(',
   'async function startScan(', 'async function startScanRequest(', 'function followScanProgress(',
   'function endScanChrome(', 'function failScan(', 'function noteLastFolder(', 'function noteStopUnconfirmed(',
   'function browseWholeDrives(', 'function topologyAnswer(',
@@ -630,9 +630,13 @@ test('a refused cancel that answers after "Scan … again" was pressed leaves th
   f.$('startAgainBtn').click();
   await turns();
   assert.equal(f.$('startLast').textContent, 'The scan of /Users/x/Desktop failed: The disk is busy.', 'control: the second scan failed');
+  assert.equal(f.state.scanning, false, 'control: and has ended, so no scan is running when the cancel answers');
+  assert.match(f.$('scanStatus').innerHTML, /<span>The disk is busy\.<\/span>/, 'control: its status line says so');
   said.answer({ status: 500, body: { error: 'Internal server error', code: 'INTERNAL' } });
   await turns();
   assert.equal(f.$('startLast').textContent, 'The scan of /Users/x/Desktop failed: The disk is busy.', 'the start screen goes on describing the newer scan');
+  assert.match(f.$('scanStatus').innerHTML, /<span>The disk is busy\.<\/span>/, 'and so does the status line: a scan begun since — ended or not — owns it (review F2.9)');
+  assert.deepEqual(f.toasts.map((t) => t[0]), ['The disk is busy.', 'Could not stop the scan: Internal server error'], 'the refused cancel is still toasted');
 });
 
 test('a rescan stopped over an older tree whose cancel is refused says so on the Dashboard, where it is seen, and tells the start screen nothing (review F1.3)', async () => {
@@ -646,7 +650,18 @@ test('a rescan stopped over an older tree whose cancel is refused says so on the
   assert.match(h.$('scanStatus').innerHTML, /Could not stop the scan: Internal server error/, 'the Dashboard\'s status line says it');
   assert.deepEqual(h.toasts, [['Could not stop the scan: Internal server error', 'error']]);
   assert.equal(h.state.lastFolder, null, 'and the start screen is told nothing');
-  assert.equal(h.$('stopAnnounce').textContent, 'Scan stopped.', 'the Stop is said aloud as the status line says it (review F1.14)');
+  assert.equal(h.$('stopAnnounce').textContent, '', '"Scan stopped." is not left for a screen reader to find beside "Could not stop the scan": the toast says what happened (review F2.1, F2.8)');
+
+  // A cloud account's listing, stopped with nothing on screen, names no folder — and is not left "stopped" either.
+  const c = page({ route: (m, url, b) => (m === 'POST' && url === '/api/cloud/scan' ? { status: 202, body: { scanId: 'scan-1' } } : cancelAnswers(500)(m, url, b)) });
+  await boot(c);
+  await c.startCloudScan('gdrive', 'Google Drive');
+  await turns();
+  assert.deepEqual(c.openStreams().map((s) => s.url), ['/api/scan/scan-1/progress'], 'control: the listing is followed');
+  await pressStop(c);
+  assert.ok(c.requests.includes('POST /api/scan/scan-1/cancel'), 'control: its cancel was asked for');
+  assert.deepEqual(c.toasts, [['Could not stop the scan: Internal server error', 'error']], 'control: refused, and toasted');
+  assert.equal(c.$('stopAnnounce').textContent, '', 'and "Scan stopped." is taken back (review F2.1)');
 });
 
 test('a Stop with nothing on screen is announced: the start screen\'s sentence goes to a live region outside the views, always rendered, and cleared as the next scan begins (review F1.14)', async () => {
