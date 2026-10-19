@@ -363,7 +363,7 @@ function ownedPlaceOf(filePath: string): OwnedPlace | null {
   }
   for (const want of APP_OWNED_RUNS) {
     for (let i = 0; i + want.length <= dirs.length; i++) {
-      // Library's runs are named by their second folder ("Application Support"), AppData's by its first.
+      // Library's runs are named by their second folder (the one inside Library), AppData's by its first.
       if (want.every((w, k) => dirs[i + k] === w)) return { kind: 'data', name: names[want[0] === 'library' ? i + 1 : i] };
     }
   }
