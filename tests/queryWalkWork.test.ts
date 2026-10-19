@@ -442,3 +442,26 @@ test('CI4 review F1.2: a sort tie that reads a kept folder\'s path while its fil
   assert.equal(probes, 1, 'the deepest folder\'s path is built once, for its tie');
   assert.ok(held < HELD_PER_FOLDER * DEPTH, heldMessage('type:dir', held, DEPTH, keptPath));
 });
+
+test('CI4 review F2.1/F2.2: a hit whose name begins with a byte-order mark keeps it — "\\uFEFFfoo" beside "foo", and "\\uFEFF" alone, are answered as the files they are, each under its own path', async () => {
+  // A hit's path is what DELETE /api/files, the cart and an Autopilot query
+  // policy act on. Read without its mark, the 900-byte '\uFEFFfoo' was
+  // answered as '/data/foo', the 5-byte file beside it, and the 7-byte
+  // '\uFEFF' as '/data/', its folder. The oracle is the listing the store was
+  // built from, as a walker's fs.readdir gives the names.
+  const BOM = '\uFEFF';
+  const file = (dir: string, name: string, size: number): FileNode => ({ name, path: `${dir}/${name}`, type: 'file', extension: '', size, modifiedAt: T - YEAR, isHidden: false });
+  const sub = `/data/${BOM}sub`;
+  const listed = [file('/data', 'foo', 5), file('/data', `${BOM}foo`, 900), file('/data', BOM, 7), file(sub, BOM, 13), file(sub, 'foo', 11)];
+  const tree: FileNode = {
+    name: 'data', path: '/data', type: 'dir', size: 936, modifiedAt: T - YEAR, isHidden: false,
+    children: [...listed.slice(0, 3), { name: `${BOM}sub`, path: sub, type: 'dir', size: 24, modifiedAt: T - YEAR, isHidden: false, children: listed.slice(3) }],
+  };
+  const out = await run(scanOf(tree), 'type:file');
+  const bySize = (a: { size: number }, b: { size: number }): number => a.size - b.size;
+  assert.deepEqual(
+    out.hits.map((h) => ({ path: h.path, name: h.name, size: h.size })).sort(bySize),
+    listed.map((n) => ({ path: n.path, name: n.name, size: n.size })).sort(bySize),
+    'every file answered under its own name and path',
+  );
+});

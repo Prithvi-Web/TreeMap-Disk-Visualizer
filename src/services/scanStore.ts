@@ -795,7 +795,14 @@ const CLOUD_PROVIDERS: readonly CloudProviderName[] = ['icloud', 'onedrive', 'dr
 const CLOUD_ID: Record<string, number> = { icloud: 1, onedrive: 2, dropbox: 3 };
 
 const utf8Encoder = new TextEncoder();
-const utf8Decoder = new TextDecoder();
+/**
+ * Reads a stored name back byte for byte. `ignoreBOM`: a name may begin with
+ * U+FEFF — fs.readdir keeps it, and the encoder stores its three bytes — and
+ * a decoder made without it reads them as nothing, so '\uFEFFfoo' was spelled
+ * as the 'foo' beside it and '\uFEFF' alone as its folder (CI4 review F2.1,
+ * F2.2): a path that names another file, which a delete would act on.
+ */
+const utf8Decoder = new TextDecoder('utf-8', { ignoreBOM: true });
 
 const INITIAL_CAP = 1024;
 const INITIAL_POOL = 16 * 1024;
@@ -1509,20 +1516,12 @@ export class PackedScanStore implements ScanStore {
     } else {
       const from = this.nameOff[parent];
       const to = this.nameOff[parent + 1];
-      const bytes = this.nameBytes;
-      if (to - from >= 3 && bytes[from] === 0xef && bytes[from + 1] === 0xbb && bytes[from + 2] === 0xbf) {
-        // A leading byte-order mark, which name()'s TextDecoder reads as
-        // nothing (CI4 review F1.1): '\uFEFF' alone is the empty name though
-        // its three bytes are stored, and '\uFEFF/' is the separator alone.
-        // Decided from the parent's name as name() reads it — its name, never
-        // its path.
-        const parentName = this.name(parent);
-        endsWithSep = parentName.length === 0 || parentName.endsWith(this.sep);
-      } else {
-        // The parent's stored name is empty or ends in the separator's byte
-        // (UTF-8: an ASCII byte is never part of a longer character).
-        endsWithSep = to === from || bytes[to - 1] === this.sepByte;
-      }
+      // The parent's stored name is empty or ends in the separator's byte
+      // (UTF-8: an ASCII byte is never part of a longer character). name()
+      // reads every stored byte back, a leading byte-order mark's too (CI4
+      // review F2.1, F2.2), so the name is empty, or ends with the separator,
+      // exactly when its bytes do.
+      endsWithSep = to === from || this.nameBytes[to - 1] === this.sepByte;
     }
     return endsWithSep ? parentPath + name : parentPath + this.sep + name;
   }

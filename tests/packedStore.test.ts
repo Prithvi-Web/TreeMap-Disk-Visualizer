@@ -164,10 +164,10 @@ test('CI4: childPath answers byte for byte what reading its parent path answered
   for (const [rootPath, sep] of roots) {
     // '' after 'a': an empty name's stored bytes sit after a name that does
     // not end in the separator, so only its emptiness can say it does.
-    // A byte-order mark (CI4 review F1.1): name() reads a leading one as
-    // nothing, so '\uFEFF' alone is the empty name though three bytes are
-    // stored, and '\uFEFF' + sep is the separator alone; one anywhere else,
-    // or a second, is part of the name.
+    // A byte-order mark (CI4 review F1.1, F2.1/F2.2): name() reads one back
+    // as it was stored, a leading one too, so '\uFEFF' alone is a name of one
+    // character that does not end in the separator, and '\uFEFF' + sep one
+    // that does.
     const names = ['a', '', `a${sep}`, 'é', `é${sep}`, 'b\\', 'c/', `${sep}${sep}`, ':', 'b:', 'z::', 'Ʀ', '\uFEFF', `\uFEFF${sep}`, 'a\uFEFF', '\uFEFF\uFEFF'];
     const packed = new PackedScanStore(rootPath, sep, folderInput('r'));
     // Every name under the root, under every name, under every name: a parent
@@ -200,6 +200,66 @@ test('CI4: childPath answers byte for byte what reading its parent path answered
     for (const spelling of [rootPath, `q${sep}`, 'q']) {
       assert.equal(packed.childPath(packed.rootId, spelling), joinedByReading(spelling, sep, packed.name(packed.rootId)), `${rootPath}: the root under ${JSON.stringify(spelling)}`);
     }
+  }
+});
+
+test('CI4 review F2.1/F2.2: a name that begins with a byte-order mark keeps it — "\\uFEFFfoo" beside "foo", and "\\uFEFF" alone, are each spelled as the file they name, by name(), path(), childPath(), the path lookup and the scan JSON, as the object store spells them', async () => {
+  // A walker lists a folder with fs.readdir, whose names keep a leading
+  // U+FEFF, and the store keeps its three bytes (EF BB BF). A TextDecoder
+  // made without ignoreBOM reads them as nothing, so the 900-byte
+  // '\uFEFFfoo' was spelled '/data/foo' — the 5-byte 'foo' beside it — and a
+  // file named '\uFEFF' alone was spelled as its folder. A path is what a
+  // delete acts on: one node, its own spelling.
+  const BOM = '\uFEFF';
+  interface Listed { name: string; size?: number; children?: Listed[] }
+  // Siblings that a decoder dropping the mark spells alike: 'foo' and
+  // '\uFEFFfoo'; '\uFEFF' and its folder; '\uFEFFsub/a' and 'sub/a'; and a
+  // folder named '\uFEFF' alone with a file in it.
+  const listing: Listed[] = [
+    { name: 'foo', size: 5 },
+    { name: `${BOM}foo`, size: 900 },
+    { name: BOM, size: 7 },
+    { name: `${BOM}sub`, children: [{ name: 'a', size: 11 }, { name: BOM, size: 13 }] },
+    { name: 'sub', children: [{ name: 'a', size: 17 }, { name: BOM, children: [{ name: 'b', size: 19 }] }] },
+  ];
+  const input = (l: Listed): NodeInput => ({ name: l.name, isDir: l.children !== undefined, size: l.size ?? 0, modifiedAt: 1, isHidden: false });
+  for (const [rootPath, sep] of [['/data', '/'], ['C:\\data', '\\']] as const) {
+    const stores = [new ObjectScanStore(rootPath, sep, folderInput('data')), new PackedScanStore(rootPath, sep, folderInput('data'))];
+    for (const store of stores) {
+      const build = (parent: number, list: Listed[]): void => {
+        for (const l of list) {
+          const id = store.addNode(parent, input(l));
+          if (l.children) build(id, l.children);
+        }
+      };
+      build(store.rootId, listing);
+      store.finalize();
+      store.sumSizes();
+    }
+    for (const store of stores) {
+      // Walked from the root by the store's own child lists, in the order they
+      // were listed: a packed store numbers its nodes anew when it finalizes.
+      const label = `${rootPath} on the ${store.constructor.name}`;
+      const stack: Array<{ id: number; path: string; list: Listed[] }> = [{ id: store.rootId, path: rootPath, list: listing }];
+      while (stack.length > 0) {
+        const { id, path: parentPath, list } = stack.pop() as { id: number; path: string; list: Listed[] };
+        const kids = store.childIds(id);
+        assert.equal(kids.length, list.length, `${label}: ${JSON.stringify(parentPath)} holds what was listed in it`);
+        kids.forEach((kid, i) => {
+          const { name, children } = list[i];
+          const path = `${parentPath}${sep}${name}`;
+          assert.equal(store.name(kid), name, `${label}: the name ${JSON.stringify(name)} as it was listed`);
+          assert.equal(store.path(kid), path, `${label}: path() of ${JSON.stringify(path)}`);
+          assert.equal(store.childPath(kid, store.path(id)), path, `${label}: childPath() of ${JSON.stringify(path)}`);
+          // A lookup answers one node for a path: each node's finding itself is
+          // every path being its own.
+          assert.equal(store.findByPath(store.path(kid)), kid, `${label}: path() of ${JSON.stringify(path)} finds that node, not another`);
+          if (children) stack.push({ id: kid, path, list: children });
+        });
+      }
+    }
+    const [obj, packed] = stores;
+    assert.equal((await streamed(packed, 13)).json, wholeTreeJson(obj), `${rootPath}: the packed store's scan JSON is the object store's`);
   }
 });
 
