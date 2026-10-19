@@ -440,6 +440,12 @@ test('a folder is offered only once the server has said a scan may start there: 
   for (const v of ['grid', 'dashboard', 'grid', 'dashboard']) h.switchView(v);
   await turns();
   assert.equal(policyAsks(h).length, 1, 'repaints ask nothing more about folders already judged');
+
+  // The folder the history names waits too: no Stop has just made it the person's own choice.
+  const back = page({ route: server({ roots: [ROOT_HISTORY], policyAnswer: () => new Promise(() => {}) }) });
+  await boot(back);
+  assert.equal(back.state.lastFolder && (back.state.lastFolder as { path: string }).path, '/', 'control: the history names /');
+  assert.deepEqual(back.choices(), [], 'no "Scan Macintosh HD again" while the server is asked either');
 });
 
 test('when the server cannot be asked, the folders are offered as the server found them, as before — asked once, never in a loop (review F3.2)', async () => {
@@ -461,6 +467,41 @@ test('a folder a scan was just accepted for needs no asking: after a Stop of a f
   assert.equal(h.choices()[0], 'Scan Projects again', 'offered at once');
   assert.equal(h.dom.activeElement, h.$('startAgainBtn'), 'and focus lands on it, never on Choose a folder… for want of an answer');
   assert.ok(!policyAsks(h).some((r) => r.includes('Projects')), 'the server, which accepted the scan, was not asked again');
+});
+
+test('a folder whose scan was stopped before the server answered is offered again at once, with focus, while the rules are asked about it; their answer takes it away only if they refuse it (review F3.2, with (vii))', async () => {
+  // The scan request had not answered, so nothing has judged the folder: it
+  // is the person's own choice, offered as "Scan … again" with focus on it
+  // the moment Stop is pressed, as with no policy anywhere.
+  const scans: Array<(a: { status: number; body: unknown }) => void> = [];
+  const asks: Array<{ asked: string[]; answer: (a: { status?: number; body?: unknown }) => void }> = [];
+  const judge = server({ roots: [], refuse: onlyDownloads });
+  const h = page({ route: server({ roots: [], scanAnswer: () => new Promise((r) => { scans.push(r); }),
+    policyAnswer: (asked) => (asked.includes('/Users/x/Projects') || asked.includes('/Users/x/Pictures')
+      ? new Promise((r) => { asks.push({ asked, answer: r }); })
+      : judge('GET', '/api/policy?' + asked.map((p) => 'scanRoot=' + encodeURIComponent(p)).join('&'), null)!) }) });
+  await boot(h);
+  assert.deepEqual(h.choices(), ['Downloads'], 'control: the policy holds');
+  void h.startScan('/Users/x/Projects'); // as Choose a folder… scans it; its request waits
+  await turns();
+  await pressStop(h);
+  assert.equal(h.choices()[0], 'Scan Projects again', 'offered at once, the rules still being asked');
+  assert.equal(h.dom.activeElement, h.$('startAgainBtn'), 'with focus on it');
+  assert.equal(asks.length, 1, 'control: the rules are asked about it');
+  asks[0].answer({ body: { scanRoots: [{ path: '/Users/x/Projects', allowed: true }] } });
+  await turns();
+  assert.equal(h.choices()[0], 'Scan Projects again', 'allowed: it stays');
+  assert.equal(h.dom.activeElement, h.$('startAgainBtn'), 'and keeps focus');
+
+  void h.startScan('/Users/x/Pictures');
+  await turns();
+  await pressStop(h);
+  assert.equal(h.choices()[0], 'Scan Pictures again', 'control: offered at once');
+  asks[1].answer({ body: { scanRoots: [{ path: '/Users/x/Pictures', allowed: false, code: 'POLICY_ROOT_NOT_ALLOWED', error: outsideRoots('/Users/x/Pictures') }] } });
+  await turns();
+  assert.deepEqual(h.choices(), ['Downloads'], 'refused: taken away');
+  assert.equal(h.dom.activeElement, h.$('emptyBrowseBtn'), 'focus moving on to Choose a folder…, never <body>');
+  assert.equal(h.$('startLast').textContent, 'You stopped the scan of /Users/x/Pictures.', 'the line, which said only that, stands');
 });
 
 test('the whole drive is named as the folder picker names it: "Startup disk" until the disk layout answers, drive letters on Windows, / on Linux', async () => {

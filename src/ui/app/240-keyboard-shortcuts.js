@@ -411,17 +411,21 @@ function renderStartChoices() {
   const sys = state.system || {};
   const last = state.lastFolder;
   const drives = browseDrivesSeen || browseWholeDrives(sys.platform, null, sys.homeDir);
+  const retry = !!last && (last.outcome === 'stopped' || last.outcome === 'failed');
   // Each folder is offered once the server has said a scan may start there —
   // never one a scan would be refused, nor one still being asked about
-  // (startJudge, review F3.2).
+  // (startJudge, review F3.2) — but for the folder of a scan just stopped or
+  // failed: the person's own choice, offered at once as "Scan … again", focus
+  // on it, while the rules are asked about it, and taken away if they refuse
+  // it. Its own request, where it answered, was the rules' answer: accepted
+  // (startNoteAllowed), or refused, which the start screen names (failScan).
   const candidates = startChoiceList(sys, last, drives, state.refusedPaths);
   const verdict = (p) => startVerdicts.get(p);
-  const list = candidates.filter((c) => { const v = verdict(c.path); return !!v && v.allowed; });
+  const list = candidates.filter((c) => { const v = verdict(c.path); return v ? v.allowed : !!(c.again && retry); });
   const lastRefused = last && last.path && verdict(last.path) && !verdict(last.path).allowed ? verdict(last.path).error : '';
   const words = startLastLine(last, lastRefused);
   line.textContent = words;
   line.hidden = !words;
-  const retry = !!last && (last.outcome === 'stopped' || last.outcome === 'failed');
   const html = list.map((c, i) => `<button class="btn start-choice${c.again ? ` start-again${retry ? ' start-retry' : ''}` : ''}"` +
     `${c.again ? ' id="startAgainBtn"' : ''} data-start-ix="${i}" title="${escapeHtml(c.drive ? `${c.path} — the whole drive` : c.path)}">` +
     `${icon(c.icon, 16)}<span class="start-choice-txt"><span class="start-choice-nm">${escapeHtml(c.name)}</span>` +
@@ -451,9 +455,8 @@ function renderStartChoices() {
  * volume's spelling) — then paint the choices with the answer (review F3.2).
  * Each folder is asked about once a page load. A folder the answer does not
  * judge — the request failed, or left it out — is offered as the server
- * found it, as before:
- * a scan of it then answers with the rules' refusal, and the start screen
- * names it and offers it nowhere (failScan). Never asked again, so a server
+ * found it, as before: a scan of it then answers with the rules' refusal,
+ * which the start screen names (failScan). Never asked again, so a server
  * that cannot answer is not asked in a loop.
  */
 async function startJudge(paths) {
