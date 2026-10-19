@@ -292,7 +292,7 @@ test('a file an installed program owns is listed, but never called serious and n
   assert.equal(owned.severity, 'low', 'not serious: it is where its program put it');
   assert.equal(owned.suggestedPath, undefined, 'and nothing is proposed');
   assert.equal(relocationTargetFor(owned), null, 'so there is no destination to move to');
-  assert.match(owned.reason, /installed program/);
+  assert.match(owned.reason, /under “Application Support”, where programs keep their own data/, 'the reason names the data folder it is in (review F2.2)');
 
   // Every shape of app ownership, and the control: the same file loose in
   // Downloads is still a serious finding with a home to go to.
@@ -903,7 +903,8 @@ test('the report counts, over every finding, those in folders installed software
   const reason = (name: string) => report.findings.find((f) => f.name === name)!.reason;
   assert.match(reason('ca.pem'), /part of the app “Thing”/, 'a file inside an app names the app (the shared installed-programs detector)');
   assert.doesNotMatch(reason('ca.pem'), /an installed program/, 'not a nameless "installed program"');
-  assert.match(reason('server.pem'), /belongs to an installed program/, 'the panel\'s wider net, which the detector does not name, keeps the general words');
+  assert.match(reason('server.pem'), /inside “node_modules”, a folder a package manager fills with installed packages/, 'the panel\'s wider net, which the detector does not name, says which folder it is (review F2.2)');
+  assert.doesNotMatch(reason('server.pem'), /part of that software|moving it would break it/, 'and claims no more than that: a file in a package folder need not be part of any package');
   assert.match(reason('cert.pem'), /operating system/, 'the operating system\'s own is said as such');
 });
 
@@ -972,6 +973,42 @@ test('a key a program keeps in its data folder is counted app-owned, and the hea
   const said = securityHeadline({ ...report, patternCount: 9 });
   assert.doesNotMatch(said, /Nothing out of place|ships? inside/, 'neither file shipped inside a program, and nothing reassures about them');
   assert.match(said, /^The 2 files below sit in folders that installed software or the operating system keeps for itself \(a program, its data or its packages\)/, 'where they are, said as it is');
+  // The row under the headline says the same (review F2.2, F2.6): a key a person saved in a tool's data
+  // folder is not "part of that software", and moving it would break nothing that shipped.
+  for (const f of (report as unknown as { findings: Array<{ name: string; reason: string }> }).findings) {
+    assert.equal(f.reason,
+      'In “SomeGitGui”, under “Application Support”, where programs keep their own data — TreeMap does not offer to move it, since a program may rely on it. If you saved it here yourself, you can move it by hand.',
+      `${f.name}: the row names the data folder and claims no more`);
+  }
+});
+
+test('every app-owned row says only what its folder is — a data folder, a package folder, a software bundle, the programs folder — never that a file the detector names no program for is part of that software (review F2.2)', () => {
+  const reasonOf = (name: string, dir: string): string => {
+    const [f] = findingsFor([file(name, dir)], '/');
+    assert.equal(f?.appOwned, true, `control: ${dir} is app-owned`);
+    return f.reason;
+  };
+  const cases: Array<[name: string, dir: string, said: string]> = [
+    ['id_rsa', path.join(HOME, 'Library', 'Containers', 'com.example.app', 'Data'),
+      'In “Data”, under “Containers”, where programs keep their own data — TreeMap does not offer to move it, since a program may rely on it. If you saved it here yourself, you can move it by hand.'],
+    ['id_rsa', path.join(HOME, 'Library', 'Group Containers', 'group.com.example'),
+      'In “group.com.example”, under “Group Containers”, where programs keep their own data — TreeMap does not offer to move it, since a program may rely on it. If you saved it here yourself, you can move it by hand.'],
+    ['id_rsa', path.join(HOME, 'AppData', 'Roaming', 'Tool'),
+      'In “Tool”, under “AppData”, where programs keep their own data — TreeMap does not offer to move it, since a program may rely on it. If you saved it here yourself, you can move it by hand.'],
+    ['id_rsa', path.join(HOME, 'Library', 'Application Support'),
+      'In “Application Support”, where programs keep their own data — TreeMap does not offer to move it, since a program may rely on it. If you saved it here yourself, you can move it by hand.'],
+    ['server.pem', path.join(HOME, 'proj', '.venv', 'lib', 'python3.12', 'site-packages', 'pkg', 'tests'),
+      'In “tests”, inside “site-packages”, a folder a package manager fills with installed packages — TreeMap does not offer to move it, since a package may rely on it.'],
+    ['server.pem', path.join(HOME, 'Library', 'Application Support', 'Tool', 'node_modules', 'pkg'),
+      'In “pkg”, inside “node_modules”, a folder a package manager fills with installed packages — TreeMap does not offer to move it, since a package may rely on it.'],
+    ['id_rsa', path.join(HOME, 'Library', 'Stuff', 'Foo.framework', 'Versions', 'A', 'Resources'),
+      'In “Resources”, inside “Foo.framework”, a software bundle — this file is part of that bundle, so moving it could break the software that loads it.'],
+    ['id_rsa', path.join(HOME, 'Library', 'Stuff', 'Helper.bundle'),
+      'In “Helper.bundle”, a software bundle — this file is part of that bundle, so moving it could break the software that loads it.'],
+    ['cert.pem', '/mnt/c/Program Files',
+      'In “Program Files”, where installed programs live — TreeMap does not offer to move it, since a program may rely on it.'],
+  ];
+  for (const [name, dir, said] of cases) assert.equal(reasonOf(name, dir), said, dir);
 });
 
 test('the API\'s appOwnedCount is declared where an agent reads it, beside the total/counts contract it leaves true (H05)', async () => {

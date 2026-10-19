@@ -343,6 +343,50 @@ export function isApplicationOwned(filePath: string): boolean {
   return APP_OWNED_RUNS.some((want) => hasRun(dirs, want));
 }
 
+/** One of the panel's wider-net places (review F2.2): what the folder is, and its name as spelled. */
+interface OwnedPlace {
+  kind: 'bundle' | 'packages' | 'programs' | 'data';
+  name: string;
+}
+
+/**
+ * Which of the panel's wider-net places holds a file the shared detector names no program for (review
+ * F2.2): the nearest bundle or package folder, else a program data folder. Its row says what that folder
+ * is and claims no more — a key a person saved in a tool's data folder is not part of that software.
+ */
+function ownedPlaceOf(filePath: string): OwnedPlace | null {
+  const names = path.dirname(filePath).split(/[\\/]+/).filter(Boolean);
+  const dirs = names.map((s) => s.toLowerCase());
+  for (let i = dirs.length - 1; i >= 0; i--) {
+    if (BUNDLE_DIR.test(dirs[i])) return { kind: 'bundle', name: names[i] };
+    if (APP_OWNED_SEGMENTS.has(dirs[i])) return { kind: dirs[i].startsWith('program files') ? 'programs' : 'packages', name: names[i] };
+  }
+  for (const want of APP_OWNED_RUNS) {
+    for (let i = 0; i + want.length <= dirs.length; i++) {
+      // Library's runs are named by their second folder ("Application Support"), AppData's by its first.
+      if (want.every((w, k) => dirs[i + k] === w)) return { kind: 'data', name: names[want[0] === 'library' ? i + 1 : i] };
+    }
+  }
+  return null;
+}
+
+/** The row's reason for a file in one of the wider-net places, `where` being its own folder (review F2.2). */
+function ownedPlaceReason(where: string, place: OwnedPlace | null): string {
+  const at = (word: string): string => (place && place.name !== where ? `, ${word} “${place.name}”` : '');
+  switch (place?.kind) {
+    case 'data':
+      return `In “${where}”${at('under')}, where programs keep their own data — TreeMap does not offer to move it, since a program may rely on it. If you saved it here yourself, you can move it by hand.`;
+    case 'packages':
+      return `In “${where}”${at('inside')}, a folder a package manager fills with installed packages — TreeMap does not offer to move it, since a package may rely on it.`;
+    case 'bundle':
+      return `In “${where}”${at('inside')}, a software bundle — this file is part of that bundle, so moving it could break the software that loads it.`;
+    case 'programs':
+      return `In “${where}”${at('inside')}, where installed programs live — TreeMap does not offer to move it, since a program may rely on it.`;
+    default:
+      return `In “${where}”, a folder installed software keeps for itself — TreeMap does not offer to move it, since that software may rely on it.`;
+  }
+}
+
 /**
  * Is `filePath` inside one of the pattern's expected directories?
  * `expectedIn` entries may be nested (`.config/gcloud`), matched as a
@@ -464,7 +508,7 @@ export function collectSecurityFindings(
           : program !== null && program.kind !== 'package'
           ? `In “${where}”, part of ${programPhrase(program)} — this file ships with that program, so moving it would break it.`
           : appOwned
-          ? `In “${where}”, which belongs to an installed program — this file is part of that software, so moving it would break it.`
+          ? ownedPlaceReason(where, ownedPlaceOf(childPath))
           : syncFolder
             ? `In “${where}”, which syncs to the cloud — a copy of this file leaves this computer.`
             : exposedFolder
