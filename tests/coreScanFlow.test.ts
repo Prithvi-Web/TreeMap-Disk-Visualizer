@@ -992,6 +992,38 @@ test('a last folder from the history that cannot be opened now is offered nowher
   assert.deepEqual(h.choices(), ['Desktop', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'], 'no Documents beside the sentence that says it cannot be opened');
 });
 
+test('a folder that cannot be opened, or whose Stop the server would not confirm, stays offered nowhere after another folder is stopped, until a scan of it is taken (review F2.5)', async () => {
+  // Review F2.5: the fact lived only on state.lastFolder, so the next Stop of
+  // any other folder overwrote it and the folder came back as a plain quick
+  // choice — a second walk of a folder that may still be walking, or a path
+  // that answers an error.
+  const h = page({ route: cancelAnswers(500) });
+  await boot(h);
+  await startFrom(h, /^Documents$/);
+  await pressStop(h);
+  assert.equal(h.$('startLast').textContent, 'TreeMap could not stop the scan of /Users/x/Documents, so it may still be running: Internal server error.', 'control: its cancel was refused');
+  assert.deepEqual(offering(h, '/Users/x/Documents'), [], 'control: offered nowhere');
+  await startFrom(h, /^Desktop$/);
+  await pressStop(h);
+  assert.equal(h.$('startLast').textContent, 'You stopped the scan of /Users/x/Desktop.', 'control: another folder\'s Stop is named now');
+  assert.deepEqual(h.choices(), ['Scan Desktop again', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'], 'the folder that may still be walking is still offered nowhere');
+  await h.startScan('/Users/x/Documents'); // as Choose a folder… scans it
+  await turns();
+  await pressStop(h);
+  assert.equal(h.choices()[0], 'Scan Documents again', 'a scan of it taken since: offered again');
+
+  const unopenable = page({ route: server({ roots: [{ rootPath: '/Users/x/Documents', count: 2, latestAt: 1_700_000_000_000, latestSize: 5 }], missing: ['/Users/x/Documents'] }) });
+  await boot(unopenable);
+  assert.deepEqual(offering(unopenable, '/Users/x/Documents'), [], 'control: the history folder that cannot be opened is offered nowhere');
+  await startFrom(unopenable, /^Desktop$/);
+  await pressStop(unopenable);
+  assert.deepEqual(unopenable.choices(), ['Scan Desktop again', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'], 'nor after another folder is stopped');
+  await unopenable.startScan('/Users/x/Documents');
+  await turns();
+  await pressStop(unopenable);
+  assert.equal(unopenable.choices()[0], 'Scan Documents again', 'a scan of it taken since: offered again');
+});
+
 test('stopping a rescan while an older tree is on screen keeps today\'s behaviour: the older results stay, no start screen', async () => {
   const tree = { name: 'x', path: '/Users/x/old', size: 1, type: 'dir', children: [] };
   const h = page({ route: server({ roots: [] }), root: tree, settledScanId: 'scan-old' });

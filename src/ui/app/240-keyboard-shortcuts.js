@@ -545,6 +545,9 @@ async function restoreLastSession() {
     } catch (e) {
       offered = false;
       last.reason = (e && e.message) || '';
+      // Offered nowhere, under any name, however the start screen comes back —
+      // after another folder's Stop too — until a scan of it is taken (review F2.5).
+      state.refusedPaths = [...(state.refusedPaths || []).filter((x) => x !== last.path), last.path];
     }
     // The person moved first — a scan started, or one stopped, which names its own folder.
     if (state.root || state.scanning || state.lastFolder) return;

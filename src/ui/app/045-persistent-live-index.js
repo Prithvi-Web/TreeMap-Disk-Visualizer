@@ -737,6 +737,9 @@ function noteLastFolder(outcome, reason = '', offered = true) {
 function noteStopUnconfirmed(noted, reason) {
   if (!noted || state.lastFolder !== noted) return;
   state.lastFolder = { ...noted, outcome: 'unstopped', reason, offered: false };
+  // And kept offered nowhere when another folder's Stop or failure takes the
+  // start screen's line, until a scan of it is taken (review F2.5).
+  state.refusedPaths = [...(state.refusedPaths || []).filter((x) => x !== noted.path), noted.path];
   withFocusKept(() => { renderStartChoices(); });
 }
 

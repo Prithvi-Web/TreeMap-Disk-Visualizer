@@ -7384,9 +7384,13 @@ const state = {
   // Whether this person has scanned before — a scan the server holds, or a
   // folder in the history (restoreLastSession). The tour reads it.
   scannedBefore: false,
-  // The folders the server refused a scan of this page load (400, 403, 404),
-  // until a scan of one is taken: the start screen offers none of them, under
-  // any name (noteLastFolder, startChoiceList; review F1.5).
+  // The folders the start screen offers nowhere, under any name, this page
+  // load, until a scan of one is taken (startChoiceList): those the server
+  // refused a scan of (400, 403, 404; noteLastFolder, review F1.5), one whose
+  // Stop the server would not confirm, which may still be walking
+  // (noteStopUnconfirmed), and a last folder the server cannot open now
+  // (restoreLastSession) — kept here, not only on lastFolder, which the next
+  // Stop or failure replaces (review F2.5).
   refusedPaths: [],
   pathIndex: new Map(),
   // Nodes resolved from the server for paths the pruned tree doesn't carry.
@@ -10433,6 +10437,9 @@ function noteLastFolder(outcome, reason = '', offered = true) {
 function noteStopUnconfirmed(noted, reason) {
   if (!noted || state.lastFolder !== noted) return;
   state.lastFolder = { ...noted, outcome: 'unstopped', reason, offered: false };
+  // And kept offered nowhere when another folder's Stop or failure takes the
+  // start screen's line, until a scan of it is taken (review F2.5).
+  state.refusedPaths = [...(state.refusedPaths || []).filter((x) => x !== noted.path), noted.path];
   withFocusKept(() => { renderStartChoices(); });
 }
 
@@ -40191,6 +40198,9 @@ async function restoreLastSession() {
     } catch (e) {
       offered = false;
       last.reason = (e && e.message) || '';
+      // Offered nowhere, under any name, however the start screen comes back —
+      // after another folder's Stop too — until a scan of it is taken (review F2.5).
+      state.refusedPaths = [...(state.refusedPaths || []).filter((x) => x !== last.path), last.path];
     }
     // The person moved first — a scan started, or one stopped, which names its own folder.
     if (state.root || state.scanning || state.lastFolder) return;
