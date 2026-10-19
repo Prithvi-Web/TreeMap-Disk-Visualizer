@@ -2788,7 +2788,8 @@ test('BOTH scan entry points honour a Stop that beat their request', () => {
   assert.ok(cloud.length > 200, 'the startCloudScan slice is non-empty');
 
   for (const [name, fn] of [['disk', disk], ['cloud', cloud]] as const) {
-    const guardAt = fn.indexOf('abandonIfStopped(resp.scanId, gen)');
+    // With the folder the request asked for, which a refused cancel keeps offered nowhere (review F3.1).
+    const guardAt = fn.indexOf('abandonIfStopped(resp.scanId, gen, ');
     const followAt = fn.indexOf('followScanProgress(resp.scanId');
     assert.ok(guardAt !== -1, `the ${name} scan path must check for a Stop that beat its request`);
     assert.ok(followAt > guardAt, `and the ${name} path must check BEFORE it opens a stream`);

@@ -111,15 +111,20 @@ function cancelScanById(scanId) {
  * Shared by both entry points on purpose: startScanRequest and startCloudScan
  * have the same await-then-follow shape, and the disk path having this guard
  * while the cloud path silently did not is exactly the asymmetry it prevents.
+ *
+ * `path` is the folder the request asked to scan, the request's own: by the
+ * time it answers, later Stops may have replaced every record of the one
+ * that ended it (review F3.1).
  */
-function abandonIfStopped(scanId, gen) {
+function abandonIfStopped(scanId, gen, path) {
   if (state.scanning && state.scanGen === gen) return false;
   // Its cancel can be refused as a Stop's own can, and the Stop that ended
   // this request has already said "stopped": a refusal is said the same way,
   // and takes back what that Stop — the one of this request's generation —
-  // said on the start screen (review F2.2).
+  // said on the start screen, while it still says it (review F2.2). Its
+  // folder is offered nowhere whatever has been stopped since (review F3.1).
   const stop = state.lastStop && state.lastStop.gen === gen ? state.lastStop : null;
-  void cancelScanById(scanId).catch((e) => stopNotConfirmed(e, gen, stop ? stop.noted : null));
+  void cancelScanById(scanId).catch((e) => stopNotConfirmed(e, gen, stop ? stop.noted : null, path));
   return true;
 }
 
@@ -145,6 +150,9 @@ async function stopScan() {
   // The scan this Stop ends, by generation: a scan begun before the cancel
   // answers owns the status line and the live region (stopNotConfirmed).
   const gen = state.scanGen;
+  // And by its folder, which a refused cancel keeps offered nowhere whatever
+  // has been stopped or has failed by the time it answers (review F3.1).
+  const stopped = state.scanningPath;
   if (state.abortScan) state.abortScan();
   closeEventSource();
   endScanChrome();
@@ -194,7 +202,7 @@ async function stopScan() {
   try {
     await cancelScanById(scanId);
   } catch (e) {
-    stopNotConfirmed(e, gen, noted);
+    stopNotConfirmed(e, gen, noted, stopped);
   }
 }
 
@@ -210,10 +218,11 @@ async function stopScan() {
  * already ended with words of its own (review F2.9). Where they are this
  * Stop's, the live region is emptied, so no screen reader finds "stopped"
  * beside the toast, whether or not a start screen named a folder (review
- * F2.1). And the start screen takes back what it said, while it still says it
- * (noteStopUnconfirmed).
+ * F2.1). And the start screen offers the stopped scan's folder, `path`,
+ * nowhere — whatever it says by then — and takes back what it said, while it
+ * still says it (noteStopUnconfirmed, review F3.1).
  */
-function stopNotConfirmed(e, gen, noted) {
+function stopNotConfirmed(e, gen, noted, path) {
   // 404 is not one of these: the record was already gone, so it is stopped.
   const refused = e.status !== 404;
   if (!refused) return;
@@ -225,7 +234,7 @@ function stopNotConfirmed(e, gen, noted) {
     status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml(why) + '</span>';
     $('stopAnnounce').textContent = '';
   }
-  noteStopUnconfirmed(noted, e.message);
+  noteStopUnconfirmed(noted, e.message, path);
 }
 function skeletonRows(n, h = 38, label = '') {
   const rows = Array.from({ length: n }, () => `<div class="skeleton" style="height:${h}px;margin:8px 0;"></div>`).join('');

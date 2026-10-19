@@ -370,7 +370,7 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
       // 2026.) The rest are a person's click, drop or request.
       body: JSON.stringify({ path, incremental: !!opts.incremental, interactive: !opts.unattended }),
     });
-    if (abandonIfStopped(resp.scanId, gen)) return;
+    if (abandonIfStopped(resp.scanId, gen, path)) return;
     followScanProgress(resp.scanId, path, resp.incremental === true, t0);
   // A request a Stop ended, or one another scan has replaced since, has
   // nothing to report when it fails — abandonIfStopped's check, for the other
@@ -643,7 +643,7 @@ async function startCloudScan(providerId, providerName) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: providerId }),
     });
-    if (abandonIfStopped(resp.scanId, gen)) return;
+    if (abandonIfStopped(resp.scanId, gen, 'cloud://' + providerId)) return;
     followScanProgress(resp.scanId, 'cloud://' + providerId, false, t0);
   // Stopped, or replaced by another scan since: nothing to report (startScanRequest, review F1.1).
   } catch (e) {
@@ -725,21 +725,23 @@ function noteLastFolder(outcome, reason = '', offered = true) {
 
 /**
  * A Stop whose cancel the server refused — anything but a 404 — so the walk
- * may still be running. The start screen said "You stopped the scan of …" the
- * moment Stop was pressed. While it still says that of this Stop — `noted`,
- * what noteLastFolder recorded for it, with nothing started or said since —
- * it says instead that TreeMap could not stop it, and offers that folder
- * nowhere: "Scan … again" would start a second walk of a folder still being
- * walked (review F1.3). Focus on a choice that went moves on (withFocusKept).
- * The live region that said "You stopped …" is stopNotConfirmed's, for every
- * refused cancel, a folder named or not (review F1.14, F2.1).
+ * of `path`, the stopped scan's folder, may still be running: it is offered
+ * nowhere, under any name, until a scan of it is taken — "Scan … again" or
+ * its quick choice would start a second walk of a folder still being walked
+ * (review F1.3). However late the refusal answers: by then another folder's
+ * Stop or failure may have taken the start screen's line (review F2.5,
+ * F3.1). The start screen said "You stopped the scan of …" the moment Stop
+ * was pressed; while it still says that of this Stop — `noted`, what
+ * noteLastFolder recorded for it, with nothing started or said since — it
+ * says instead that TreeMap could not stop it. Focus on a choice that went
+ * moves on (withFocusKept). The live region that said "You stopped …" is
+ * stopNotConfirmed's, for every refused cancel, a folder named or not
+ * (review F1.14, F2.1). (A cloud account's listing, `cloud://…`, is never
+ * a choice there, so keeping it out changes nothing.)
  */
-function noteStopUnconfirmed(noted, reason) {
-  if (!noted || state.lastFolder !== noted) return;
-  state.lastFolder = { ...noted, outcome: 'unstopped', reason, offered: false };
-  // And kept offered nowhere when another folder's Stop or failure takes the
-  // start screen's line, until a scan of it is taken (review F2.5).
-  state.refusedPaths = [...(state.refusedPaths || []).filter((x) => x !== noted.path), noted.path];
+function noteStopUnconfirmed(noted, reason, path) {
+  if (path) state.refusedPaths = [...(state.refusedPaths || []).filter((x) => x !== path), path];
+  if (noted && state.lastFolder === noted) state.lastFolder = { ...noted, outcome: 'unstopped', reason, offered: false };
   withFocusKept(() => { renderStartChoices(); });
 }
 

@@ -840,6 +840,11 @@ test('(v) a Stop pressed before POST /api/scan answers, whose late cancel the se
   assert.deepEqual(t.toasts, [['Could not stop the scan: Internal server error', 'error']], 'control: refused, and toasted');
   assert.equal(t.$('startLast').textContent, 'You stopped the scan of /Users/x/Documents.', 'the start screen goes on naming the newer Stop');
   assert.equal(t.choices()[0], 'Scan Documents again', 'and offering its folder');
+  // But the older request's folder may still be walking, whichever Stop the
+  // start screen names now: it is offered nowhere (review F3.1). The Stop
+  // that ended its request was overwritten by the newer one before it
+  // answered; the request names its own folder.
+  assert.deepEqual(offering(t, '/Users/x/Desktop').map((b) => b.textContent), [], `the folder whose late cancel was refused is offered nowhere (${t.choices().join(' | ')})`);
 
   // A cloud listing stopped before it answered: no folder to name, and the refusal is said.
   const cloudHeld: Array<(a: { status: number; body: unknown }) => void> = [];
@@ -1055,6 +1060,30 @@ test('a folder that cannot be opened, or whose Stop the server would not confirm
   await turns();
   await pressStop(unopenable);
   assert.equal(unopenable.choices()[0], 'Scan Documents again', 'a scan of it taken since: offered again');
+});
+
+test('a refused cancel that answers after another folder\'s Stop keeps its own folder offered nowhere, while the start screen goes on naming the newer Stop (review F3.1)', async () => {
+  // Review F3.1: the pin was written only while the start screen still said
+  // what this Stop said, so a slow cancel refused after another folder had
+  // been stopped pinned nothing, and the folder that may still be walking
+  // came back as a plain choice — one click from a second walk of it.
+  const held = { answer: (_a: { status: number; body: unknown }) => {} };
+  const h = page({ route: cancelAnswers('held', held) });
+  await boot(h);
+  await startFrom(h, /^Desktop$/);
+  h.$('scanBtn').focus();
+  void h.stopScan(); // Desktop's cancel is held
+  await turns();
+  assert.equal(h.choices()[0], 'Scan Desktop again', 'control: said and offered at once, before the cancel answers');
+  await startFrom(h, /^Documents$/);
+  await pressStop(h); // Documents' cancel is confirmed
+  assert.equal(h.$('startLast').textContent, 'You stopped the scan of /Users/x/Documents.', 'control: the newer Stop is named');
+  assert.deepEqual(h.choices(), ['Scan Documents again', 'Desktop', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'], 'control: Desktop is a plain choice while its cancel is unanswered');
+  held.answer({ status: 500, body: { error: 'Internal server error', code: 'INTERNAL' } });
+  await turns();
+  assert.deepEqual(h.toasts, [['Could not stop the scan: Internal server error', 'error']], 'control: refused, and toasted');
+  assert.equal(h.$('startLast').textContent, 'You stopped the scan of /Users/x/Documents.', 'control: the start screen goes on naming the newer Stop');
+  assert.deepEqual(offering(h, '/Users/x/Desktop').map((b) => b.textContent), [], `the folder that may still be walking is offered nowhere (${h.choices().join(' | ')})`);
 });
 
 test('stopping a rescan while an older tree is on screen keeps today\'s behaviour: the older results stay, no start screen', async () => {
