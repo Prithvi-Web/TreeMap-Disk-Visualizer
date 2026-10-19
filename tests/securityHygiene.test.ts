@@ -982,7 +982,7 @@ test('a key a program keeps in its data folder is counted app-owned, and the hea
   }
 });
 
-test('every app-owned row says only what its folder is — a data folder, a package folder, a software bundle, the programs folder — never that a file the detector names no program for is part of that software (review F2.2)', () => {
+test('every app-owned row says only what its folder is — a data folder, a package folder, a software bundle, the programs folder, the nearest where a path holds two — never that a file the detector names no program for is part of that software (review F2.2, F3.5)', () => {
   const reasonOf = (name: string, dir: string): string => {
     const [f] = findingsFor([file(name, dir)], '/');
     assert.equal(f?.appOwned, true, `control: ${dir} is app-owned`);
@@ -1007,6 +1007,11 @@ test('every app-owned row says only what its folder is — a data folder, a pack
       'In “Helper.bundle”, a software bundle — this file is part of that bundle, so moving it could break the software that loads it.'],
     ['cert.pem', '/mnt/c/Program Files',
       'In “Program Files”, where installed programs live — TreeMap does not offer to move it, since a program may rely on it.'],
+    // Two places in one path (review F3.5): the nearest names the row, whichever kind it is.
+    ['id_rsa', path.join(HOME, 'proj', 'node_modules', 'foo', 'Bar.framework', 'Resources'),
+      'In “Resources”, inside “Bar.framework”, a software bundle — this file is part of that bundle, so moving it could break the software that loads it.'],
+    ['server.pem', path.join(HOME, 'Library', 'Stuff', 'Foo.framework', 'Versions', 'A', 'Resources', 'node_modules', 'pkg'),
+      'In “pkg”, inside “node_modules”, a folder a package manager fills with installed packages — TreeMap does not offer to move it, since a package may rely on it.'],
   ];
   for (const [name, dir, said] of cases) assert.equal(reasonOf(name, dir), said, dir);
 });
