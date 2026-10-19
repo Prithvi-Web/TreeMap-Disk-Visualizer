@@ -252,6 +252,79 @@ test('a file with an escaped name, held open, is in use and never a deleted file
   assert.deepEqual(zombies, [], 'each file is still at its path with its inode: nothing deleted is held');
 });
 
+/*
+ * Review F3.1, F3.3, measured on this Mac with `lsof -w -F n` under no locale and under en_US.UTF-8 (both print
+ * the same): every control byte but a backspace, tab, newline, form feed and carriage return is written as `^`
+ * and the character 0x40 above it — 0x01 "^A", VT "^K", ESC "^[", 0x1c "^\", 0x1f "^_" — and a caret as
+ * itself, so "^A" cannot be read back. 0x1c's "^\" even runs into the letter after it: "c\x1cb.txt" is
+ * printed "c^\b.txt", which reads back as a caret and a backspace. Beside lsof's other escapes in one name
+ * each byte is written as it is alone (measured too).
+ */
+const LSOF_CARET_RECORDED: readonly (readonly [lsofText: string, name: string])[] = [
+  ['a^Ab.txt', 'a\x01b.txt'],
+  ['vt^Kx.txt', 'vt\x0bx.txt'],
+  ['esc^[z.txt', 'esc\x1bz.txt'],
+  [String.raw`c^\b.txt`, 'c\x1cb.txt'],
+  ['us^_x.txt', 'us\x1fx.txt'],
+  [String.raw`mix^A\tz.txt`, 'mix\x01\tz.txt'],
+  [String.raw`bk^A\\z.txt`, 'bk\x01\\z.txt'],
+  [String.raw`dl^A\x7fz.txt`, 'dl\x01\x7fz.txt'],
+  [String.raw`\xc3\xa9^[z.txt`, 'é\x1bz.txt'],
+  [String.raw`fs^\\\z.txt`, 'fs\x1c\\z.txt'],
+];
+const ENOENT = (p: string): Error => Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+
+test('a held file whose name holds a control byte lsof writes as ^X is found in use — alone or inside a folder being deleted — and never reported as a deleted file still holding space (review F3.1, F3.3)', async () => {
+  const dir = '/Users/me/f31';
+  const lines = ['p53661', 'csleep'];
+  LSOF_CARET_RECORDED.forEach(([written], i) => lines.push(`f${i + 3}`, 's1', `i${i + 10}`, `n${dir}/${written}`));
+  lines.push('f99', 's1', 'i20', `n${dir}/d^Bir/inner.txt`);
+  const records = parseLsofRecords(lines.join('\n'));
+  const files = LSOF_CARET_RECORDED.map(([, name]) => `${dir}/${name}`);
+  const folder = `${dir}/d\x02ir`;
+  const held = lsof.intersectHandles(records, [...files, folder].map((f) => [f, f] as const));
+  assert.deepEqual(held.map((h) => h.path), [...files, folder], 'each file, and the folder holding the last one, is found in use');
+
+  // Every file is still at its own path with its inode; only lsof's spelling of it names nothing — or, for
+  // "a^Ab.txt", another file: a real caret and an A, with another inode.
+  const inodes = new Map<string, number>([...files.map((f, i) => [f, i + 10] as const), [`${folder}/inner.txt`, 20], [`${dir}/a^Ab.txt`, 999]]);
+  const zombies = await resolveZombies(records, async (p) => {
+    const ino = inodes.get(p);
+    if (ino === undefined) throw ENOENT(p);
+    return ino;
+  });
+  assert.deepEqual(zombies.map((z) => z.path), [], 'nobody deleted them: a ^X spelling that names nothing, or another file, is no proof');
+
+  const marked = parseLsofRecords(['p9', 'cnode', 'f3', 's100', 'i42', 'n/tmp/a^Ab.bin (deleted)'].join('\n'));
+  assert.deepEqual((await resolveZombies(marked, async (p) => { throw ENOENT(p); })).map((z) => z.path), ['/tmp/a^Ab.bin'],
+    'control: lsof\'s own (deleted) marker is believed, whatever the name holds');
+  const plain = parseLsofRecords(['p9', 'cnode', 'f3', 's100', 'i42', 'n/tmp/gone.bin'].join('\n'));
+  assert.deepEqual((await resolveZombies(plain, async (p) => { throw ENOENT(p); })).map((z) => z.path), ['/tmp/gone.bin'],
+    'control: a path with no caret that is gone is still a deleted file held');
+});
+
+test('B2/B5: a held file whose name holds a control byte lsof writes as ^X is found in use and not reported deleted (review F3.1, F3.3)', { skip: !IS_MAC }, async () => {
+  const dir = await mkTmp();
+  const fds: number[] = [];
+  try {
+    const folder = path.join(dir, 'd\x02ir');
+    await fsp.mkdir(folder);
+    const targets = [...LSOF_CARET_RECORDED.map(([, name]) => path.join(dir, name)), path.join(folder, 'inner.txt')];
+    for (const t of targets) {
+      await fsp.writeFile(t, 'x');
+      fds.push(fs.openSync(t, 'r'));
+    }
+    const asked = [...targets.slice(0, -1), folder];
+    const held = (await openHandlesFor(asked)).filter((h) => h.pid === process.pid);
+    assert.deepEqual([...new Set(held.map((h) => h.path))].sort(), [...asked].sort(), 'every open file, and the folder holding one, is found in use');
+    const zombies = (await lsof.zombieHandles()).filter((z) => z.path.includes(path.basename(dir)));
+    assert.deepEqual(zombies, [], 'no file was deleted, so none is reported as held deleted space');
+  } finally {
+    for (const fd of fds) fs.closeSync(fd);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('B2/B5: under no locale, as the Dock starts TreeMap, a held file whose name lsof escapes is found in use and not reported deleted (review F2.1)', { skip: !IS_MAC }, async () => {
   const dir = await mkTmp();
   const saved = { ...process.env };

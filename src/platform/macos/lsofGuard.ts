@@ -35,6 +35,9 @@ import { meansAbsent } from '../../utils/errno';
  * 3. **lsof escapes what it prints.** A backslash in a path or name is `\\`, a tab `\t`, and under no
  *    locale every byte past ASCII is `\xNN` (review F2.1). Both fields are read back through
  *    `decodeLsofText`, or no path holding one would match, and every such file would read as deleted.
+ *    Its `^A` for a control byte cannot be undone, a caret being written as itself: a path is matched
+ *    by that spelling too (`lsofReadBack`), and one holding a caret is never judged deleted by a stat
+ *    of the spelling (review F3.1, F3.3).
  *
  * Field order, as emitted: `f` (descriptor) opens a block, then `t` type,
  * `D` device, `s` size, `i` inode, `n` name. State resets on each `f`.
@@ -133,7 +136,8 @@ export const LSOF_NAME_MAX = 31;
  * tab, newline, backspace, form feed and carriage return are `\t`, `\n`, `\b`, `\f`, `\r`; DEL — and,
  * under no locale, as the Dock and launchd start TreeMap, every byte past ASCII — is `\xNN`. Its `^X`
  * for another control byte is not undone: lsof writes a `^` as itself, so "^A" in its text may be a
- * caret and an A, and is left as the text it is.
+ * caret and an A, and is left as the text it is. The guard allows for it where it judges a path
+ * (`lsofReadBack`, and resolveZombies; review F3.1, F3.3).
  */
 const LSOF_ESCAPE = /\\(\\|x[0-9a-fA-F]{2}|[bfnrt])/;
 
@@ -158,6 +162,39 @@ export function decodeLsofText(value: string): string {
   const parts = value.split(LSOF_ESCAPE).map((part, i) =>
     i % 2 === 1 ? Buffer.from([lsofEscapeByte(part)]) : Buffer.from(part, 'utf8'));
   return Buffer.concat(parts).toString('utf8');
+}
+
+/** The letter lsof escapes each of LSOF_CONTROL's bytes with. */
+const LSOF_CONTROL_LETTER: ReadonlyMap<number, string> = new Map(Object.entries(LSOF_CONTROL).map(([letter, byte]) => [byte, letter]));
+
+/**
+ * A path as lsof writes it (`-F n`), measured on this Mac under no locale and under UTF-8 (review F2.1,
+ * F3.1, F3.3), as far as reading it back can tell: a backslash as `\\`; a backspace, tab, newline, form
+ * feed and carriage return as `\b`, `\t`, `\n`, `\f`, `\r`; every other control byte as `^` and the
+ * character 0x40 above it (0x01 "^A", ESC "^[", 0x1c "^\"). DEL and every letter past ASCII are kept as
+ * they are: lsof's `\xNN` for their bytes reads back as those bytes.
+ */
+function lsofPrinted(path: string): string {
+  let out = '';
+  for (const ch of path) {
+    const c = ch.codePointAt(0) ?? 0;
+    const letter = LSOF_CONTROL_LETTER.get(c);
+    if (ch === '\\') out += '\\\\';
+    else if (letter !== undefined) out += `\\${letter}`;
+    else if (c < 0x20) out += `^${String.fromCharCode(c + 0x40)}`;
+    else out += ch;
+  }
+  return out;
+}
+
+/**
+ * The path parseLsofRecords reads back for the file at `path` (review F3.1, F3.3): `path` itself, unless
+ * one of its names holds a control byte lsof writes as `^X`. That spelling cannot be undone, since lsof
+ * writes a caret as itself, so the guard matches the file by the spelling instead: "a\x01b.txt" is read
+ * back as "a^Ab.txt", and "c\x1cb.txt" — printed "c^\b.txt" — as a caret and a backspace.
+ */
+export function lsofReadBack(path: string): string {
+  return decodeLsofText(lsofPrinted(path));
 }
 
 /**
@@ -320,11 +357,18 @@ export function intersectHandles(
   records: LsofRecord[],
   wanted: readonly (readonly [resolved: string, requested: string])[],
 ): OpenHandleInfo[] {
-  const exact = new Map(wanted);
+  // Each path by its own spelling and by the one lsof's text is read back as (review F3.1, F3.3): a name
+  // holding a control byte lsof writes as `^X` comes back with the caret, never with the byte.
+  const spellings = wanted.flatMap(([resolved, requested]) => {
+    const readBack = lsofReadBack(resolved);
+    return readBack === resolved ? [[resolved, requested] as const] : [[resolved, requested] as const, [readBack, requested] as const];
+  });
+  const exact = new Map(spellings);
   // Directory prefixes carry a trailing separator so that deleting `/a/logs`
   // does not claim `/a/logs-archive/x` — a false warning about an unrelated
-  // file is how a guard trains people to click through it.
-  const prefixes = wanted.map(([resolved, requested]) => [`${resolved.replace(/\/+$/, '')}/`, requested] as const);
+  // file is how a guard trains people to click through it. (No escape lsof
+  // writes holds a `/`, so a folder's spelling begins its files' spellings.)
+  const prefixes = spellings.map(([resolved, requested]) => [`${resolved.replace(/\/+$/, '')}/`, requested] as const);
 
   const seen = new Set<string>();
   const out: OpenHandleInfo[] = [];
@@ -405,6 +449,10 @@ export async function resolveZombies(
       if (rec.ino === null) continue; // no inode reported — cannot know, so don't claim
       const live = await lookup(rec.path);
       if (live === 'unknown') continue; // could not look — cannot know, so don't claim
+      // lsof writes a control byte as `^X` and a caret as itself (review F3.1, F3.3): a path holding a caret
+      // that names nothing, or another inode, may be a file with a control byte in its name, still in its
+      // place — cannot know, so don't claim. Where lsof marks a file (deleted) itself, that still counts.
+      if (live !== rec.ino && rec.path.includes('^')) continue;
       isZombie = live === 'gone' || live !== rec.ino;
     }
     if (!isZombie) continue;
