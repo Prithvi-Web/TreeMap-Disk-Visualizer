@@ -675,9 +675,24 @@ test('a Stop with nothing on screen is announced: the start screen\'s sentence g
   assert.match(tag, /role="status"/);
   assert.match(tag, /aria-live="polite"/);
   assert.doesNotMatch(tag, /\shidden\b/, 'rendered from the start, so its first change is spoken');
-  const main = INDEX.indexOf('<main>');
+  // The <main> ELEMENT, after <body>: the page's stylesheet mentions "<main>" in comments far above it,
+  // and the first literal match is one of those (review F2.7).
+  const body = INDEX.search(/<body[\s>]/);
+  assert.notEqual(body, -1, 'the page has a body');
+  const mainRe = /<main[\s>]/g;
+  mainRe.lastIndex = body;
+  const mainTag = mainRe.exec(INDEX);
+  assert.ok(mainTag, 'the <main> element is in the body');
+  const main = mainTag!.index;
+  const mainEnd = INDEX.indexOf('</main>', main);
   const startScreen = INDEX.indexOf('<section id="emptyState">');
-  assert.ok(main < at && at < startScreen, 'in <main>, before the start screen and every view: never inside something a scan hides');
+  assert.ok(main < at && at < startScreen && startScreen < mainEnd, 'in <main>, before the start screen and every view');
+  // A child of <main> itself: every element opened between <main> and the region is closed before it, so it
+  // sits inside no container a view or a scan hides.
+  const between = INDEX.slice(INDEX.indexOf('>', main) + 1, INDEX.lastIndexOf('<', at)).replace(/<!--[\s\S]*?-->/g, '');
+  const opened = (between.match(/<(?!\/|!)(?!(?:br|hr|img|input|meta|link|wbr|source)\b)[a-z][\w-]*\b[^>]*>/gi) ?? []).length;
+  const closed = (between.match(/<\/[a-z][\w-]*\s*>/gi) ?? []).length;
+  assert.equal(opened, closed, `inside no element but <main> (${between.trim().slice(0, 120)})`);
 
   const h = page({ route: server({ roots: [] }) });
   await boot(h);
@@ -910,6 +925,24 @@ test('(v) the same for a quiet rescan behind an index paint, and for a cloud acc
   assert.deepEqual(c.openStreams().map((s) => s.url), ['/api/scan/scan-1/progress'], 'the disk scan begun since is still followed');
   assert.equal(c.$('emptyState').style.display, 'none');
   assert.deepEqual(c.toasts, []);
+
+  // Stopped, nothing started since, and then the listing fails: it was stopped (review F2.6).
+  const lonely: Array<(a: { status: number; body: unknown }) => void> = [];
+  const lone = page({ route: (m, url, b) => (m === 'POST' && url === '/api/cloud/scan' ? new Promise((r) => { lonely.push(r); }) : server({ roots: [] })(m, url, b)) });
+  await boot(lone);
+  void lone.startCloudScan('gdrive', 'Google Drive');
+  await turns();
+  assert.equal(lonely.length, 1, 'control: the cloud listing is asked for');
+  await pressStop(lone);
+  assert.match(lone.$('scanStatus').innerHTML, /Scan stopped by user/, 'control: stopped');
+  lonely[0]({ status: 500, body: { error: 'Google Drive did not answer.', code: 'INTERNAL' } });
+  await turns();
+  assert.deepEqual(lone.toasts, [], 'no red toast for a listing the person stopped');
+  assert.match(lone.$('scanStatus').innerHTML, /Scan stopped by user/, 'the status line still says the person stopped it');
+  assert.ok(!lone.$('scanStatus').cls.has('error'), 'and is not painted as a failure');
+  assert.equal(lone.$('scanAnnounce').textContent, 'Scanning…', 'nothing announces a failure');
+  assert.equal(lone.state.lastFolder, null, 'and the start screen is told nothing: a cloud account is named nowhere there');
+  assert.equal(lone.$('emptyState').style.display, 'flex', 'control: the start screen the Stop put back stays up');
 });
 
 test('(vi) a failed scan offers "Scan … again" the same way; a folder the server refused is named with the reason, not offered', async () => {
