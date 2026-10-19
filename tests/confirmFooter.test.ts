@@ -544,3 +544,41 @@ test('a file held open says "This file"; one of 0 bytes makes no promise about s
   assert.match(unknown.text, /^This item is in use right now\. Its space may not come back/, 'not in the tree: called an item, and it may hold space');
   for (const w of [empty, big, unknown]) assert.equal(w.ok, 'Move to Trash anyway');
 });
+
+test('several items in use: the sentence says some of them are, speaks of space only where an open file may hold some, and names who must close it when not every program listed does (review F1.11)', async () => {
+  const head = (w: { text: string }) => w.text.slice(0, w.text.search(/ (Editor|QuickTime Player|VLC|Python|node|vim) — /));
+  const files = { '/r/a.txt': { type: 'file' as const, size: 0 }, '/r/b.mov': { type: 'file' as const, size: 9_000_000 }, '/r/c.mov': { type: 'file' as const, size: 7_000_000 } };
+  // One of two open files holds bytes, and only one of the two programs holds it: that program is the one to close.
+  const one = await inUseWarning(['/r/a.txt', '/r/b.mov'],
+    [{ path: '/r/a.txt', processName: 'Editor' }, { path: '/r/b.mov', processName: 'QuickTime Player' }], files);
+  assert.equal(head(one), 'Some of these items are in use right now. One of them may keep its space, even once you empty the Trash, until QuickTime Player closes it.',
+    'the 0 B file promises nothing; the other is named by the program that holds it, never "until those programs close it"');
+  assert.equal(one.ok, 'Move to Trash anyway');
+  // The same, with one program holding both: "that program" is the one listed.
+  const same = await inUseWarning(['/r/a.txt', '/r/b.mov'],
+    [{ path: '/r/a.txt', processName: 'Editor' }, { path: '/r/b.mov', processName: 'Editor' }], files);
+  assert.equal(head(same), 'Some of these items are in use right now. One of them may keep its space, even once you empty the Trash, until that program closes it.');
+  // A folder held open and a 0 B file: no space is held, and none is mentioned.
+  const none = await inUseWarning(['/r/Empty', '/r/a.txt'],
+    [{ path: '/r/Empty', openPath: '/r/Empty', processName: 'Python' }, { path: '/r/a.txt', processName: 'Editor' }],
+    { ...files, '/r/Empty': { type: 'dir', size: 0 } });
+  assert.equal(head(none), 'Some of these items are in use right now.');
+  assert.doesNotMatch(none.text, /space/, 'nothing open holds bytes: nothing is said about freeing any');
+  // Two files with bytes, each held by its own program, and nothing else listed: "those programs".
+  const both = await inUseWarning(['/r/b.mov', '/r/c.mov'],
+    [{ path: '/r/b.mov', processName: 'QuickTime Player' }, { path: '/r/c.mov', processName: 'VLC' }], files);
+  assert.equal(head(both), 'Some of these items are in use right now. Their space may not come back, even once you empty the Trash, until those programs close them.');
+  // Two files with bytes held by one program, a 0 B file by another: the one to close is named.
+  const named = await inUseWarning(['/r/a.txt', '/r/b.mov', '/r/c.mov'],
+    [{ path: '/r/a.txt', processName: 'Editor' }, { path: '/r/b.mov', processName: 'QuickTime Player' }, { path: '/r/c.mov', processName: 'QuickTime Player' }], files);
+  assert.equal(head(named), 'Some of these items are in use right now. Their space may not come back, even once you empty the Trash, until QuickTime Player closes them.');
+  // Two of three programs hold bytes: both are named.
+  const two = await inUseWarning(['/r/a.txt', '/r/b.mov', '/r/c.mov'],
+    [{ path: '/r/a.txt', processName: 'Editor' }, { path: '/r/b.mov', processName: 'QuickTime Player' }, { path: '/r/c.mov', processName: 'VLC' }], files);
+  assert.equal(head(two), 'Some of these items are in use right now. Their space may not come back, even once you empty the Trash, until QuickTime Player and VLC close them.');
+  // One folder selected, two files open in it — one with bytes (node), one empty (vim): one of them, and node is named.
+  const inside = await inUseWarning(['/r/logs'],
+    [{ path: '/r/logs', openPath: '/r/logs/x.log', processName: 'node' }, { path: '/r/logs', openPath: '/r/logs/y.log', processName: 'vim' }],
+    { '/r/logs': { type: 'dir', size: 5000 }, '/r/logs/x.log': { type: 'file', size: 5000 }, '/r/logs/y.log': { type: 'file', size: 0 } });
+  assert.equal(head(inside), '2 files inside this folder are in use right now. One of them may keep its space, even once you empty the Trash, until node closes it.');
+});

@@ -242,7 +242,15 @@ function renderOpenHandleWarning(report, pathCount, nodeOf = () => null) {
   // own, and a file of 0 bytes holds none: neither is promised space there is
   // not (H07). An item the scan does not know may hold some.
   const holding = openPaths.filter(p => { const node = nodeOf(p); return !node || (node.type !== 'dir' && node.size > 0); });
-  const closes = byProcess.size === 1 ? 'that program closes' : 'those programs close';
+  // Who must close it: the programs listed when every one of them holds space,
+  // else those that do, by name — "until those programs close it" over an
+  // editor holding a 0-byte file and QuickTime holding a film named the
+  // editor as one to wait for (review F1.11).
+  const holders = [...new Set(conflicts.filter(c => holding.includes(c.openPath || c.path)).map(c => c.processName))];
+  const closes = holders.length === byProcess.size
+    ? (holders.length === 1 ? 'that program closes' : 'those programs close')
+    : holders.length === 1 ? `${escapeHtml(holders[0])} closes`
+    : `${holders.slice(0, -1).map(escapeHtml).join(', ')} and ${escapeHtml(holders[holders.length - 1])} close`;
   const consequence = !holding.length ? ''
     : holding.length > 1 ? ` Their space may not come back, even once you empty the Trash, until ${closes} them.`
     : n === 1 ? ` Its space may not come back, even once you empty the Trash, until ${closes} it.`
