@@ -539,12 +539,13 @@ function pageHarness(opts: {
   const followScanProgress = (): void => { order.push('follow'); };
   const TOPIC = { scan: 'scan', capabilities: 'capabilities' };
   const fns = new Function('$', 'state', 'api', 'toast', 'icon', 'escapeHtml', 'formatCount', 'emit', 'TOPIC', 'window', 'document',
-    'beginScanChrome', 'performance', 'abandonIfStopped', 'followScanProgress', 'failScan', 'quietRescanFailed',
+    'beginScanChrome', 'performance', 'abandonIfStopped', 'followScanProgress', 'failScan', 'quietRescanFailed', 'startNoteAllowed',
     `'use strict'; ${src} return { render: renderRefusedFolders, notice: preScanAccessNotice, arm: armFullDiskAccessRecheck, scan: startScanRequest };`)(
     $, state, api, (m: string) => toasts.push(m), () => '', (s: string) => String(s), (n: number) => String(n),
     (topic: string, payload: unknown) => { emitted.push([topic, payload]); }, TOPIC, win, doc,
     beginScanChrome, { now: () => 0 }, () => false, followScanProgress,
     (m: string) => assert.fail(`the scan failed: ${m}`), () => assert.fail('a quiet rescan failed'),
+    () => {}, // what the start screen learns from a scan the server accepted: tests/coreScanFlow.test.ts's
   ) as { render: () => void; notice: (p: string) => boolean; arm: () => void; scan: (p: string) => Promise<void> };
   const settle = async (): Promise<void> => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
   const fire = async (...names: string[]): Promise<void> => {

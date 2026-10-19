@@ -406,8 +406,9 @@ function scanStartHarness(indexed: boolean) {
     renderIndexBadge: noop, renderIndexLine: noop, indexTree: noop, switchView: noop, clearScanQueue: noop, restoreDashboardPanels: noop,
     // Where focus goes when the chrome hides the button that held it is tests/firstRun.test.ts's (review F1.11).
     withFocusKept: (change: () => void) => { change(); },
-    // What the start screen says and where focus lands after a Stop: tests/coreScanFlow.test.ts's.
-    noteLastFolder: noop, focusStartScreen: noop,
+    // What the start screen says and where focus lands after a Stop, and what it learns from a scan
+    // the server accepted: tests/coreScanFlow.test.ts's.
+    noteLastFolder: noop, focusStartScreen: noop, startNoteAllowed: noop,
     followScanProgress: (scanId: string) => { log.push(`follow ${scanId}`); },
     quietRescanFailed: () => { log.push('quiet rescan failed'); }, failScan: (m: string) => { log.push(`failed: ${m}`); },
     INSTANT_OPEN_NODES: 25000,

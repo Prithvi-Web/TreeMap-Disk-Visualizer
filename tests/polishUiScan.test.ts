@@ -1241,6 +1241,7 @@ function startScanHarness({ indexed, painted = true, onScreen = '/Users/x/corpus
     renderIndexLine: (line: unknown) => { lines.push(line); },
     api: async (url: string, opts: { body: string }) => { if (url === '/api/scan') posts.push(JSON.parse(opts.body)); return { scanId: 'new' }; },
     abandonIfStopped: () => false, followScanProgress: noop, quietRescanFailed: noop, failScan: noop,
+    startNoteAllowed: noop, // what the start screen learns from a scan the server accepted: tests/coreScanFlow.test.ts's
     // The Full Disk Access notice beside the scan (U-11): asked for alongside the request, never awaited.
     scanAccessNotice: async () => {},
     performance: { now: () => 0 },
@@ -1340,6 +1341,7 @@ function jobRescanHarness({ indexed }: { indexed: boolean }) {
     indexStatusFor: async (p: string) => (indexed ? { indexed: true, path: p, root: { path: p, state: 'ready', live: true } } : { indexed: false }),
     openFromIndex: async () => true, renderIndexBadge: noop, renderIndexLine: noop,
     abandonIfStopped: () => false, followScanProgress: noop, quietRescanFailed: noop, failScan: noop,
+    startNoteAllowed: noop, // what the start screen learns from a scan the server accepted: tests/coreScanFlow.test.ts's
     scanAccessNotice: async () => {}, // the Full Disk Access notice beside the scan (U-11), as above
     performance: { now: () => 0 },
   };
