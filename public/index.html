@@ -2338,8 +2338,11 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 /* ── The start screen's choices (the owner, 17 Oct 2026) ──
    A row of plain buttons that wraps, between the explanation and the one
    primary, "Choose a folder…" (G03). 44 px targets; a choice's second line —
-   a size and date, or "Whole drive" — is quieter by its size and ink. */
-#emptyState .start-last { margin: 0; }
+   a size and date, or "Whole drive" — is quieter by its size and ink. The
+   sentence naming the last folder carries its whole path, which has no
+   spaces to break at: it breaks anywhere rather than run past its column and
+   be clipped at a narrow window (review F2.10). */
+#emptyState .start-last { margin: 0; overflow-wrap: anywhere; }
 .start-choices { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; max-width: 760px; }
 .start-choices:empty { display: none; }
 .start-choice { min-height: 44px; padding: 6px 16px; font-size: 13.5px; }

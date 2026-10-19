@@ -1096,6 +1096,17 @@ test('a scan that fails leaves no dead scan id behind, as a Stop leaves none: a 
   assert.equal(first.state.scanId, null, 'and no scan id is left for a view to ask with');
 });
 
+test('the start screen\'s sentence breaks a long path anywhere to fit its column, as a toast and a refused folder do: a path has no spaces to break at (review F2.10)', () => {
+  // Review F2.10: #startLast embeds the raw path, under `#emptyState p { max-width: 460px }`
+  // centred, with nothing that lets a long unbroken run of it wrap; past the
+  // column it ran off centre, and <main> clips it at a narrow window — the end
+  // of the path, the part that tells folders apart.
+  const at = INDEX.indexOf('#emptyState .start-last {');
+  assert.notEqual(at, -1, 'the start screen\'s sentence has a rule of its own');
+  const rule = INDEX.slice(at, INDEX.indexOf('}', at));
+  assert.match(rule, /overflow-wrap:\s*anywhere/, `and breaks a path anywhere to fit (${rule})`);
+});
+
 test('the start screen\'s page-level bindings are declared before the boot paints the first view: one read before its declaration throws, and stops the whole page script', () => {
   // Found in a browser on this build: switchView('dashboard') at boot runs
   // renderEmptyState → renderStartChoices, which read `startPainted` while
