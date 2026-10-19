@@ -154,7 +154,7 @@ test('a process name lsof wrote as \\xNN escapes is read back as its letters, an
   const nameOf = (c: string): string => parseLsofRecords(['p41', `c${c}`, 'f3', 'n/x/a'].join('\n'))[0].processName;
   assert.equal(nameOf('\\xc3\\x89cran Partag\\xc3\\xa9 Assistant App'), 'Écran Partagé Assistant App', 'the escapes are the bytes of É and é');
   assert.equal(show(nameOf('\\xc3\\x89cran Partag\\xc3\\xa9 Assistant App'), null), 'Écran Partagé Assistant App', 'its 29 bytes are under lsof\'s 31: whole, with no ellipsis');
-  assert.equal(nameOf('do\\x41'), 'do\\x41', 'lsof writes no printable byte as an escape: "\\x41" is text, left as it is');
+  assert.equal(nameOf(String.raw`do\\x41`), String.raw`do\x41`, 'lsof writes a backslash as "\\\\" (measured, review F2.1): the name "do\\x41" is read back as it is, never as "doA"');
 
   assert.equal(show(nameOf(JP_CUT_ESCAPED), null), '日本語日本語日本語日…', 'cut inside a character under no locale: the whole characters, said to be cut');
   assert.equal(show(nameOf(JP_CUT_ESCAPED), JP_EXE), '日本語日本語日本語日本語', 'and the executable\'s own name where it continues them');
@@ -191,6 +191,88 @@ test('the executables a cut name is completed from are read by a ps under a UTF-
   assert.equal(found.get(7), JP_EXE);
   assert.equal(seen.length, 1);
   assert.match(seen[0]?.LC_ALL ?? '', /\.UTF-8$/, 'LC_ALL names a UTF-8 locale: under C, macOS\'s ps writes É as "M-CM^I"');
+});
+
+test('a whole name of 30 bytes — one short of what lsof prints — is never said to be cut, nor its executable asked for (review F2.5)', async () => {
+  const show = lsofNames.displayProcessName!;
+  const full = lsofNames.withFullProcessNames!;
+  const ascii = 'Google Chrome Helper (Renderer'; // 30 ASCII bytes
+  const accented = 'Écran Partagé Assistant Appl'; // 28 characters, 30 bytes
+  assert.deepEqual([ascii, accented].map((n) => Buffer.byteLength(n)), [30, 30], 'control: both one byte short of lsof\'s 31');
+  assert.equal(show(ascii, null), ascii, '30 ASCII bytes: whole, no ellipsis');
+  assert.equal(show(accented, null), accented, '30 bytes past ASCII: whole, no ellipsis');
+  assert.equal(show(ascii, '/x/Google Chrome Helper (Renderer) Extra'), ascii, 'and never swapped for a longer executable name');
+  let calls = 0;
+  const named = await full([{ pid: 3, processName: ascii }, { pid: 4, processName: accented }], async () => { calls++; return new Map(); });
+  assert.equal(calls, 0, 'no name may be cut: ps is not asked');
+  assert.deepEqual(named.map((r) => r.processName), [ascii, accented]);
+});
+
+/*
+ * Review F2.1, recorded on this Mac with `lsof -F n` under no locale, as the Dock and launchd start TreeMap
+ * (LC_ALL=C prints the same): lsof writes a backslash as `\\` under every locale, a tab and a newline as `\t`
+ * and `\n`, DEL and each byte past ASCII as `\xNN`; under en_US.UTF-8 it writes É and é as their bytes but
+ * the backslash still as `\\`. A control byte is `^A`, exactly as a caret followed by an A is, so `^X`
+ * cannot be undone and is left as written.
+ */
+const LSOF_N_RECORDED: readonly (readonly [lsofText: string, name: string])[] = [
+  [String.raw`\xc3\x89cran Partag\xc3\xa9.txt`, 'Écran Partagé.txt'],
+  [String.raw`back\\slash.txt`, String.raw`back\slash.txt`],
+  [String.raw`tab\there.txt`, 'tab\there.txt'],
+  [String.raw`nl\nline.txt`, 'nl\nline.txt'],
+  [String.raw`del\x7fz.txt`, 'del\x7fz.txt'],
+  [String.raw`lit\\x41.txt`, String.raw`lit\x41.txt`],
+  [String.raw`lit\\\\n.txt`, String.raw`lit\\n.txt`],
+  ['caret^Atext.txt', 'caret^Atext.txt'],
+];
+
+test('parseLsofRecords reads a path back from every escape lsof writes in it — a backslash, a tab, a newline, DEL and each byte past ASCII — and leaves its ambiguous ^X as written (review F2.1)', () => {
+  for (const [written, name] of LSOF_N_RECORDED) {
+    const [rec] = parseLsofRecords(['p41', 'csleep', 'f3', 's1', 'i9', `n/Users/me/f21/${written}`].join('\n'));
+    assert.equal(rec?.path, `/Users/me/f21/${name}`, `lsof's "${written}" is the file "${name}"`);
+  }
+  const [gone] = parseLsofRecords(['p9', 'cnode', 'f3', 's100', 'i42', String.raw`n/tmp/\xc3\xa9t\xc3\xa9.bin (deleted)`].join('\n'));
+  assert.deepEqual([gone.path, gone.markedDeleted], ['/tmp/été.bin', true], 'an escaped path keeps the Linux (deleted) marker, which is not part of the path');
+  assert.equal(parseLsofRecords(['p41', String.raw`cback\\slash`, 'f3', 'n/x/a'].join('\n'))[0].processName, String.raw`back\slash`,
+    'a name\'s backslash is read back the same way');
+});
+
+test('a file with an escaped name, held open, is in use and never a deleted file still held (review F2.1)', async () => {
+  const out = ['p53661', 'csleep', 'f3', 's1', 'i9',
+    String.raw`n/Users/me/\xc3\x89cran Partag\xc3\xa9.txt`, 'f4', 's1', 'i10', String.raw`n/Users/me/back\\slash.txt`].join('\n');
+  const files = ['/Users/me/Écran Partagé.txt', String.raw`/Users/me/back\slash.txt`];
+  const held = lsof.intersectHandles(parseLsofRecords(out), files.map((f) => [f, f] as const));
+  assert.deepEqual(held.map((h) => h.path), files, 'each file is found in use');
+  const inodes = new Map([[files[0], 9], [files[1], 10]]);
+  const zombies = await resolveZombies(parseLsofRecords(out), async (p) => {
+    const ino = inodes.get(p);
+    if (ino === undefined) throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+    return ino;
+  });
+  assert.deepEqual(zombies, [], 'each file is still at its path with its inode: nothing deleted is held');
+});
+
+test('B2/B5: under no locale, as the Dock starts TreeMap, a held file whose name lsof escapes is found in use and not reported deleted (review F2.1)', { skip: !IS_MAC }, async () => {
+  const dir = await mkTmp();
+  const saved = { ...process.env };
+  const fds: number[] = [];
+  try {
+    const targets = [path.join(dir, 'Écran Partagé.txt'), path.join(dir, String.raw`back\slash.txt`)];
+    for (const t of targets) {
+      await fsp.writeFile(t, 'x');
+      fds.push(fs.openSync(t, 'r'));
+    }
+    for (const k of Object.keys(process.env)) if (k === 'LANG' || k.startsWith('LC_')) delete process.env[k];
+    const held = (await openHandlesFor(targets)).filter((h) => h.pid === process.pid);
+    assert.deepEqual(held.map((h) => h.path).sort(), [...targets].sort(), 'both open files are found in use');
+    const zombies = (await lsof.zombieHandles()).filter((z) => z.path.includes(path.basename(dir)));
+    assert.deepEqual(zombies, [], 'neither file was deleted, so neither is reported as held deleted space');
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+    for (const fd of fds) fs.closeSync(fd);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('the open-file check names its conflicts whole: openHandlesFor hands what it intersects to withFullProcessNames (H04)', () => {

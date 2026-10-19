@@ -32,6 +32,10 @@ import { meansAbsent } from '../../utils/errno';
  *    caller's delete set therefore compares realpaths, or every warning about a
  *    file under `/tmp`, `/var` or `/etc` would be silently missed.
  *
+ * 3. **lsof escapes what it prints.** A backslash in a path or name is `\\`, a tab `\t`, and under no
+ *    locale every byte past ASCII is `\xNN` (review F2.1). Both fields are read back through
+ *    `decodeLsofText`, or no path holding one would match, and every such file would read as deleted.
+ *
  * Field order, as emitted: `f` (descriptor) opens a block, then `t` type,
  * `D` device, `s` size, `i` inode, `n` name. State resets on each `f`.
  *
@@ -100,7 +104,9 @@ export function parseLsofRecords(stdout: string): LsofRecord[] {
       case 'n': {
         if (!pid) break;
         const markedDeleted = value.endsWith('(deleted)');
-        const path = markedDeleted ? value.slice(0, -'(deleted)'.length).trimEnd() : value;
+        // The path as the file system spells it, not as lsof printed it (review F2.1): matched against
+        // realpaths and stat'ed, the printed form finds nothing — and a file nobody deleted reads as gone.
+        const path = decodeLsofText(markedDeleted ? value.slice(0, -'(deleted)'.length).trimEnd() : value);
         // Sockets, pipes, kqueues and cwd markers are not files on disk.
         if (path.startsWith('/')) out.push({ pid, processName, path, ino, size, markedDeleted });
         size = ino = null;
@@ -122,21 +128,35 @@ export function parseLsofRecords(stdout: string): LsofRecord[] {
 export const LSOF_NAME_MAX = 31;
 
 /**
- * A byte lsof could not print, as it writes one (`\x%02x`): under no locale — as the Dock and launchd
- * start TreeMap — every byte past ASCII (measured, review F1.1). A byte it can print, a backslash
- * included, is written as itself, so `\x41` is text.
+ * One escape as lsof writes it in a name (`c`) or a path (`n`), measured on this Mac (review F1.1,
+ * F2.1). A backslash is `\\` under every locale, so every backslash lsof prints starts an escape; a
+ * tab, newline, backspace, form feed and carriage return are `\t`, `\n`, `\b`, `\f`, `\r`; DEL — and,
+ * under no locale, as the Dock and launchd start TreeMap, every byte past ASCII — is `\xNN`. Its `^X`
+ * for another control byte is not undone: lsof writes a `^` as itself, so "^A" in its text may be a
+ * caret and an A, and is left as the text it is.
  */
-const LSOF_BYTE_ESCAPE = /(\\x(?:7f|[89a-f][0-9a-f]))/;
+const LSOF_ESCAPE = /\\(\\|x[0-9a-fA-F]{2}|[bfnrt])/;
+
+/** The control byte each of lsof's letter escapes stands for. */
+const LSOF_CONTROL: Readonly<Record<string, number>> = { b: 0x08, f: 0x0c, n: 0x0a, r: 0x0d, t: 0x09 };
+
+/** The byte one of lsof's escapes (without its backslash) stands for. */
+function lsofEscapeByte(body: string): number {
+  if (body === '\\') return 0x5c;
+  if (body.length === 3) return Number.parseInt(body.slice(1), 16);
+  return LSOF_CONTROL[body];
+}
 
 /**
- * lsof's text with its `\xNN` escapes put back as the bytes they stand for, read as UTF-8 (review
- * F1.1): "\xc3\x89cran" is "Écran". A character a cut went through decodes as one U+FFFD, as it does
- * where lsof writes the raw bytes under a UTF-8 locale and Node decodes them.
+ * lsof's text with every escape put back as the byte it stands for, read as UTF-8 (review F1.1, F2.1):
+ * "\xc3\x89cran" is "Écran", "back\\slash" is "back\slash". A character a cut went through decodes as
+ * one U+FFFD, as it does where lsof writes the raw bytes under a UTF-8 locale and Node decodes them.
  */
 export function decodeLsofText(value: string): string {
-  if (!LSOF_BYTE_ESCAPE.test(value)) return value;
-  const parts = value.split(LSOF_BYTE_ESCAPE).map((part, i) =>
-    i % 2 === 1 ? Buffer.from([Number.parseInt(part.slice(2), 16)]) : Buffer.from(part, 'utf8'));
+  if (!value.includes('\\')) return value;
+  // Split on one capturing group: the odd parts are the escapes' bodies, the even ones plain text.
+  const parts = value.split(LSOF_ESCAPE).map((part, i) =>
+    i % 2 === 1 ? Buffer.from([lsofEscapeByte(part)]) : Buffer.from(part, 'utf8'));
   return Buffer.concat(parts).toString('utf8');
 }
 
