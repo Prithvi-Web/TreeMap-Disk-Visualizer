@@ -746,6 +746,101 @@ test('(v) Stop pressed before POST /api/scan answers, then Scan again: the late 
   assert.equal(h.state.scanId, 'scan-new');
 });
 
+/** A server whose scan requests wait for the test, and whose cancel of `late` answers `status`. */
+function lateCancelAnswers(late: string, status: number, held: Array<(a: { status: number; body: unknown }) => void>): Route {
+  const base = server({ roots: [], scanAnswer: () => new Promise((r) => { held.push(r); }) });
+  return (m, url, b) => {
+    if (m === 'POST' && url === '/api/cloud/scan') return new Promise((r) => { held.push(r); });
+    if (url !== `/api/scan/${late}/cancel`) return base(m, url, b);
+    return { status, body: status === 404 ? { error: 'Unknown or expired scanId', code: 'SCAN_NOT_FOUND' } : { error: 'Internal server error', code: 'INTERNAL' } };
+  };
+}
+
+test('(v) a Stop pressed before POST /api/scan answers, whose late cancel the server refuses, says so as a refused cancel at Stop does: the scan may still be running, its folder is offered nowhere, the failure is toasted (review F2.2)', async () => {
+  // Review F2.2: abandonIfStopped's cancel was fire-and-forget — a refusal
+  // reached console.warn only, and the start screen went on saying "You
+  // stopped the scan of …" with a focused "Scan … again" that would start a
+  // second walk of a folder that may still be walking.
+  const held: Array<(a: { status: number; body: unknown }) => void> = [];
+  const h = page({ route: lateCancelAnswers('late-1', 500, held) });
+  await boot(h);
+  await startFrom(h, /^Desktop$/);
+  await pressStop(h);
+  assert.equal(h.$('startLast').textContent, 'You stopped the scan of /Users/x/Desktop.', 'control: said at once');
+  assert.equal(h.$('stopAnnounce').textContent, 'You stopped the scan of /Users/x/Desktop.', 'control: and aloud');
+  held[0]({ status: 202, body: { scanId: 'late-1', incremental: false } });
+  await turns();
+  assert.ok(h.requests.includes('POST /api/scan/late-1/cancel'), 'control: the late answer is cancelled');
+  assert.ok(!h.streams.some((s) => s.url === '/api/scan/late-1/progress'), 'control: and never followed');
+  assert.equal(h.$('startLast').textContent, 'TreeMap could not stop the scan of /Users/x/Desktop, so it may still be running: Internal server error.');
+  assert.deepEqual(offering(h, '/Users/x/Desktop').map((b) => b.textContent), [], `the folder that may still be walking is offered nowhere (${h.choices().join(' | ')})`);
+  assert.deepEqual(h.toasts, [['Could not stop the scan: Internal server error', 'error']], 'the failure is toasted');
+  assert.match(h.$('scanStatus').innerHTML, /Could not stop the scan: Internal server error/, 'and the status line says it, not "Scan stopped by user"');
+  assert.equal(h.$('stopAnnounce').textContent, '', '"You stopped …" is not left for a screen reader');
+  assert.equal(h.dom.activeElement, h.$('emptyBrowseBtn'), 'focus on Choose a folder…, never <body>');
+
+  // A 404: the record was already gone, so it IS stopped — nothing changes.
+  const goneHeld: Array<(a: { status: number; body: unknown }) => void> = [];
+  const gone = page({ route: lateCancelAnswers('late-1', 404, goneHeld) });
+  await boot(gone);
+  await startFrom(gone, /^Desktop$/);
+  await pressStop(gone);
+  goneHeld[0]({ status: 202, body: { scanId: 'late-1', incremental: false } });
+  await turns();
+  assert.ok(gone.requests.includes('POST /api/scan/late-1/cancel'), 'control: cancelled');
+  assert.equal(gone.$('startLast').textContent, 'You stopped the scan of /Users/x/Desktop.');
+  assert.equal(gone.choices()[0], 'Scan Desktop again');
+  assert.deepEqual(gone.toasts, []);
+
+  // A scan begun since keeps its screen and its status line; the refusal is still toasted.
+  const newer: Array<(a: { status: number; body: unknown }) => void> = [];
+  const n = page({ route: lateCancelAnswers('late-1', 500, newer) });
+  await boot(n);
+  await startFrom(n, /^Desktop$/);
+  await pressStop(n);
+  await startFrom(n, /^Documents$/);
+  newer[1]({ status: 202, body: { scanId: 'scan-b', incremental: false } });
+  await turns();
+  newer[0]({ status: 202, body: { scanId: 'late-1', incremental: false } });
+  await turns();
+  assert.ok(n.requests.includes('POST /api/scan/late-1/cancel'), 'control: cancelled');
+  assert.equal(n.state.scanning, true, 'the newer scan runs on');
+  assert.equal(n.$('emptyState').style.display, 'none', 'with no start screen over it');
+  assert.deepEqual(n.openStreams().map((s) => s.url), ['/api/scan/scan-b/progress'], 'still followed');
+  assert.doesNotMatch(n.$('scanStatus').innerHTML, /Could not stop/, 'its status line is its own');
+  assert.deepEqual(n.toasts, [['Could not stop the scan: Internal server error', 'error']], 'the first walk may still be running, and that is said');
+
+  // Two Stops before either request answered: the older request's refusal takes back nothing the newer Stop said.
+  const two: Array<(a: { status: number; body: unknown }) => void> = [];
+  const t = page({ route: lateCancelAnswers('late-1', 500, two) });
+  await boot(t);
+  await startFrom(t, /^Desktop$/);
+  await pressStop(t);
+  await startFrom(t, /^Documents$/);
+  await pressStop(t);
+  assert.equal(t.$('startLast').textContent, 'You stopped the scan of /Users/x/Documents.', 'control: the newer Stop is named');
+  two[0]({ status: 202, body: { scanId: 'late-1', incremental: false } });
+  await turns();
+  assert.ok(t.requests.includes('POST /api/scan/late-1/cancel'), 'control: the older request is cancelled');
+  assert.deepEqual(t.toasts, [['Could not stop the scan: Internal server error', 'error']], 'control: refused, and toasted');
+  assert.equal(t.$('startLast').textContent, 'You stopped the scan of /Users/x/Documents.', 'the start screen goes on naming the newer Stop');
+  assert.equal(t.choices()[0], 'Scan Documents again', 'and offering its folder');
+
+  // A cloud listing stopped before it answered: no folder to name, and the refusal is said.
+  const cloudHeld: Array<(a: { status: number; body: unknown }) => void> = [];
+  const c = page({ route: lateCancelAnswers('late-c', 500, cloudHeld) });
+  await boot(c);
+  void c.startCloudScan('gdrive', 'Google Drive');
+  await turns();
+  await pressStop(c);
+  assert.equal(c.$('stopAnnounce').textContent, 'Scan stopped.', 'control: said aloud');
+  cloudHeld[0]({ status: 202, body: { scanId: 'late-c' } });
+  await turns();
+  assert.ok(c.requests.includes('POST /api/scan/late-c/cancel'), 'control: the late listing is cancelled');
+  assert.deepEqual(c.toasts, [['Could not stop the scan: Internal server error', 'error']], 'its refusal is toasted');
+  assert.equal(c.$('stopAnnounce').textContent, '', 'and "Scan stopped." taken back');
+});
+
 test('(v) a Stopped request that FAILS late is no one\'s to report: a new scan begun since stays followed, on screen and stoppable, and a Stop with nothing after it stays a Stop (review F1.1, F1.4)', async () => {
   // Review F1.1: the success half of the race was guarded (abandonIfStopped),
   // the failure half was not — scan A's late 403 ran failScan against scan B:

@@ -607,6 +607,10 @@ const state = {
   // The folder the running or last started scan is of (startScan,
   // startCloudScan): a Stop or a failure names it on the start screen.
   scanningPath: null,
+  // The last Stop: the scan generation it ended and what it said on the start
+  // screen (`noted`, or null) — read when the request that Stop ended answers
+  // afterwards and its cancel is refused (abandonIfStopped, review F2.2).
+  lastStop: null,
   // Whether this person has scanned before — a scan the server holds, or a
   // folder in the history (restoreLastSession). The tour reads it.
   scannedBefore: false,

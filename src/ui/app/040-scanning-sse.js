@@ -114,7 +114,12 @@ function cancelScanById(scanId) {
  */
 function abandonIfStopped(scanId, gen) {
   if (state.scanning && state.scanGen === gen) return false;
-  void cancelScanById(scanId).catch((e) => console.warn('[treemap] late cancel failed:', e));
+  // Its cancel can be refused as a Stop's own can, and the Stop that ended
+  // this request has already said "stopped": a refusal is said the same way,
+  // and takes back what that Stop — the one of this request's generation —
+  // said on the start screen (review F2.2).
+  const stop = state.lastStop && state.lastStop.gen === gen ? state.lastStop : null;
+  void cancelScanById(scanId).catch((e) => stopNotConfirmed(e, gen, stop ? stop.noted : null));
   return true;
 }
 
@@ -162,6 +167,9 @@ async function stopScan() {
   // What is said here is said before the cancel answers; `noted` is kept to
   // take it back if the cancel is refused (noteStopUnconfirmed).
   const noted = state.root ? null : noteLastFolder('stopped');
+  // For a request this Stop ended before it answered, whose cancel is sent
+  // when it does (abandonIfStopped).
+  state.lastStop = { gen, noted };
 
   const status = $('scanStatus');
   status.classList.remove('error'); // stopping is a choice, not a failure
