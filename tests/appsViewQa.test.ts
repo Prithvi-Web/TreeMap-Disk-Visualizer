@@ -206,6 +206,33 @@ test('each step of the keyboard walk shows the dot\'s own tooltip — its name, 
   s.chart.destroy();
 });
 
+test('a walk key held with Cmd, Ctrl or Alt is left to the page and the browser — neither taken nor walked — and Shift, which has no action there, still walks (review F1.13)', () => {
+  const s = keyboardScatter(APPS);
+  s.press('ArrowRight');
+  const said = s.live!.textContent;
+  assert.equal(said, 'Notes: 12 files, 3000 B (1 of 3)', 'control: a bare key walks');
+  const shortcuts: Array<[string, { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean }, string]> = [
+    ['ArrowDown', { metaKey: true }, 'Cmd+Down (to the end of the page on a Mac)'],
+    ['ArrowUp', { metaKey: true }, 'Cmd+Up (to the top)'],
+    ['ArrowLeft', { metaKey: true }, 'Cmd+Left (back)'],
+    ['ArrowLeft', { altKey: true }, 'Alt+Left (back in a browser tab)'],
+    ['ArrowRight', { altKey: true }, 'Alt+Right (forward)'],
+    ['Home', { ctrlKey: true }, 'Ctrl+Home'],
+    ['End', { ctrlKey: true }, 'Ctrl+End'],
+    ['ArrowRight', { ctrlKey: true, altKey: true }, 'Ctrl+Option+Right (VoiceOver\'s own move)'],
+  ];
+  for (const [key, mods, what] of shortcuts) {
+    s.press(key, mods);
+    assert.deepEqual(s.prevented, ['ArrowRight'], `${what} is not taken from the page`);
+    assert.equal(s.live!.textContent, said, `${what} does not walk the dots`);
+    assert.equal(s.tip().words, 'Notes | 12 files | 3000 B', `${what} leaves the tooltip where it was`);
+  }
+  s.press('ArrowRight', { shiftKey: true });
+  assert.equal(s.live!.textContent, 'Slack: 900 files, 120000 B (2 of 3)', 'Shift+Right walks as Right does');
+  assert.deepEqual(s.prevented, ['ArrowRight', 'ArrowRight']);
+  s.chart.destroy();
+});
+
 test('the Apps scatter says it can be walked by keyboard, and its note is true for keyboard users too (H54)', () => {
   const scatter = slice('<div class="apps-scatter" id="appsScatter" hidden>', '<div id="appsBody">');
   assert.match(scatter, /<div class="as-note muted">Each dot is one application — point at one, or tab to the chart and use the arrow keys, to see its name, file count and size\.<\/div>/);

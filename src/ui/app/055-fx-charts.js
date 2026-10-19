@@ -2173,7 +2173,10 @@ const FxCharts = (() => {
        each dot lights as a hover does, shows its tooltip, and is said aloud
        through a polite live region in the tooltip's own words: its label,
        its x and its y, and where it is in the walk. Only those keys are
-       taken from the page: Tab still leaves. */
+       taken from the page, bare or with Shift: Tab still leaves, and one
+       held with Cmd, Ctrl or Alt/Option is the browser's or the system's
+       (Cmd+Down to the page's end, Alt+Left back, VoiceOver's Ctrl+Option
+       moves), so it is neither taken nor walked (review F1.13). */
     canvas.tabIndex = 0;
     const live = document.createElement('div');
     live.className = 'sr-only';
@@ -2181,7 +2184,7 @@ const FxCharts = (() => {
     host.appendChild(live);
     const WALK = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1, Home: 0, End: 0 };
     function onKey(e) {
-      if (!(e.key in WALK)) return;
+      if (!(e.key in WALK) || e.metaKey || e.ctrlKey || e.altKey) return;
       const f = frame();
       const m = model(f);
       if (!m.pts.length) return;
