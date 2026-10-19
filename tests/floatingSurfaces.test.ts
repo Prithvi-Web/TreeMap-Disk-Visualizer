@@ -39,9 +39,24 @@ const SHEET = (() => {
   return INDEX.slice(open + '<style>'.length, close).replace(/\/\*[\s\S]*?\*\//g, ' ');
 })();
 
-type Rule = { selectors: string[]; body: string };
+/** The sheet's @media blocks: where each runs, and its max-width when that is all it asks (null: a query this reader does not evaluate). */
+const MEDIA = [...SHEET.matchAll(/@media\s*([^{]*)\{/g)].map((m) => {
+  let depth = 0, to = -1;
+  for (let i = m.index! + m[0].length - 1; i < SHEET.length; i++) {
+    if (SHEET[i] === '{') depth++;
+    else if (SHEET[i] === '}' && --depth === 0) { to = i; break; }
+  }
+  const max = /^\(max-width:\s*(\d+(?:\.\d+)?)px\)$/.exec(m[1].trim());
+  return { from: m.index!, to, max: max ? Number(max[1]) : null };
+});
+
+/** A rule, and — when it sits in an @media block — that block's max-width (null: one this reader cannot evaluate). */
+type Rule = { selectors: string[]; body: string; media?: number | null };
 const RULES: Rule[] = [...SHEET.matchAll(/([^{}]*)\{([^{}]*)\}/g)]
-  .map((m) => ({ selectors: m[1].trim().split(',').map((s) => s.trim().replace(/\s+/g, ' ')), body: m[2] }))
+  .map((m) => {
+    const block = MEDIA.find((b) => m.index! > b.from && m.index! < b.to);
+    return { selectors: m[1].trim().split(',').map((s) => s.trim().replace(/\s+/g, ' ')), body: m[2], ...(block ? { media: block.max } : {}) };
+  })
   .filter((r) => r.selectors[0] && !r.selectors[0].startsWith('@'));
 
 /** Declarations of one rule, last one wins, custom properties included. */
@@ -225,16 +240,24 @@ function px(v: string | undefined): number {
   return Number(m![1]);
 }
 
-/** A page state: which `:has(…)` conditions hold, and whether the preview pane is open. */
-type PageState = { active: string[]; preview?: boolean };
+/**
+ * A page state: which `:has(…)` conditions hold, whether the preview pane is open, whether the cart's
+ * drawer is open (`body.cart-open`, set by cartDockToggle — never without `#cartDock.show`, since an
+ * emptied cart closes the drawer), and the window's width, which decides the `@media (max-width)` rules.
+ */
+type PageState = { active: string[]; preview?: boolean; cartOpen?: boolean; W?: number };
 
-/** `body`, `body.preview-open` and any run of `:has(…)` after them: do they hold in `st`? */
+/** `body`, `body.preview-open`, `.cart-open` and any run of `:has(…)` after them: do they hold in `st`? */
 function bodyHolds(prefix: string, st: PageState): boolean {
   if (!prefix.startsWith('body')) return false;
   let rest = prefix.slice(4);
   if (rest.startsWith('.preview-open')) {
     if (!st.preview) return false;
     rest = rest.slice('.preview-open'.length);
+  }
+  if (rest.startsWith('.cart-open')) {
+    if (!st.cartOpen) return false;
+    rest = rest.slice('.cart-open'.length);
   }
   while (rest) {
     if (!rest.startsWith(':has(')) return false;
@@ -244,7 +267,10 @@ function bodyHolds(prefix: string, st: PageState): boolean {
       else if (rest[i] === ')' && --depth === 0) { end = i; break; }
     }
     if (end === -1) return false;
-    if (!st.active.includes(rest.slice(5, end))) return false;
+    const cond = rest.slice(5, end);
+    // The sidebar is open exactly when it is not collapsed.
+    const holds = cond === '#sideNav:not(.collapsed)' ? !st.active.includes('#sideNav.collapsed') : st.active.includes(cond);
+    if (!holds) return false;
     rest = rest.slice(end + 1);
   }
   return true;
@@ -254,11 +280,13 @@ function bodyHolds(prefix: string, st: PageState): boolean {
  * What one element computes to in a page state: every rule whose selector is
  * the element itself, or a `body…` condition then the element, applied by
  * specificity and then source order — the browser's cascade, for the shapes
- * these rules take.
+ * these rules take. A rule inside `@media (max-width: N)` counts only in a
+ * state whose window is N px or narrower; one inside any other query never.
  */
 function cascade(target: string, st: PageState): Map<string, string> {
   const hits: { spec: [number, number, number]; at: number; body: string }[] = [];
   RULES.forEach((r, at) => {
+    if (r.media !== undefined && !(r.media !== null && st.W !== undefined && st.W <= r.media)) return;
     for (const sel of r.selectors) {
       let ok = false;
       if (target === 'body') ok = bodyHolds(sel, st);
@@ -338,20 +366,25 @@ function toastSpan(W: number, H: number, st: PageState): [number, number] {
   return [centre - w / 2, centre + w / 2];
 }
 
-/** Where each right-hand surface starts (its left edge) in a W-px window, when it is up. */
-function rightSurfaces(W: number, st: PageState): { name: string; left: number }[] {
+/**
+ * Where each right-hand surface starts (its left edge) in a W-px window, when it is up — each read
+ * from its own rules in that state (the open cart, the preview pane, the window's @media), so a
+ * surface that moves is found where it moved to, not where it rests.
+ */
+function rightSurfaces(W: number, given: PageState): { name: string; left: number }[] {
+  const st: PageState = { ...given, W };
   const out: { name: string; left: number }[] = [];
   if (st.preview) out.push({ name: 'the preview pane', left: W - px(declsOf('#previewPane').get('width')) });
   if (st.active.includes('#cartDock.show')) {
-    const dock = declsOf('#cartDock');
-    const right = st.preview ? px(declsOf('body.preview-open #cartDock').get('right')) : px(dock.get('right'));
-    out.push({ name: 'the cart dock', left: W - right - px(dock.get('width')) });
+    const dock = cascade('#cartDock', st);
+    const vars = scope(st, dock);
+    const w = Math.min(evalLen(dock.get('width')!, vars, W, MIN_H), evalLen(dock.get('max-width')!, vars, W, MIN_H));
+    out.push({ name: 'the cart dock', left: W - evalLen(dock.get('right')!, vars, W, MIN_H) - w });
   }
   if (st.active.includes('#tourOverlay:not([hidden])')) {
-    const card = declsOf('.tour-card');
-    const capped = /^min\((\d+)px, calc\(100vw - (\d+)px\)\)$/.exec(card.get('width') || '');
-    assert.ok(capped, 'the coach card has a capped width');
-    out.push({ name: 'the coach card', left: W - px(card.get('right')) - Math.min(Number(capped![1]), W - Number(capped![2])) });
+    const card = cascade('.tour-card', st);
+    const vars = scope(st, card);
+    out.push({ name: 'the coach card', left: W - evalLen(card.get('right')!, vars, W, MIN_H) - evalLen(card.get('width')!, vars, W, MIN_H) });
   }
   return out;
 }
@@ -371,40 +404,56 @@ test('toasts rest at the bottom, never over the top-right view toolbars (D08)', 
   assert.equal(t.get('right'), undefined, 'and not pinned right, where the cart dock and coach card live');
 });
 
-test('a toast stays clear of the sidebar, the preview pane, the cart dock and the coach card at every window size (D08)', () => {
+test('a toast stays clear of the sidebar, the preview pane, the cart dock and the coach card at every window size — the open cart\'s drawer too, with the coach card standing left of it (D08, review F1.12)', () => {
   const overlays = ['#cartDock.show', '#tourOverlay:not([hidden])'];
   const residual: string[] = [];
-  let checked = 0;
+  let checked = 0, besideOpenCart = 0;
   for (const W of [MIN_W, 1320, 1440, 1920]) {
     for (const collapsed of [false, true]) {
       for (const preview of [false, true]) {
         for (let mask = 0; mask < 1 << overlays.length; mask++) {
           const active = overlays.filter((_, b) => mask & (1 << b));
           if (collapsed) active.push('#sideNav.collapsed');
-          const st: PageState = { active, preview };
-          const [x0, x1] = toastSpan(W, MIN_H, st);
-          const sideEdge = 12 + px(collapsed ? declsOf(':root').get('--side-w-rail') : declsOf(':root').get('--side-w'));
-          const right = rightSurfaces(W, st);
-          const label = `${W}px, sidebar ${collapsed ? 'rail' : 'open'}${preview ? ', preview' : ''}${active.filter((a) => a !== '#sideNav.collapsed').map((a) => ', ' + a).join('')}`;
-          const room = Math.min(W, ...right.map((r) => r.left)) - sideEdge - 24;
-          if (room < 240) { residual.push(label); continue; }
-          checked++;
-          assert.ok(x0 >= sideEdge, `${label}: the toast starts at ${x0}px, the sidebar ends at ${sideEdge}px`);
-          for (const r of right) assert.ok(x1 <= r.left, `${label}: the toast ends at ${x1}px, ${r.name} starts at ${r.left}px`);
-          assert.ok(x1 - x0 >= 240, `${label}: a toast keeps a readable width (${x1 - x0}px)`);
+          // The drawer opens only over a shown dock (an emptied cart closes it).
+          for (const cartOpen of active.includes('#cartDock.show') ? [false, true] : [false]) {
+            const st: PageState = { active, preview, cartOpen, W };
+            const [x0, x1] = toastSpan(W, MIN_H, st);
+            const sideEdge = 12 + px(collapsed ? declsOf(':root').get('--side-w-rail') : declsOf(':root').get('--side-w'));
+            const right = rightSurfaces(W, st);
+            const label = `${W}px, sidebar ${collapsed ? 'rail' : 'open'}${preview ? ', preview' : ''}${active.filter((a) => a !== '#sideNav.collapsed').map((a) => ', ' + a).join('')}${cartOpen ? ', cart open' : ''}`;
+            const room = Math.min(W, ...right.map((r) => r.left)) - sideEdge - 24;
+            if (room < 240) { residual.push(label); continue; }
+            checked++;
+            if (cartOpen && active.includes('#tourOverlay:not([hidden])')) besideOpenCart++;
+            assert.ok(x0 >= sideEdge, `${label}: the toast starts at ${x0}px, the sidebar ends at ${sideEdge}px`);
+            for (const r of right) assert.ok(x1 <= r.left, `${label}: the toast ends at ${x1}px, ${r.name} starts at ${r.left}px`);
+            assert.ok(x1 - x0 >= 240, `${label}: a toast keeps a readable width (${x1 - x0}px)`);
+          }
         }
       }
     }
   }
-  assert.ok(checked >= 50, `the clear cases were checked (${checked})`);
-  // The one state with no clear room left: the pane AND the cart open (the
-  // dock then sits left of the pane) in the smallest window.
+  assert.ok(checked >= 80, `the clear cases were checked (${checked})`);
+  // The coach card stands left of the open cart (H51): those states are
+  // checked against where it stands then, not where it rests (review F1.12).
+  assert.ok(besideOpenCart >= 7, `the coach card beside the open cart was checked where there is room for a toast (${besideOpenCart})`);
+  // The states with no clear room left: the pane AND the cart open (the dock
+  // then sits left of the pane) in the smallest window; and the coach card
+  // standing left of the open cart in a window under ~1280 px (~1110 px with
+  // the sidebar a rail), or under ~1610 px with the preview pane open too.
   assert.deepEqual(residual, [
+    `${MIN_W}px, sidebar open, #cartDock.show, #tourOverlay:not([hidden]), cart open`,
     `${MIN_W}px, sidebar open, preview, #cartDock.show`,
     `${MIN_W}px, sidebar open, preview, #cartDock.show, #tourOverlay:not([hidden])`,
+    `${MIN_W}px, sidebar open, preview, #cartDock.show, #tourOverlay:not([hidden]), cart open`,
+    `${MIN_W}px, sidebar rail, #cartDock.show, #tourOverlay:not([hidden]), cart open`,
     `${MIN_W}px, sidebar rail, preview, #cartDock.show`,
     `${MIN_W}px, sidebar rail, preview, #cartDock.show, #tourOverlay:not([hidden])`,
-  ], 'only the pane-and-cart corner of the smallest window is left without room');
+    `${MIN_W}px, sidebar rail, preview, #cartDock.show, #tourOverlay:not([hidden]), cart open`,
+    '1320px, sidebar open, preview, #cartDock.show, #tourOverlay:not([hidden]), cart open',
+    '1320px, sidebar rail, preview, #cartDock.show, #tourOverlay:not([hidden]), cart open',
+    '1440px, sidebar open, preview, #cartDock.show, #tourOverlay:not([hidden]), cart open',
+  ], 'only the pane-and-cart corner of the smallest window, and the coach card beside the open cart where the window is too narrow for a toast between them and the sidebar, are left without room');
 });
 
 test('while the selection bar is up, toasts sit above it rather than over its buttons (D08)', () => {

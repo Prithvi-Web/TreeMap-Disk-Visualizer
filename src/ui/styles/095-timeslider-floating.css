@@ -118,11 +118,15 @@ body.cart-open #treemapWrap > .tm-querybar { left: 18px; transform: none;
    Live, Lens, refresh, Export — for 4–12 s after every scan (QA D08). The
    right-hand side is taken too, by surfaces that come and go: the preview
    pane, the cart dock (pushed left of the pane while that is open), the
-   coach card. Each sets how far in from the right edge it reaches, the
+   coach card (standing left of the cart while its drawer is open: the card's
+   own --tour-r and --tour-w, 080-suggestions-reclaim.css, say where).
+   Each sets how far in from the right edge it reaches, the
    stack centres on the strip between the sidebar and the furthest of them,
    and a toast is capped to that strip's width. Below a 240-px strip — the
-   pane AND the cart open in a window under ~1220 px — there is no clear room
-   and a toast overlaps them for its few seconds. The stack lifts above the
+   pane AND the cart open in a window under ~1220 px, or the coach card
+   beside the open cart under ~1280 px (~1610 px with the pane open too) —
+   there is no clear room and a toast overlaps them for its few seconds. The
+   stack lifts above the
    selection bar while that is up, and while a dialog is open it moves to the
    top of the scrim, clear of the sheet's buttons; that slot names the
    selection-bar state too, because Move to Trash from the Grid's bar opens a
@@ -136,7 +140,7 @@ body:has(#sideNav.collapsed) { --toast-l: calc(var(--side-w-rail) + 12px); }
 body.preview-open { --tr-pane: 330px; }
 body:has(#cartDock.show) { --tr-cart: 388px; }
 body.preview-open:has(#cartDock.show) { --tr-cart: 714px; }
-body:has(#tourOverlay:not([hidden])) { --tr-tour: 378px; }
+body:has(#tourOverlay:not([hidden])) { --tr-tour: calc(var(--tour-r) + var(--tour-w)); }
 #toasts { position: fixed; bottom: 22px; z-index: 300;
   --toast-r: max(var(--tr-pane), var(--tr-cart), var(--tr-tour));
   --toast-room: max(240px, calc(100vw - var(--toast-l) - var(--toast-r) - 24px));

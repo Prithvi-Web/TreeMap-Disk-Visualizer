@@ -2360,8 +2360,15 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 /* ── v4 §9.2: the first-run coach card ── */
 #tourOverlay { position: fixed; inset: 0; z-index: 96; pointer-events: none; }
 #tourOverlay[hidden] { display: none; }
-.tour-card { pointer-events: auto; position: absolute; right: 18px; bottom: 86px;
-  width: min(360px, calc(100vw - 32px)); padding: 15px 16px;
+/* Where the card stands is set on the body element, as --tour-r (its offset from the
+   window's right edge) and --tour-w (its width), because two things read it:
+   the card itself, and the toast stack's reservation for it (--tr-tour in
+   095-timeslider-floating.css), which once kept the card's resting 378 px
+   while the card stood left of the open cart, so a toast could land on its
+   buttons (review F1.12). One place, so the two cannot part again. */
+body { --tour-r: 18px; --tour-w: min(360px, calc(100vw - 32px)); }
+.tour-card { pointer-events: auto; position: absolute; right: var(--tour-r); bottom: 86px;
+  width: var(--tour-w); padding: 15px 16px;
   border: 1px solid var(--hairline-2); border-radius: var(--r-md); box-shadow: var(--shadow-3); }
 /* While the cart is open the card stands left of it (sixth browser pass H51):
    above the cart's layer (96 over 80) it sat on Preview after, Clear, Move all
@@ -2374,15 +2381,15 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
    dock goes back to its resting edge, and so does the card's offset.
    tests/layoutQa.test.ts checks the card clear of the open cart and of the
    sidebar at every window size, in both sidebar states. */
-body.cart-open .tour-card { right: 400px; }
-body.preview-open.cart-open .tour-card { right: 726px; width: min(360px, calc(100vw - 982px)); }
-body.preview-open.cart-open:has(#sideNav.collapsed) .tour-card { width: min(360px, calc(100vw - 814px)); }
+body.cart-open { --tour-r: 400px; }
+body.preview-open.cart-open { --tour-r: 726px; --tour-w: min(360px, calc(100vw - 982px)); }
+body.preview-open.cart-open:has(#sideNav.collapsed) { --tour-w: min(360px, calc(100vw - 814px)); }
 @media (max-width: 1235px) {
-  body.preview-open.cart-open:has(#sideNav:not(.collapsed)) .tour-card { right: 400px; width: min(360px, calc(100vw - 32px)); }
+  body.preview-open.cart-open:has(#sideNav:not(.collapsed)) { --tour-r: 400px; --tour-w: min(360px, calc(100vw - 32px)); }
 }
 @media (max-width: 1067px) {
-  body.preview-open.cart-open .tour-card,
-  body.preview-open.cart-open:has(#sideNav.collapsed) .tour-card { right: 400px; width: min(360px, calc(100vw - 32px)); }
+  body.preview-open.cart-open,
+  body.preview-open.cart-open:has(#sideNav.collapsed) { --tour-r: 400px; --tour-w: min(360px, calc(100vw - 32px)); }
 }
 /* The card floats straight on the treemap canvas with no scrim, and its
    .glass fill is --glass-strong, 72% opaque with no blur: the cell labels
@@ -3089,11 +3096,15 @@ body.cart-open #treemapWrap > .tm-querybar { left: 18px; transform: none;
    Live, Lens, refresh, Export — for 4–12 s after every scan (QA D08). The
    right-hand side is taken too, by surfaces that come and go: the preview
    pane, the cart dock (pushed left of the pane while that is open), the
-   coach card. Each sets how far in from the right edge it reaches, the
+   coach card (standing left of the cart while its drawer is open: the card's
+   own --tour-r and --tour-w, 080-suggestions-reclaim.css, say where).
+   Each sets how far in from the right edge it reaches, the
    stack centres on the strip between the sidebar and the furthest of them,
    and a toast is capped to that strip's width. Below a 240-px strip — the
-   pane AND the cart open in a window under ~1220 px — there is no clear room
-   and a toast overlaps them for its few seconds. The stack lifts above the
+   pane AND the cart open in a window under ~1220 px, or the coach card
+   beside the open cart under ~1280 px (~1610 px with the pane open too) —
+   there is no clear room and a toast overlaps them for its few seconds. The
+   stack lifts above the
    selection bar while that is up, and while a dialog is open it moves to the
    top of the scrim, clear of the sheet's buttons; that slot names the
    selection-bar state too, because Move to Trash from the Grid's bar opens a
@@ -3107,7 +3118,7 @@ body:has(#sideNav.collapsed) { --toast-l: calc(var(--side-w-rail) + 12px); }
 body.preview-open { --tr-pane: 330px; }
 body:has(#cartDock.show) { --tr-cart: 388px; }
 body.preview-open:has(#cartDock.show) { --tr-cart: 714px; }
-body:has(#tourOverlay:not([hidden])) { --tr-tour: 378px; }
+body:has(#tourOverlay:not([hidden])) { --tr-tour: calc(var(--tour-r) + var(--tour-w)); }
 #toasts { position: fixed; bottom: 22px; z-index: 300;
   --toast-r: max(var(--tr-pane), var(--tr-cart), var(--tr-tour));
   --toast-room: max(240px, calc(100vw - var(--toast-l) - var(--toast-r) - 24px));

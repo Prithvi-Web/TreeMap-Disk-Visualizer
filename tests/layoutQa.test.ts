@@ -628,8 +628,11 @@ test('while the cart is open the welcome tour\'s card covers none of it — at e
         const dockW = Math.min(cssPx(dock.get('width')!, W), cssPx(vw(dock.get('max-width')!, W), W));
         const dockLeft = W - cssPx(dock.get('right')!, W) - dockW;
         const card = forState(['.tour-card', 'body.cart-open .tour-card', ...(preview ? ['body.preview-open.cart-open .tour-card'] : [])], W, rail);
-        const cardRight = W - cssPx(card.get('right')!, W);
-        const cardLeft = cardRight - cssPx(vw(card.get('width')!, W), W);
+        // The card's place is set on <body> (--tour-r, --tour-w) for the toast stack to read too (review F1.12).
+        const tour = forState(['body', 'body.cart-open', ...(preview ? ['body.preview-open.cart-open'] : [])], W, rail);
+        const resolved = (v: string) => v.replace(/var\((--[\w-]+)\)/g, (_m, k: string) => { const r = tour.get(k); assert.ok(r, `${label}: ${k} is set on <body>`); return r!; });
+        const cardRight = W - cssPx(resolved(card.get('right')!), W);
+        const cardLeft = cardRight - cssPx(vw(resolved(card.get('width')!), W), W);
         assert.ok(cardRight <= dockLeft, `${label}: the card runs to x ${cardRight.toFixed(0)}; the open cart starts at x ${dockLeft.toFixed(0)} — no button of the cart is under it`);
         assert.ok(cardLeft >= side, `${label}: the card starts at x ${cardLeft.toFixed(0)}, clear of the sidebar (to x ${side})`);
         assert.ok(cardRight - cardLeft >= 240, `${label}: the card keeps a readable width (${(cardRight - cardLeft).toFixed(0)} px)`);
@@ -639,7 +642,8 @@ test('while the cart is open the welcome tour\'s card covers none of it — at e
   }
   assert.equal(checked, 44, 'every size, sidebar state and pane state was checked');
   // Control: with the cart closed the card stays where it rests.
-  assert.equal(declsAt('.tour-card', 1440).get('right'), '18px', 'control: the resting card, 18 px from the right');
+  assert.equal(declsAt('.tour-card', 1440).get('right'), 'var(--tour-r)', 'the card stands where <body> says');
+  assert.equal(declsAt('body', 1440).get('--tour-r'), '18px', 'control: the resting card, 18 px from the right');
 });
 
 /* ══════════════ B26 — the map refits when a row around it changes height ══════════════ */

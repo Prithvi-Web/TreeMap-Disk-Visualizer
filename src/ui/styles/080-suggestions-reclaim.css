@@ -163,8 +163,15 @@
 /* ── v4 §9.2: the first-run coach card ── */
 #tourOverlay { position: fixed; inset: 0; z-index: 96; pointer-events: none; }
 #tourOverlay[hidden] { display: none; }
-.tour-card { pointer-events: auto; position: absolute; right: 18px; bottom: 86px;
-  width: min(360px, calc(100vw - 32px)); padding: 15px 16px;
+/* Where the card stands is set on the body element, as --tour-r (its offset from the
+   window's right edge) and --tour-w (its width), because two things read it:
+   the card itself, and the toast stack's reservation for it (--tr-tour in
+   095-timeslider-floating.css), which once kept the card's resting 378 px
+   while the card stood left of the open cart, so a toast could land on its
+   buttons (review F1.12). One place, so the two cannot part again. */
+body { --tour-r: 18px; --tour-w: min(360px, calc(100vw - 32px)); }
+.tour-card { pointer-events: auto; position: absolute; right: var(--tour-r); bottom: 86px;
+  width: var(--tour-w); padding: 15px 16px;
   border: 1px solid var(--hairline-2); border-radius: var(--r-md); box-shadow: var(--shadow-3); }
 /* While the cart is open the card stands left of it (sixth browser pass H51):
    above the cart's layer (96 over 80) it sat on Preview after, Clear, Move all
@@ -177,15 +184,15 @@
    dock goes back to its resting edge, and so does the card's offset.
    tests/layoutQa.test.ts checks the card clear of the open cart and of the
    sidebar at every window size, in both sidebar states. */
-body.cart-open .tour-card { right: 400px; }
-body.preview-open.cart-open .tour-card { right: 726px; width: min(360px, calc(100vw - 982px)); }
-body.preview-open.cart-open:has(#sideNav.collapsed) .tour-card { width: min(360px, calc(100vw - 814px)); }
+body.cart-open { --tour-r: 400px; }
+body.preview-open.cart-open { --tour-r: 726px; --tour-w: min(360px, calc(100vw - 982px)); }
+body.preview-open.cart-open:has(#sideNav.collapsed) { --tour-w: min(360px, calc(100vw - 814px)); }
 @media (max-width: 1235px) {
-  body.preview-open.cart-open:has(#sideNav:not(.collapsed)) .tour-card { right: 400px; width: min(360px, calc(100vw - 32px)); }
+  body.preview-open.cart-open:has(#sideNav:not(.collapsed)) { --tour-r: 400px; --tour-w: min(360px, calc(100vw - 32px)); }
 }
 @media (max-width: 1067px) {
-  body.preview-open.cart-open .tour-card,
-  body.preview-open.cart-open:has(#sideNav.collapsed) .tour-card { right: 400px; width: min(360px, calc(100vw - 32px)); }
+  body.preview-open.cart-open,
+  body.preview-open.cart-open:has(#sideNav.collapsed) { --tour-r: 400px; --tour-w: min(360px, calc(100vw - 32px)); }
 }
 /* The card floats straight on the treemap canvas with no scrim, and its
    .glass fill is --glass-strong, 72% opaque with no blur: the cell labels
