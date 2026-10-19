@@ -1074,26 +1074,44 @@ test('a scan that fails leaves no dead scan id behind, as a Stop leaves none: a 
   // SCAN_FAILED, and failScan left state.scanId on it — a pruned folder of
   // the older tree then loaded as nothing, and the Calendar said "Could not
   // build the calendar: <the scan's error>" instead of its empty state.
+  // The id is put back BEFORE the views remount, as stopScan's is
+  // (failurePaths: scanIdAtSwitch): a view mounted by failScan's switchView —
+  // the Calendar asks /api/scan/<id>/calendar as it mounts — asks with the
+  // id it finds then (review F3.3). Each view's mount records it.
+  const mountedWith = (p: ReturnType<typeof page>, view: string): unknown[] => {
+    const seen: unknown[] = [];
+    (p.given.VIEW_BY_ID as Map<string, { mount: () => void }>).get(view)!.mount = () => { seen.push(p.state.scanId); };
+    return seen;
+  };
   const tree = { name: 'x', path: '/Users/x/old', size: 1, type: 'dir', children: [] };
   const h = page({ route: server({ roots: [] }), root: tree, settledScanId: 'scan-old' });
   h.switchView('dashboard');
   await h.startScan('/Users/x/Desktop');
   await turns();
   assert.equal(h.state.scanId, 'scan-1', 'control: the rescan is followed');
+  const dashboardSaw = mountedWith(h, 'dashboard');
   h.streams[0].onmessage!({ data: JSON.stringify({ type: 'error', message: 'The drive stopped answering.' }) });
   await turns();
   assert.equal(h.state.scanning, false, 'control: it failed');
   assert.equal(h.$('emptyState').style.display, 'none', 'control: the older tree stays on screen');
   assert.equal(h.state.scanId, 'scan-old', 'with its own scan behind it, not the failed one');
+  assert.deepEqual(dashboardSaw, ['scan-old'], 'and the Dashboard, remounted over the older tree, is mounted with the older tree\'s scan, never the failed one');
 
   const first = page({ route: server({ roots: [] }) });
   await boot(first);
   await startFrom(first, /^Desktop$/);
   assert.equal(first.state.scanId, 'scan-1', 'control: the first scan is followed');
+  // A view that needs no scan mounts with nothing on screen: the person moved to it while the scan ran.
+  first.switchView('trends');
+  const trendsSaw = mountedWith(first, 'trends');
   first.streams[0].onmessage!({ data: JSON.stringify({ type: 'error', message: 'The drive stopped answering.' }) });
   await turns();
-  assert.equal(first.$('startLast').textContent, 'The scan of /Users/x/Desktop failed: The drive stopped answering.', 'control: it failed');
+  assert.equal(first.state.scanning, false, 'control: it failed');
+  assert.equal((first.state.lastFolder as { outcome: string }).outcome, 'failed', 'control: as a first scan, with no tree on screen');
   assert.equal(first.state.scanId, null, 'and no scan id is left for a view to ask with');
+  first.switchView('dashboard');
+  assert.equal(first.$('startLast').textContent, 'The scan of /Users/x/Desktop failed: The drive stopped answering.', 'control: the start screen names it');
+  assert.deepEqual(trendsSaw, [null], 'nor is one there as the view is remounted: it is mounted with no scan id, never the failed scan\'s');
 });
 
 test('the start screen\'s sentence breaks a long path anywhere to fit its column, as a toast and a refused folder do: a path has no spaces to break at (review F2.10)', () => {
