@@ -1004,6 +1004,33 @@ test('stopping a rescan while an older tree is on screen keeps today\'s behaviou
   assert.equal(h.state.lastFolder, null, 'and the start screen is not told about the stopped rescan');
 });
 
+test('a scan that fails leaves no dead scan id behind, as a Stop leaves none: a failed rescan over an older tree puts back the older tree\'s scan, a failed first scan leaves none (review F2.3)', async () => {
+  // Review F2.3: every scanId-keyed endpoint answers a failed scan with 500
+  // SCAN_FAILED, and failScan left state.scanId on it — a pruned folder of
+  // the older tree then loaded as nothing, and the Calendar said "Could not
+  // build the calendar: <the scan's error>" instead of its empty state.
+  const tree = { name: 'x', path: '/Users/x/old', size: 1, type: 'dir', children: [] };
+  const h = page({ route: server({ roots: [] }), root: tree, settledScanId: 'scan-old' });
+  h.switchView('dashboard');
+  await h.startScan('/Users/x/Desktop');
+  await turns();
+  assert.equal(h.state.scanId, 'scan-1', 'control: the rescan is followed');
+  h.streams[0].onmessage!({ data: JSON.stringify({ type: 'error', message: 'The drive stopped answering.' }) });
+  await turns();
+  assert.equal(h.state.scanning, false, 'control: it failed');
+  assert.equal(h.$('emptyState').style.display, 'none', 'control: the older tree stays on screen');
+  assert.equal(h.state.scanId, 'scan-old', 'with its own scan behind it, not the failed one');
+
+  const first = page({ route: server({ roots: [] }) });
+  await boot(first);
+  await startFrom(first, /^Desktop$/);
+  assert.equal(first.state.scanId, 'scan-1', 'control: the first scan is followed');
+  first.streams[0].onmessage!({ data: JSON.stringify({ type: 'error', message: 'The drive stopped answering.' }) });
+  await turns();
+  assert.equal(first.$('startLast').textContent, 'The scan of /Users/x/Desktop failed: The drive stopped answering.', 'control: it failed');
+  assert.equal(first.state.scanId, null, 'and no scan id is left for a view to ask with');
+});
+
 test('the start screen\'s page-level bindings are declared before the boot paints the first view: one read before its declaration throws, and stops the whole page script', () => {
   // Found in a browser on this build: switchView('dashboard') at boot runs
   // renderEmptyState → renderStartChoices, which read `startPainted` while
