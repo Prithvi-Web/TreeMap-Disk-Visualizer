@@ -472,10 +472,11 @@ type NodeFact = { type: 'dir' | 'file'; size: number; name?: string };
 
 /**
  * The trash sheet for `paths`, its open-file answer `conflicts`, over a tree that knows `nodes`
- * (path → node; a path not in it is not in the scan). Answers the panel's words, tags removed, and
- * the OK button's label.
+ * (path → node; a path not in it is not in the scan). Answers the panel's words, tags removed, its
+ * markup, and the OK button's label. `pageEscape` uses the page's own escapeHtml rather than none, so
+ * a name a program chose can be told apart from markup (review F2.3).
  */
-async function inUseWarning(paths: string[], conflicts: Array<{ path: string; openPath?: string; processName: string; pid?: number }>, nodes: Record<string, NodeFact>): Promise<{ text: string; ok: string }> {
+async function inUseWarning(paths: string[], conflicts: Array<{ path: string; openPath?: string; processName: string; pid?: number }>, nodes: Record<string, NodeFact>, { pageEscape = false } = {}): Promise<{ text: string; html: string; ok: string }> {
   const els: Record<string, any> = {};
   const $ = (id: string) => (els[id] ||= (() => {
     const classes = new Set<string>();
@@ -488,7 +489,9 @@ async function inUseWarning(paths: string[], conflicts: Array<{ path: string; op
     api: (url: string) => (url === '/api/files/installed-programs' ? Promise.resolve({ parts: [] }) : new Promise((resolve) => { answer = resolve; })),
     ensureNodes: async () => {},
     nodeFor: (p: string) => (nodes[p] ? { name: p.split('/').pop(), ...nodes[p] } : null),
-    icon: () => '', escapeHtml: (s: string) => s, formatBytes: (n: number) => `${n}B`, formatCount: (n: number) => String(n),
+    icon: () => '', formatBytes: (n: number) => `${n}B`, formatCount: (n: number) => String(n),
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    escapeHtml: pageEscape ? new Function(`${declOf('escapeHtml')}; return escapeHtml;`)() : (s: string) => s,
     cloudProviderOfScan: () => ({ name: 'Drive', trashLabel: 'its trash' }), cloudTrashPaths: async () => {},
   };
   const keys = Object.keys(deps);
@@ -505,7 +508,8 @@ async function inUseWarning(paths: string[], conflicts: Array<{ path: string; op
   await page.confirmTrash(paths);
   answer({ checked: true, complete: true, conflicts: conflicts.map((c) => ({ pid: 7, ...c })) });
   await turns();
-  return { text: String($('confirmOpenHandles').innerHTML).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(), ok: String($('confirmOk').innerHTML) };
+  const html = String($('confirmOpenHandles').innerHTML);
+  return { text: html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(), html, ok: String($('confirmOk').innerHTML) };
 }
 
 test('a folder held open is "This folder is in use", with no promise of space it does not hold, and OK says it moves it to the Trash (H07)', async () => {
@@ -581,4 +585,18 @@ test('several items in use: the sentence says some of them are, speaks of space 
     [{ path: '/r/logs', openPath: '/r/logs/x.log', processName: 'node' }, { path: '/r/logs', openPath: '/r/logs/y.log', processName: 'vim' }],
     { '/r/logs': { type: 'dir', size: 5000 }, '/r/logs/x.log': { type: 'file', size: 5000 }, '/r/logs/y.log': { type: 'file', size: 0 } });
   assert.equal(head(inside), '2 files inside this folder are in use right now. One of them may keep its space, even once you empty the Trash, until node closes it.');
+});
+
+test('a program the warning says must close a file is escaped where the sentence names it, alone or beside another — any local program chooses its own name (review F2.3)', async () => {
+  const files = { '/r/a.txt': { type: 'file' as const, size: 0 }, '/r/b.mov': { type: 'file' as const, size: 9_000_000 }, '/r/c.mov': { type: 'file' as const, size: 7_000_000 } };
+  /** The sentence's markup, before the list of programs (which is escaped on its own). */
+  const sentence = (w: { html: string }): string => w.html.slice(0, w.html.indexOf('<ul>'));
+  const one = await inUseWarning(['/r/a.txt', '/r/b.mov'],
+    [{ path: '/r/a.txt', processName: 'Editor' }, { path: '/r/b.mov', processName: '<b>x</b>' }], files, { pageEscape: true });
+  assert.match(sentence(one), /until &lt;b&gt;x&lt;\/b&gt; closes it\./, 'one program holding space: its name is escaped in the sentence');
+  assert.doesNotMatch(sentence(one), /<b>x/, 'never markup a program chose');
+  const two = await inUseWarning(['/r/a.txt', '/r/b.mov', '/r/c.mov'],
+    [{ path: '/r/a.txt', processName: 'Editor' }, { path: '/r/b.mov', processName: '<b>x</b>' }, { path: '/r/c.mov', processName: '<i>y</i>' }], files, { pageEscape: true });
+  assert.match(sentence(two), /until &lt;b&gt;x&lt;\/b&gt; and &lt;i&gt;y&lt;\/i&gt; close them\./, 'two programs holding space: both names escaped');
+  assert.doesNotMatch(sentence(two), /<b>x|<i>y/, 'never markup a program chose');
 });
