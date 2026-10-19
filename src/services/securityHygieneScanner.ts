@@ -61,6 +61,42 @@ export interface SecurityPattern {
    * finding. Decided from the scan's own size, never by opening the file.
    */
   maxBytes?: number;
+  /**
+   * The `why` for one file, from its name alone, where the name says more than
+   * the pattern does; `why` where it does not. Never by opening the file.
+   */
+  whyFor?: (name: string) => string;
+}
+
+/**
+ * What a .pem holds, as far as its name goes (seventh browser pass J53). A .pem
+ * may hold a private key, or only public material — certificates, a CA bundle
+ * such as roots.pem or cacert.pem — and TreeMap reads names, never contents.
+ * A row once said "PEM files usually hold a private key or a certificate with
+ * one" of every public CA bundle. The name's words are matched whole (split at
+ * anything not a letter or digit), so monkey.pem suggests no key; a name that
+ * suggests both, or neither, gets the sentence true of every .pem.
+ */
+const PEM_KEY_WORDS = new Set(['key', 'privkey', 'privatekey', 'private', 'priv', 'secret']);
+const PEM_CERT_WORDS = new Set(['cert', 'certs', 'certificate', 'certificates', 'cacert', 'cacerts', 'crt', 'ca', 'roots', 'root', 'chain', 'fullchain', 'bundle', 'trust', 'truststore', 'public', 'pub']);
+/** A word that ends like a certificate's name: zcacert, DigiCertGlobalRootCA. */
+const PEM_CERT_ENDINGS = /(?:cert|certs|rootca)$/;
+const PEM_WHY_CERTS =
+  'Its name suggests public certificates, such as a certificate authority bundle, which are not secret — but a .pem can hold a ' +
+  'private key too, and TreeMap reads names and sizes, never contents, so it cannot be sure.';
+const PEM_WHY_KEY =
+  'Its name suggests a private key: anyone with a copy can use it wherever it is trusted. TreeMap reads names and sizes, never ' +
+  'contents, so the name is all it goes by.';
+const PEM_WHY =
+  'A .pem file may hold a private key, or only public material such as certificates. TreeMap reads names and sizes, never ' +
+  'contents, so it cannot tell which: open it to check — a private key’s block begins with a line naming a PRIVATE KEY.';
+export function pemWhy(name: string): string {
+  const words = name.toLowerCase().replace(/\.pem$/, '').split(/[^a-z0-9]+/).filter(Boolean);
+  const key = words.some((w) => PEM_KEY_WORDS.has(w));
+  const certs = words.some((w) => PEM_CERT_WORDS.has(w) || PEM_CERT_ENDINGS.test(w));
+  if (certs && !key) return PEM_WHY_CERTS;
+  if (key && !certs) return PEM_WHY_KEY;
+  return PEM_WHY;
 }
 
 /**
@@ -88,7 +124,8 @@ export const SECURITY_PATTERNS: SecurityPattern[] = [
   {
     id: 'pem-key',
     label: 'Private key or certificate',
-    why: 'PEM files usually hold a private key or a certificate with one.',
+    why: PEM_WHY,
+    whyFor: pemWhy,
     severity: 'high',
     extensions: ['pem'],
     expectedIn: ['.ssh', '.certs', '.config/certs'],
@@ -494,7 +531,7 @@ export function collectSecurityFindings(
       findings.push({
         patternId: pattern.id,
         label: pattern.label,
-        why: pattern.why,
+        why: pattern.whyFor ? pattern.whyFor(name) : pattern.why,
         // A file that ships with a program is where that program put it, so it
         // is not "in the wrong place" in the sense this panel means. Listed,
         // never called serious.

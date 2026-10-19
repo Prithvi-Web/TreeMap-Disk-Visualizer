@@ -463,6 +463,37 @@ test('only a file very likely to be an SSH key is offered a move into ~/.ssh (D7
   }
 });
 
+test('a .pem is said to hold what its name suggests — public certificates, or a private key — and otherwise that it may hold a private key; never "usually a private key" (seventh browser pass J53)', () => {
+  // QA: every .pem row said "PEM files usually hold a private key or a certificate with one", but
+  // roots.pem, zcacert.pem and cacert.pem are public CA bundles. A .pem may hold a private key or only
+  // public material, and TreeMap reads names, never contents — so the row says what the name suggests,
+  // where it suggests something, and otherwise that the file may hold a private key.
+  const at = path.join(HOME, 'Downloads');
+  const whyOf = (name: string) => {
+    const f = findingsFor([file(name, at)])[0];
+    assert.ok(f, `${name}: listed`);
+    assert.equal(f.patternId, 'pem-key', `${name}: by the .pem rule`);
+    assert.equal(f.severity, 'high', `${name}: still serious — the name is only a suggestion`);
+    assert.doesNotMatch(f.why, /usually hold a private key/, `${name}: never the old overstatement`);
+    assert.match(f.why, /names and sizes/, `${name}: says TreeMap goes by the name, never the contents`);
+    return f.why;
+  };
+  for (const name of ['roots.pem', 'zcacert.pem', 'cacert.pem', 'ca-bundle.pem', 'fullchain.pem', 'cert.pem', 'DigiCertGlobalRootCA.pem']) {
+    const why = whyOf(name);
+    assert.match(why, /^Its name suggests public certificates/, `${name}: the name suggests certificates (${why})`);
+    assert.match(why, /can hold a private key too/, `${name}: and a .pem can still hold a key (${why})`);
+  }
+  for (const name of ['privkey.pem', 'server-key.pem', 'private.pem', 'tls.key.pem']) {
+    assert.match(whyOf(name), /^Its name suggests a private key/, `${name}: the name suggests a private key`);
+  }
+  // A name that suggests nothing, or both at once, says only what is true of every .pem.
+  for (const name of ['server.pem', 'monkey.pem', 'cert-and-key.pem', 'sample.pem']) {
+    const why = whyOf(name);
+    assert.match(why, /^A \.pem file may hold a private key, or only public material/, `${name}: may hold a key (${why})`);
+    assert.doesNotMatch(why, /suggests/, `${name}: and claims no suggestion its name does not make`);
+  }
+});
+
 test('the 500 cap keeps the most serious findings, and the counts describe every finding (D77)', () => {
   // QA's corpus: 951 ".key" documents walked before Misc/keys-in-wrong-place, so the cap
   // (applied in walk order) dropped the real keys, and the counts described the slice.
