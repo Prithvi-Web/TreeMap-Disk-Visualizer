@@ -1230,12 +1230,14 @@ export async function approvePolicy(policyId: string, runId: string): Promise<Au
  * approved — awaiting approval, and made for the policy as it is now: told to approve a newest run that
  * asked nothing, a client was refused again. A policy not yet approved previews afresh at the next check
  * (`approvePolicy` has just cleared its cooldown), which passes over a policy switched off; an approved
- * one is never brought forward, and looks afresh at its next scheduled run.
+ * one is never brought forward, and looks afresh at its next scheduled run. "At its next check", never
+ * "within a minute": no check runs for LAUNCH_HOLD_MS after the server starts (scheduler.ts), so the
+ * next one can be ten minutes off (review F2.4).
  */
 function afterStaleApproval(policy: AutopilotPolicy, newest: AutopilotRun | undefined): string {
   const approvable = newest?.status === 'awaiting-approval' && newest.scope !== undefined && sameScope(newest.scope, policy);
   if (!policy.approvedAt) {
-    const when = policy.enabled ? 'at its next check, within a minute' : 'at its next check once it is switched on';
+    const when = policy.enabled ? 'at its next check' : 'at its next check once it is switched on';
     return approvable
       ? `Approve its newest run, which shows what it matches now — a fresh preview comes ${when}.`
       : `A fresh preview of what it matches now comes ${when}; approve that run.`;

@@ -341,7 +341,10 @@ test('a stale approval says when the fresh preview comes - at the next check whi
   };
   try {
     const on = await staleRefusal({ enabled: true });
-    assert.match(on.message, /a fresh preview comes at its next check, within a minute\./, on.message);
+    assert.match(on.message, /a fresh preview comes at its next check\./, on.message);
+    // Not "within a minute": for LAUNCH_HOLD_MS after TreeMap starts, no check runs at all (scheduler.ts), so
+    // the next check can be ten minutes off (review F2.4). The page's unapprovableRunNote says it the same way.
+    assert.doesNotMatch(on.message, /within a minute/, on.message);
     assert.doesNotMatch(on.message, /switched on/, on.message);
     const off = await staleRefusal({ enabled: false });
     assert.match(off.message, /a fresh preview comes at its next check once it is switched on\./, `the scheduler passes over a policy switched off: ${off.message}`);
@@ -382,7 +385,7 @@ test('a stale approval names the newest run only when that run can be approved -
     const edited = await refusal(approvePolicy('stale-edit', seen.id));
     assert.equal(edited.code, 'APPROVAL_STALE', edited.message);
     assert.doesNotMatch(edited.message, /Approve its newest run/, `the newest run is the one refused: ${edited.message}`);
-    assert.match(edited.message, /A fresh preview of what it matches now comes at its next check, within a minute; approve that run\.$/, edited.message);
+    assert.match(edited.message, /A fresh preview of what it matches now comes at its next check; approve that run\.$/, `not "within a minute": no check runs while the launch hold lasts (review F2.4): ${edited.message}`);
     await savePolicies([{ ...(await policyNow('stale-edit')), enabled: false }]);
     const editedOff = (await refusal(approvePolicy('stale-edit', seen.id))).message;
     assert.match(editedOff, /A fresh preview of what it matches now comes at its next check once it is switched on; approve that run\.$/, editedOff);
