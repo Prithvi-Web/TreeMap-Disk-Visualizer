@@ -120,7 +120,12 @@ function keyboardScatter(points: Array<{ x: number; y: number; label: string }>)
   const canvas = { parentElement: host, tabIndex: -1, attrs: {} as Record<string, string>,
     setAttribute(k: string, v: string) { this.attrs[k] = v; },
     addEventListener(t: string, fn: (e: unknown) => void) { listeners[t] = fn; }, removeEventListener() {} };
-  const ctx = new Proxy({} as Record<string, unknown>, { get: (t, k) => (k in t ? t[k as string] : () => {}), set: (t, k, v) => { t[k as string] = v; return true; } });
+  // Every arc the chart draws, as [x, y]: a dot is two arcs about its centre, and the active one is drawn last, on top.
+  const arcs: Array<[number, number]> = [];
+  const ctx = new Proxy({} as Record<string, unknown>, {
+    get: (t, k) => (k === 'arc' ? (x: number, y: number) => { arcs.push([x, y]); } : k in t ? t[k as string] : () => {}),
+    set: (t, k, v) => { t[k as string] = v; return true; },
+  });
   const stubs = `
     const REDUCED = true;
     function formatBytes(n) { return n + ' B'; }
@@ -139,11 +144,14 @@ function keyboardScatter(points: Array<{ x: number; y: number; label: string }>)
   const live = host.children.find((c) => c.attrs['aria-live'] === 'polite');
   const prevented: string[] = [];
   type Mods = { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; shiftKey?: boolean };
-  const press = (key: string, mods: Mods = {}) => listeners.keydown?.({ key, ...mods, preventDefault: () => { prevented.push(key); } });
+  const press = (key: string, mods: Mods = {}) => {
+    arcs.length = 0; // what this key's render draws, alone
+    listeners.keydown?.({ key, ...mods, preventDefault: () => { prevented.push(key); } });
+  };
   // The chart's own tooltip, the one makeTip puts in the host: shown or not, its words, and where it stands.
   const tipEl = host.children.find((c) => c.className === 'fx-tip');
   const tip = () => ({ shown: !!tipEl?.classes.has('on'), words: tipEl ? shownWords(tipEl) : '', at: tipEl?.style.transform ?? '' });
-  return { canvas, listeners, live, press, prevented, chart, host, tip, hasTip: !!tipEl };
+  return { canvas, listeners, live, press, prevented, chart, host, tip, hasTip: !!tipEl, arcs };
 }
 
 const APPS = [
@@ -181,6 +189,33 @@ test('the scatter is one tab stop, and the arrow keys walk its dots in file-coun
   assert.equal(s.live!.removed, true, 'the live region goes with the chart');
 });
 
+/** The stub tooltip's box: the offsetWidth and offsetHeight every stub element reports. */
+const TIP_W = 120;
+const TIP_H = 40;
+
+/**
+ * The tooltip stands beside the dot the walk is on, as the chart drew it (review F2.4): the corner of its
+ * box nearest that dot — the corner makeTip hangs it from, 14 px aside and 12 px above (or 16 px below)
+ * — is within 24 px of the dot's centre; no other dot stands within 48 px of it, so that corner is hung
+ * from it alone. (The box itself may cover a neighbour: flipped left at the chart's edge, Xcode's covers
+ * Slack's dot.)
+ */
+function besideActiveDot(s: ReturnType<typeof keyboardScatter>, name: string): void {
+  const m = /^translate\((-?[\d.]+)px, (-?[\d.]+)px\)$/.exec(s.tip().at);
+  assert.ok(m, `${name}: the tooltip is placed (${s.tip().at})`);
+  const [lx, ly] = [Number(m![1]), Number(m![2])];
+  assert.ok(s.arcs.length >= 2, `${name}: control: the step drew its dots`);
+  const active = s.arcs[s.arcs.length - 1];
+  const others = s.arcs.filter(([x, y]) => x !== active[0] || y !== active[1]);
+  assert.ok(others.length > 0, `${name}: control: the other dots were drawn too`);
+  const dist = (a: readonly number[], b: readonly number[]): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const corner = [[lx, ly], [lx + TIP_W, ly], [lx, ly + TIP_H], [lx + TIP_W, ly + TIP_H]]
+    .reduce((best, c) => (dist(c, active) < dist(best, active) ? c : best));
+  for (const o of others) assert.ok(dist(active, o) > 48, `${name}: control: no other dot stands within 48 px of it (${o.join(', ')})`);
+  assert.ok(dist(corner, active) <= 24,
+    `${name}: the tooltip at (${lx}, ${ly}) is hung ${dist(corner, active).toFixed(1)} px from the dot it names at (${active.join(', ')})`);
+}
+
 test('each step of the keyboard walk shows the dot\'s own tooltip — its name, file count and size — beside that dot, and leaving the chart hides it (review F1.8)', () => {
   // For a sighted keyboard user the tooltip is the only visible name of the dot: the live region is read aloud, not shown.
   const s = keyboardScatter(APPS);
@@ -196,8 +231,12 @@ test('each step of the keyboard walk shows the dot\'s own tooltip — its name, 
   assert.equal(slack.words, 'Slack | 900 files | 120000 B', 'the next dot\'s words replace the last one\'s');
   assert.match(slack.at, /^translate\(-?\d+px, -?\d+px\)$/, `it is placed (${slack.at})`);
   assert.notEqual(slack.at, notes.at, 'and it moves to the dot it names');
+  besideActiveDot(s, 'Slack');
   s.press('End');
   assert.equal(s.tip().words, 'Xcode | 4000 files | 9000000 B');
+  besideActiveDot(s, 'Xcode');
+  s.press('Home');
+  besideActiveDot(s, 'Notes');
   s.listeners.blur?.({});
   assert.equal(s.tip().shown, false, 'Tab away and the tooltip goes, as it does when the pointer leaves');
   s.press('ArrowUp');
