@@ -141,7 +141,8 @@ test('open-file conflicts ask the executable of the cut names alone, in one call
 /*
  * Review F1.1: a name past ASCII. Recorded on this Mac with `lsof -w -F pc`: under no locale (as the Dock
  * and launchd start TreeMap) lsof writes each byte it cannot print as `\xNN` text; under a UTF-8 locale it
- * writes the raw bytes, cut at byte 31 — inside a character, which Node then decodes as U+FFFD.
+ * writes the raw bytes, cut at byte 31 — inside a character, whose first byte it writes raw, which Node
+ * then decodes as U+FFFD (any later byte of it is `\xNN`, review F3.2 below).
  * 日 本 語 are three bytes each (E6 97 A5, E6 9C AC, E8 AA 9E).
  */
 const NIHONGO_ESCAPED = '\\xe6\\x97\\xa5\\xe6\\x9c\\xac\\xe8\\xaa\\x9e';
@@ -165,6 +166,28 @@ test('a process name lsof wrote as \\xNN escapes is read back as its letters, an
   assert.equal(Buffer.byteLength(appli), 31, 'control: as many bytes as lsof prints');
   assert.equal(show(appli, '/Applications/Écran Partagé Assistant Application'), 'Écran Partagé Assistant Application', 'judged by its bytes, it may be cut: the executable continues it');
   assert.equal(show(appli, null), 'Écran Partagé Assistant Appli…', 'and with no executable it is said to be cut');
+});
+
+/*
+ * Review F3.2, recorded on this Mac with `lsof -w -F pc` under en_US.UTF-8, as `npm start` from a terminal
+ * runs: a 35-byte executable name the kernel cuts at 31 bytes, after two of the three bytes of こ, is written
+ * with the first of them raw and the second as the text "\x81" — two U+FFFD once read back. (Under no locale
+ * both are "\xNN" and read back as one.)
+ */
+test('a name cut inside a character that reads back as a run of U+FFFD — a raw byte, then lsof\'s \\xNN for the next — is completed from the executable, and never shown with a U+FFFD (review F3.2)', async () => {
+  const whole = 'AAあいうえおかきくけこさ';
+  const exe = `/Users/me/bin/${whole}`;
+  // As runText reads lsof's output: its bytes decoded as UTF-8.
+  const stdout = Buffer.concat([Buffer.from('p16327\ncAAあいうえおかきくけ'), Buffer.from([0xe3]), Buffer.from(String.raw`\x81` + '\nf3\nn/x/a\n')]).toString('utf8');
+  const [rec] = parseLsofRecords(stdout);
+  assert.equal(rec.processName, 'AAあいうえおかきくけ��', 'control: the raw byte and the escaped one each read back as a U+FFFD');
+  const show = lsofNames.displayProcessName!;
+  assert.equal(show(rec.processName, exe), whole, 'the executable continues what was kept');
+  assert.equal(show(rec.processName, null), 'AAあいうえおかきくけ…', 'with no executable it is said to be cut, with no U+FFFD');
+  const [named] = await lsofNames.withFullProcessNames!([{ pid: 16327, processName: rec.processName }], async () => new Map([[16327, exe]]));
+  assert.equal(named.processName, whole, 'and the open-file warning names it whole');
+  // A cut keeps at most three bytes of a four-byte character: however many U+FFFD they read back as, none is shown.
+  assert.equal(show(`${'x'.repeat(28)}���`, null), `${'x'.repeat(28)}…`, 'three U+FFFD are one cut character');
 });
 
 test('open-file conflicts ask about every name cut by its bytes or inside a character, and none whole (review F1.1)', async () => {

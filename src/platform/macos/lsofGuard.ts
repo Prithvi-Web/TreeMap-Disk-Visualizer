@@ -153,8 +153,10 @@ function lsofEscapeByte(body: string): number {
 
 /**
  * lsof's text with every escape put back as the byte it stands for, read as UTF-8 (review F1.1, F2.1):
- * "\xc3\x89cran" is "Écran", "back\\slash" is "back\slash". A character a cut went through decodes as
- * one U+FFFD, as it does where lsof writes the raw bytes under a UTF-8 locale and Node decodes them.
+ * "\xc3\x89cran" is "Écran", "back\\slash" is "back\slash". A character a cut went through reads back as
+ * one to three U+FFFD: one under no locale, where lsof escapes each of its bytes; one per byte under a
+ * UTF-8 locale, where lsof writes its first byte raw — which Node decodes as a U+FFFD — and any after it
+ * as `\xNN`, each a lone byte here (measured, review F3.2).
  */
 export function decodeLsofText(value: string): string {
   if (!value.includes('\\')) return value;
@@ -200,8 +202,8 @@ export function lsofReadBack(path: string): string {
 /**
  * Whether lsof may have cut `name` (H04, review F1.1). It prints at most LSOF_NAME_MAX bytes — bytes,
  * not characters: "Écran Partagé Assistant Appli" is 29 characters and 31 bytes. A cut inside a
- * character leaves one to three of its bytes after the 28 to 30 before them, read as one U+FFFD, which
- * is three bytes itself: such a name counts at least 31 too.
+ * character leaves one to three of its bytes after the 28 to 30 before them, read back as one to three
+ * U+FFFD, three bytes each: such a name counts at least 31 too.
  */
 function mayBeCut(name: string): boolean {
   return Buffer.byteLength(name, 'utf8') >= LSOF_NAME_MAX;
@@ -211,12 +213,12 @@ function mayBeCut(name: string): boolean {
  * A process's name as a person reads it (H04). A name lsof cannot have cut is whole, its trailing
  * spaces dropped. One it may have cut: the executable's own name is used where it continues it, and
  * otherwise what lsof gave is said to be cut, with an ellipsis — never a name that stops mid-word on a
- * space, as "Quit Google Chrome Helper (Aperitif ?" did, nor one ending in the U+FFFD of a character
- * the cut went through (review F1.1).
+ * space, as "Quit Google Chrome Helper (Aperitif ?" did, nor one ending in the U+FFFDs a character the
+ * cut went through reads back as \u2014 one to three of them (review F1.1, F3.2).
  */
 export function displayProcessName(lsofName: string, executable: string | null): string {
   if (!mayBeCut(lsofName)) return lsofName.trimEnd();
-  const kept = lsofName.replace(/\uFFFD$/, '');
+  const kept = lsofName.replace(/\uFFFD+$/, '');
   const own = executable ? executable.slice(executable.lastIndexOf('/') + 1) : '';
   if (own.startsWith(kept)) return own;
   return `${kept.trimEnd()}…`;
