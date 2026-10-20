@@ -79,7 +79,7 @@ only visible by reading it.
 | Fast enumeration | `getattrlistbulk`, one call per folder, in the native scan core | 2 | Core not loaded → the bundled gdu for a full scan with no "Don't scan" list that does not include the drives mounted inside the folder, otherwise `readdir` + `lstat` (degraded, with the loader's reason — see below). A scan with a "Don't scan" list always takes `readdir` + `lstat`. A fast rescan reuses its cache only where the core does not walk the scan. The core walks it when it is loaded and can list the folder, the scan has no "Don't scan" list and is not of a single file, and the Scan engine setting is not Built-in walker or gdu; there the request is not used, and `engineReason` says so |
 | Live changes | `fs.watch(recursive)` → FSEvents | 1 | Watch cannot be established → index staleness guard |
 | Open handles | `lsof -F` | 3 | `lsof` missing → delete proceeds without the warning |
-| Zombie handles | `lsof -F` + inode comparison | 3 | as above |
+| Zombie handles | `lsof -F` + inode comparison | 3 | as above. Sees only the programs running under your account (every program when TreeMap runs as root). A held file it cannot decide — the stat of its path refused, or a name holding a `^` (lsof writes a control byte as `^X`) when a spelling it could be cannot be looked at, or it has more than 4 carets or more spellings than TreeMap tries — is counted and shown as not checked, never claimed |
 | Allocated size | `lstat().blocks × 512` | 1 | Always available, exact |
 | Placeholders | allocated blocks + `.icloud` stubs | 1 | Always available |
 | Provenance | `mdls -plist` + `com.apple.quarantine` | 3 | Spotlight off → quarantine record still answers |

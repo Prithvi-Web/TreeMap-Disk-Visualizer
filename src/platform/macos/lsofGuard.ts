@@ -36,15 +36,17 @@ import { meansAbsent } from '../../utils/errno';
  *    locale every byte past ASCII is `\xNN` (review F2.1). Both fields are read back through
  *    `decodeLsofText`, or no path holding one would match, and every such file would read as deleted.
  *    Its `^A` for a control byte cannot be undone, a caret being written as itself: a path is matched
- *    by that spelling too (`lsofReadBack`), and one holding a caret is never judged deleted by a stat
- *    of the spelling (review F3.1, F3.3).
+ *    by that spelling too (`lsofReadBack`; review F3.1, F3.3), and one holding a caret is judged deleted
+ *    only when no spelling its text could be holds its inode and every one could be looked at
+ *    (`lsofSpellings`, BQL item 12); otherwise it is counted as undecided, never claimed.
  *
  * Field order, as emitted: `f` (descriptor) opens a block, then `t` type,
  * `D` device, `s` size, `i` inode, `n` name. State resets on each `f`.
  *
  * What this cannot see: processes owned by other users, unless TreeMap runs
  * elevated. Reported as a partial answer in the capability reason, never as a
- * confident "nothing has it open".
+ * confident "nothing has it open" — and the held-space panel speaks only for
+ * the person's own programs (BQL item 11).
  */
 
 /** One descriptor as reported by lsof. */
@@ -197,6 +199,102 @@ function lsofPrinted(path: string): string {
  */
 export function lsofReadBack(path: string): string {
   return decodeLsofText(lsofPrinted(path));
+}
+
+/** The most carets a path read back from lsof may hold for the guard to try every spelling it could be (BQL item 12). */
+export const LSOF_CARETS_TRIED = 4;
+/** The most spellings it tries for one path: four carets, each a caret, a control byte or 0x1c's run-ins, stay inside. */
+const LSOF_SPELLINGS_MAX = 256;
+/** The most fragments the search below looks at for one path, so no name, however written, costs an unbounded walk. */
+const LSOF_SEARCH_MAX = 50_000;
+
+/**
+ * How many characters at the end of lsof's printed text a following character could still change: a
+ * backslash no escape consumed, alone or with an `x` and one hex digit after it — the start of a `\xNN`
+ * the next characters may finish. 0 when the text ends between escapes.
+ */
+function openEscapeTail(printed: string): number {
+  for (let i = 0; i < printed.length; i++) {
+    if (printed[i] !== '\\') continue;
+    const after = printed.slice(i + 1);
+    if (/^(\\|x[0-9a-fA-F]{2}|[bfnrt])/.test(after)) { i += after[0] === 'x' ? 3 : 1; continue; }
+    if (/^(x[0-9a-fA-F]?)?$/.test(after)) return printed.length - i;
+  }
+  return 0;
+}
+
+/**
+ * Every path whose spelling lsof reads back as `readBack` (BQL item 12), each verified by `lsofReadBack`;
+ * null when there could be more than the guard tries — more than LSOF_CARETS_TRIED carets, or more
+ * spellings or search than its bounds allow.
+ *
+ * lsof writes a control byte as `^` and the character 0x40 above it, and a caret as itself, so each `^X`
+ * in its text may be a caret and an X or one control byte. And 0x1c's `^\` runs into what follows it: its
+ * backslash and the next characters lsof prints can read back as one escape — "\x1cb" as a caret and a
+ * backspace, "\x1cx41" as "^A", "\x1c\\" as a caret and two backslashes. A path with no caret is read back
+ * as itself and nothing else, and so is every part of a path between one caret's spelling and the next.
+ *
+ * The search: from each caret, the shortest runs of characters whose printed text ends between escapes
+ * and reads back as the text there, then the rest of the path the same way. A character in a spelling
+ * that is not in the text itself is one of those runs' — a control byte, 0x1c, or a letter, `x`, hex
+ * digit, backslash or escaped control 0x1c's backslash ran into — and those are all tried.
+ */
+export function lsofSpellings(readBack: string): string[] | null {
+  const carets = readBack.split('^').length - 1;
+  if (carets === 0) return [readBack];
+  if (carets > LSOF_CARETS_TRIED) return null;
+  const alphabet = new Set<string>([...readBack, '^', '\x1c', '\\', 'x', 'b', 'f', 'n', 'r', 't', '\b', '\t', '\n', '\f', '\r', ...'0123456789abcdefABCDEF']);
+  for (let i = readBack.indexOf('^'); i !== -1; i = readBack.indexOf('^', i + 1)) {
+    const c = readBack.charCodeAt(i + 1);
+    if (c >= 0x40 && c <= 0x5f) alphabet.add(String.fromCharCode(c - 0x40));
+  }
+  const letters = [...alphabet];
+  let searched = 0;
+  let overflow = false;
+
+  /** The shortest runs of characters at a caret whose printed text ends between escapes and reads back as `text`'s start. */
+  const runsAt = (text: string): [run: string, used: number][] => {
+    const runs: [string, number][] = [];
+    const grow = (run: string): void => {
+      if (overflow) return;
+      if (++searched > LSOF_SEARCH_MAX) { overflow = true; return; }
+      const printed = lsofPrinted(run);
+      const back = decodeLsofText(printed);
+      const open = openEscapeTail(printed);
+      if (!text.startsWith(back.slice(0, back.length - open))) return;
+      if (run.length > 0 && open === 0) { runs.push([run, back.length]); return; }
+      if (run.length > 2 * text.length + 4) return;
+      for (const ch of letters) grow(run + ch);
+    };
+    grow('');
+    return runs;
+  };
+
+  const memo = new Map<string, string[] | null>();
+  const spellingsOf = (text: string): string[] | null => {
+    const known = memo.get(text);
+    if (known !== undefined) return known;
+    const at = text.indexOf('^');
+    let out: string[] | null = [];
+    if (at === -1) out = [text];
+    else {
+      const head = text.slice(0, at);
+      for (const [run, used] of runsAt(text.slice(at))) {
+        const tails = spellingsOf(text.slice(at + used));
+        if (tails === null || overflow) { out = null; break; }
+        for (const tail of tails) out.push(head + run + tail);
+        if (out.length > LSOF_SPELLINGS_MAX) { out = null; break; }
+      }
+    }
+    if (overflow) out = null;
+    memo.set(text, out);
+    return out;
+  };
+  const found = spellingsOf(readBack);
+  if (found === null || overflow) return null;
+  // Every spelling is checked against what lsof would print for it: none is a guess.
+  const exact = [...new Set(found)].filter((p) => lsofReadBack(p) === readBack);
+  return exact.length > LSOF_SPELLINGS_MAX ? null : exact;
 }
 
 /**
@@ -468,19 +566,19 @@ export async function resolveZombieScan(
       // No inode reported — cannot know, so don't claim. Not counted either: lsof shows a few such records
       // on a Mac, all where Unix sockets live, and they hold no space.
       if (rec.ino === null) continue;
-      const live = await lookup(rec.path);
-      if (live === 'unknown') { // could not look — cannot know, so don't claim
+      // lsof writes a control byte as `^X` and a caret as itself (review F3.1, F3.3), so a path holding a
+      // caret is any of the spellings its text could be (BQL item 12): the file was at one of them. In use
+      // when one holds its inode; deleted only when none does and every one could be looked at; otherwise —
+      // a spelling that cannot be looked at, or more spellings than the guard tries — cannot know, so don't
+      // claim, and count it. Where lsof marks a file (deleted) itself, that still counts.
+      const spellings = rec.path.includes('^') ? lsofSpellings(rec.path) : [rec.path];
+      const places = spellings === null ? null : await Promise.all(spellings.map(lookup));
+      if (places?.includes(rec.ino)) continue;
+      if (places === null || places.includes('unknown')) { // could not look — cannot know, so don't claim
         undecided.add(`${rec.ino}\0${rec.path}`);
         continue;
       }
-      // lsof writes a control byte as `^X` and a caret as itself (review F3.1, F3.3): a path holding a caret
-      // that names nothing, or another inode, may be a file with a control byte in its name, still in its
-      // place — cannot know, so don't claim. Where lsof marks a file (deleted) itself, that still counts.
-      if (live !== rec.ino && rec.path.includes('^')) {
-        undecided.add(`${rec.ino}\0${rec.path}`);
-        continue;
-      }
-      isZombie = live === 'gone' || live !== rec.ino;
+      isZombie = true; // gone from every spelling, or another inode in its place
     }
     if (!isZombie) continue;
     const key = `${rec.pid}\0${rec.ino ?? rec.path}`;

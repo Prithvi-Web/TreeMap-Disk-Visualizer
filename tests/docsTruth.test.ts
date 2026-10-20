@@ -9,6 +9,7 @@ isolatedDataDir('treemap-docsTruth-data-');
 import { FAST_PATH_UNAVAILABLE, nativeEligibility, nativeRule, type EligibilityInput } from '../src/services/scan/nativeEngine';
 import { MEMORY_CAP_ROWS, RESERVE_FACTOR, memoryRoomFor, noRestartRefusal } from '../src/services/scan/nativeMemory';
 import { ENDPOINTS } from '../src/api/openapi';
+import { LSOF_CARETS_TRIED } from '../src/platform/macos/lsofGuard';
 
 /**
  * The engineering record and the agents' contract — docs/PLATFORM_NOTES.md,
@@ -749,4 +750,11 @@ test('the README says what Held-Up Space sees and that an open file it cannot ch
   assert.ok(schema?.properties?.undecidedCount, 'the spec names the count');
   assert.ok(schema?.required?.includes('undecidedCount'), 'and every report carries it');
   assert.match(schema.properties.undecidedCount.description ?? '', /could not check/);
+});
+
+test('PLATFORM_NOTES\' macOS zombie-handles row says what the probe does not see and that what it cannot decide is counted, with the caret bound lsofGuard keeps (BQL item 12)', () => {
+  const row = lineStarting(read('docs', 'PLATFORM_NOTES.md'), '| Zombie handles | `lsof -F` + inode comparison |');
+  assert.match(row, /Sees only the programs running under your account \(every program when TreeMap runs as root\)/, 'another account\'s programs are not seen');
+  assert.match(row, new RegExp(`more than ${String(LSOF_CARETS_TRIED)} carets or more spellings than TreeMap tries`), 'the bound is the code\'s');
+  assert.match(row, /is counted and shown as not checked, never claimed \|$/, 'and what it cannot decide is counted');
 });

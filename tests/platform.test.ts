@@ -473,6 +473,72 @@ test('the held-space probe counts the held files it could not decide — one who
   }), scan.handles, 'resolveZombies answers the same handles');
 });
 
+/* BQL item 12: a held file whose name holds a caret, decided by every spelling lsof's text could be. */
+
+test('lsofSpellings: every path lsof reads back as a text is among its spellings, and each spelling reads back as that text — every name of up to three characters from carets, letters, hex digits, backslashes and control bytes (BQL item 12)', () => {
+  const chars = ['^', 'A', '1', 'x', 'b', '\\', '\x01', '\x1c', '\x08'];
+  let names = [''];
+  const all: string[] = [];
+  for (let len = 1; len <= 3; len++) {
+    names = names.flatMap((n) => chars.map((c) => n + c));
+    all.push(...names);
+  }
+  for (const name of all) {
+    const file = `/d/${name}.log`;
+    const back = lsof.lsofReadBack(file);
+    const spellings = lsof.lsofSpellings(back);
+    assert.ok(spellings, `${JSON.stringify(back)} has spellings`);
+    assert.ok(spellings.includes(file), `${JSON.stringify(file)}, read back as ${JSON.stringify(back)}, is among ${JSON.stringify(spellings)}`);
+    for (const s of spellings) assert.equal(lsof.lsofReadBack(s), back, `${JSON.stringify(s)} reads back as ${JSON.stringify(back)}`);
+  }
+  assert.equal(all.length, 9 + 81 + 729);
+  const sorted = (a: string[] | null) => (a ? [...a].sort() : a);
+  assert.deepEqual(lsof.lsofSpellings('/x/plain.log'), ['/x/plain.log'], 'no caret: the text is the path');
+  assert.deepEqual(sorted(lsof.lsofSpellings('/x/build^A.log')), ['/x/build\x01.log', '/x/build\x1cx41.log', '/x/build^A.log'],
+    'a caret and an A, the control byte 0x01, or 0x1c running into "x41"');
+  assert.deepEqual(sorted(lsof.lsofSpellings('/x/build^1.log')), ['/x/build\x1cx31.log', '/x/build^1.log'], '"^1" is no control byte, yet 0x1c and "x31" read back as it');
+  assert.deepEqual(sorted(lsof.lsofSpellings('/x/n^J.log')), ['/x/n\x1cx4A.log', '/x/n\x1cx4a.log', '/x/n^J.log'], 'a newline is written \\n, never ^J');
+  assert.equal(lsof.lsofSpellings('/x/a^Ab^Bc^Cd^De^E.log'), null, `more than ${lsof.LSOF_CARETS_TRIED} carets: more spellings than the guard tries`);
+  assert.equal(lsof.LSOF_CARETS_TRIED, 4);
+});
+
+test('a held file whose name holds a caret is decided by every spelling lsof\'s text could be: none holding its inode and none unknown, it is deleted and listed; one holding its inode, in use; one that cannot be looked at, undecided (BQL item 12)', async () => {
+  // It was never listed: lsof writes a control byte as ^X and a caret as itself, so a deleted build^1.log
+  // (7.3 MB) read as "may be a file with a control byte in its name, still in place" and was skipped.
+  const held = (p: string) => parseLsofRecords(['p77', 'cbuild', 'f9', 's7340032', 'i4242', `n${p}`].join('\n'));
+  const at = (answers: Record<string, number | string>) => async (p: string) => {
+    const a = answers[p];
+    if (a === undefined) throw ENOENT(p);
+    if (typeof a === 'string') throw Object.assign(new Error(`${a}: ${p}`), { code: a });
+    return a;
+  };
+  const verdict = async (p: string, answers: Record<string, number | string>) => {
+    const scan = await lsof.resolveZombieScan(held(p), at(answers));
+    return [scan.handles.map((h) => [h.path, h.bytes]), scan.undecided];
+  };
+  assert.deepEqual(await verdict('/x/build^1.log', {}), [[['/x/build^1.log', 7340032]], 0], 'no spelling of it is there: deleted, and listed');
+  assert.deepEqual(await verdict('/x/build^A.log', {}), [[['/x/build^A.log', 7340032]], 0], 'nor of build^A.log');
+  assert.deepEqual(await verdict('/x/build^A.log', { '/x/build^A.log': 999 }), [[['/x/build^A.log', 7340032]], 0],
+    'another file at the caret\'s spelling, none at the others: still deleted');
+  assert.deepEqual(await verdict('/x/build^A.log', { '/x/build\x01.log': 4242 }), [[], 0], 'its inode at the control byte\'s spelling: in use, in place');
+  assert.deepEqual(await verdict('/x/build^1.log', { '/x/build\x1cx31.log': 4242 }), [[], 0],
+    'its inode at 0x1c\'s run-in spelling — which a caret-or-control-byte rule alone would have called deleted');
+  assert.deepEqual(await verdict('/x/build^A.log', { '/x/build\x01.log': 'EPERM' }), [[], 1], 'a spelling that cannot be looked at: undecided, never claimed');
+  assert.deepEqual(await verdict('/x/build^A.log', { '/x/build\x01.log': 'EPERM', '/x/build\x1cx41.log': 4242 }), [[], 0], 'unless another spelling holds its inode');
+  assert.deepEqual(await verdict('/x/a^Ab^Bc^Cd^De^E.log', {}), [[], 1], 'five carets: more than it tries, so undecided');
+  // The files of the F3.1/F3.3 recording, each in place: in use, and none left undecided.
+  const dir = '/Users/me/f31';
+  const lines = ['p53661', 'csleep'];
+  LSOF_CARET_RECORDED.forEach(([written], i) => lines.push(`f${i + 3}`, 's1', `i${i + 10}`, `n${dir}/${written}`));
+  const inodes = new Map<string, number>(LSOF_CARET_RECORDED.map(([, name], i) => [`${dir}/${name}`, i + 10] as const));
+  const scan = await lsof.resolveZombieScan(parseLsofRecords(lines.join('\n')), async (p) => {
+    const ino = inodes.get(p);
+    if (ino === undefined) throw ENOENT(p);
+    return ino;
+  });
+  assert.deepEqual([scan.handles, scan.undecided], [[], 0], 'every one found at one of its spellings');
+});
+
 /* ══════════════════ Provenance (unit) ══════════════════ */
 
 test('parseQuarantine reads the real four-field record', () => {
