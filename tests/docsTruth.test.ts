@@ -758,3 +758,27 @@ test('PLATFORM_NOTES\' macOS zombie-handles row says what the probe does not see
   assert.match(row, new RegExp(`more than ${String(LSOF_CARETS_TRIED)} carets or more spellings than TreeMap tries`), 'the bound is the code\'s');
   assert.match(row, /is counted and shown as not checked, never claimed \|$/, 'and what it cannot decide is counted');
 });
+
+test('AGENTS.md\'s fleet paragraph names the refusal of a peer\'s scan at or under macOS\'s automount folders, as fleetSync makes it (BQL docs, item 4)', () => {
+  // c4aba13b refuses a paired peer's scan of /net, /Network or /home on a Mac (autofs mounts a share there on
+  // sight) with 400 AUTOMOUNT_PATH; the paragraph listing the peer's refusals did not say so.
+  const fleet = read('src', 'services', 'fleet', 'fleetSync.ts');
+  assert.match(fleet, /const DARWIN_AUTOMOUNT_ROOTS = new Set\(\['net', 'network', 'home'\]\);/, 'the three automount folders');
+  assert.match(fleet, /new PathRejectedError\(PEER_AUTOMOUNT, 'AUTOMOUNT_PATH'\)/, 'refused with AUTOMOUNT_PATH');
+  assert.match(fleet, /if \(!\(err instanceof PathRejectedError\)\) throw err;\s*send\(res, 400, \{ error: err\.message, code: err\.code \}\);/, 'answered 400');
+  const paragraph = from(read('AGENTS.md'), 'Triggering a scan on a peer is a separate').split('\n   - ')[0].replace(/\s+/g, ' ');
+  assert.match(paragraph, /on a Mac nothing at or under `\/net`, `\/Network` or `\/home`, macOS's automount folders, by any spelling — any case, the Data volume's, `\.\.` climbing there, `~` where the home folder is under `\/home` — or through a link that leads there: `400 AUTOMOUNT_PATH`, before anything looks inside them, since a look there mounts a network share/);
+});
+
+test('PLATFORM_NOTES\' macOS SMART row says what the app says when smartctl is missing: the tool to get, and no install command (BQL docs)', () => {
+  // QA D18 (b0e1495c) took the Homebrew line out of the macOS reason; the row still said "install instructions shown".
+  const mac = read('src', 'platform', 'macos', 'index.ts');
+  const probe = between(mac, 'override async probeSmartData()', 'override async probeHardwareEncode()');
+  const reason = /reason:\s*(?:\/\/[^\n]*\n\s*)*'([^']*)'/.exec(probe)?.[1] ?? '';
+  assert.match(reason, /needs the smartmontools utility \(smartmontools\.org\)/, 'the reason names the tool and where it comes from');
+  assert.doesNotMatch(reason, /brew |sudo |apt |port install/, 'and gives no install command');
+  const macOs = from(read('docs', 'PLATFORM_NOTES.md'), '## macOS');
+  const row = macOs.split('\n').find((l) => l.startsWith('| SMART |')) ?? '';
+  assert.doesNotMatch(row, /install instructions/, 'the row no longer promises instructions');
+  assert.match(row, /Not installed → names smartmontools \(smartmontools\.org\), with no install command \|$/);
+});

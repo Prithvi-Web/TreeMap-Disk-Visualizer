@@ -86,7 +86,7 @@ only visible by reading it.
 | Topology | `diskutil list`/`info -plist` → `plutil`, + `statfs` | 3 + 1 | — |
 | Snapshots | `tmutil` + `mount_apfs` | 3 | No local snapshots → stated plainly |
 | Clone families | **none reachable** | — | Sizes labelled approximate |
-| SMART | `smartctl --json` | 3 | Not installed → install instructions shown |
+| SMART | `smartctl --json` | 3 | Not installed → names smartmontools (smartmontools.org), with no install command |
 | Shell menu | Finder Quick Action in `~/Library/Services` | 3 | — |
 
 ### `getattrlistbulk` is used — by the native scan core, since Phase 3
