@@ -83,11 +83,17 @@ For a directory: `project-directory` → `directory` → `location`. For a file:
 `target` resolves to Rust or Maven by the manifest beside it. A directory
 claimed by any rule is reported once and never descended into.
 
-Nor is a folder of installed Python packages, `site-packages` or
-`dist-packages`, wherever it is (a virtualenv, a Python installed for the
-system), claimed or not: what is in it is its packages' own files. pip ships a
-package folder named `build`, and a rule that names `build` would otherwise
-offer it as build output.
+Nor is a folder of installed Python packages, claimed or not: what is in it is
+its packages' own files. pip ships a package folder named `build`, and a rule
+that names `build` would otherwise offer it as build output. Such a folder is
+one named `site-packages` or `dist-packages`, wherever it is (a virtualenv, a
+Python installed for the system), and any folder holding a `*.dist-info`
+folder, the record an installer writes beside each package it puts in place —
+uv's cache and `pip install --target` put packages outside any site-packages.
+A scan rooted at a `site-packages` or `dist-packages` folder, or anywhere below
+one, offers nothing. A scan rooted inside a package folder that only a
+`.dist-info` beside it marks is walked as any folder is: the scan lists nothing
+above its root.
 
 Several rules may share an `id` to merge into one suggestion group (the two
 `regen-web-build` entries do). They must agree on title, description, category,

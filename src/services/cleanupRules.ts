@@ -35,7 +35,9 @@ import { MAX_SLICE_ATTEMPTS, SlicedWalk, SliceOptions, walkInSlices } from './sl
  *
  * A directory claimed by any rule is reported once and not descended into, so
  * a nested node_modules never produces overlapping suggestions. Nor is a folder
- * of installed Python packages (`INSTALLED_PACKAGES`), claimed or not.
+ * of installed Python packages (`INSTALLED_PACKAGES`, `DIST_INFO`), claimed
+ * or not, and a scan rooted in or below a site-packages or dist-packages folder
+ * offers nothing (`underInstalledPackages`).
  *
  * Track U, U-16: the walk is an explicit stack in the order the recursive walk
  * had, so it can stop between any two children. `collectCleanupSuggestions`
@@ -67,8 +69,35 @@ export const CLEANUP_MAX_ATTEMPTS = MAX_SLICE_ATTEMPTS;
  * pip unable to build a wheel. A virtualenv no rule claims, one with no project
  * file beside it, was walked into that way (BQL-b1 review F1.1, F1.3, F1.6).
  * Read from a name the walk has already read, so it costs no read of its own.
+ *
+ * The walk meets such a folder only as a child, so a scan rooted at one, or
+ * below one, is judged by its root's own path (`underInstalledPackages`): a
+ * scan of a virtualenv's site-packages, made to see which package is big,
+ * offered pip's `build` package the same way (BQL-b1 review F2.1, F2.4).
  */
 const INSTALLED_PACKAGES = new Set(['site-packages', 'dist-packages']);
+
+/**
+ * True if `rootPath` is a folder of installed packages or lies below one: one
+ * of the folder names in it, read in any case and split on either separator (a
+ * scan on Windows spells its root with backslashes), is in INSTALLED_PACKAGES.
+ * Decided once per walk; such a walk offers and claims nothing.
+ */
+function underInstalledPackages(rootPath: string): boolean {
+  return rootPath.split(/[\\/]/).some((part) => INSTALLED_PACKAGES.has(part.toLowerCase()));
+}
+
+/**
+ * The folder an installer writes beside every package it puts in place, its
+ * record of the files it wrote: `pip-26.0.1.dist-info`. Packages are put in
+ * place outside any site-packages too — uv's cache holds each wheel it unpacks
+ * as its package folders and their .dist-info, and `pip install --target`
+ * lays them out the same way — so a folder holding one is a folder of
+ * installed packages, wherever it is, and the walk never goes into it (BQL-b1
+ * review F2.4). A scan rooted inside one of its package folders is walked as
+ * any folder is: the scan lists nothing above its root, so nothing says it.
+ */
+const DIST_INFO = /\.dist-info$/i;
 
 /** True if any basename in `siblings` matches a pattern (`foo.*` ⇒ any `foo.<ext>`): a folder's siblings, or its children. */
 function siblingPresent(siblings: Set<string>, patterns: string[]): boolean {
@@ -105,6 +134,11 @@ interface Frame {
   kids: number[];
   next: number;
   siblings: Set<string> | null;
+  /**
+   * Its folders' names, read once in `enter` to look for a `*.dist-info`, and
+   * kept so `examine` reads none of them again: every name is read once.
+   */
+  dirNames: Map<number, string>;
 }
 
 /**
@@ -146,7 +180,7 @@ class SuggestionWalk implements SlicedWalk {
     this.suppressed = prepareSuppressed(suppressedRoots, store.rootPath);
     this.locations = locationIndex(catalog.location);
     this.joinsNames = Object.getPrototypeOf(store) === PackedScanStore.prototype;
-    this.enter(store.rootId, store.rootPath);
+    if (!underInstalledPackages(store.rootPath)) this.enter(store.rootId, store.rootPath);
   }
 
   /** Examines up to `budget` children; true once every child has been examined. */
@@ -173,11 +207,23 @@ class SuggestionWalk implements SlicedWalk {
       .sort((a, b) => b.totalSize - a.totalSize);
   }
 
-  /** Queue a folder's children; a folder with none is examined and left, as the recursive walk returned. */
+  /**
+   * Queue a folder's children; a folder with none is examined and left, as the
+   * recursive walk returned, and so is a folder of installed packages.
+   */
   private enter(node: number, nodePath: string): void {
-    const kids = this.store.childIds(node);
+    const store = this.store;
+    const kids = store.childIds(node);
     if (kids.length === 0) return;
-    this.stack.push({ path: nodePath, kids, next: 0, siblings: null });
+    // Only folders' names are read here; a file's is read when it is examined.
+    const dirNames = new Map<number, string>();
+    for (const c of kids) {
+      if (!store.isDir(c)) continue;
+      const name = store.name(c);
+      if (DIST_INFO.test(name)) return; // installed packages — see DIST_INFO
+      dirNames.set(c, name);
+    }
+    this.stack.push({ path: nodePath, kids, next: 0, siblings: null, dirNames });
   }
 
   /** Sibling basenames in this directory — used to confirm regenerable dirs. Built the first time a rule asks. */
@@ -198,7 +244,7 @@ class SuggestionWalk implements SlicedWalk {
   private examine(frame: Frame, child: number): void {
     const store = this.store;
     const catalog = this.catalog;
-    const name = store.name(child);
+    const name = frame.dirNames.get(child) ?? store.name(child);
     const childPath = this.joinsNames ? joinPath(frame.path, store.sep, name) : store.childPath(child, frame.path);
     if (matchesAny(this.ignore, childPath, name)) return; // user said hands off
     // A note that suppresses covers its whole subtree — skip, never descend.
