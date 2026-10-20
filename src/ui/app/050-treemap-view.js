@@ -816,11 +816,17 @@ function tmTone(base, beside, target) {
   if (light !== null) return { rgb: mix(base, [255, 255, 255], light / 32), light: true };
   return worst([0, 0, 0]) >= worst([255, 255, 255]) ? { rgb: [0, 0, 0], light: false } : { rgb: [255, 255, 255], light: true };
 }
-/** Each folder's drawn rectangles, by the folder's path. */
+/**
+ * Each folder's drawn rectangles, by the folder's path. A staged block (the
+ * cart preview's) is filed under the folder it lies in, its `parentPath`: its
+ * name, "<folder> — freed", reads as a name in the folder above, which filed
+ * it there — counted twice in that folder, whose own fill (pass 0) it then hid,
+ * and never in its own (review F1.4).
+ */
 function tmKidsOf(px) {
   const kids = new Map();
   for (const r of px) {
-    const parent = tmParentPath(r.n.path);
+    const parent = r.n.freed && typeof r.n.parentPath === 'string' ? r.n.parentPath : tmParentPath(r.n.path);
     if (!kids.has(parent)) kids.set(parent, []);
     kids.get(parent).push(r);
   }

@@ -291,8 +291,10 @@ function tmBuildPreview() {
       if (!r || r.w <= 0 || r.h <= 0) continue;
       if (live[k].node === null) {
         freedTotal += live[k].size;
+        // `parentPath`: the folder it lies in, which its name does not spell —
+        // tmParentPath of "/a/b — freed" is "/a" (review F1.4).
         out.push({
-          name: 'Staged', path: parent.path + ' — freed', size: live[k].size, type: 'dir',
+          name: 'Staged', path: parent.path + ' — freed', parentPath: parent.path, size: live[k].size, type: 'dir',
           depth: depth + 1, expanded: false, freed: true,
           x: r.x, y: r.y, w: r.w, h: r.h,
         });

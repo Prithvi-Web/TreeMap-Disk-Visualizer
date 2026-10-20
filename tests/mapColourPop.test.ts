@@ -1474,7 +1474,8 @@ test('J51: a folder whose files are all under the size floor is filled with its 
     // neither is space the folder holds on this disk.
     const hollow = rasterPaint([
       { name: 'F', path: '/f', size: 3e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 100, h: 100 },
-      { name: 'staged.bin', path: '/f/staged.bin', size: 2e9, type: 'file', depth: 2, expanded: false, x: 10, y: 10, w: 30, h: 30, freed: true } as Tile,
+      // A staged block as tmBuildPreview names it, in the folder it lies in (review F1.4).
+      { name: 'Staged', path: '/f — freed', parentPath: '/f', size: 2e9, type: 'dir', depth: 2, expanded: false, x: 10, y: 10, w: 30, h: 30, freed: true } as Tile,
       { name: 'cloud.mov', path: '/f/cloud.mov', size: 2e9, type: 'file', depth: 2, expanded: false, x: 50, y: 10, w: 30, h: 30, cloudPlaceholder: true } as Tile,
     ], palette, 200, 200);
     assert.ok(hollow.px[0].bg, `${theme}: control — the folder around them is filled`);
@@ -1507,6 +1508,57 @@ test('J51: a folder whose files are all under the size floor is filled with its 
 
 /** The page's own mix, for a test that says what a colour should be. */
 function mix3(a: RGB, b: RGB, t: number): number[] { return a.map((v, i) => Math.round(v + (b[i] - v) * t)); }
+
+/** The cart preview's nodes as the page's own tmBuildPreview lays them out — its staged blocks named "<folder> — freed". */
+function previewOf(nodes: Tile[], rootPath: string, rootSize: number, cart: string[], sizes: Record<string, number>): Tile[] {
+  let out: Tile[] | null = null;
+  // Built while loading, so every helper it calls is pulled in.
+  load<() => { nodes: Tile[] | null }>(['tmBuildPreview'], {
+    state: { treemap: { nodes, rootPath, rootSize }, cart: new Set(cart) },
+    cartNode: (p: string) => (p in sizes ? { path: p, size: sizes[p] } : null),
+  }, 'tmBuildPreview', (build) => { out = build().nodes; });
+  assert.ok(out, 'control: a preview was built');
+  return out!;
+}
+
+/**
+ * A live map whose folder /r/g holds /r/g/p and a file, with a fifth of /r/g in files under the floor;
+ * /r/g/p holds one file, and the cart stages a file inside /r/g/p that the map never drew — so the
+ * preview draws it as a staged block in /r/g/p, which tiles /r/g/p with the file.
+ */
+function stagedInNestedFolder(): Tile[] {
+  const dir = (path: string, size: number, depth: number): Tile => ({ name: path.slice(path.lastIndexOf('/') + 1), path, size, type: 'dir', depth, expanded: true, x: 0, y: 0, w: 1, h: 1 });
+  const file = (path: string, size: number, depth: number): Tile => ({ ...dir(path, size, depth), type: 'file', expanded: false });
+  const nodes = [dir('/r/g', 10e9, 1), dir('/r/g/p', 6e9, 2), file('/r/g/leaf.bin', 2e9, 2), file('/r/g/p/a.bin', 3e9, 3)];
+  const staged = '/r/g/p/deep/x.bin';
+  return previewOf(nodes, '/r', 10e9, [staged], { [staged]: 3e9 });
+}
+
+test('J51 in "Preview after": a staged block is counted in the folder it lies in, so the folder above keeps its own fill where nothing covers it (review F1.4)', () => {
+  const preview = stagedInNestedFolder();
+  const block = preview.find((n) => (n as { freed?: boolean }).freed)!;
+  assert.equal(block.path, '/r/g/p — freed', 'control: the staged block, named as the page names it, lies in /r/g/p');
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const ground = canvasGround(palette);
+    const { raster, px } = rasterPaint(preview, palette, 200, 200);
+    const g = px.find((r) => r.n.path === '/r/g')!, p = px.find((r) => r.n.path === '/r/g/p')!;
+    assert.ok(g.bg, `${theme}: /r/g, a fifth of it in files under the floor, is filled where none of its rectangles covers it`);
+    assert.equal(p.bg, undefined, `${theme}: /r/g/p, tiled by its file and the staged block, has no fill of its own under them`);
+    // A pixel of /r/g that none of its rectangles covers, clear of its band: /r/g's cushion, not the map's ground.
+    const inside = px.filter((r) => r.n.path.startsWith('/r/g/'));
+    let spot: [number, number] | null = null;
+    for (let y = g.y + 4; y < g.y + g.h - 4 && !spot; y++) {
+      for (let x = g.x + 4; x < g.x + g.w - 4 && !spot; x++) {
+        if (!inside.some((c) => x + 0.5 > c.x - 4 && x + 0.5 < c.x + c.w + 4 && y + 0.5 > c.y - 4 && y + 0.5 < c.y + c.h + 4)) spot = [x, y];
+      }
+    }
+    assert.ok(spot, `${theme}: control — a part of /r/g no rectangle covers`);
+    const shown = raster.at(...spot!);
+    const want = lerp(g.bg![0], g.bg![1], (spot![1] + 0.5 - g.y) / g.h);
+    assert.ok(contrast(shown, ground) > 1.3, `${theme}: not the map's ground there (${shown.map(Math.round)} on ${ground.map(Math.round)})`);
+    assert.ok(contrast(shown, want) < 1.05, `${theme}: /r/g's own cushion there (${shown.map(Math.round)}, want ${want.map(Math.round)})`);
+  }
+});
 
 /* ── A dense corner as the real map draws one ── */
 
