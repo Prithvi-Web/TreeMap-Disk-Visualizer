@@ -16,6 +16,7 @@ import {
   loadRuleCatalogFrom,
   matchReasonFor,
   packForPlatform,
+  REMEDY_PROSE_WORDS,
   remedyIsCommand,
   shellWord,
   validateRulePack,
@@ -617,7 +618,12 @@ test('the page fills a restore command exactly as the server does: its copy of f
 test('the server tells a remedy\'s command from its sentence exactly as the page does: its copy of remedyIsCommand is held to this one (BQL-b1 review F1.2, F1.5)', () => {
   // The Reclaim Score's reason sets a command in backticks and a sentence as
   // words, as the Clean Up card sets one in a code pill and the other as text.
-  const page = lift<{ remedyIsCommand: (part: string) => boolean }>(['REMEDY_PROSE_WORDS', 'remedyIsCommand'], '{ remedyIsCommand }');
+  const page = lift<{ remedyIsCommand: (part: string) => boolean; REMEDY_PROSE_WORDS: ReadonlySet<string> }>(
+    ['REMEDY_PROSE_WORDS', 'remedyIsCommand'], '{ remedyIsCommand, REMEDY_PROSE_WORDS }');
+  // The word lists themselves, equal (BQL-b1 review F2.5): nearly every
+  // sentence below holds "it" or "on", so the parity loop alone stayed green
+  // with the server's list cut from twenty words to those two.
+  assert.deepEqual([...REMEDY_PROSE_WORDS].sort(), [...page.REMEDY_PROSE_WORDS].sort(), 'the server\'s prose words are the page\'s, word for word');
   const shipped = PACK_NAMES.flatMap((name) => (JSON.parse(fs.readFileSync(path.join(SHIPPED, `${name}.json`), 'utf8')) as { rules: Record<string, unknown>[] }).rules)
     .flatMap((r) => [r.restoreCommand, r.adviceCommand, r.clearCommand].filter((t): t is string => typeof t === 'string'))
     .map((t) => fillFolder(t, ['.venv']))
@@ -627,4 +633,9 @@ test('the server tells a remedy\'s command from its sentence exactly as the page
   const parts = [...new Set([...shipped, 'npm install', 'python3 -m venv .venv', 'reinstall the packages it held', 'automatic on next run',
     'the next test run with coverage writes it again', 'Final Cut Pro ▸ File', '~/bin/tool --flag', 'Remove-Item -Recurse x', 'Run it again', 'make it.', ''])];
   for (const part of parts) assert.equal(remedyIsCommand(part), page.remedyIsCommand(part), `remedyIsCommand(${JSON.stringify(part)})`);
+  // And each word on its own decides: "x the" is words to read, on both sides.
+  for (const word of new Set([...REMEDY_PROSE_WORDS, ...page.REMEDY_PROSE_WORDS])) {
+    assert.deepEqual([remedyIsCommand(`x ${word}`), page.remedyIsCommand(`x ${word}`)], [false, false], `"x ${word}" is a sentence, on the server and the page`);
+  }
+  assert.deepEqual([remedyIsCommand('x y'), page.remedyIsCommand('x y')], [true, true], 'control: "x y", with no such word, is a command on both');
 });

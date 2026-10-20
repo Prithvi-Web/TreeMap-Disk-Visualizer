@@ -570,8 +570,12 @@ export function fillFolder(command: string, names: readonly string[]): string {
       : part).join('');
 }
 
-/** Small words prose cannot do without and no command holds: the page's list (220-clean-up-modal.js), word for word. */
-const REMEDY_PROSE_WORDS = new Set(['a', 'an', 'and', 'are', 'automatic', 'automatically', 'be', 'first', 'is', 'it', 'its', 'next', 'on', 'or', 'the', 'these', 'this', 'until', 'when', 'will']);
+/**
+ * Small words prose cannot do without and no command holds: the page's list
+ * (220-clean-up-modal.js), word for word. Exported so tests/rulePacks.test.ts
+ * can hold the two lists equal (BQL-b1 review F2.5).
+ */
+export const REMEDY_PROSE_WORDS: ReadonlySet<string> = new Set(['a', 'an', 'and', 'are', 'automatic', 'automatically', 'be', 'first', 'is', 'it', 'its', 'next', 'on', 'or', 'the', 'these', 'this', 'until', 'when', 'will']);
 
 /**
  * Whether one part of a remedy — a restore or advice text split on " · " and
