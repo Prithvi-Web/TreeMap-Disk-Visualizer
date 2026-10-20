@@ -148,9 +148,12 @@ async function renderGrid() {
   // After ensureSubtree, either we hold this folder's children or we don't.
   // Still `pruned`, or absent from the tree entirely, both mean the fetch never
   // landed — and calling that "empty" is a lie about the user's disk. Guarded
-  // on scanId/path so the pre-scan state still shows the normal empty view.
+  // on a tree being on screen, so the pre-scan state still shows the normal
+  // empty view: the saved index's tree, which no scan stands behind, asked
+  // the index for the folder (ensureSubtree), and keyed on a scan id it said
+  // "This folder is empty" of one the index did not answer for (BQJ-1b).
   const gridNode = state.pathIndex.get(state.grid.path);
-  const unloaded = !!state.scanId && !!state.grid.path && (!gridNode || !!gridNode.pruned);
+  const unloaded = !!state.root && !!state.grid.path && (!gridNode || !!gridNode.pruned);
 
   // Scores for this folder's children, before the sort that needs them.
   // Bounded by the folder's own contents rather than the tree's, and awaited

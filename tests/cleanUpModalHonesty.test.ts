@@ -702,6 +702,7 @@ function findHarness(facts: (paths: string[]) => Promise<unknown>, cloud = false
   const page = new Function(...keys, `let cleanMatches = [], cleanOnDisk = new Map();
     ${declOf('runCleanFind')}
     const CLEAN_ON_DISK_CHUNK = ${/const CLEAN_ON_DISK_CHUNK = (\d+);/.exec(INDEX)?.[1] ?? 'undefined'};
+    ${declOf('treeScanId')}
     ${declOf('cleanOnDiskOf')}
     return { find: runCleanFind, onDisk: () => cleanOnDisk, matches: () => cleanMatches };`)(...keys.map((k) => deps[k])) as {
     find: (fetcher: () => Promise<unknown>) => Promise<void>; onDisk: () => Map<string, number>; matches: () => unknown[];

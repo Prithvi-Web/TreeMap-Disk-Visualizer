@@ -7749,7 +7749,9 @@ function seedNodes(files) {
  * about to delete.
  */
 async function ensureNodes(paths) {
-  const scanId = state.scanId;
+  // The scan the tree on screen came from (treeScanId): a scan still walking
+  // answers nothing about it (BQJ-1b).
+  const scanId = treeScanId();
   if (!scanId) return;
   const missing = [...new Set(paths)].filter((p) => !state.pathIndex.has(p) && !state.nodeCache.has(p));
   if (!missing.length) return;
@@ -7763,7 +7765,7 @@ async function ensureNodes(paths) {
       });
       // A rescan during the fetch means these answers describe a tree that no
       // longer exists — caching them would report stale sizes as current.
-      if (scanId !== state.scanId) return;
+      if (scanId !== treeScanId()) return;
       if (r.nodes) for (const p of chunk) state.nodeCache.set(p, r.nodes[p] || null);
     } catch { /* unresolved: callers fall back to what they already hold */ }
   }
@@ -11292,14 +11294,18 @@ async function renderCloudSafe() {
   const tab = $('cleanTabCloud');
   if (!host) return;
   const hide = () => { if (tab) tab.hidden = true; host.innerHTML = ''; };
-  if (!state.scanId) { hide(); return; }
+  // The scan the tree on screen came from (treeScanId) — the list is of that
+  // tree's files — never a scan still walking (BQJ-1b). The saved index's
+  // tree has none, and the tab claims nothing.
+  const scanId = treeScanId();
+  if (!scanId) { hide(); return; }
 
   // The client tree is pruned to a node budget, so counting placeholders here
   // would only see the part that came through. The server walks the whole scan:
   // its counts and byte totals are exact, only the file lists are capped.
   let data;
   try {
-    data = await api(`/api/cleanup/cloud-safe?scanId=${state.scanId}`);
+    data = await api(`/api/cleanup/cloud-safe?scanId=${scanId}`);
   } catch (e) {
     // Two different answers arrive here and only one of them is a failure.
     // While a scan runs the endpoint answers 202 { status: 'running' }, which
@@ -34535,9 +34541,12 @@ async function renderGrid() {
   // After ensureSubtree, either we hold this folder's children or we don't.
   // Still `pruned`, or absent from the tree entirely, both mean the fetch never
   // landed — and calling that "empty" is a lie about the user's disk. Guarded
-  // on scanId/path so the pre-scan state still shows the normal empty view.
+  // on a tree being on screen, so the pre-scan state still shows the normal
+  // empty view: the saved index's tree, which no scan stands behind, asked
+  // the index for the folder (ensureSubtree), and keyed on a scan id it said
+  // "This folder is empty" of one the index did not answer for (BQJ-1b).
   const gridNode = state.pathIndex.get(state.grid.path);
-  const unloaded = !!state.scanId && !!state.grid.path && (!gridNode || !!gridNode.pruned);
+  const unloaded = !!state.root && !!state.grid.path && (!gridNode || !!gridNode.pruned);
 
   // Scores for this folder's children, before the sort that needs them.
   // Bounded by the folder's own contents rather than the tree's, and awaited
@@ -39129,13 +39138,16 @@ const CLEAN_ON_DISK_CHUNK = 2000;
  */
 async function cleanOnDiskOf(files) {
   const out = new Map();
-  // A cloud account's files are on no disk here: nothing to measure.
-  if (!state.scanId || isCloudScan()) return out;
+  // A cloud account's files are on no disk here: nothing to measure. Asked of
+  // the scan the tree on screen came from (treeScanId), never a scan still
+  // walking (BQJ-1b).
+  const scanId = treeScanId();
+  if (!scanId || isCloudScan()) return out;
   try {
     for (let i = 0; i < files.length; i += CLEAN_ON_DISK_CHUNK) {
       const res = await api('/api/facts', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scanId: state.scanId, paths: files.slice(i, i + CLEAN_ON_DISK_CHUNK).map((f) => f.path), providers: ['onDisk'] }),
+        body: JSON.stringify({ scanId, paths: files.slice(i, i + CLEAN_ON_DISK_CHUNK).map((f) => f.path), providers: ['onDisk'] }),
       });
       const fact = res && res.providers && res.providers.onDisk;
       if (!fact || !fact.available) return new Map();

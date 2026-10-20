@@ -1658,3 +1658,25 @@ test('no tile overhangs the Grid when its scrollbar appears — on a first visit
     noOverhang(nav, 'a folder taller than the window opened from one that fit');
   });
 });
+
+/* ══════════════ BQJ-1b — a folder the saved index could not answer for is not "empty" ══════════════ */
+
+test('over the saved index\'s tree, which no scan stands behind, a folder whose children could not be fetched says it could not be loaded — never "This folder is empty" (BQJ-1b)', async () => {
+  const g = gridHarness();
+  // The saved index's tree: no scan id; Fonts' children were withheld, and the index did not answer for them (ensureSubtree held nothing).
+  (g.state as unknown as { scanId: string | null }).scanId = null;
+  const fonts = g.state.pathIndex.get('/r/Fonts')!;
+  fonts.children = [];
+  (fonts as Node & { pruned?: boolean }).pruned = true;
+  g.state.grid.path = '/r/Fonts';
+  await g.renderGrid();
+  const said = g.els.gridScroll.children.filter((c) => c.className === 'grid-empty').map((c) => c.innerHTML).join(' ');
+  assert.match(said, /Couldn’t load this folder/, `a folder not fetched is said to be not loaded: ${said}`);
+  assert.doesNotMatch(said, /This folder is empty/, 'not called empty');
+  // Control: a folder held whole and empty is empty.
+  fonts.children = [];
+  delete (fonts as Node & { pruned?: boolean }).pruned;
+  await g.renderGrid();
+  const empty = g.els.gridScroll.children.filter((c) => c.className === 'grid-empty').map((c) => c.innerHTML).join(' ');
+  assert.match(empty, /This folder is empty/, `control: a folder held whole with nothing in it is empty: ${empty}`);
+});

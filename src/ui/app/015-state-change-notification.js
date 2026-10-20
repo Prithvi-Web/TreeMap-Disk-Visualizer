@@ -176,7 +176,9 @@ function seedNodes(files) {
  * about to delete.
  */
 async function ensureNodes(paths) {
-  const scanId = state.scanId;
+  // The scan the tree on screen came from (treeScanId): a scan still walking
+  // answers nothing about it (BQJ-1b).
+  const scanId = treeScanId();
   if (!scanId) return;
   const missing = [...new Set(paths)].filter((p) => !state.pathIndex.has(p) && !state.nodeCache.has(p));
   if (!missing.length) return;
@@ -190,7 +192,7 @@ async function ensureNodes(paths) {
       });
       // A rescan during the fetch means these answers describe a tree that no
       // longer exists — caching them would report stale sizes as current.
-      if (scanId !== state.scanId) return;
+      if (scanId !== treeScanId()) return;
       if (r.nodes) for (const p of chunk) state.nodeCache.set(p, r.nodes[p] || null);
     } catch { /* unresolved: callers fall back to what they already hold */ }
   }

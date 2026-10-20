@@ -1191,13 +1191,16 @@ const CLEAN_ON_DISK_CHUNK = 2000;
  */
 async function cleanOnDiskOf(files) {
   const out = new Map();
-  // A cloud account's files are on no disk here: nothing to measure.
-  if (!state.scanId || isCloudScan()) return out;
+  // A cloud account's files are on no disk here: nothing to measure. Asked of
+  // the scan the tree on screen came from (treeScanId), never a scan still
+  // walking (BQJ-1b).
+  const scanId = treeScanId();
+  if (!scanId || isCloudScan()) return out;
   try {
     for (let i = 0; i < files.length; i += CLEAN_ON_DISK_CHUNK) {
       const res = await api('/api/facts', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scanId: state.scanId, paths: files.slice(i, i + CLEAN_ON_DISK_CHUNK).map((f) => f.path), providers: ['onDisk'] }),
+        body: JSON.stringify({ scanId, paths: files.slice(i, i + CLEAN_ON_DISK_CHUNK).map((f) => f.path), providers: ['onDisk'] }),
       });
       const fact = res && res.providers && res.providers.onDisk;
       if (!fact || !fact.available) return new Map();

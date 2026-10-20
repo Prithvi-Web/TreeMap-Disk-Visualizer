@@ -535,3 +535,42 @@ test('opening an archive or disk image on the map asks the scan the tree on scre
   }, '{ open: expandContainerNode }', () => ({ children: [], entryCount: 0, truncated: false }));
   await throughThePhases('Opening a container', state, asks, () => fns.open({ path: '/r/a.zip', name: 'a.zip' }), noop);
 });
+
+/* ───────────────────────────── the tree's nodes, Clean Up ───────────────────────────── */
+
+test('a path the pruned tree left out is resolved by the scan the tree on screen came from — never the running scan — and its answer kept only for that tree', async () => {
+  const state: Record<string, unknown> = { root: TREE, ...HELD, pathIndex: new Map(), nodeCache: new Map() };
+  const { fns, asks } = page<{ ensure: (p: string[]) => Promise<void> }>(['async function ensureNodes('], { state },
+    '{ ensure: ensureNodes }', () => ({ nodes: { '/r/deep/x': { path: '/r/deep/x', size: 5 } } }));
+  await throughThePhases('Resolving a node', state, asks, () => fns.ensure(['/r/deep/x']), () => { (state.nodeCache as Map<string, unknown>).clear(); });
+  // During a rescan over the older scan's tree, its answer is that tree's: kept.
+  Object.assign(state, HELD);
+  (state.nodeCache as Map<string, unknown>).clear();
+  await fns.ensure(['/r/deep/x']);
+  assert.ok((state.nodeCache as Map<string, unknown>).has('/r/deep/x'), 'and the answer is kept for the tree on screen, the running scan\'s id on hand notwithstanding');
+  (state.nodeCache as Map<string, unknown>).clear();
+  const before = asks.length;
+  Object.assign(state, INDEX_RUNNING);
+  await fns.ensure(['/r/deep/x']);
+  assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked of the running scan');
+});
+
+test('Clean Up: what a match takes on its disk, and the cloud-safe list, are asked of the scan the tree on screen came from — never the running scan', async () => {
+  const state: Record<string, unknown> = { root: TREE, ...HELD };
+  const onDisk = page<{ measure: (f: unknown[]) => Promise<Map<string, number>> }>(['async function cleanOnDiskOf('], {
+    state, isCloudScan: () => false, CLEAN_ON_DISK_CHUNK: 2000,
+  }, '{ measure: cleanOnDiskOf }', () => ({ providers: { onDisk: { available: true, values: { '/r/a': { bytes: 4 } } } } }));
+  await throughThePhases('Clean Up\'s on-disk sizes', state, onDisk.asks, () => onDisk.fns.measure([{ path: '/r/a' }]), noop);
+  const $ = stubDom();
+  const cloud = page<{ render: () => Promise<void> }>(['async function renderCloudSafe('], { state, $, seedNodes: noop },
+    '{ render: renderCloudSafe }', () => ({ totalCount: 0, groups: [] }));
+  await throughThePhases('Clean Up\'s cloud-safe list', state, cloud.asks, cloud.fns.render, noop);
+  for (const phase of [INDEX_RUNNING, INDEX_STOPPED]) {
+    Object.assign(state, phase);
+    const asked = onDisk.asks.length + cloud.asks.length;
+    assert.equal((await onDisk.fns.measure([{ path: '/r/a' }])).size, 0, 'over the saved index\'s tree no on-disk size is known');
+    await cloud.fns.render();
+    assert.equal(onDisk.asks.length + cloud.asks.length, asked, 'and nothing is asked — not of the running scan');
+    assert.equal($('cleanTabCloud').hidden, true, 'the cloud-safe tab claims nothing');
+  }
+});

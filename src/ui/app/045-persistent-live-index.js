@@ -1228,14 +1228,18 @@ async function renderCloudSafe() {
   const tab = $('cleanTabCloud');
   if (!host) return;
   const hide = () => { if (tab) tab.hidden = true; host.innerHTML = ''; };
-  if (!state.scanId) { hide(); return; }
+  // The scan the tree on screen came from (treeScanId) — the list is of that
+  // tree's files — never a scan still walking (BQJ-1b). The saved index's
+  // tree has none, and the tab claims nothing.
+  const scanId = treeScanId();
+  if (!scanId) { hide(); return; }
 
   // The client tree is pruned to a node budget, so counting placeholders here
   // would only see the part that came through. The server walks the whole scan:
   // its counts and byte totals are exact, only the file lists are capped.
   let data;
   try {
-    data = await api(`/api/cleanup/cloud-safe?scanId=${state.scanId}`);
+    data = await api(`/api/cleanup/cloud-safe?scanId=${scanId}`);
   } catch (e) {
     // Two different answers arrive here and only one of them is a failure.
     // While a scan runs the endpoint answers 202 { status: 'running' }, which

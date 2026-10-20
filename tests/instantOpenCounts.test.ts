@@ -311,7 +311,8 @@ test('the refusal fires on Enter only, not on every keystroke', () => {
 /* ══════════════════ 5. Cloud-safe waits in public ══════════════════ */
 
 function runRenderCloudSafe(apiImpl: () => Promise<unknown>) {
-  const src = slice('async function renderCloudSafe', 'async function renderGrowthProjection');
+  // With the app's one rule for the scan the tree on screen came from (treeScanId), which it asks.
+  const src = `${slice('function treeScanId(', '\n}\n')}\n}\n` + slice('async function renderCloudSafe', 'async function renderGrowthProjection');
   const { $, els } = makeDom();
   els.cleanTabCloud = el(); els.cleanTabCloud.hidden = false;
   const noop = () => {};
