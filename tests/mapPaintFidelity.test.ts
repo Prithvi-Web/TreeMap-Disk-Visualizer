@@ -238,7 +238,12 @@ function mapRects(nodes: any[], colourOf: (n: any) => number[], hideCloud = fals
 }
 
 type LensOp = { kind: string; style?: unknown; lineWidth?: number; box: number[] | null; seg?: number[] };
-/** What the real lensPaint draws over `pxRects` with the cursor `at`, in order: each fill and stroke with its paint and the box it covered. */
+/**
+ * What the real lensPaint draws over `pxRects` with the cursor `at`, in order: each fill and stroke with its paint and the box it covered.
+ * Only the map's ground, --tm-canvas-bg, reads as LENS_GROUND; every other variable is magenta (review F3.2), so a test that finds
+ * LENS_GROUND knows the glass read the ground's variable and not another.
+ */
+const LENS_GROUND = '#0b0b0f';
 function lensOps(pxRects: any[], colourOf: (n: any) => number[], at = { x: 25, y: 25 }): LensOp[] {
   const ops: LensOp[] = [];
   const st: Record<string, any> = { fillStyle: '', strokeStyle: '', lineWidth: 1 };
@@ -270,7 +275,7 @@ function lensOps(pxRects: any[], colourOf: (n: any) => number[], at = { x: 25, y
   });
   load<(ctx: unknown, w: number, h: number) => void>(LENS_NAMES, {
     state: { lens: { held: true, pinned: false, at }, treemap: { pxRects, cells: [] } },
-    isCells: () => false, cssVar: () => '#0b0b0f', cellRgb: colourOf, altCellPath() {}, window: { devicePixelRatio: 1 },
+    isCells: () => false, cssVar: (name: string) => (name === '--tm-canvas-bg' ? LENS_GROUND : '#ff00ff'), cellRgb: colourOf, altCellPath() {}, window: { devicePixelRatio: 1 },
   }, 'lensPaint')(ctx, 120, 100);
   return ops;
 }
@@ -344,7 +349,7 @@ test('the lens clears a staged block and a hollow online-only file to the map\'s
     const box = [c.x, c.y, c.w, c.h];
     const clear = ops.findIndex((op) => op.kind === 'clearRect' && near(op.box, box));
     assert.ok(clear > fFill, `${path}: cleared on the glass after the folder's fill`);
-    assert.ok(ops[clear + 1]?.kind === 'fill' && ops[clear + 1].style === '#0b0b0f' && near(ops[clear + 1].box, box), `${path}: then laid with the map's ground`);
+    assert.ok(ops[clear + 1]?.kind === 'fill' && ops[clear + 1].style === LENS_GROUND && near(ops[clear + 1].box, box), `${path}: then laid with the map's ground, --tm-canvas-bg (${String(ops[clear + 1]?.style)})`);
     assert.ok(ops[clear + 2]?.kind === 'fill' && ops[clear + 2].style === own && near(ops[clear + 2].box, box), `${path}: then its own faint fill, ${own}`);
   }
 });
@@ -370,5 +375,8 @@ test('the lens lays the map\'s ground over a folder an online-only file is hidde
   const box = [synced.x, synced.y, synced.w, synced.h];
   const clear = ops.findIndex((op) => op.kind === 'clearRect' && near(op.box, box));
   assert.ok(clear > fFill && clear < hereFill, `Synced's box is cleared on the glass after F's fill and before here.bin (${fFill} < ${clear} < ${hereFill})`);
-  assert.ok(ops[clear + 1]?.kind === 'fill' && ops[clear + 1].style === '#0b0b0f' && near(ops[clear + 1].box, box), 'then laid with the map\'s ground');
+  assert.ok(ops[clear + 1]?.kind === 'fill' && ops[clear + 1].style === LENS_GROUND && near(ops[clear + 1].box, box), `then laid with the map's ground, --tm-canvas-bg (${String(ops[clear + 1]?.style)})`);
+  // And the glass itself is laid with the map's ground first, under everything it magnifies (review F3.2).
+  const glass = ops.findIndex((op) => op.kind === 'fillRect');
+  assert.ok(glass >= 0 && glass < fFill && ops[glass].style === LENS_GROUND, `the glass is first laid with the map's ground, --tm-canvas-bg (${String(ops[glass]?.style)})`);
 });
