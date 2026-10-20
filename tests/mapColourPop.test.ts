@@ -1661,6 +1661,46 @@ test('J51 in "Preview after": a staged block is counted in the folder it lies in
   }
 });
 
+test('J51 in every colouring: a folder with nothing drawn in it is filled with the colour the map shows for it — its Age band, its Reclaim score, "not scored", its History diff colour seen through the diff\'s washes — never the size ramp\'s (review F1.8)', () => {
+  const ages = OTHER_COLOURS.filter((c) => c.name.startsWith('Age band ')).map((c) => c.rgb);
+  const scores = OTHER_COLOURS.filter((c) => /^Reclaim score \d+$/.test(c.name)).map((c) => c.rgb);
+  const unscored = OTHER_COLOURS.find((c) => c.name === 'Reclaim not scored')!.rgb;
+  const pick = <T,>(list: T[], path: string): T => list[[...path].reduce((a, ch) => a + ch.charCodeAt(0), 0) % list.length];
+  // The History diff: each node's earlier size decides its colour, and each folder that grew, shrank or is new is washed.
+  const prevKind: Record<string, string> = { '/c': 'unchanged', '/c/Mail': 'grew', '/c/Mail/INBOX': 'shrank', '/c/Mail/Sent': 'new', '/c/Wide folder': 'shrank', '/c/Half': 'grew', '/c/Half/big.mov': 'unchanged' };
+  const withPrev = subFloorTiles().map((n) => ({ ...n, prevSize: PREV[prevKind[n.path]](n.size) } as Tile));
+  const SAME = DIFF_PAGE.diffRgb({ size: 1, prevSize: 1 });
+  const modes: Array<[string, Tile[], (n: Tile) => RGB, { active: boolean; diff: boolean }]> = [
+    ['Age', subFloorTiles(), (n) => pick(ages, n.path), { active: false, diff: false }],
+    ['Reclaim', subFloorTiles(), (n) => pick(scores, n.path), { active: false, diff: false }],
+    ['Reclaim, not scored', subFloorTiles(), () => unscored, { active: false, diff: false }],
+    ['History diff', withPrev, (n) => DIFF_PAGE.diffRgb(n), { active: true, diff: true }],
+  ];
+  const spots = [['/c/Mail/INBOX', 0.5, 0.5], ['/c/Mail/Sent', 0.5, 0.5], ['/c/Mail', 0.85, 0.5], ['/c/Wide folder', 0.5, 0.5], ['/c/Half', 0.75, 0.5], ['/c', 0.9, 0.9]] as const;
+  for (const [mode, tiles, colour, history] of modes) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      const { raster, px } = rasterPaint(tiles, palette, 400, 400, colour, history);
+      for (const [path, fx, fy] of spots) {
+        const r = whole(px.find((p) => p.n.path === path)!);
+        const own = colour(r.n), amp = Math.min(1, r.h / 60);
+        assert.notDeepEqual(own, ramp.sizeRgb(r.n.size), `${mode}, ${path}: control — its colour here is not its size ramp colour`);
+        const cushion: RGB[] = [mix3(own, [255, 255, 255], 0.16 * amp) as RGB, mix3(own, [0, 0, 0], 0.22 * amp) as RGB];
+        assert.deepEqual(r.bg, cushion, `${theme}, ${mode}, ${path}: its fill is the cushion of the colour the map shows for it`);
+        // On the pixels: that cushion, through the wash of each changed folder over it, in the order the map lays them.
+        const x = Math.floor(r.x + r.w * fx), y = Math.floor(r.y + r.h * fy);
+        let want = lerp(cushion[0], cushion[1], (y + 0.5 - r.y) / r.h);
+        if (history.diff) {
+          for (const f of px) {
+            const c = DIFF_PAGE.diffRgb(f.n);
+            if (f.frame && c.join() !== SAME.join() && x >= f.x + 1 && x < f.x + f.w - 1 && y >= f.y + 1 && y < f.y + f.h - 1) want = lerp(want, c, 0.3);
+          }
+        }
+        assert.ok(contrast(raster.at(x, y), want) < 1.05, `${theme}, ${mode}, ${path}: shows that colour (${raster.at(x, y).map(Math.round)}, want ${want.map(Math.round)})`);
+      }
+    }
+  }
+});
+
 test('owner\'s outlines: a folder\'s band beside a cell that shows the map\'s ground — a hollow online-only file, a staged block, the part of a folder an online-only file is hidden in — reaches 3:1 against what that cell shows, in both themes (review F1.5)', () => {
   const dir = (path: string, depth: number, x: number, y: number, w: number, h: number): Tile => ({ name: path, path, size: 4e10 / depth, type: 'dir', depth, expanded: true, x, y, w, h });
   const file = (path: string, depth: number, x: number, y: number, w: number, h: number, more: object = {}): Tile => ({ name: path, path, size: 3e9, type: 'file', depth, expanded: false, x, y, w, h, ...more } as Tile);
@@ -1913,4 +1953,28 @@ test('owner\'s outlines: the SVG export paints each leaf\'s toned outline and hi
   const bandsInSvg = rects.filter(({ a }) => /^rgb\(/.test(a.fill ?? '') && !('fill-opacity' in a)).map(({ a }) => `${['x', 'y', 'width', 'height'].map((k) => Number(a[k]).toFixed(2)).join(' ')} ${a.fill}`);
   assert.ok(bandsOnCanvas.length >= painted.filter((r) => r.frame).length * 4, `control: each folder's bands are on the canvas (${bandsOnCanvas.length})`);
   assert.deepEqual(bandsInSvg, bandsOnCanvas, 'the SVG lays the same bands, in the same colours, in the same order');
+});
+
+test('the SVG export lays the map\'s ground under a staged block and a hollow online-only file in a folder with its own fill — after the folder\'s fill, before the cell\'s dashed outline, as the canvas clears each cell to its ground — so the folder\'s colour never claims space that is not there (review F1.9)', () => {
+  const tiles = [
+    { name: 'F', path: '/f', size: 3e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 60, h: 60 } as Tile,
+    { name: 'Staged', path: '/f — freed', parentPath: '/f', size: 2e9, type: 'dir', depth: 2, expanded: false, freed: true, x: 5, y: 5, w: 20, h: 20 } as Tile,
+    { name: 'cloud.mov', path: '/f/cloud.mov', size: 2e9, type: 'file', depth: 2, expanded: false, cloudPlaceholder: true, x: 30, y: 5, w: 20, h: 20 } as Tile,
+  ];
+  const { svg, px } = exportSvg(tiles, (n) => ramp.sizeRgb(n.size), '#0e0e13');
+  const painted = px as Painted[];
+  const f = painted.find((r) => r.n.path === '/f')!;
+  assert.ok(f.bg, 'control: the folder has a fill of its own, which the SVG lays first');
+  const rects = [...svg.matchAll(/<rect ([^>]*?)\/?>/g)].map((m) => ({ a: attrs(m[1]), at: m.index! }));
+  const close = (a: Record<string, string>, box: number[], tol = 0.051) => ['x', 'y', 'width', 'height'].every((k, i) => Math.abs(Number(a[k]) - box[i]) < tol);
+  const fFill = rects.find(({ a }) => /^url\(#tm-f/.test(a.fill ?? '') && close(a, [f.x, f.y, f.w, f.h]))!;
+  assert.ok(fFill, 'control: the folder\'s fill is in the SVG');
+  for (const path of ['/f — freed', '/f/cloud.mov']) {
+    const c = painted.find((r) => r.n.path === path)!;
+    const ground = rects.find(({ a }) => a.fill === '#0e0e13' && close(a, [c.x, c.y, c.w, c.h]) && a.stroke === undefined);
+    assert.ok(ground, `${path}: a rectangle of the map's ground covers its whole box`);
+    const dashed = rects.find(({ a }) => a['stroke-dasharray'] === '4 3' && close(a, [c.x + 0.5, c.y + 0.5, c.w - 1, c.h - 1], 0.11));
+    assert.ok(dashed, `${path}: control — its dashed outline is in the SVG`);
+    assert.ok(fFill.at < ground!.at && ground!.at < dashed!.at, `${path}: the ground is laid after the folder's fill and before the cell's dashed outline (${fFill.at} < ${ground!.at} < ${dashed!.at})`);
+  }
 });
