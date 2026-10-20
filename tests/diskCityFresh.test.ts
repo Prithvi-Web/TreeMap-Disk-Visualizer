@@ -920,10 +920,13 @@ test('review F1.5: while a rescan runs over an older scan\'s tree, Disk City sta
   assert.deepEqual(cityNames(h), ['s1:/corpus/Mail'], 'and drawn');
 });
 
-test('review F1.5: a saved index\'s tree on screen, its map laid out by the page — no scan\'s — gets no city: Disk City builds nothing of it, and asks no scan for one, whether or not its scan has answered', async () => {
+/** What Disk City says over a saved index's tree with no scan behind it and none running (review F2.1, F2.3): the Dashboard's own words. */
+const FROM_INDEX = { lod: 'Opened from the saved index — scan this folder to see its city.', status: '' };
+
+test('review F1.5, F2.1, F2.3: a saved index\'s tree on screen, its map laid out by the page — no scan\'s — gets no city: Disk City builds nothing of it and asks no scan for one; while its scan runs it says it is loading, and once a Stop has ended that scan it says the tree is the saved index — never "loading" of a scan that will not land', async () => {
   for (const answered of [false, true]) {
     const label = answered ? 'its scan answered and followed' : 'before its scan answers';
-    const h = cityHarness();
+    const h = cityHarness({ realChrome: true });
     // As loadTreemap leaves a map it laid out of the saved index's tree (tmHeldTreemap): recorded as no scan's.
     const nodes: Node[] = [1, 2, 3].map((i) => ({ path: `/idx/f${i}`, name: 'index:/idx', size: 5000 * i, type: 'file', x: 30 * (i - 1), y: 0, w: 30, h: 100 }));
     Object.assign(h.state, { root: { path: '/idx', size: 30_000 }, scanning: true, settledScanId: null, scanId: answered ? 's-run' : null });
@@ -933,5 +936,64 @@ test('review F1.5: a saved index\'s tree on screen, its map laid out by the page
     await settle();
     assert.deepEqual(h.asked, [], `${label}: no scan is asked for a map — none is behind the tree, and a running one answers 202`);
     assert.deepEqual(cityNames(h), [], `${label}: and no city is built of the saved index's layout, which Disk City never reuses`);
+    assert.deepEqual(chromeOf(h), LOADING, `${label}: while its scan runs the city is loading — it is drawn when that scan lands`);
+    // Stop: stopScan ends the scan (scanning false, the scan behind the tree
+    // = settledScanId || null = none) and remounts the view on screen.
+    Object.assign(h.state, { scanning: false, scanId: null });
+    h.views.city.mount();
+    await settle();
+    assert.deepEqual(h.asked, [], `${label}, Stopped: still no scan asked for a map — there is none`);
+    assert.deepEqual(cityNames(h), [], `${label}, Stopped: and still no city of the saved index's layout`);
+    assert.deepEqual(chromeOf(h), FROM_INDEX, `${label}, Stopped: the city says the tree is the saved index and what would draw it — not "loading this folder…", which nothing will`);
+    h.chrome!(); // a redraw: a resize
+    assert.deepEqual(chromeOf(h), FROM_INDEX, `${label}, Stopped: and a redraw says the same`);
+    assert.deepEqual(cityTrail(h).slice(-1), ['/idx'], `${label}, Stopped: the trail is the tree on screen's`);
+    assert.equal((h.$('cityUpBtn') as { disabled: boolean }).disabled, true, `${label}, Stopped: and Up, with no city to climb, is off`);
   }
+});
+
+test('review F2.3: Disk City up on an older scan\'s folder when a saved index\'s tree replaces it takes that tree\'s trail at once, with Up off — and a load of the older tree still out, landing late, rewrites neither the trail nor the folder the map is in', async () => {
+  const h = cityHarness({ realChrome: true });
+  h.state.scanId = 's1';
+  h.state.root = { path: '/corpus', size: 1 };
+  h.state.view = 'city';
+  h.mounted.id = 'city';
+  await h.loadCity('/corpus');
+  assert.deepEqual(cityNames(h), ['s1:/corpus'], 'control: the older scan\'s city is drawn');
+  h.server.hold = true;
+  const late = h.loadCity('/corpus/Mail'); // a click on a building, its fetch still out
+  await settle();
+  assert.deepEqual(cityTrail(h).slice(-1), ['/corpus'], 'control: the trail is still the folder drawn while the drill loads');
+  // The index paint of /idx (openFromIndex, then finishScan with no scan):
+  // the tree, the folder the map is in, and the views told (TOPIC.scan).
+  Object.assign(h.state, { root: { path: '/idx', size: 30_000 }, scanning: true, settledScanId: null, scanId: null });
+  h.state.treemap.rootPath = '/idx';
+  h.views.city.onScanChange(null as unknown as string);
+  assert.deepEqual(cityTrail(h).slice(-1), ['/idx'], 'the trail names the tree on screen at once, not the older scan\'s folder');
+  assert.equal((h.$('cityUpBtn') as { disabled: boolean }).disabled, true, 'and Up is off');
+  assert.deepEqual(chromeOf(h), LOADING, 'and the city is loading: its scan runs');
+  h.server.held[0].land();
+  await late;
+  await settle();
+  assert.equal(h.state.treemap.rootPath, '/idx', 'the late load of the older tree does not move the map out of the tree on screen');
+  assert.deepEqual(cityTrail(h).slice(-1), ['/idx'], 'nor rewrite the trail');
+  assert.deepEqual(cityNames(h), [], 'nor build the older scan\'s city under it');
+
+  // A drill of the older tree that failed, its hover card up: neither is the saved index's tree's.
+  const g = cityHarness({ realChrome: true });
+  g.state.scanId = 's1';
+  g.state.root = { path: '/corpus', size: 1 };
+  g.state.view = 'city';
+  g.mounted.id = 'city';
+  await g.loadCity('/corpus');
+  g.server.down = 'HTTP 500';
+  await g.loadCity('/corpus/Mail');
+  assert.match(chromeOf(g).lod, /^Mail did not load: HTTP 500/, 'control: the failed drill is said');
+  g.card!.show(g.state.city.blocks[0], 10, 10);
+  assert.equal((g.$('cityCard') as { hidden: boolean }).hidden, false, 'control: a hover card is up over the older city');
+  Object.assign(g.state, { root: { path: '/idx', size: 30_000 }, scanning: true, settledScanId: null, scanId: null });
+  g.state.treemap.rootPath = '/idx';
+  g.views.city.onScanChange(null as unknown as string);
+  assert.deepEqual(chromeOf(g), LOADING, 'the older tree\'s failed drill is not said over the saved index\'s tree');
+  assert.equal((g.$('cityCard') as { hidden: boolean }).hidden, true, 'and the card of an older building goes with it');
 });

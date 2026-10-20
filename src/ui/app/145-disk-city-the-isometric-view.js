@@ -1418,7 +1418,12 @@ function renderCityChrome() {
     const failed = c.loadFailed;
     if (failed) parts.push(`${baseName(failed.path)} did not load: ${failed.message}`);
     if (!from) {
-      if (!failed) parts.push('loading this folder…');
+      // Loading is true while a load is out or a scan runs whose landing
+      // draws the city. A saved index's tree with no scan behind it and none
+      // running — a Stop, a failure — gets no city (buildCity) and nothing
+      // will load: said as the Dashboard's lists say it (review F2.1, F2.3).
+      const fromIndex = !!state.root && !state.scanId && !state.scanning;
+      if (!failed) parts.push(fromIndex ? 'Opened from the saved index — scan this folder to see its city.' : 'loading this folder…');
     } else {
       // §6.1 forbids a silent threshold. A map drawing 4,120 of 251,000 things
       // and saying nothing is lying by omission about what is on screen.
@@ -1561,10 +1566,23 @@ async function loadCity(rootPath) {
   // scan's (settledScanId) or the saved index's (none), and a scan still
   // walking answers a map with 202 (review F1.5). None: no city.
   const scanAtRequest = state.scanning ? state.settledScanId : state.scanId;
-  if (!scanAtRequest || !state.root) return;
+  if (!state.root) return;
   const want = rootPath || state.treemap.rootPath || state.root.path;
-  const seq = ++cityLoadSeq;
+  const seq = ++cityLoadSeq; // a load of the tree before, still out, is overtaken
   const c = state.city;
+  if (!scanAtRequest) {
+    // The saved index's tree, with no scan behind it: no city is built of it
+    // and nothing is asked. Its trail, its Up and its line are this tree's
+    // now — returning before them left the last city's trail standing, and a
+    // load of that tree still out rewrote the trail and the map's folder when
+    // it landed (review F2.3).
+    cityShowCard(null);
+    c.loadFailed = null;
+    renderCrumbs($('cityCrumbs'), want, (p) => loadCity(p));
+    $('cityUpBtn').disabled = true; // no city to climb
+    renderCityChrome();
+    return;
+  }
   const held = state.treemap.nodesFor;
   const fresh = !!held && held.nodes === state.treemap.nodes && held.scanId === scanAtRequest && held.path === want
     && state.treemap.nodes.length > 0;
