@@ -28,6 +28,7 @@ import { restoreNameKeyFor } from '../utils/volumeNames';
 import { AsyncMutex } from '../utils/asyncMutex';
 import { trackWrite } from '../utils/backgroundWrites';
 import { recordRestorePartial, restorePlacementHooks, sweepRestoreLeftovers, whileRestoring } from './restoreLeftovers';
+import { inTodaysWords } from './legacyWording';
 
 /**
  * Undo Vault — recovery beyond the OS Trash (B3).
@@ -2048,8 +2049,18 @@ export async function getCapsuleIndex(): Promise<TimeCapsuleIndex> {
   return {
     status: await statusOf(store),
     entries: [...store.entries].sort((a, b) => b.capturedAt - a.capturedAt),
-    events: store.events,
+    events: store.events.map(eventInTodaysWords),
   };
+}
+
+/**
+ * A saved event as the page is served it: a detail an earlier build wrote under the Undo Vault's old
+ * name is in today's words (see legacyWording.ts). The record on disk is not changed.
+ */
+function eventInTodaysWords(event: TimeCapsuleEvent): TimeCapsuleEvent {
+  if (!event || typeof event !== 'object') return event; // a hand-edited index, served as it is
+  const detail = inTodaysWords(event.detail);
+  return detail === event.detail ? event : { ...event, detail };
 }
 
 export async function getCapsuleEntry(id: string): Promise<TimeCapsuleEntry | undefined> {

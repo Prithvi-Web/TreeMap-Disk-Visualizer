@@ -37,6 +37,7 @@ import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { assertFeatureAvailable } from './storageMode';
 import { AsyncMutex } from '../utils/asyncMutex';
+import { inTodaysWords } from './legacyWording';
 
 /**
  * Autopilot — scheduled cleanup with safety rails (B1).
@@ -1266,7 +1267,26 @@ export async function approvePolicyForTests(policyId: string): Promise<Autopilot
 
 export async function listRuns(limit = 50): Promise<AutopilotRun[]> {
   const store = await loadStore();
-  return store.runs.slice(0, Math.min(Math.max(limit, 1), MAX_RUNS));
+  return store.runs.slice(0, Math.min(Math.max(limit, 1), MAX_RUNS)).map(runInTodaysWords);
+}
+
+/**
+ * A saved run as the page is served it: a reason an earlier build wrote under the Undo Vault's old
+ * name is in today's words (see legacyWording.ts). The record on disk is not changed.
+ */
+function runInTodaysWords(run: AutopilotRun): AutopilotRun {
+  if (!run || typeof run !== 'object') return run; // a hand-edited record, served as it is
+  const blockedReason = inTodaysWords(run.blockedReason);
+  const skipped = Array.isArray(run.skipped)
+    ? run.skipped.map((s) => {
+      if (!s || typeof s !== 'object') return s;
+      const reason = inTodaysWords(s.reason);
+      return reason === s.reason ? s : { ...s, reason };
+    })
+    : run.skipped;
+  const skippedChanged = skipped !== run.skipped && skipped.some((s, i) => s !== run.skipped[i]);
+  if (blockedReason === run.blockedReason && !skippedChanged) return run;
+  return { ...run, ...(blockedReason === run.blockedReason ? {} : { blockedReason }), ...(skippedChanged ? { skipped } : {}) };
 }
 
 export async function getRun(id: string): Promise<AutopilotRun | undefined> {

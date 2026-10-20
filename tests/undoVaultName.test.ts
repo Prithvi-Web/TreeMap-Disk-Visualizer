@@ -96,9 +96,46 @@ function tsFilesUnder(dir: string): string[] {
   return filesUnder(dir, (name) => name.endsWith('.ts'));
 }
 
+/**
+ * The one file in src/ that spells the old name, on purpose: it recognises the sentences TreeMap
+ * saved before the rename, so that they are served in today's words (review F1.2). It may spell it
+ * only on the left of each of its LEGACY_PHRASES pairs — a phrase it looks for, never one it says —
+ * and those literals are blanked before either sweep reads it.
+ */
+const LEGACY_WORDING = path.join('src', 'services', 'legacyWording.ts');
+
+/** The left of each [before, now] pair of LEGACY_PHRASES in `sf`, as source nodes. */
+function legacyBeforeHalves(sf: ts.SourceFile): ts.StringLiteral[] {
+  const out: ts.StringLiteral[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === 'LEGACY_PHRASES'
+      && n.initializer && ts.isArrayLiteralExpression(n.initializer)) {
+      for (const pair of n.initializer.elements) {
+        if (ts.isArrayLiteralExpression(pair) && pair.elements.length === 2 && ts.isStringLiteral(pair.elements[0])) out.push(pair.elements[0]);
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/** `rel`'s text as the sweeps read it: for legacyWording.ts, each pair's left half blanked. */
+function sweptText(rel: string): string {
+  const text = read(rel);
+  if (rel !== LEGACY_WORDING) return text;
+  const sf = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let out = text;
+  for (const lit of legacyBeforeHalves(sf).reverse()) { // from the end, so the earlier offsets hold
+    const start = lit.getStart(sf);
+    out = `${out.slice(0, start)}'${' '.repeat(lit.end - start - 2)}'${out.slice(lit.end)}`;
+  }
+  return out;
+}
+
 /** `rel`'s string literals, each place they say the old name prefixed with the file. */
 function oldNameInLiterals(rel: string): string[] {
-  return oldNameIn(literalsOf(read(rel), rel)).map((hit) => `${rel}: ${hit}`);
+  return oldNameIn(literalsOf(sweptText(rel), rel)).map((hit) => `${rel}: ${hit}`);
 }
 
 /* ══════════════ The reader itself ══════════════ */
@@ -168,7 +205,20 @@ test('no comment in TreeMap\'s own source names "Time Capsule" either: every fil
   for (const rel of ['services/cartCommit.ts', 'ui/app/175-cleanup-cart.js', 'ui/styles/075-modals.css', 'ui/manifest.json']) {
     assert.ok(files.includes(path.join('src', rel)), `src/${rel} is read`);
   }
-  assert.deepEqual(files.flatMap((rel) => oldNameIn(read(rel)).map((hit) => `${rel}: ${hit}`)), []);
+  assert.deepEqual(files.flatMap((rel) => oldNameIn(sweptText(rel)).map((hit) => `${rel}: ${hit}`)), []);
+});
+
+test('the one file let off spells the old name only in the phrases it looks for, and nothing else reads them', () => {
+  const sf = ts.createSourceFile(LEGACY_WORDING, read(LEGACY_WORDING), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const halves = legacyBeforeHalves(sf);
+  assert.ok(halves.length >= 18, `the pairs are found (${halves.length})`);
+  for (const lit of halves) {
+    assert.match(lit.text, /time capsule|the capsule/i, `"${lit.text}" is an old phrase, not a place to keep a sentence`);
+  }
+  assert.ok(oldNameIn(read(LEGACY_WORDING)).length > 0, 'unblanked, the file does spell it');
+  assert.deepEqual(oldNameIn(sweptText(LEGACY_WORDING)), [], 'blanked, it spells it nowhere else — no comment, no right half');
+  const readers = filesUnder('src').filter((rel) => rel !== LEGACY_WORDING && read(rel).includes('LEGACY_PHRASES'));
+  assert.deepEqual(readers, [], 'only inTodaysWords reads the pairs, so a left half is only ever looked for, never said');
 });
 
 /* ══════════════ The new name where a person looks for it ══════════════ */
