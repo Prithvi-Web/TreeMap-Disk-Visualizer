@@ -341,7 +341,7 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
         // Not enumerable: the tests that compare draws whole compare what they always did.
         Object.defineProperty(draw, 'at', { enumerable: false,
           value: { scanning: state.scanning, indexScanDue: state.indexScanDue, scanId: state.scanId, settledScanId: state.settledScanId,
-            root: r ? { path: r.path } : null, scanningPath: state.scanningPath } });
+            root: r ? { path: r.path } : null, scanningPath: state.scanningPath, system: state.system } });
         draws.push(draw);
       },
       fxTmPillBeamsSync: noop, loadSavedViews: noop, refreshDock: noop, tmRejudgeQuery: () => { rejudged.push(state.scanId); }, tmRejudgeQueryWait: noop, exitHistoryState: noop,
@@ -1832,6 +1832,22 @@ test('BQJ-1b (2): a rescan pressed over a saved index\'s tree a Stop left on scr
     assert.equal(h.draws.at(-1)!.root, MAIL, 'control: the tree it draws is the one on screen');
     await pressStop(h);
     assert.equal(legendAt(h.draws.at(-1)!.at), LEGEND_FROM_INDEX, 'a Stop in that window: what would score it, again');
+    probe.answer!();
+    await started;
+  }
+
+  // The folder typed another way — `~/Mail/` in the path box, which startScan keeps as typed — is the folder on
+  // screen all the same: its lines say loading too (review F1.3).
+  {
+    const { h, probe } = held();
+    h.switchView('treemap');
+    const drawn = h.draws.length;
+    const started = h.startScan('~/Mail/');
+    await turns();
+    assert.ok(probe.answer, 'control: the index is being asked about the folder');
+    assert.ok(h.draws.length > drawn, 'typed as ~/Mail/, the map is drawn again as the scan chrome begins');
+    assert.equal(legendAt(h.draws.at(-1)!.at), LEGEND_COMING, 'and its legend says scoring starts once the scan finishes — ~/Mail/ is the folder on screen');
+    await pressStop(h);
     probe.answer!();
     await started;
   }

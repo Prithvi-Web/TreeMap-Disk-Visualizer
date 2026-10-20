@@ -119,6 +119,29 @@ test('treeScanId names the scan behind the tree on screen through a rescan, a la
   assert.equal(treeScanComing(), true, 'a scan of the folder on screen is coming for its tree');
   state.scanningPath = '/Users/x/Desktop';
   assert.equal(treeScanComing(), false, 'a scan of another folder is no scan of this tree: it replaces it, and "scan this folder" stays true of it');
+  // The folder on screen typed another way: startScan keeps the box's text, the tree's path is the server's
+  // spelling (sanitizePath: `~` expanded, path.resolve). Each is the folder on screen (review F1.3).
+  state.system = { platform: 'darwin', homeDir: '/Users/x' };
+  state.root = { path: '/Users/x/Documents', name: 'Documents', size: 1 };
+  const comingFor = (typed: string) => { state.scanningPath = typed; return treeScanComing(); };
+  for (const typed of ['~/Documents', '/Users/x/Documents/', '/Users/x//Documents', '/Users/x/Pictures/../Documents', '/Users/x/./Documents', '/users/X/documents']) {
+    assert.equal(comingFor(typed), true, `"${typed}" is a scan of the folder on screen (macOS folds case)`);
+  }
+  for (const typed of ['/Users/x/Desktop', '~/Desktop', 'Documents', '/Users/x/Documents/sub', '/Users/x/Documents ']) {
+    assert.equal(comingFor(typed), false, `"${typed}" is not`);
+  }
+  state.system = { platform: 'linux', homeDir: '/home/x' };
+  state.root = { path: '/home/x/Documents', name: 'Documents', size: 1 };
+  assert.equal(comingFor('~/Documents/'), true, 'Linux: the home folder and a trailing separator');
+  assert.equal(comingFor('/home/x/documents'), false, 'Linux: case counts');
+  state.system = { platform: 'win32', homeDir: 'C:\\Users\\x' };
+  state.root = { path: 'C:\\Users\\x\\Documents', name: 'Documents', size: 1 };
+  for (const typed of ['C:\\Users\\x\\Documents\\', 'c:/users/x/documents', '~\\Documents']) {
+    assert.equal(comingFor(typed), true, `Windows: "${typed}" is the folder on screen`);
+  }
+  assert.equal(comingFor('D:\\Users\\x\\Documents'), false, 'Windows: another drive is another folder');
+  state.root = { path: 'cloud://gdrive', name: 'Google Drive', size: 1 };
+  assert.equal(comingFor('cloud://gdrive'), true, 'a cloud account\'s tree, rescanned: its own spelling, no folder to resolve');
 });
 
 /* ───────────────────────────── a stub DOM and the page ───────────────────────────── */

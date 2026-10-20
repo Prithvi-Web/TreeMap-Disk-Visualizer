@@ -117,7 +117,36 @@ function treeScanId() {
  * nothing will land (a Stop, a failure).
  */
 function treeScanComing() {
-  return !!state.indexScanDue || (!!state.scanning && !!state.root && state.scanningPath === state.root.path);
+  if (state.indexScanDue) return true;
+  if (!state.scanning || !state.root || typeof state.scanningPath !== 'string') return false;
+  if (state.scanningPath === state.root.path) return true;
+  // startScan keeps the folder as typed; the tree's path is the server's
+  // spelling (sanitizePath). `~/Documents` or `Documents/` was "another
+  // folder", and the lines over the folder being scanned kept saying "scan
+  // this folder" (review F1.3). So each is spelled the server's way: leading
+  // whitespace off, `~` the home folder, `.` and `..` resolved, repeated and
+  // trailing separators gone (Windows reads `/` and `\` alike) — and case
+  // folded except on Linux, as the "Don't scan" patterns read it
+  // (ignorePatternTest). A relative path is none: the server resolves it
+  // against a folder the page cannot see. A link is not followed.
+  const sys = state.system || {};
+  const win = sys.platform === 'win32';
+  const spell = (p) => {
+    let s = p.replace(/^\s+/, '');
+    if (sys.homeDir && (s === '~' || s.startsWith('~/') || s.startsWith('~\\'))) s = sys.homeDir + '/' + s.slice(1);
+    if (win) s = s.replace(/\\/g, '/');
+    const head = win && /^[A-Za-z]:\//.test(s) ? s.slice(0, 3) : s.startsWith('/') ? '/' : null;
+    if (head === null) return null;
+    const names = [];
+    for (const name of s.slice(head.length).split('/')) {
+      if (name === '..') names.pop();
+      else if (name !== '' && name !== '.') names.push(name);
+    }
+    const spelled = head + names.join('/');
+    return sys.platform === 'linux' ? spelled : spelled.toLowerCase();
+  };
+  const typed = spell(state.scanningPath);
+  return typed !== null && typed === spell(state.root.path);
 }
 
 /**
