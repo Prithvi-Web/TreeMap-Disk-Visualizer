@@ -73,7 +73,6 @@ const rec = (over: Partial<LsofRecord> = {}): LsofRecord => ({
   path: '/a/f.txt',
   ino: 1,
   size: 10,
-  markedDeleted: false,
   ...over,
 });
 
@@ -105,8 +104,10 @@ test('the deepest match wins, so the warning names the most specific path', () =
 
 test('an unlinked inode blocks nothing', () => {
   // Its blocks are already unreachable by name; deleting the name is a no-op,
-  // so warning about it would be noise. B5 reports these separately.
-  assert.deepEqual(intersectHandles([rec({ markedDeleted: true })], [['/a/f.txt', '/a/f.txt']]), []);
+  // so warning about it would be noise. B5 reports these separately. Asked of
+  // the /proc matcher: Linux's kernel marks an unlinked file, while macOS's
+  // lsof prints one as it printed the file before (BQL-a review F2.4).
+  assert.deepEqual(intersectProc([{ pid: 42, processName: 'TestApp', path: '/a/f.txt', markedDeleted: true, fdPath: '/proc/42/fd/3' }], [['/a/f.txt', '/a/f.txt']]), []);
 });
 
 test('one process holding many descriptors on one file warns once', () => {
@@ -237,6 +238,29 @@ test('a file held open by another process is found through the service', { skip:
     // than asserting on a race.
     await waitFor(async () => (await checkOpenHandles([target])).conflicts.length === 0, 'the killed holder\'s descriptor being reaped', 100);
     assert.deepEqual((await checkOpenHandles([target])).conflicts, [], 'closing the file clears the warning');
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a live file whose own name ends in "(deleted)", held open by another program, is in use: the guard names its holder, and the held-space pass does not call it a deleted file (BQL-a review F2.4)', { skip: !IS_UNIX }, async () => {
+  // macOS's lsof prints no "(deleted)" marker, and Linux's kernel prints a deleted file's name with one — so
+  // the same text is a live file's own name. Read as a marker, the live file was listed as held deleted
+  // space and the guard skipped it: trashing it raised no warning.
+  const dir = await fsp.realpath(await mkTmp());
+  try {
+    const target = path.join(dir, 'report (deleted)');
+    await fsp.writeFile(target, Buffer.alloc(1234, 1));
+    const release = await holdOpenElsewhere(target);
+    try {
+      const report = await checkOpenHandles([target]);
+      assert.equal(report.checked, true);
+      assert.deepEqual(report.conflicts.map((c) => c.path), [target], 'its holder is named');
+      const held = (await platform().getZombieHandleScan()).handles.filter((h) => h.path.includes(path.basename(dir)));
+      assert.deepEqual(held, [], 'nobody deleted it, so it holds no deleted space');
+    } finally {
+      release();
+    }
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });
   }

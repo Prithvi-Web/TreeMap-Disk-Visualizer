@@ -773,6 +773,13 @@ test('PLATFORM_NOTES\' Linux open-handles row says whose programs the delete-tim
     'a program it may not read is said, never passed over');
 });
 
+test('PLATFORM_NOTES says a name ending in "(deleted)" is a file\'s own name on macOS, and that the Linux open-file guard tells a live one from the kernel\'s marker (BQL-a review F2.4)', () => {
+  const notes = joinedLines(read('docs', 'PLATFORM_NOTES.md'));
+  assert.doesNotMatch(notes, /marker is still honoured/, 'macOS honours no marker');
+  assert.match(notes, /So a name ending in `\(deleted\)` is read whole, as the file's own name: taken for Linux's marker, a live `report \(deleted\)` held open was listed as a deleted file still holding space, and the open-file guard skipped it\./);
+  assert.match(notes, /The open-file guard reads the suffix the same way: the descriptor's own inode at the printed name means the text is the file's name, so a live file named so, held open, is reported in use rather than skipped as an unlinked one\./);
+});
+
 test('PLATFORM_NOTES\' macOS zombie-handles row says what the probe does not see and that what it cannot decide is counted, with the caret bound lsofGuard keeps (BQL item 12)', () => {
   const row = lineStarting(read('docs', 'PLATFORM_NOTES.md'), '| Zombie handles | `lsof -F` + inode comparison |');
   assert.match(row, /Sees only the programs running under your account \(every program when TreeMap runs as root\)/, 'another account\'s programs are not seen');

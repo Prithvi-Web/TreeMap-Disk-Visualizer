@@ -189,12 +189,18 @@ async function unreadableProgramsOf(procRoot: string, refused: readonly number[]
  * system, so restricting it to exact paths would discard the very information
  * that makes trashing a folder safe. macOS reaches the same contract through a
  * full `lsof` dump (see ../macos/lsofGuard.ts) — different mechanism, identical
- * guarantee, which is what §11.1 asks for.
+ * guarantee, which is what §11.1 asks for. `statOf` is the stat that tells a
+ * live file named "… (deleted)" from the kernel's marker (`withNamesAsPrinted`),
+ * injectable so a test can stand in inodes a fixture cannot give.
  */
-export async function openHandlesFor(paths: string[], procRoot = '/proc'): Promise<OpenHandleInfo[]> {
+export async function openHandlesFor(
+  paths: string[],
+  procRoot = '/proc',
+  statOf: (p: string) => Promise<{ ino: number }> = (p) => fsp.stat(p),
+): Promise<OpenHandleInfo[]> {
   if (paths.length === 0) return [];
   const wanted = await wantedOf(paths);
-  return intersectHandles(await readOpenDescriptors(procRoot), wanted);
+  return intersectHandles(await withNamesAsPrinted(await readOpenDescriptors(procRoot), statOf), wanted);
 }
 
 /**
@@ -212,13 +218,36 @@ export async function openHandleScanFor(
   if (paths.length === 0) return { handles: [], unreadablePrograms: 0 };
   const wanted = await wantedOf(paths);
   const walk = await scanOpenDescriptors(procRoot);
-  return { handles: intersectHandles(walk.records, wanted), unreadablePrograms: await unreadableProgramsOf(procRoot, walk.refused, uid) };
+  const handles = intersectHandles(await withNamesAsPrinted(walk.records), wanted);
+  return { handles, unreadablePrograms: await unreadableProgramsOf(procRoot, walk.refused, uid) };
 }
 
 /** The open-file guard's words for `n` programs whose open files it could not read (`openHandleScanFor`). */
 export function openFilesUnreadReason(n: number): string {
   const one = n === 1;
   return `TreeMap could not read which files ${String(n)} ${one ? 'program has' : 'programs have'} open — a program can keep them even from the account it runs as, as ssh-agent does — so a file ${one ? 'it holds' : 'they hold'} open may be in use without being listed.`;
+}
+
+/**
+ * The records, each whose " (deleted)" is a live file's own name read back as that name (the BQL-a review,
+ * F2.4): the kernel prints an unlinked file's name with " (deleted)" after it, and a live file whose name
+ * ends that way the same, so the open-file guard skipped the live one and trashing it raised no warning.
+ * Told apart as the held-space pass's Trap 1 does: the descriptor's own inode at the printed name means the
+ * text is the file's name. One whose descriptor cannot be stat'ed, with a file at the printed name, is taken
+ * at its name too — a warning more than needed, never one missed. Nothing at the printed name: the marker.
+ */
+async function withNamesAsPrinted(
+  records: readonly ProcFdRecord[],
+  statOf: (p: string) => Promise<{ ino: number }> = (p) => fsp.stat(p),
+): Promise<ProcFdRecord[]> {
+  return Promise.all(records.map(async (rec) => {
+    if (!rec.markedDeleted) return rec;
+    const printed = rec.path + DELETED_SUFFIX;
+    const there = await statOf(printed).then((st) => st.ino, () => null);
+    if (there === null) return rec;
+    const held = await statOf(rec.fdPath).then((st) => st.ino, () => null);
+    return held === null || held === there ? { ...rec, path: printed, markedDeleted: false } : rec;
+  }));
 }
 
 /** Each path with its realpath first, the way the walk's descriptors spell what they point at. */

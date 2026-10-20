@@ -251,8 +251,10 @@ shipped a confidently wrong answer.
    `(deleted)` to an unlinked-but-open file does not happen on macOS: the output
    for a descriptor is byte-identical before and after `unlink()` — same path,
    same size, same inode. B5 therefore compares lsof's `i` (inode) field against
-   the inode currently at that path. The `(deleted)` marker is still honoured
-   where it appears, so Linux takes the cheap path and macOS the correct one.
+   the inode currently at that path. So a name ending in `(deleted)` is read
+   whole, as the file's own name: taken for Linux's marker, a live
+   `report (deleted)` held open was listed as a deleted file still holding
+   space, and the open-file guard skipped it.
 
 2. **`lsof` exits 1 when any path argument is missing — while still printing
    valid records for the rest.** An earlier version of `runText` discarded stdout
@@ -629,7 +631,10 @@ owns its space outright), and the Windows mapper says so where it does it.
   suffix blindly reports a live file as reclaimable and invites the user to kill
   the process holding it. The stripped path is confirmed against the inode
   behind the descriptor; when the descriptor cannot be stat'ed at all, the code
-  stays silent rather than claiming something unverified.
+  stays silent rather than claiming something unverified. The open-file guard
+  reads the suffix the same way: the descriptor's own inode at the printed name
+  means the text is the file's name, so a live file named so, held open, is
+  reported in use rather than skipped as an unlinked one.
 - **`/proc` is a live view.** ENOENT while walking it is the normal case, not an
   error, and never aborts the pass.
 - **Concurrency is read from `/sys/block/<dev>/queue/rotational`,** not guessed.

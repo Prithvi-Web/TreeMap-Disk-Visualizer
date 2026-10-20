@@ -420,6 +420,61 @@ test('linux: the open-file guard\'s capability says it sees the programs of your
   }
 });
 
+/*
+ * The BQL-a review, F2.4 (the guard's half, on Linux too): the kernel prints an unlinked file's name with
+ * " (deleted)" after it, and a live file whose own name ends that way is printed the same — so the guard
+ * skipped the live one, and trashing it raised no warning. What is at the printed name tells them apart, as
+ * the held-space pass's Trap 1 does: the descriptor's own inode there means the text is the file's name.
+ */
+test('linux: a live file whose own name ends in " (deleted)", held open, is in use to the open-file guard — while a deleted file still blocks nothing, nor a new file at its old name (BQL-a review F2.4)', { skip: WIN_NO_PROC_FIXTURE }, async () => {
+  const root = await mkTmp();
+  const data = await mkTmp();
+  try {
+    const real = await fsp.realpath(data);
+    const live = path.join(real, 'report (deleted)');
+    await fsp.writeFile(live, 'the live file');
+    const reborn = path.join(real, 'old.log'); // a new file at the name of one deleted while held
+    await fsp.writeFile(reborn, 'new');
+    await fakeProc(root, [{ pid: 9, comm: 'python3', fds: [
+      { name: '3', target: live }, // read back "…/report (deleted)": the kernel's text for a deleted "…/report" too
+      { name: '4', target: `${reborn} (deleted)` }, // the deleted old.log: nothing at "old.log (deleted)"
+    ] }]);
+    assert.deepEqual((await readOpenDescriptors(root)).map((r) => [r.path, r.markedDeleted]), [[path.join(real, 'report'), true], [reborn, true]],
+      'control: the walk reads both as the kernel\'s marker');
+    assert.deepEqual((await openHandlesFor([live], root)).map((h) => [h.pid, h.path]), [[9, live]], 'the live file\'s holder is named');
+    assert.deepEqual((await openHandlesFor([real], root)).map((h) => h.openPath), [live], 'and deleting its folder names it — never the deleted old.log');
+    assert.deepEqual(await openHandlesFor([reborn], root), [], 'a deleted file blocks nothing, nor a new file at its old name');
+    const provider = new LinuxProvider();
+    (provider as unknown as { procRoot: string }).procRoot = root;
+    assert.deepEqual((await provider.getOpenHandlesBatch([live])).handles.map((h) => h.pid), [9], 'the batch guard the same');
+  } finally {
+    await fsp.rm(root, { recursive: true, force: true });
+    await fsp.rm(data, { recursive: true, force: true });
+  }
+});
+
+test('linux: the open-file guard takes the kernel\'s " (deleted)" for a name only when the descriptor\'s own inode is at the printed name — another inode there is another file, and a descriptor it cannot stat is taken at its name, a warning more than needed rather than one missed (BQL-a review F2.4)', { skip: WIN_NO_PROC_FIXTURE }, async () => {
+  const root = await mkTmp();
+  try {
+    const printed = '/home/me/report (deleted)';
+    await fakeProc(root, [{ pid: 9, comm: 'python3', fds: [{ name: '3', target: printed }] }]);
+    const fd = path.join(root, '9', 'fd', '3');
+    const fail = (code: string) => Object.assign(new Error(code), { code });
+    const statsBy = (fdIno: number | 'EACCES', printedIno: number | 'ENOENT') => async (p: string): Promise<{ ino: number }> => {
+      const answer = p === fd ? fdIno : p === printed ? printedIno : 'ENOENT';
+      if (typeof answer === 'string') throw fail(answer);
+      return { ino: answer };
+    };
+    const pids = async (statOf: (p: string) => Promise<{ ino: number }>) => (await openHandlesFor([printed], root, statOf)).map((h) => h.pid);
+    assert.deepEqual(await pids(statsBy(7, 7)), [9], 'the descriptor\'s own inode at the printed name: the file\'s name');
+    assert.deepEqual(await pids(statsBy(7, 8)), [], 'another inode there: a deleted "report", and another file named "report (deleted)"');
+    assert.deepEqual(await pids(statsBy('EACCES', 8)), [9], 'a descriptor it cannot stat, with a file at the printed name: warned');
+    assert.deepEqual(await pids(statsBy(7, 'ENOENT')), [], 'nothing at the printed name: the kernel\'s marker');
+  } finally {
+    await fsp.rm(root, { recursive: true, force: true });
+  }
+});
+
 /* ════════════════════════ Linux: lsblk topology ════════════════════════ */
 
 /** A partitioned laptop disk: the disk node is only hardware, its partitions are the volumes. */

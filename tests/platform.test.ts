@@ -90,7 +90,6 @@ test('parseLsofRecords reads field output, including names containing spaces', (
   assert.equal(rec.path, '/Users/me/a file.txt');
   assert.equal(rec.size, 4096);
   assert.equal(rec.ino, 991);
-  assert.equal(rec.markedDeleted, false);
 });
 
 /* ── Sixth browser pass H04: lsof's 31-character command names ── */
@@ -259,7 +258,7 @@ test('parseLsofRecords reads a path back from every escape lsof writes in it —
     assert.equal(rec?.path, `/Users/me/f21/${name}`, `lsof's "${written}" is the file "${name}"`);
   }
   const [gone] = parseLsofRecords(['p9', 'cnode', 'f3', 's100', 'i42', String.raw`n/tmp/\xc3\xa9t\xc3\xa9.bin (deleted)`].join('\n'));
-  assert.deepEqual([gone.path, gone.markedDeleted], ['/tmp/été.bin', true], 'an escaped path keeps the Linux (deleted) marker, which is not part of the path');
+  assert.equal(gone.path, '/tmp/été.bin (deleted)', 'an escaped path ending in "(deleted)" is read back whole: macOS\'s lsof prints no marker (BQL-a review F2.4)');
   assert.equal(parseLsofRecords(['p41', String.raw`cback\\slash`, 'f3', 'n/x/a'].join('\n'))[0].processName, String.raw`back\slash`,
     'a name\'s backslash is read back the same way');
 });
@@ -323,8 +322,8 @@ test('a held file whose name holds a control byte lsof writes as ^X is found in 
   assert.deepEqual(zombies.map((z) => z.path), [], 'nobody deleted them: a ^X spelling that names nothing, or another file, is no proof');
 
   const marked = parseLsofRecords(['p9', 'cnode', 'f3', 's100', 'i42', 'n/tmp/a^Ab.bin (deleted)'].join('\n'));
-  assert.deepEqual((await resolveZombies(marked, async (p) => { throw ENOENT(p); })).map((z) => z.path), ['/tmp/a^Ab.bin'],
-    'control: lsof\'s own (deleted) marker is believed, whatever the name holds');
+  assert.deepEqual((await resolveZombies(marked, async (p) => { throw ENOENT(p); })).map((z) => z.path), ['/tmp/a^Ab.bin (deleted)'],
+    'control: a caret name ending in "(deleted)" — its own name, lsof printing no marker — gone from every spelling is a deleted file held (BQL-a review F2.4)');
   const plain = parseLsofRecords(['p9', 'cnode', 'f3', 's100', 'i42', 'n/tmp/gone.bin'].join('\n'));
   assert.deepEqual((await resolveZombies(plain, async (p) => { throw ENOENT(p); })).map((z) => z.path), ['/tmp/gone.bin'],
     'control: a path with no caret that is gone is still a deleted file held');
@@ -382,11 +381,29 @@ test('the open-file check names its conflicts whole: openHandlesFor hands what i
     'every conflict the warning lists passes through the whole-name step');
 });
 
-test('parseLsofRecords honours the Linux (deleted) marker and strips it', () => {
-  const sample = ['p9', 'cnode', 'f3', 's100', 'i42', 'n/tmp/gone.bin (deleted)'].join('\n');
-  const [rec] = parseLsofRecords(sample);
-  assert.equal(rec.markedDeleted, true);
-  assert.equal(rec.path, '/tmp/gone.bin', 'the marker is not part of the path');
+/*
+ * The BQL-a review, F2.4: lsofGuard runs only on macOS, and macOS's lsof prints no "(deleted)" marker
+ * (measured; the note at the top of lsofGuard.ts) — so a name ending in "(deleted)" is the file's own name.
+ * Read as a marker, a live "report (deleted)" held open was listed as a deleted file still holding space,
+ * its program offered a Quit, while the open-file guard skipped it and trashing it raised no warning.
+ */
+test('parseLsofRecords reads a name ending in "(deleted)" whole: macOS\'s lsof prints no such marker, so it is the file\'s own name (BQL-a review F2.4)', () => {
+  const sample = ['p9', 'cnode', 'f3', 's100', 'i42', 'n/tmp/gone.bin (deleted)', 'f4', 's1', 'i43', 'n/tmp/x(deleted)'].join('\n');
+  assert.deepEqual(parseLsofRecords(sample).map((r) => r.path), ['/tmp/gone.bin (deleted)', '/tmp/x(deleted)']);
+  assert.ok(parseLsofRecords(sample).every((r) => !('markedDeleted' in r)), 'no record says lsof marked it');
+});
+
+test('a live file whose own name ends in "(deleted)", held open, is in use — never a deleted file still held — and gone from its name it is a deleted file held, by its whole name (BQL-a review F2.4)', async () => {
+  const file = '/Users/me/Documents/report (deleted)';
+  const records = parseLsofRecords(['p88', 'cpython3', 'f3', 's1234', 'i555', `n${file}`].join('\n'));
+  assert.deepEqual(lsof.intersectHandles(records, [[file, file]]).map((h) => [h.pid, h.path]), [[88, file]], 'the open-file guard names its holder');
+  const live = await lsof.resolveZombieScan(records, async (p) => {
+    if (p === file) return 555;
+    throw ENOENT(p);
+  });
+  assert.deepEqual([live.handles, live.undecided], [[], 0], 'still at its name with its inode: not a deleted file held');
+  const gone = await lsof.resolveZombieScan(records, async (p) => { throw ENOENT(p); });
+  assert.deepEqual(gone.handles.map((h) => [h.path, h.bytes]), [[file, 1234]], 'gone from its name: a deleted file held, named whole');
 });
 
 test('parseLsofRecords ignores sockets, pipes and cwd entries', () => {

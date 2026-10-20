@@ -4,17 +4,15 @@ import type { OpenHandleInfo, ZombieHandleInfo, ZombieHandleScan } from '../type
 import { meansAbsent } from '../../utils/errno';
 
 /**
- * Open-handle (B2) and zombie-handle (B5) detection on macOS and Linux via
- * `lsof`.
+ * Open-handle (B2) and zombie-handle (B5) detection on macOS via `lsof`.
  *
  * Mechanism choice (§2.3): tier 3, a system binary. `lsof` ships with macOS and
  * with every mainstream Linux distribution, needs no entitlement to see the
  * calling user's own processes, and has a documented machine-readable mode.
  * There is no `--json`, but `-F` is not human-formatted output — it is
  * field-per-line output designed for programs, so parsing it does not violate
- * §10's "no regex over human-formatted output" rule. Linux additionally has a
- * faster no-subprocess path through /proc (see ../linux/procFdGuard.ts); this
- * module is macOS's primary mechanism and Linux's fallback.
+ * §10's "no regex over human-formatted output" rule. Linux reads /proc instead,
+ * with no subprocess (see ../linux/procFdGuard.ts); only macOS runs this module.
  *
  * ── Two behaviours measured on macOS 15 (Darwin 25.5), not assumed ──
  *
@@ -24,8 +22,10 @@ import { meansAbsent } from '../../utils/errno';
  *    before and after `unlink()` — same path, same size, same inode. Detecting
  *    a zombie therefore compares lsof's `i` (inode) field against the inode
  *    currently at that path: gone, or a different inode, means the descriptor
- *    is holding an unlinked one. The `(deleted)` marker is still honoured when
- *    present, so Linux takes the cheap path and macOS the correct one.
+ *    is holding an unlinked one. So a name ending in `(deleted)` is the file's
+ *    own name, read whole: taken for Linux's marker, a live "report (deleted)"
+ *    held open was listed as a deleted file still holding space, and the
+ *    open-file guard skipped it (the BQL-a review, F2.4).
  *
  * 2. **lsof reports resolved paths.** A handle opened on `/tmp/x` comes back as
  *    `/private/tmp/x`, because `/tmp` is a symlink. Matching results against a
@@ -59,8 +59,6 @@ export interface LsofRecord {
   ino: number | null;
   /** Size in bytes, when reported. */
   size: number | null;
-  /** True when lsof itself flagged the inode as unlinked (Linux). */
-  markedDeleted: boolean;
 }
 
 /**
@@ -68,8 +66,9 @@ export interface LsofRecord {
  *
  * Exported because this parser is the only part of the mechanism that can be
  * asserted without a live system, and the awkward cases it must survive —
- * spaces in application names, `(deleted)` suffixes, non-file names like
- * sockets and pipes — are exactly where a naive implementation goes wrong.
+ * spaces in application names, a name ending in `(deleted)` (the file's own:
+ * macOS's lsof prints no marker), non-file names like sockets and pipes — are
+ * exactly where a naive implementation goes wrong.
  */
 export function parseLsofRecords(stdout: string): LsofRecord[] {
   const out: LsofRecord[] = [];
@@ -108,12 +107,12 @@ export function parseLsofRecords(stdout: string): LsofRecord[] {
         break;
       case 'n': {
         if (!pid) break;
-        const markedDeleted = value.endsWith('(deleted)');
         // The path as the file system spells it, not as lsof printed it (review F2.1): matched against
         // realpaths and stat'ed, the printed form finds nothing — and a file nobody deleted reads as gone.
-        const path = decodeLsofText(markedDeleted ? value.slice(0, -'(deleted)'.length).trimEnd() : value);
+        // Whole: a trailing "(deleted)" is part of the name (the BQL-a review, F2.4).
+        const path = decodeLsofText(value);
         // Sockets, pipes, kqueues and cwd markers are not files on disk.
-        if (path.startsWith('/')) out.push({ pid, processName, path, ino, size, markedDeleted });
+        if (path.startsWith('/')) out.push({ pid, processName, path, ino, size });
         size = ino = null;
         break;
       }
@@ -480,8 +479,8 @@ export function intersectHandles(
   const seen = new Set<string>();
   const out: OpenHandleInfo[] = [];
   for (const rec of records) {
-    if (rec.markedDeleted) continue; // an unlinked inode blocks no delete
-
+    // An unlinked inode is printed as the file was (macOS's lsof prints no marker), so a program holding one
+    // is named too when a new file at that name is deleted: a warning more than needed, never one missed.
     let requested = exact.get(rec.path);
     if (requested === undefined) {
       // Deepest match wins, so a set holding both a folder and a file inside it
@@ -509,9 +508,9 @@ export function intersectHandles(
  * descriptor closes, which is how a disk can be full with nothing visible to
  * account for it.
  *
- * Uses lsof's own `(deleted)` marker where the platform emits it, and falls
- * back to comparing the descriptor's inode against what is at that path now —
- * which is the only mechanism that works on macOS (see the note at the top).
+ * Compares the descriptor's inode against what is at that path now — the only
+ * mechanism that works on macOS, whose lsof prints no `(deleted)` marker (see
+ * the note at the top).
  */
 export async function zombieHandles(): Promise<ZombieHandleInfo[]> {
   return (await zombieHandleScan()).handles;
@@ -581,26 +580,23 @@ export async function resolveZombieScan(
   const undecided = new Set<string>();
 
   for (const rec of records) {
-    let isZombie = rec.markedDeleted;
-    if (!isZombie) {
-      // No inode reported — cannot know, so don't claim. Not counted either: lsof shows a few such records
-      // on a Mac, all where Unix sockets live, and they hold no space.
-      if (rec.ino === null) continue;
-      // lsof writes a control byte as `^X` and a caret as itself (review F3.1, F3.3), so a path holding a
-      // caret is any of the spellings its text could be (BQL item 12): the file was at one of them. In use
-      // when one holds its inode; deleted only when none does and every one could be looked at; otherwise —
-      // a spelling that cannot be looked at, or more spellings than the guard tries — cannot know, so don't
-      // claim, and count it. Where lsof marks a file (deleted) itself, that still counts.
-      const spellings = spellingsAt(rec.path);
-      const places = spellings === null ? null : await Promise.all(spellings.map(lookup));
-      if (places?.includes(rec.ino)) continue;
-      if (places === null || places.includes('unknown')) { // could not look — cannot know, so don't claim
-        undecided.add(`${rec.ino}\0${rec.path}`);
-        continue;
-      }
-      isZombie = true; // gone from every spelling, or another inode in its place
+    // No inode reported — cannot know, so don't claim. Not counted either: lsof shows a few such records
+    // on a Mac, all where Unix sockets live, and they hold no space.
+    if (rec.ino === null) continue;
+    // lsof writes a control byte as `^X` and a caret as itself (review F3.1, F3.3), so a path holding a
+    // caret is any of the spellings its text could be (BQL item 12): the file was at one of them. In use
+    // when one holds its inode; deleted only when none does and every one could be looked at; otherwise —
+    // a spelling that cannot be looked at, or more spellings than the guard tries — cannot know, so don't
+    // claim, and count it. A name ending in "(deleted)" is judged the same way: macOS's lsof prints no
+    // marker, so that is the file's own name (the BQL-a review, F2.4).
+    const spellings = spellingsAt(rec.path);
+    const places = spellings === null ? null : await Promise.all(spellings.map(lookup));
+    if (places?.includes(rec.ino)) continue;
+    if (places === null || places.includes('unknown')) { // could not look — cannot know, so don't claim
+      undecided.add(`${rec.ino}\0${rec.path}`);
+      continue;
     }
-    if (!isZombie) continue;
+    // Gone from every spelling, or another inode in its place: a deleted file still held.
     const key = `${rec.pid}\0${rec.ino ?? rec.path}`;
     if (seen.has(key)) continue;
     seen.add(key);
