@@ -35087,6 +35087,9 @@ async function loadCostEstimate(after) {
   if (after) {
     try { await after; } catch { /* the lists report their own failure; the card still loads */ }
     if (scanId !== treeScanId()) {
+      // Over the saved index's tree its own words stand, said when it was
+      // painted — not "Run a scan" over a folder on screen (review F1.12).
+      if (!treeScanId() && state.root) return;
       host.classList.remove('fx-chart-loading');
       host.innerHTML = '<div class="muted">Run a scan to see what this data would cost to keep online.</div>';
       return;

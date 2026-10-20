@@ -879,6 +879,35 @@ test('the Dashboard\'s cards keep no answer the older scan gives once the rescan
   }
 });
 
+test('Cost to keep, waiting on a landed scan\'s list walk when another folder is opened from its saved index, leaves the index paint\'s words standing — not "Run a scan to see…" over a folder on screen', async () => {
+  const $ = stubDom();
+  const state: Record<string, unknown> = { root: TREE, ...LANDED };
+  const { fns, asks } = page<{ cost: (after?: Promise<unknown>) => Promise<void> }>(['async function loadCostEstimate('], {
+    state, $, skeletonRows: () => '<i>loading</i>', costMoney: () => '', costSavingHtml: () => '', fxBarStyle: () => '', formatBytes: String,
+    escapeHtml: esc, FxNum: { rollHtml: noop }, fxBarsIn: noop,
+  }, '{ cost: loadCostEstimate }', () => ({ groups: [], providers: [], asOf: '2026-01-01' }));
+  let listsAnswer: (v: unknown) => void = noop;
+  const out = fns.cost(new Promise((resolve) => { listsAnswer = resolve; })); // finishScan: the card waits on the lists' walk
+  await turns();
+  // Another folder opened from its saved index meanwhile (finishScan's index branch): its card says what it waits for.
+  Object.assign(state, { root: { path: '/other', name: 'other', size: 1 }, scanning: false, scanId: null, settledScanId: null, indexScanDue: true });
+  await fns.cost();
+  assert.match($('costBody').innerHTML, COMING, 'control: the index paint\'s card says it fills in once the scan finishes');
+  listsAnswer(true);
+  await out;
+  assert.match($('costBody').innerHTML, COMING, 'the landed scan\'s card, superseded, leaves those words standing');
+  assert.equal(asks.length, 0, 'and asks nothing');
+  // Superseded by a newer scan's tree instead, it settles on its own empty state as before (review of U-16, finding 3).
+  Object.assign(state, { root: TREE, ...LANDED });
+  let again: (v: unknown) => void = noop;
+  const later = fns.cost(new Promise((resolve) => { again = resolve; }));
+  await turns();
+  Object.assign(state, { scanId: 'scan-newer', settledScanId: 'scan-newer' });
+  again(true);
+  await later;
+  assert.match($('costBody').innerHTML, /Run a scan to see what this data would cost to keep online/, 'control: a newer scan\'s tree: the card\'s own empty state, unchanged');
+});
+
 test('a Stop or a failure that leaves the saved index\'s tree on screen says the Dashboard\'s scan-backed cards again — the saved index\'s now, not "fills in once the scan finishes" — and one that leaves a scanned tree asks nothing again', () => {
   const asked: string[] = [];
   const state: Record<string, unknown> = { root: TREE, ...INDEX_STOPPED, largest: [], bigFolders: [], types: [], scanStats: null, donut: {} };
