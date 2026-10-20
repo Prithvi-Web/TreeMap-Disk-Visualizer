@@ -956,8 +956,9 @@ test('review F1.5, F2.1, F2.3, F3.4: a saved index\'s tree on screen, its map la
     // chrome begun again (beginScanChrome), the paint's scan due (finishScan).
     // Or a rescan of it just pressed, after a Stop: the scan chrome begun while
     // the index is asked about, no paint yet, so nothing due.
+    // (startScan names the folder it scans first: a scan of this one, BQJ-1b.)
     Object.assign(h.state, { root: { path: '/idx', size: 30_000 }, scanning: true, indexScanDue: running !== 'starting', settledScanId: null,
-      scanId: running === 'answered' ? 's-run' : null });
+      scanId: running === 'answered' ? 's-run' : null, scanningPath: '/idx' });
     Object.assign(h.state.treemap, { rootPath: '/idx', nodes, nodesFor: { scanId: null, path: '/idx', nodes, size: 30_000, minSize: 4000 } });
     h.state.view = 'city';
     h.views.city.mount();
@@ -979,6 +980,17 @@ test('review F1.5, F2.1, F2.3, F3.4: a saved index\'s tree on screen, its map la
     assert.deepEqual(cityTrail(h).slice(-1), ['/idx'], `${label}, Stopped: the trail is the tree on screen's`);
     assert.equal((h.$('cityUpBtn') as { disabled: boolean }).disabled, true, `${label}, Stopped: and Up, with no city to climb, is off`);
   }
+  // A scan of another folder running over the saved index's tree (BQJ-1b): no scan of this tree is coming —
+  // that scan replaces it — so the city says the tree is the saved index, never "loading this folder…".
+  const other = cityHarness({ realChrome: true });
+  const nodes: Node[] = [1, 2].map((i) => ({ path: `/idx/f${i}`, name: 'index:/idx', size: 5000 * i, type: 'file', x: 30 * (i - 1), y: 0, w: 30, h: 100 }));
+  Object.assign(other.state, { root: { path: '/idx', size: 15_000 }, scanning: true, indexScanDue: false, settledScanId: null, scanId: 's-desk', scanningPath: '/Users/x/Desktop' });
+  Object.assign(other.state.treemap, { rootPath: '/idx', nodes, nodesFor: { scanId: null, path: '/idx', nodes, size: 15_000, minSize: 4000 } });
+  other.state.view = 'city';
+  other.views.city.mount();
+  await settle();
+  assert.deepEqual(other.asked, [], 'a scan of another folder: nothing is asked of it for this tree');
+  assert.deepEqual(chromeOf(other), FROM_INDEX, 'and the city says this tree is the saved index — nothing will draw it');
 });
 
 test('review F2.3: Disk City up on an older scan\'s folder when a saved index\'s tree replaces it takes that tree\'s trail at once, with Up off — and a load of the older tree still out, landing late, rewrites neither the trail nor the folder the map is in', async () => {

@@ -238,7 +238,8 @@ async function turns(n = 30): Promise<void> {
 
 /** A draw the treemap view asked for (loadTreemap): the folder asked, and the tree and scan on screen as it asked. */
 /** `at`: the scan state the draw was made in — what the Reclaim legend a draw repaints reads (reclaimNoScanWords). */
-type Draw = { path: string; root: string | null; scanId: unknown; at: { scanning: unknown; indexScanDue: unknown; scanId: unknown; settledScanId: unknown } };
+type Draw = { path: string; root: string | null; scanId: unknown;
+  at: { scanning: unknown; indexScanDue: unknown; scanId: unknown; settledScanId: unknown; root: { path: string } | null; scanningPath: unknown } };
 
 function page(o: { route: Route; system?: unknown; search?: string; root?: unknown; settledScanId?: string | null; index?: boolean; realTreemap?: boolean; realCity?: boolean }) {
   const dom = new Dom();
@@ -339,7 +340,8 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
         const draw = { path: p, root: r ? r.path : null, scanId: state.scanId } as Draw;
         // Not enumerable: the tests that compare draws whole compare what they always did.
         Object.defineProperty(draw, 'at', { enumerable: false,
-          value: { scanning: state.scanning, indexScanDue: state.indexScanDue, scanId: state.scanId, settledScanId: state.settledScanId } });
+          value: { scanning: state.scanning, indexScanDue: state.indexScanDue, scanId: state.scanId, settledScanId: state.settledScanId,
+            root: r ? { path: r.path } : null, scanningPath: state.scanningPath } });
         draws.push(draw);
       },
       fxTmPillBeamsSync: noop, loadSavedViews: noop, refreshDock: noop, tmRejudgeQuery: () => { rejudged.push(state.scanId); }, exitHistoryState: noop,

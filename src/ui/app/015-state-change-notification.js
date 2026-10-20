@@ -104,15 +104,20 @@ function treeScanId() {
 }
 
 /**
- * Whether a scan will land behind a tree no scan stands behind yet — the saved
- * index's, while its scan runs (scanning) or is due (indexScanDue: the paint
- * returns before the scan is requested, review F3.1). What a view says there in
+ * Whether a scan of the tree on screen is coming, for a tree no scan stands
+ * behind yet — the saved index's: the scan an index paint is due
+ * (indexScanDue: set by the paint, which returns before its scan is
+ * requested, and held until the scan chrome ends, review F3.1), or a running
+ * scan of that folder (startScan names it first, scanningPath) — a rescan
+ * pressed over it, the index still being asked about. A scan of another
+ * folder is none: it replaces the tree rather than standing behind it, and
+ * "scan this folder" stays true of it (BQJ-1b). What a view says there in
  * place of what it would ask the tree's scan: that it fills in once the scan
  * finishes while one is coming, and that the tree is the saved index once
  * nothing will land (a Stop, a failure).
  */
 function treeScanComing() {
-  return state.scanning || state.indexScanDue;
+  return !!state.indexScanDue || (!!state.scanning && !!state.root && state.scanningPath === state.root.path);
 }
 
 /**

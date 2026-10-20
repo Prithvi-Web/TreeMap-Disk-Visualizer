@@ -534,8 +534,11 @@ test('review F3.3: over a saved index\'s tree no scan stands behind, the legend 
   h.why('/r/0');
   assert.deepEqual(h.toasts.slice(1), [SCAN_TO_SCORE.trim()], 'and so does the breakdown');
   // A rescan of it pressed (beginScanChrome), the index asked about: no paint yet, so nothing due — but a scan runs.
-  Object.assign(h.state, { scanning: true });
+  Object.assign(h.state, { scanning: true, root: { path: '/r' }, scanningPath: '/r' }); // startScan names the folder first
   assert.equal(h.note(), SCORED_ONCE_SCANNED, 'a scan of it starting: scoring waits on that scan again');
+  // A scan of another folder is no scan of this tree (BQJ-1b): nothing will score it, and the legend says so.
+  Object.assign(h.state, { scanningPath: '/Users/x/Desktop' });
+  assert.equal(h.note(), SCAN_TO_SCORE, 'a scan of another folder running: still what would score this one — never "starts once this folder\'s scan finishes"');
 
   // A tree its scan stands behind, its scores still to come: as before.
   const scanned = harness(() => ({ values: {} }));

@@ -484,15 +484,13 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   // no scan stands behind and none was coming — what a Stop or a failure
   // leaves (J05) — its lines said nothing will land: Disk City's "scan this
   // folder to see its city", the Reclaim legend's "scan this folder to score
-  // it", the Dashboard's lists' "scan this folder to list…". This scan makes
-  // them untrue, and nothing repainted them while the index was asked about
-  // (~400 ms on a large root) until the paint (BQJ-1b). Only a scan of that
-  // folder (startScan names it first): a scan of another one brings no scan
-  // of this tree, and "scan this folder" stays true of it until that scan's
-  // own chrome takes the Dashboard. Judged before `scanning` is set, with the
-  // app's own rule (treeScanId, treeScanComing).
-  const saidNothingWillLand = quiet && !!state.root && state.scanningPath === state.root.path
-    && !treeScanId() && !treeScanComing();
+  // it", the Dashboard's lists' "scan this folder to list…". A scan of that
+  // folder starting now makes them untrue, and nothing repainted them while
+  // the index was asked about (~400 ms on a large root) until the paint
+  // (BQJ-1b). Whether one was coming is read before `scanning` is set, with
+  // the app's own rule (treeScanComing); a scan of another folder brings
+  // none, and "scan this folder" stays true of the tree on screen.
+  const comingBefore = quiet && !!state.root && treeScanComing();
   state.scanning = true;
   state.abortScan = null; // no stream yet — Stop before the request answers has no scanId
   state.scanGen++; // this scan's identity while its request is in flight
@@ -534,7 +532,7 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
     $('scanStatus').innerHTML = message
       ? '<span>' + escapeHtml(message) + '</span>'
       : icon('refresh', 14) + '<span>Checking for changes…</span>';
-    if (saidNothingWillLand) {
+    if (state.root && !comingBefore && !treeScanId() && treeScanComing()) {
       // Said again, as loading: the lists as on their way, and the view on
       // screen re-entered — its lines read the scan coming now. A Stop in
       // this window says the saved index again (stopScan re-enters it).

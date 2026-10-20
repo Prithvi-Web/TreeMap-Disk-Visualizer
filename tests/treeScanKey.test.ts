@@ -102,6 +102,11 @@ test('treeScanId names the scan behind the tree on screen through a rescan, a la
   assert.equal(treeScanComing(), false, 'and none is coming');
   Object.assign(state, { scanning: false, indexScanDue: true });
   assert.equal(treeScanComing(), true, 'the index paint, its scan due but not yet requested, has one coming too');
+  // A scan pressed over the saved index's tree before any paint (the index asked about): coming only if it is a scan of that tree.
+  Object.assign(state, { scanning: true, indexScanDue: false, scanId: null, root: TREE, scanningPath: TREE.path });
+  assert.equal(treeScanComing(), true, 'a scan of the folder on screen is coming for its tree');
+  state.scanningPath = '/Users/x/Desktop';
+  assert.equal(treeScanComing(), false, 'a scan of another folder is no scan of this tree: it replaces it, and "scan this folder" stays true of it');
 });
 
 /* ───────────────────────────── a stub DOM and the page ───────────────────────────── */
