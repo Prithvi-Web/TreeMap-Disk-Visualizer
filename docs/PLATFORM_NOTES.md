@@ -629,12 +629,14 @@ owns its space outright), and the Windows mapper says so where it does it.
 
 - **A filename can legitimately end in `" (deleted)"`.** Trusting the kernel's
   suffix blindly reports a live file as reclaimable and invites the user to kill
-  the process holding it. The stripped path is confirmed against the inode
-  behind the descriptor; when the descriptor cannot be stat'ed at all, the code
-  stays silent rather than claiming something unverified. The open-file guard
-  reads the suffix the same way: the descriptor's own inode at the printed name
-  means the text is the file's name, so a live file named so, held open, is
-  reported in use rather than skipped as an unlinked one.
+  the process holding it. What is at the printed name — the stripped path with
+  `" (deleted)"` put back — is confirmed against the inode behind the
+  descriptor: the descriptor's own inode there means the text is the file's own
+  name, and so does a file there when the descriptor cannot be stat'ed at all.
+  A printed name TreeMap may not look at is counted as not checked, never
+  claimed. The open-file guard reads the suffix the same way, so a live file
+  named so, held open, is reported in use rather than skipped as an unlinked
+  one, and so is one whose printed name it may not look at.
 - **`/proc` is a live view.** ENOENT while walking it is the normal case, not an
   error, and never aborts the pass.
 - **Concurrency is read from `/sys/block/<dev>/queue/rotational`,** not guessed.

@@ -249,12 +249,19 @@ export class LinuxProvider extends BaseProvider {
   /** Where the held-space pass reads /proc: a field so a test can point the provider at a fixture tree. */
   protected procRoot = '/proc';
 
+  /**
+   * The stat the held-space pass looks through: a field so a test can answer as a real /proc's descriptor
+   * does — the open file itself, whatever is at its printed name — which a fixture's links cannot (the BQL-a
+   * review, F3.4).
+   */
+  protected heldSpaceStatOf: (p: string) => Promise<{ ino: number; size: number }> = (p) => fsp.stat(p);
+
   override async getZombieHandles(): Promise<ZombieHandleInfo[]> {
-    return zombieHandles(this.procRoot);
+    return zombieHandles(this.procRoot, this.heldSpaceStatOf);
   }
 
   override async getZombieHandleScan(): Promise<ZombieHandleScan> {
-    return zombieHandleScan(this.procRoot);
+    return zombieHandleScan(this.procRoot, this.heldSpaceStatOf);
   }
 
   /* ---------------- Sizing ---------------- */

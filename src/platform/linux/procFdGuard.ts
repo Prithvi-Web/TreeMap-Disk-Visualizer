@@ -1,7 +1,7 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
 import type { OpenHandleInfo, ZombieHandleInfo, ZombieHandleScan } from '../types';
-import { meansAbsent } from '../../utils/errno';
+import { meansAbsent, meansGone } from '../../utils/errno';
 
 /**
  * Open-handle (B2) and zombie-handle (B5) detection on Linux, straight from
@@ -14,16 +14,18 @@ import { meansAbsent } from '../../utils/errno';
  * set costs one pass over /proc rather than spawning lsof.
  *
  * The kernel appends ` (deleted)` to the link target of an unlinked inode.
- * Unlike macOS (see ../macos/lsofGuard.ts, where no such marker exists) this is
- * authoritative, so B5 on Linux reads it directly rather than comparing inodes.
+ * Unlike macOS (see ../macos/lsofGuard.ts, where no such marker exists) B5 on
+ * Linux starts from that marker — but a live file's own name can end the same
+ * way, so the marker is read together with the inodes (trap 1).
  *
  * ── Two traps this handles ──
  *
  * 1. **A filename can legitimately end in " (deleted)".** Trusting the suffix
  *    blindly would report a perfectly live file as reclaimable space. The
- *    stripped path is therefore confirmed against the inode behind the
- *    descriptor: if `/proc/<pid>/fd/<n>` still stats to the same inode as the
- *    path on disk, it is not deleted, whatever its name says.
+ *    printed name — the stripped path with " (deleted)" put back — is therefore
+ *    confirmed against the inode behind the descriptor: if `/proc/<pid>/fd/<n>`
+ *    stats to the same inode as the file at the printed name, it is not
+ *    deleted, whatever its name says (`readPrintedName`, both passes).
  *
  * 2. **Processes disappear mid-scan.** /proc is a live view, so ENOENT while
  *    walking it is the normal case, not an error, and never aborts the pass.
@@ -235,25 +237,43 @@ export function openFilesUnreadReason(n: number): string {
   return `TreeMap could not read which files ${String(n)} ${one ? 'program has' : 'programs have'} open — a program can keep them even from the account it runs as, as ssh-agent does — so a file ${one ? 'it holds' : 'they hold'} open may be in use without being listed.`;
 }
 
+type StatOf = (p: string) => Promise<{ ino: number }>;
+
+/**
+ * What the printed name says of a record the kernel marked " (deleted)" — trap 1, decided the same way by both
+ * passes (the BQL-a review, F2.4, F3.2, F3.4). The kernel prints an unlinked file's name with " (deleted)"
+ * after it, and a live file whose own name ends that way the same, so the text alone cannot tell them apart;
+ * what is at the printed name (the stripped path with " (deleted)" put back) can:
+ *   - 'name': the descriptor's own inode is there — or the descriptor cannot be stat'ed and a file is there —
+ *     so the text is a live file's own name;
+ *   - 'marker': nothing is there (no such file, or a name the kernel will never resolve, such as one too long
+ *     to be there), or another inode is: the kernel's marker of an unlinked file;
+ *   - 'unknown': the look failed otherwise (refused, a failing drive): whether a live file is there cannot be
+ *     said, and a refused look is no proof the name is free.
+ * `fdIno` gives the descriptor's inode, asked only once a file is at the printed name.
+ */
+async function readPrintedName(rec: ProcFdRecord, statOf: StatOf, fdIno: () => Promise<number | null>): Promise<'name' | 'marker' | 'unknown'> {
+  let there: number;
+  try {
+    there = (await statOf(rec.path + DELETED_SUFFIX)).ino;
+  } catch (err) {
+    return meansGone(err) ? 'marker' : 'unknown';
+  }
+  const held = await fdIno();
+  return held === null || held === there ? 'name' : 'marker';
+}
+
 /**
  * The records, each whose " (deleted)" is a live file's own name read back as that name (the BQL-a review,
- * F2.4): the kernel prints an unlinked file's name with " (deleted)" after it, and a live file whose name
- * ends that way the same, so the open-file guard skipped the live one and trashing it raised no warning.
- * Told apart as the held-space pass's Trap 1 does: the descriptor's own inode at the printed name means the
- * text is the file's name. One whose descriptor cannot be stat'ed, with a file at the printed name, is taken
- * at its name too — a warning more than needed, never one missed. Nothing at the printed name: the marker.
+ * F2.4): the open-file guard skipped the live one, and trashing it raised no warning. Decided by what is at
+ * the printed name (`readPrintedName`); one whose printed name could not be looked at is taken at its name
+ * too (F3.2) — a warning more than needed, never one missed.
  */
-async function withNamesAsPrinted(
-  records: readonly ProcFdRecord[],
-  statOf: (p: string) => Promise<{ ino: number }> = (p) => fsp.stat(p),
-): Promise<ProcFdRecord[]> {
+async function withNamesAsPrinted(records: readonly ProcFdRecord[], statOf: StatOf = (p) => fsp.stat(p)): Promise<ProcFdRecord[]> {
   return Promise.all(records.map(async (rec) => {
     if (!rec.markedDeleted) return rec;
-    const printed = rec.path + DELETED_SUFFIX;
-    const there = await statOf(printed).then((st) => st.ino, () => null);
-    if (there === null) return rec;
-    const held = await statOf(rec.fdPath).then((st) => st.ino, () => null);
-    return held === null || held === there ? { ...rec, path: printed, markedDeleted: false } : rec;
+    const read = await readPrintedName(rec, statOf, () => statOf(rec.fdPath).then((st) => st.ino, () => null));
+    return read === 'marker' ? rec : { ...rec, path: rec.path + DELETED_SUFFIX, markedDeleted: false };
   }));
 }
 
@@ -365,9 +385,22 @@ export async function zombieHandleScan(
       /* the process exited mid-pass — handled below, without guessing */
     }
 
-    // What is at that path now: its inode, 'gone' (no such file), or 'unknown'
-    // when TreeMap could not look. Permission denied says nothing about whether
-    // the file is still there (QA D17), so an unknown is never claimed.
+    // Trap 1: a live file whose own name ends in " (deleted)" is printed as the kernel prints a deleted one,
+    // so what is at the printed name decides, as it does for the open-file guard (the BQL-a review, F3.4:
+    // this pass stat'ed only the stripped path, so a live "notes (deleted)" held open was listed as a deleted
+    // "notes" still holding space, its program offered a Restart). A printed name TreeMap could not look at
+    // may be that live file: not checked, never claimed (QA D17).
+    const printed = await readPrintedName(rec, statOf, () => Promise.resolve(ino));
+    if (printed === 'name') continue;
+    if (printed === 'unknown') {
+      // Counted only while its descriptor still answers: one that went away mid-pass holds nothing now.
+      if (ino !== null) undecided.add(`${String(ino)}\0${rec.path}`);
+      continue;
+    }
+
+    // What is at the stripped path now: its inode, 'gone' (no such file), or
+    // 'unknown' when TreeMap could not look. Permission denied says nothing about
+    // whether the file is still there (QA D17), so an unknown is never claimed.
     const now = await statOf(rec.path).then(
       (st) => st.ino,
       (err: unknown) => (meansAbsent(err) ? 'gone' as const : 'unknown' as const),
@@ -378,17 +411,16 @@ export async function zombieHandleScan(
       continue;
     }
 
-    // Trap 1: a file genuinely named "notes (deleted)" is not a zombie.
     if (ino !== null) {
-      // Authoritative: the descriptor's inode against whatever is at that path
-      // now. Same inode means the suffix was part of the name.
+      // The descriptor's own inode back at its path: the file was linked there
+      // again, and holds no space apart from it.
       if (now === ino) continue;
     } else {
       // The descriptor could not be stat'ed, so the inode comparison is
       // unavailable. Claiming a zombie here would be asserting something
       // unverified — §10's "reporting a number you can't verify". Fall back to
-      // the weaker but honest test: if a file still exists at that path, assume
-      // the name simply ends in " (deleted)" and stay quiet.
+      // the weaker but honest test: if a file is at that path, it may be the
+      // same file linked there again, so stay quiet.
       if (now !== 'gone') continue;
     }
 

@@ -777,7 +777,18 @@ test('PLATFORM_NOTES says a name ending in "(deleted)" is a file\'s own name on 
   const notes = joinedLines(read('docs', 'PLATFORM_NOTES.md'));
   assert.doesNotMatch(notes, /marker is still honoured/, 'macOS honours no marker');
   assert.match(notes, /So a name ending in `\(deleted\)` is read whole, as the file's own name: taken for Linux's marker, a live `report \(deleted\)` held open was listed as a deleted file still holding space, and the open-file guard skipped it\./);
-  assert.match(notes, /The open-file guard reads the suffix the same way: the descriptor's own inode at the printed name means the text is the file's name, so a live file named so, held open, is reported in use rather than skipped as an unlinked one\./);
+  assert.match(notes, /The open-file guard reads the suffix the same way, so a live file named so, held open, is reported in use rather than skipped as an unlinked one, and so is one whose printed name it may not look at\./);
+});
+
+test('PLATFORM_NOTES\' Linux trap 1 says what the held-space pass confirms — what is at the printed name, as procFdGuard reads it for both passes — never that it confirms the stripped path (BQL-a review F3.4)', () => {
+  // The held-space pass stat'ed only the stripped path, so a live "notes (deleted)" held open was listed as a
+  // deleted "notes", while the notes said "The stripped path is confirmed against the inode behind the descriptor".
+  const notes = joinedLines(read('docs', 'PLATFORM_NOTES.md'));
+  assert.doesNotMatch(notes, /The stripped path is confirmed against the inode/, 'the stripped path alone cannot tell a live "notes (deleted)" from a deleted "notes"');
+  assert.match(notes, /What is at the printed name — the stripped path with `" \(deleted\)"` put back — is confirmed against the inode behind the descriptor: the descriptor's own inode there means the text is the file's own name, and so does a file there when the descriptor cannot be stat'ed at all\. A printed name TreeMap may not look at is counted as not checked, never claimed\./);
+  const guard = read('src', 'platform', 'linux', 'procFdGuard.ts');
+  assert.match(guard, /const printed = await readPrintedName\(rec, statOf, \(\) => Promise\.resolve\(ino\)\);\n\s+if \(printed === 'name'\) continue;/, 'the held-space pass reads the printed name');
+  assert.match(guard, /const read = await readPrintedName\(rec, statOf,/, 'and the open-file guard the same way');
 });
 
 test('PLATFORM_NOTES\' macOS zombie-handles row says what the probe does not see and that what it cannot decide is counted, with the caret bound lsofGuard keeps (BQL item 12)', () => {

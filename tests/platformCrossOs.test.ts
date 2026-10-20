@@ -152,21 +152,58 @@ test('linux: an unlinked inode blocks no delete, so it is not an open-handle con
   }
 });
 
-test('linux: a real file whose NAME ends in " (deleted)" is not reported as a zombie', { skip: WIN_NO_PROC_FIXTURE }, async () => {
+test('linux: a live file whose own NAME ends in " (deleted)", held open, is not reported as a zombie (BQL-a review F3.4)', { skip: WIN_NO_PROC_FIXTURE }, async () => {
   // The trap: trusting the kernel's suffix blindly would report a live file as
-  // reclaimable space and invite the user to kill the process holding it.
+  // reclaimable space and invite the user to kill the process holding it. The
+  // kernel prints a live file's /proc/<pid>/fd link as its own path, so fd/3 reads
+  // back ".../notes (deleted)" — the text it prints for a deleted ".../notes" too.
+  // (This fixture once pointed at "notes (deleted) (deleted)", a text the kernel
+  // never prints for a live file, and passed while the pass stat'ed only the
+  // stripped path, the BQL-a review F3.4.)
   const root = await mkTmp();
   const data = await mkTmp();
   try {
     const tricky = path.join(data, 'notes (deleted)');
     await fsp.writeFile(tricky, 'still very much alive');
-    await fakeProc(root, [{ pid: 5, comm: 'editor', fds: [{ name: '3', target: `${tricky} (deleted)` }] }]);
+    await fakeProc(root, [{ pid: 5, comm: 'editor', fds: [{ name: '3', target: tricky }] }]);
+    assert.deepEqual((await readOpenDescriptors(root)).map((r) => [r.path, r.markedDeleted]), [[path.join(data, 'notes'), true]],
+      'control: the walk reads it as the kernel\'s marker');
 
-    const zombies = await zombieHandles(root);
-    assert.deepEqual(zombies, [], 'the file still exists at that path with that inode, so it is not a zombie');
+    const scan = await zombieHandleScan(root);
+    assert.deepEqual([scan.handles, scan.undecided], [[], 0], 'the descriptor\'s own inode is at the printed name: a live file named so, not a deleted file holding space');
   } finally {
     await fsp.rm(root, { recursive: true, force: true });
     await fsp.rm(data, { recursive: true, force: true });
+  }
+});
+
+test('linux: the held-space pass reads the printed name first, as the open-file guard does — the descriptor\'s inode there, or a file there when the descriptor cannot be stat\'ed, is a live file; a printed name it may not look at is counted as not checked; another file there, nothing there, or a name too long to be there leaves the kernel\'s marker (BQL-a review F3.4)', { skip: WIN_NO_PROC_FIXTURE }, async () => {
+  // A real descriptor stats the open file itself, whatever is at the printed name; a fixture of real links
+  // cannot give that (its link leads to whatever is at the printed name), so the stat is stood in for.
+  const root = await mkTmp();
+  try {
+    const stripped = '/tm-no-such-dir/notes';
+    const printed = `${stripped} (deleted)`;
+    await fakeProc(root, [{ pid: 5, comm: 'editor', fds: [{ name: '3', target: printed }] }]);
+    const fd = path.join(root, '5', 'fd', '3');
+    const fail = (code: string) => Object.assign(new Error(code), { code });
+    const statsBy = (fdAnswer: number | string, printedAnswer: number | string) => async (p: string): Promise<{ ino: number; size: number }> => {
+      const answer = p === fd ? fdAnswer : p === printed ? printedAnswer : 'ENOENT'; // nothing at the stripped path
+      if (typeof answer === 'string') throw fail(answer);
+      return { ino: answer, size: 5000 };
+    };
+    const read = async (fdAnswer: number | string, printedAnswer: number | string) => {
+      const scan = await zombieHandleScan(root, statsBy(fdAnswer, printedAnswer));
+      return [scan.handles.map((h) => h.path), scan.undecided];
+    };
+    assert.deepEqual(await read(7, 7), [[], 0], 'the descriptor\'s own inode at the printed name: a live file named so — never a deleted file holding space');
+    assert.deepEqual(await read('ENOENT', 7), [[], 0], 'a descriptor it cannot stat, with a file at the printed name: taken as that live file, never claimed');
+    assert.deepEqual(await read(7, 'EACCES'), [[], 1], 'a printed name it may not look at: counted as not checked, never claimed');
+    assert.deepEqual(await read(7, 8), [[stripped], 0], 'another file at the printed name: a deleted "notes" still holding space');
+    assert.deepEqual(await read(7, 'ENOENT'), [[stripped], 0], 'nothing at the printed name: the kernel\'s marker');
+    assert.deepEqual(await read(7, 'ENAMETOOLONG'), [[stripped], 0], 'a printed name too long to be there: the kernel\'s marker too');
+  } finally {
+    await fsp.rm(root, { recursive: true, force: true });
   }
 });
 
@@ -184,21 +221,24 @@ test('linux: a genuinely unlinked inode IS reported as a zombie', { skip: WIN_NO
 });
 
 test('linux: a zombie carries the inode its descriptor points at (QA D17)', { skip: WIN_NO_PROC_FIXTURE }, async () => {
-  // The descriptor still resolves (the fixture's target exists under its "(deleted)"
-  // name) while nothing is at the original path: the inode is what lets programs
-  // holding the same file be counted once.
+  // The descriptor still resolves — a real one stats the unlinked file itself — while
+  // nothing is at the original path, nor at the printed name: the inode is what lets
+  // programs holding the same file be counted once. A fixture link would lead to
+  // whatever is at the printed name, which the pass now reads as a live file named so
+  // (the BQL-a review F3.4), so the descriptor's stat is stood in for.
   const root = await mkTmp();
-  const data = await mkTmp();
   try {
-    const held = path.join(data, 'held.log (deleted)');
-    await fsp.writeFile(held, 'x'.repeat(64));
-    await fakeProc(root, [{ pid: 8, comm: 'logger', fds: [{ name: '3', target: held }] }]);
-    const zombies = await zombieHandles(root);
+    await fakeProc(root, [{ pid: 8, comm: 'logger', fds: [{ name: '3', target: '/tm-no-such-dir/held.log (deleted)' }] }]);
+    const fd = path.join(root, '8', 'fd', '3');
+    const statOf = async (p: string): Promise<{ ino: number; size: number }> => {
+      if (p === fd) return { ino: 4242, size: 64 };
+      throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+    };
+    const zombies = await zombieHandles(root, statOf);
     assert.equal(zombies.length, 1, 'nothing is at held.log, so it is a zombie');
-    assert.equal(zombies[0].ino, (await fsp.stat(held)).ino, 'with the inode the descriptor points at');
+    assert.deepEqual([zombies[0].ino, zombies[0].bytes], [4242, 64], 'with the inode and size the descriptor points at');
   } finally {
     await fsp.rm(root, { recursive: true, force: true });
-    await fsp.rm(data, { recursive: true, force: true });
   }
 });
 
@@ -259,7 +299,7 @@ test('linux: the probe counts each held file it could not decide — the descrip
       if (p === path.join(root, '9', 'fd', '5')) throw fail('ENOENT'); // the program closed it mid-pass
       if (p === path.join(root, '9', 'fd', '6')) return { ino: 7, size: 20 };
       if (p.startsWith(root)) return { ino: 5, size: 10 }; // every descriptor on held.log
-      if (p === '/var/log/gone.log') throw fail('ENOENT');
+      if (p.startsWith('/var/log/gone.log')) throw fail('ENOENT'); // nothing at its path, nor at its printed name
       throw fail('EACCES');
     };
     const scan = await zombieHandleScan(root, statOf);
@@ -361,37 +401,38 @@ test('linux: a program whose open files were refused and whose status then answe
 test('linux: the provider hands on the pass\'s count — a deleted file still held whose path TreeMap may not look at is counted as not checked (BQL-a review F1.6)', {
   skip: WIN_NO_PROC_FIXTURE || (process.getuid?.() === 0 && 'root can look into any folder'),
 }, async () => {
-  // The descriptor answers (it stats the open file itself) while the path refuses: here the path is a link
-  // into a folder TreeMap may not enter, the case a real /proc gives under a root-only folder.
+  // The descriptor answers (it stats the open file itself) while the path refuses: the case a real /proc gives
+  // under a root-only folder. A real descriptor stats the open file whatever is at its printed name, which a
+  // fixture of real links cannot give — its link leads to the printed name, which the pass reads as a live file
+  // named so (the BQL-a review F3.4) — so the provider's stat is stood in for.
   const root = await mkTmp();
-  const data = await mkTmp();
-  const locked = path.join(data, 'locked');
+  const held = '/tm-no-such-dir/locked/held.log';
+  const gonePath = '/tm-no-such-dir/open/gone.log'; // and one with nothing at its path
   try {
-    await fsp.mkdir(path.join(data, 'open'));
-    await fsp.writeFile(path.join(data, 'open', 'held.log (deleted)'), 'the open file');
-    await fsp.writeFile(path.join(data, 'open', 'gone.log (deleted)'), 'twelve bytes'); // and one with nothing at its path
-    await fsp.mkdir(locked);
-    await fsp.symlink(path.join(locked, 'x'), path.join(data, 'open', 'held.log'));
     await fakeProc(root, [{ pid: 9, comm: 'daemon', fds: [
-      { name: '3', target: `${path.join(data, 'open', 'held.log')} (deleted)` },
-      { name: '4', target: `${path.join(data, 'open', 'gone.log')} (deleted)` },
+      { name: '3', target: `${held} (deleted)` },
+      { name: '4', target: `${gonePath} (deleted)` },
     ] }, { pid: 10, comm: 'ssh-agent', fds: [] }]);
     const me = process.getuid?.() ?? 0;
     await fsp.writeFile(path.join(root, '10', 'status'), `Name:\tssh-agent\nUid:\t${String(me)}\t${String(me)}\t${String(me)}\t${String(me)}\n`);
     await fsp.chmod(path.join(root, '10', 'fd'), 0o000); // a program of this account whose open files may not be read
-    await fsp.chmod(locked, 0o000);
+    const fail = (code: string) => Object.assign(new Error(code), { code });
+    const statOf = async (p: string): Promise<{ ino: number; size: number }> => {
+      if (p === path.join(root, '9', 'fd', '3')) return { ino: 3, size: 13 };
+      if (p === path.join(root, '9', 'fd', '4')) return { ino: 4, size: 12 };
+      if (p.startsWith('/tm-no-such-dir/locked/')) throw fail('EACCES'); // a folder TreeMap may not enter
+      throw fail('ENOENT');
+    };
     const provider = new LinuxProvider();
-    (provider as unknown as { procRoot: string }).procRoot = root;
+    Object.assign(provider as unknown as { procRoot: string; heldSpaceStatOf: typeof statOf }, { procRoot: root, heldSpaceStatOf: statOf });
     const scan = await provider.getZombieHandleScan();
-    const gone = [[9, path.join(data, 'open', 'gone.log'), 12]];
+    const gone = [[9, gonePath, 12]];
     assert.deepEqual([scan.handles.map((h) => [h.pid, h.path, h.bytes]), scan.undecided], [gone, 1], 'the gone file claimed; the other not, and counted');
     assert.equal(scan.unreadablePrograms, 1, 'and the program it could not read, as the account TreeMap runs as (BQL-a review F1.4)');
     assert.deepEqual((await provider.getZombieHandles()).map((h) => [h.pid, h.path, h.bytes]), gone, 'the bare list reads the same /proc');
   } finally {
-    await fsp.chmod(locked, 0o700).catch(() => undefined);
     await fsp.chmod(path.join(root, '10', 'fd'), 0o700).catch(() => undefined);
     await fsp.rm(root, { recursive: true, force: true });
-    await fsp.rm(data, { recursive: true, force: true });
   }
 });
 
@@ -506,6 +547,36 @@ test('linux: the open-file guard takes the kernel\'s " (deleted)" for a name onl
     assert.deepEqual(await pids(statsBy(7, 8)), [], 'another inode there: a deleted "report", and another file named "report (deleted)"');
     assert.deepEqual(await pids(statsBy('EACCES', 8)), [9], 'a descriptor it cannot stat, with a file at the printed name: warned');
     assert.deepEqual(await pids(statsBy(7, 'ENOENT')), [], 'nothing at the printed name: the kernel\'s marker');
+  } finally {
+    await fsp.rm(root, { recursive: true, force: true });
+  }
+});
+
+/*
+ * The BQL-a review, F3.2: the guard read every failed look at the printed name as "nothing there", so a live
+ * "report (deleted)" in a folder TreeMap may not search (EACCES) was taken for the kernel's marker, skipped,
+ * and trashing the folder holding it raised no warning.
+ */
+test('linux: the open-file guard takes a record at its printed name when what is there cannot be looked at — a refused look is no proof the name is free — while nothing there, or a name too long to be there, is the kernel\'s marker (BQL-a review F3.2)', { skip: WIN_NO_PROC_FIXTURE }, async () => {
+  const root = await mkTmp();
+  try {
+    const folder = '/tm-no-such-dir/proj';
+    const printed = `${folder}/locked/report (deleted)`;
+    await fakeProc(root, [{ pid: 9, comm: 'python3', fds: [{ name: '3', target: printed }] }]);
+    const fd = path.join(root, '9', 'fd', '3');
+    const fail = (code: string) => Object.assign(new Error(code), { code });
+    const statsBy = (printedAnswer: number | string) => async (p: string): Promise<{ ino: number }> => {
+      const answer = p === fd ? 7 : p === printed ? printedAnswer : 'ENOENT';
+      if (typeof answer === 'string') throw fail(answer);
+      return { ino: answer };
+    };
+    const holders = async (printedAnswer: number | string) =>
+      (await openHandlesFor([folder], root, statsBy(printedAnswer))).map((h) => [h.pid, h.openPath]);
+    assert.deepEqual(await holders(7), [[9, printed]], 'control: the descriptor\'s own inode at the printed name');
+    assert.deepEqual(await holders('EACCES'), [[9, printed]], 'a printed name it may not look at: warned — a warning more than needed, never one missed');
+    assert.deepEqual(await holders('EIO'), [[9, printed]], 'nor one whose drive failed the look');
+    assert.deepEqual(await holders('ENOENT'), [], 'nothing at the printed name: the kernel\'s marker, an unlinked file that blocks nothing');
+    assert.deepEqual(await holders('ENAMETOOLONG'), [], 'a printed name too long to be there: the kernel\'s marker too');
   } finally {
     await fsp.rm(root, { recursive: true, force: true });
   }
