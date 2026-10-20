@@ -609,6 +609,10 @@ const state = {
   // just stopped or failed with nothing on screen (noteLastFolder) —
   // { path, size, at, outcome, reason, offered }. renderStartChoices paints it.
   lastFolder: null,
+  // The folder the history names (restoreLastSession), in lastFolder's shape:
+  // still offered after another folder's scan is stopped or fails, which takes
+  // lastFolder (the owner, 20 Oct 2026; seventh browser pass J03).
+  historyFolder: null,
   // The folder the running or last started scan is of (startScan,
   // startCloudScan): a Stop or a failure names it on the start screen.
   scanningPath: null,

@@ -1235,7 +1235,12 @@ test('a folder that cannot be opened, or whose Stop the server would not confirm
   await unopenable.startScan('/Users/x/Documents');
   await turns();
   await pressStop(unopenable);
-  assert.equal(unopenable.choices()[0], 'Scan Documents again', 'a scan of it taken since: offered again');
+  // It is the history's folder: its last finished scan's size and date stay with it (review F1.11, J03).
+  assert.equal(unopenable.choices()[0], `Scan Documents again ${formatBytes(5)} · ${formatDate(1_700_000_000_000)}`, 'a scan of it taken since: offered again');
+  await startFrom(unopenable, /^Desktop$/);
+  await pressStop(unopenable);
+  assert.equal(unopenable.choices()[1], `Scan Documents again ${formatBytes(5)} · ${formatDate(1_700_000_000_000)}`,
+    'and, the history\'s folder openable now, it stays offered beside another folder\'s Stop (J03)');
 });
 
 test('a refused cancel that answers after another folder\'s Stop keeps its own folder offered nowhere, while the start screen goes on naming the newer Stop (review F3.1)', async () => {
@@ -1598,6 +1603,81 @@ test('J02: a Stop that lands after the scan has finished says so and shows the f
   assert.equal(again.$('scanStatus').innerHTML, said, 'the running scan\'s status line is its own');
   assert.equal(again.$('stopAnnounce').textContent, '', 'and nothing announces a Stop over it');
   assert.equal(again.$('emptyState').style.display, 'none', 'nor puts the start screen back');
+});
+
+test('J03 (the owner, 20 Oct 2026): after another folder\'s scan is stopped or fails, the history\'s folder stays on the start screen — "Scan Mail again" beside the stopped or failed one, the stopped one first, and never a folder the server refused', async () => {
+  // Seventh browser pass, J03: relaunch with Mail in the history, then
+  // Desktop, then Stop — the choices became "Scan Desktop again, Documents, …"
+  // with no Mail. After 404/403 failures no "again" choice was left at all.
+  // The owner decided on 20 Oct 2026: keep the history folder offered.
+  const mailAgain = `Scan Mail again ${formatBytes(37_700_000)} · ${formatDate(MAIL_HISTORY.latestAt)}`;
+  const h = page({ route: server({ roots: [MAIL_HISTORY], scanAnswer: (n) => (n === 2 ? { status: 500, body: { error: 'Internal server error', code: 'INTERNAL' } }
+    : n === 3 ? { status: 404, body: { error: 'Path does not exist', code: 'PATH_NOT_FOUND' } } : { status: 202, body: { scanId: `scan-${n}`, incremental: false } }) }) });
+  await boot(h);
+  assert.deepEqual(h.choices(), [mailAgain, 'Desktop', 'Documents', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'], 'control: the history\'s folder first');
+  await startFrom(h, /^Desktop$/);
+  await pressStop(h);
+  assert.deepEqual(h.choices(), ['Scan Desktop again', mailAgain, 'Documents', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'],
+    'a Stop: the stopped folder first, the history\'s folder kept with its size and date');
+  assert.equal(h.dom.activeElement, h.$('startAgainBtn'), 'focus on the stopped one');
+  assert.equal(h.$('startAgainBtn').textContent, 'Scan Desktop again', 'control: that is the button focused');
+  assert.equal(h.$('startChoices').children.filter((b) => b.id === 'startAgainBtn').length, 1, 'and only it carries the id focus lands by');
+  assert.equal(h.choice(/^Scan Mail again/).title, MAIL, 'the history\'s choice names its path');
+  await startFrom(h, /^Documents$/); // answered 500
+  assert.deepEqual(h.choices(), ['Scan Documents again', mailAgain, 'Desktop', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'], 'a failure: the same');
+  await startFrom(h, /^Downloads$/); // answered 404: refused
+  assert.deepEqual(h.choices(), [mailAgain, 'Desktop', 'Documents', 'Home folder', 'Macintosh HD Whole drive'],
+    'a folder the server refused is offered nowhere — and the history\'s folder is still there');
+  assert.equal(h.dom.activeElement, h.$('emptyBrowseBtn'), 'control: focus on Choose a folder…, the refused folder having no "again"');
+  const before = h.posts.length;
+  h.choice(/^Scan Mail again/).click();
+  await turns();
+  assert.equal(h.posts.length, before + 1, 'the history\'s choice scans');
+  assert.equal(h.posts.at(-1)!.path, MAIL, 'its folder');
+  await pressStop(h);
+  assert.deepEqual(h.choices(), [mailAgain, 'Desktop', 'Documents', 'Home folder', 'Macintosh HD Whole drive'],
+    'the history\'s folder stopped: one "Scan Mail again", first, with its size and date');
+  assert.equal(h.dom.activeElement, h.$('startAgainBtn'), 'with focus on it');
+
+  // The history answering after a Stop: its folder joins the start screen second, the stopped one keeping its place and focus.
+  let history: (a: { body: unknown }) => void = () => {};
+  const base = server({ roots: [MAIL_HISTORY] });
+  const slow = page({ route: (m, url, b) => (url === '/api/snapshots' ? new Promise((r) => { history = r; }) : base(m, url, b)) });
+  slow.switchView('dashboard');
+  const restoring = slow.restoreLastSession();
+  await turns();
+  assert.deepEqual(slow.choices(), ['Desktop', 'Documents', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'], 'control: the history has not answered');
+  await startFrom(slow, /^Desktop$/);
+  await pressStop(slow);
+  history({ body: { roots: [MAIL_HISTORY] } });
+  await restoring;
+  await turns();
+  assert.deepEqual(slow.choices(), ['Scan Desktop again', mailAgain, 'Documents', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'],
+    'the history answering after the Stop: its folder second, the stopped one first');
+  assert.equal(slow.$('startLast').textContent, 'You stopped the scan of /Users/x/Desktop.', 'the line still names the Stop');
+  assert.equal(slow.dom.activeElement, slow.$('startAgainBtn'), 'and focus stays on "Scan Desktop again"');
+
+  // While the rules are asked about the history's folder, it waits, as every folder does: only the folder just stopped is offered at once.
+  let rules: (a: Answer) => void = () => {};
+  const judge = server({ roots: [MAIL_HISTORY] });
+  const asking = page({ route: server({ roots: [MAIL_HISTORY], policyAnswer: (asked) => (asked.includes(MAIL)
+    ? new Promise((r) => { rules = r; }) : judge('GET', '/api/policy?' + asked.map((x) => 'scanRoot=' + encodeURIComponent(x)).join('&'), null)!) }) });
+  await boot(asking);
+  void asking.startScan('/Users/x/Projects'); // as Choose a folder… scans it
+  await turns();
+  await pressStop(asking);
+  assert.deepEqual(asking.choices(), ['Scan Projects again', 'Desktop', 'Documents', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'],
+    'the history\'s folder is not offered before the rules have answered for it (the others were judged before the history answered)');
+  rules(await judge('GET', `/api/policy?scanRoot=${encodeURIComponent(MAIL)}`, null)!);
+  await turns();
+  assert.ok(asking.choices().includes(mailAgain), `allowed: it is offered (${asking.choices().join(' | ')})`);
+
+  // A history folder the server cannot open is offered nowhere, before or after another Stop (review F2.5).
+  const gone = page({ route: server({ roots: [MAIL_HISTORY], missing: [MAIL] }) });
+  await boot(gone);
+  await startFrom(gone, /^Desktop$/);
+  await pressStop(gone);
+  assert.deepEqual(gone.choices(), ['Scan Desktop again', 'Documents', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'], 'control: an unopenable history folder stays offered nowhere');
 });
 
 test('a scan that fails leaves no dead scan id behind, as a Stop leaves none: a failed rescan over an older tree puts back the older tree\'s scan, a failed first scan leaves none (review F2.3)', async () => {

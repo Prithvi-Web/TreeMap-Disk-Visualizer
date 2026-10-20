@@ -355,20 +355,26 @@ function startFolderName(p, drives) {
  * picker names it (browseWholeDrives). A folder is offered once, where it
  * comes first.
  */
-function startChoiceList(sys, last, drives, refused = []) {
+function startChoiceList(sys, last, drives, refused = [], history = null) {
   const out = [];
   // A folder that answers an error is offered nowhere, under any name: every
-  // folder the server refused a scan of (`refused`), and the folder `last`
-  // names where it is not offered. "Documents" one row below "The scan of
-  // …/Documents failed: …" would only hear the same refusal (review F1.5).
+  // folder the server refused a scan of (`refused` — a history folder that
+  // cannot be opened among them, until a scan of it is taken), and the folder
+  // `last` names where it is not offered. "Documents" one row below "The scan
+  // of …/Documents failed: …" would only hear the same refusal (review F1.5).
   const skip = new Set(refused);
   if (last && last.path && !last.offered) skip.add(last.path);
   const add = (c) => { if (c.path && !skip.has(c.path) && !out.some((x) => x.path === c.path)) out.push(c); };
-  if (last && last.offered && last.path) {
-    const sized = typeof last.size === 'number' && last.at > 0;
-    add({ path: last.path, name: `Scan ${startFolderName(last.path, drives)} again`, icon: 'refresh', again: true,
-      sub: sized ? `${formatBytes(last.size)} · ${formatDate(last.at)}` : '' });
-  }
+  const again = (f, extra) => {
+    const sized = typeof f.size === 'number' && f.at > 0;
+    add({ path: f.path, name: `Scan ${startFolderName(f.path, drives)} again`, icon: 'refresh', again: true,
+      sub: sized ? `${formatBytes(f.size)} · ${formatDate(f.at)}` : '', ...extra });
+  };
+  if (last && last.offered && last.path) again(last, {});
+  // The history's folder stays offered after another folder's scan is stopped
+  // or fails — second, the stopped or failed one first (the owner, 20 Oct
+  // 2026; seventh browser pass J03). `history`: it is not where focus lands.
+  if (history && history.offered && history.path) again(history, { history: true });
   const home = sys && sys.homeDir;
   const dirs = sys && Array.isArray(sys.commonDirs) ? sys.commonDirs : [];
   for (const name of START_FOLDERS) {
@@ -422,15 +428,16 @@ function renderStartChoices() {
   // on it, while the rules are asked about it, and taken away if they refuse
   // it. Its own request, where it answered, was the rules' answer: accepted
   // (startNoteAllowed), or refused, which the start screen names (failScan).
-  const candidates = startChoiceList(sys, last, drives, state.refusedPaths);
+  const candidates = startChoiceList(sys, last, drives, state.refusedPaths, state.historyFolder);
   const verdict = (p) => startVerdicts.get(p);
-  const list = candidates.filter((c) => { const v = verdict(c.path); return v ? v.allowed : !!(c.again && retry); });
+  const list = candidates.filter((c) => { const v = verdict(c.path); return v ? v.allowed : !!(c.again && !c.history && retry); });
   const lastRefused = last && last.path && verdict(last.path) && !verdict(last.path).allowed ? verdict(last.path).error : '';
   const words = startLastLine(last, lastRefused);
   line.textContent = words;
   line.hidden = !words;
-  const html = list.map((c, i) => `<button class="btn start-choice${c.again ? ` start-again${retry ? ' start-retry' : ''}` : ''}"` +
-    `${c.again ? ' id="startAgainBtn"' : ''} data-start-ix="${i}" title="${escapeHtml(c.drive ? `${c.path} — the whole drive` : c.path)}">` +
+  // One "Scan … again" carries the id focus lands by: the last folder's, never the history's beside it (J03).
+  const html = list.map((c, i) => `<button class="btn start-choice${c.again ? ` start-again${retry && !c.history ? ' start-retry' : ''}` : ''}"` +
+    `${c.again && !c.history ? ' id="startAgainBtn"' : ''} data-start-ix="${i}" title="${escapeHtml(c.drive ? `${c.path} — the whole drive` : c.path)}">` +
     `${icon(c.icon, 16)}<span class="start-choice-txt"><span class="start-choice-nm">${escapeHtml(c.name)}</span>` +
     `${c.sub ? `<span class="start-sub">${escapeHtml(c.sub)}</span>` : ''}</span></button>`).join('');
   if (html !== startPainted) {
@@ -620,10 +627,12 @@ async function restoreLastSession() {
       // after another folder's Stop too — until a scan of it is taken (review F2.5).
       state.refusedPaths = [...(state.refusedPaths || []).filter((x) => x !== last.path), last.path];
     }
+    // Offered after another folder's scan is stopped or fails, too (J03).
+    state.historyFolder = { ...last, offered };
     // The person moved first — a scan started, or one stopped, which names its own folder.
-    if (state.root || state.scanning || state.lastFolder) return;
-    state.lastFolder = { ...last, offered };
-    renderStartChoices();
+    if (state.root || state.scanning) return;
+    if (!state.lastFolder) state.lastFolder = state.historyFolder;
+    renderStartChoices(); // a choice holding focus keeps it, on its new button
   } catch (e) {
     console.warn('[treemap] session restore skipped:', e.message);
   } finally {

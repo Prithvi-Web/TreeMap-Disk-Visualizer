@@ -381,5 +381,9 @@ test('a scan the person stopped while the restore was asking keeps its own name 
   });
   await h.run();
   assert.equal((h.state.lastFolder as { path: string }).path, '/Users/x/Desktop', 'the history does not replace it');
-  assert.equal(h.painted, 0, 'nor repaint over it');
+  // The owner, 20 Oct 2026 (seventh browser pass J03): the history's folder stays offered beside a
+  // stopped one, so the start screen is painted again to add it — second, the Stop keeping its name
+  // and its place (tests/coreScanFlow.test.ts).
+  assert.equal((h.state.historyFolder as { path: string }).path, '/Users/x/corpus', 'the history\'s folder is kept beside it');
+  assert.equal(h.painted, 1, 'and the start screen painted again to offer it');
 });
