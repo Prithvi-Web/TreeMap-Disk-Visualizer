@@ -9541,19 +9541,19 @@ async function stopScan() {
   // was being scanned, "Scan … again" first among its choices (the owner,
   // 17 Oct 2026: "a scan should work again after being stopped"). A tree
   // still on screen — a rescan stopped — stays, with its own scan behind it.
-  // What is said here is said before the cancel answers; `noted` is kept to
-  // take it back if the cancel is refused (noteStopUnconfirmed).
-  const noted = state.root ? null : noteLastFolder('stopped');
+  // While this Stop's own cancel is out, it says only that it is stopping:
+  // the scan may have finished first (seventh browser pass, J02), and then
+  // "You stopped…" would be false. stopSettled says what the answer says;
+  // `noted` is kept to take it back if the cancel is refused
+  // (noteStopUnconfirmed). A Stop with no scan id yet stopped it outright.
+  const noted = state.root ? null : noteLastFolder(scanId ? 'stopping' : 'stopped');
   // For a request this Stop ended before it answered, whose cancel is sent
   // when it does (abandonIfStopped).
   state.lastStop = { gen, noted };
 
-  // A tree left on screen with no scan behind it is the saved index's, and
-  // is said to be (J05): it stays drawn and usable, and may be out of date.
-  const indexLeft = state.root && !state.settledScanId ? `Scan stopped — showing the saved index of ${state.root.path}.` : '';
   const status = $('scanStatus');
   status.classList.remove('error'); // stopping is a choice, not a failure
-  status.innerHTML = icon('stop', 14) + '<span>' + (indexLeft ? escapeHtml(indexLeft) : 'Scan stopped by user') + '</span>';
+  status.innerHTML = icon('stop', 14) + '<span>' + escapeHtml(scanId ? 'Stopping the scan…' : stoppedWords()) + '</span>';
   restoreDashboardPanels();
   // And put the start screen back if that is where we are — over the
   // Dashboard's Stop, which held focus if it was pressed from the keyboard
@@ -9566,16 +9566,85 @@ async function stopScan() {
   focusStartScreen();
   // And said aloud: the start screen's own line, or the status line's, in a
   // live region nothing hides (review F1.14).
-  $('stopAnnounce').textContent = noted ? startLastLine(noted) : indexLeft || 'Scan stopped.';
+  $('stopAnnounce').textContent = noted ? startLastLine(noted) : scanId ? 'Stopping the scan…' : stoppedWords(true);
 
   // Stopped before POST /api/scan answered — startScanRequest abandons that scan — or before it was
   // sent, while startScan asked the index — and startScan starts none (final review F1.7).
   if (!scanId) return;
+  let answer = null;
   try {
-    await cancelScanById(scanId);
+    answer = await cancelScanById(scanId);
   } catch (e) {
-    stopNotConfirmed(e, gen, noted, stopped);
+    // 404: the record was already gone, so it is stopped (stopNotConfirmed).
+    if (e.status !== 404) { stopNotConfirmed(e, gen, noted, stopped); return; }
   }
+  stopSettled(answer, gen, noted, scanId, stopped);
+}
+
+/**
+ * What a Stop that ended a scan says once the scan is stopped: a tree left on
+ * screen with no scan behind it is the saved index's, and is said to be (J05)
+ * — it stays drawn and usable, and may be out of date. `spoken`: the live
+ * region's shorter form.
+ */
+function stoppedWords(spoken = false) {
+  if (state.root && !state.settledScanId) return `Scan stopped — showing the saved index of ${state.root.path}.`;
+  return spoken ? 'Scan stopped.' : 'Scan stopped by user';
+}
+
+/**
+ * The answer to a Stop's own cancel, `answer` (null for a 404: gone, so
+ * stopped). Unless a scan has begun since `gen`, the generation the Stop
+ * ended — which then owns the screen — it says what the answer says (seventh
+ * browser pass, J02): `{ cancelled: false, status: 'complete' }` is a scan
+ * that finished before Stop reached it, which the server kept, and it is
+ * shown (showFinishedAfterStop); anything else is stopped, and "Stopping…"
+ * becomes "You stopped…" on the start screen, or the status line's words.
+ */
+function stopSettled(answer, gen, noted, scanId, path) {
+  if (state.scanGen !== gen) return;
+  if (answer && answer.cancelled === false && answer.status === 'complete') { void showFinishedAfterStop(scanId, gen, noted, path); return; }
+  const status = $('scanStatus');
+  status.innerHTML = icon('stop', 14) + '<span>' + escapeHtml(stoppedWords()) + '</span>';
+  if (!noted) { $('stopAnnounce').textContent = stoppedWords(true); return; }
+  if (state.lastFolder === noted) state.lastFolder = { ...noted, outcome: 'stopped' };
+  $('stopAnnounce').textContent = startLastLine(state.lastFolder);
+  withFocusKept(() => { renderStartChoices(); });
+}
+
+/**
+ * A scan that finished before Stop reached it (J02): the server kept it, so
+ * it is shown — its counters and its tree, as its completion would have
+ * painted them — and it is said that it had finished. Where it cannot be
+ * read, the start screen says that it finished and could not be shown, and
+ * offers it again. Nothing is shown over a scan begun since.
+ */
+async function showFinishedAfterStop(scanId, gen, noted, path) {
+  let stats = null;
+  let result = null;
+  let why = '';
+  try {
+    const body = await api(`/api/scan/${scanId}/stats`);
+    if (body) { const { scanId: _scanId, status: _status, ...rest } = body; stats = rest; }
+    result = await api(`/api/scan/${scanId}/result`);
+  } catch (e) {
+    why = (e && e.message) || '';
+  }
+  if (state.scanGen !== gen) return;
+  if (!result || result.status !== 'complete' || !result.root) {
+    const words = `The scan of ${path} had already finished when you pressed Stop, but its results could not be shown`;
+    $('scanStatus').innerHTML = icon('alert', 14) + '<span>' + escapeHtml(words + '.') + '</span>';
+    if (noted && state.lastFolder === noted) {
+      state.lastFolder = { ...noted, outcome: 'unshown', reason: why };
+      $('stopAnnounce').textContent = startLastLine(state.lastFolder);
+      withFocusKept(() => { renderStartChoices(); });
+    } else $('stopAnnounce').textContent = words + '.';
+    return;
+  }
+  if (noted && state.lastFolder === noted) state.lastFolder = null; // the tree is on screen: no start screen names it
+  state.scanId = scanId;
+  $('stopAnnounce').textContent = `The scan of ${path} had already finished when you pressed Stop — its results are on screen.`;
+  await finishScan(result.root, stats && stats.durationMs > 0 ? stats.durationMs : 0, stats, { afterStop: true });
 }
 
 /**
@@ -10639,8 +10708,11 @@ async function scanStatsFor(scanId, result) {
  * Paint a finished scan. `reopenedAt` is set when the tree is a scan the
  * server still held, reopened after a reload (QA D57): it finished then, not
  * now, so the card says when, and there is no "Scan complete" to announce.
+ * `afterStop`: a scan that finished before the Stop pressed for it reached
+ * the server (J02) — its toast says so, and nothing is indexed behind it: the
+ * person asked for the work to stop.
  */
-async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
+async function finishScan(root, durationMs, stats, { reopenedAt = 0, afterStop = false } = {}) {
   endScanChrome();
   state.root = root;
   // The id that answers questions about the tree we just put on screen — set
@@ -10720,8 +10792,12 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
     const refusedDirs = stats && stats.refused && stats.refused.dirs > 0 ? stats.refused.dirs : 0;
     const empty = root.size === 0 && !files;
     if (!empty) {
-      toast(`Scan complete — ${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} ${filesWord}`}` +
-        (refusedDirs ? ` — ${formatCount(refusedDirs)} folder${refusedDirs === 1 ? '' : 's'} could not be read` : ''));
+      const counted = `${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} ${filesWord}`}` +
+        (refusedDirs ? ` — ${formatCount(refusedDirs)} folder${refusedDirs === 1 ? '' : 's'} could not be read` : '');
+      // One toast for the one crossing. A scan that finished before the Stop
+      // pressed for it reached the server says so (J02), not "Scan complete".
+      if (afterStop) toast(`The scan had already finished when you pressed Stop — ${counted}`);
+      else toast(`Scan complete — ${counted}`);
     }
     fxScanDonePulse();
   }
@@ -10768,7 +10844,7 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
   // be pointless work, and a whole disk is not indexed automatically (U-1).
   // This scan's own counts, not state.scanStats: another scan finishing
   // while the lists loaded has replaced those (Track U review L4).
-  if (root.path) buildIndexInBackground(root.path, stats || null);
+  if (root.path && !afterStop) buildIndexInBackground(root.path, stats || null);
   renderGrowthProjection();
   loadBudgets();
   // The snapshot (and its time-slider tree) is saved asynchronously after the
@@ -40506,7 +40582,10 @@ function startChoiceList(sys, last, drives, refused = []) {
 function startLastLine(last, refusal = '') {
   if (!last || !last.path) return '';
   const sentence = (s) => (/[.!?…]$/.test(s) ? s : s + '.');
+  // Said while the Stop's cancel is out: the scan may yet prove to have finished (J02).
+  if (last.outcome === 'stopping') return `Stopping the scan of ${last.path}…`;
   if (last.outcome === 'stopped') return `You stopped the scan of ${last.path}.`;
+  if (last.outcome === 'unshown') return `The scan of ${last.path} had already finished when you pressed Stop, but its results could not be shown: ${sentence(last.reason || 'TreeMap could not read them')}`;
   if (last.outcome === 'unstopped') return `TreeMap could not stop the scan of ${last.path}, so it may still be running: ${sentence(last.reason || 'the server did not say why')}`;
   if (last.outcome === 'failed') return `The scan of ${last.path} failed: ${sentence(last.reason || 'it did not finish')}`;
   if (!last.offered) return `Your last scan was of ${last.path}, which cannot be opened now: ${sentence(last.reason || 'TreeMap could not open it')}`;
@@ -40528,7 +40607,7 @@ function renderStartChoices() {
   const sys = state.system || {};
   const last = state.lastFolder;
   const drives = browseDrivesSeen || browseWholeDrives(sys.platform, null, sys.homeDir);
-  const retry = !!last && (last.outcome === 'stopped' || last.outcome === 'failed');
+  const retry = !!last && ['stopping', 'stopped', 'failed', 'unshown'].includes(last.outcome);
   // Each folder is offered once the server has said a scan may start there —
   // never one a scan would be refused, nor one still being asked about
   // (startJudge, review F3.2) — but for the folder of a scan just stopped or

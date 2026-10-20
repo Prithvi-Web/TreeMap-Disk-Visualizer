@@ -175,19 +175,19 @@ async function stopScan() {
   // was being scanned, "Scan … again" first among its choices (the owner,
   // 17 Oct 2026: "a scan should work again after being stopped"). A tree
   // still on screen — a rescan stopped — stays, with its own scan behind it.
-  // What is said here is said before the cancel answers; `noted` is kept to
-  // take it back if the cancel is refused (noteStopUnconfirmed).
-  const noted = state.root ? null : noteLastFolder('stopped');
+  // While this Stop's own cancel is out, it says only that it is stopping:
+  // the scan may have finished first (seventh browser pass, J02), and then
+  // "You stopped…" would be false. stopSettled says what the answer says;
+  // `noted` is kept to take it back if the cancel is refused
+  // (noteStopUnconfirmed). A Stop with no scan id yet stopped it outright.
+  const noted = state.root ? null : noteLastFolder(scanId ? 'stopping' : 'stopped');
   // For a request this Stop ended before it answered, whose cancel is sent
   // when it does (abandonIfStopped).
   state.lastStop = { gen, noted };
 
-  // A tree left on screen with no scan behind it is the saved index's, and
-  // is said to be (J05): it stays drawn and usable, and may be out of date.
-  const indexLeft = state.root && !state.settledScanId ? `Scan stopped — showing the saved index of ${state.root.path}.` : '';
   const status = $('scanStatus');
   status.classList.remove('error'); // stopping is a choice, not a failure
-  status.innerHTML = icon('stop', 14) + '<span>' + (indexLeft ? escapeHtml(indexLeft) : 'Scan stopped by user') + '</span>';
+  status.innerHTML = icon('stop', 14) + '<span>' + escapeHtml(scanId ? 'Stopping the scan…' : stoppedWords()) + '</span>';
   restoreDashboardPanels();
   // And put the start screen back if that is where we are — over the
   // Dashboard's Stop, which held focus if it was pressed from the keyboard
@@ -200,16 +200,85 @@ async function stopScan() {
   focusStartScreen();
   // And said aloud: the start screen's own line, or the status line's, in a
   // live region nothing hides (review F1.14).
-  $('stopAnnounce').textContent = noted ? startLastLine(noted) : indexLeft || 'Scan stopped.';
+  $('stopAnnounce').textContent = noted ? startLastLine(noted) : scanId ? 'Stopping the scan…' : stoppedWords(true);
 
   // Stopped before POST /api/scan answered — startScanRequest abandons that scan — or before it was
   // sent, while startScan asked the index — and startScan starts none (final review F1.7).
   if (!scanId) return;
+  let answer = null;
   try {
-    await cancelScanById(scanId);
+    answer = await cancelScanById(scanId);
   } catch (e) {
-    stopNotConfirmed(e, gen, noted, stopped);
+    // 404: the record was already gone, so it is stopped (stopNotConfirmed).
+    if (e.status !== 404) { stopNotConfirmed(e, gen, noted, stopped); return; }
   }
+  stopSettled(answer, gen, noted, scanId, stopped);
+}
+
+/**
+ * What a Stop that ended a scan says once the scan is stopped: a tree left on
+ * screen with no scan behind it is the saved index's, and is said to be (J05)
+ * — it stays drawn and usable, and may be out of date. `spoken`: the live
+ * region's shorter form.
+ */
+function stoppedWords(spoken = false) {
+  if (state.root && !state.settledScanId) return `Scan stopped — showing the saved index of ${state.root.path}.`;
+  return spoken ? 'Scan stopped.' : 'Scan stopped by user';
+}
+
+/**
+ * The answer to a Stop's own cancel, `answer` (null for a 404: gone, so
+ * stopped). Unless a scan has begun since `gen`, the generation the Stop
+ * ended — which then owns the screen — it says what the answer says (seventh
+ * browser pass, J02): `{ cancelled: false, status: 'complete' }` is a scan
+ * that finished before Stop reached it, which the server kept, and it is
+ * shown (showFinishedAfterStop); anything else is stopped, and "Stopping…"
+ * becomes "You stopped…" on the start screen, or the status line's words.
+ */
+function stopSettled(answer, gen, noted, scanId, path) {
+  if (state.scanGen !== gen) return;
+  if (answer && answer.cancelled === false && answer.status === 'complete') { void showFinishedAfterStop(scanId, gen, noted, path); return; }
+  const status = $('scanStatus');
+  status.innerHTML = icon('stop', 14) + '<span>' + escapeHtml(stoppedWords()) + '</span>';
+  if (!noted) { $('stopAnnounce').textContent = stoppedWords(true); return; }
+  if (state.lastFolder === noted) state.lastFolder = { ...noted, outcome: 'stopped' };
+  $('stopAnnounce').textContent = startLastLine(state.lastFolder);
+  withFocusKept(() => { renderStartChoices(); });
+}
+
+/**
+ * A scan that finished before Stop reached it (J02): the server kept it, so
+ * it is shown — its counters and its tree, as its completion would have
+ * painted them — and it is said that it had finished. Where it cannot be
+ * read, the start screen says that it finished and could not be shown, and
+ * offers it again. Nothing is shown over a scan begun since.
+ */
+async function showFinishedAfterStop(scanId, gen, noted, path) {
+  let stats = null;
+  let result = null;
+  let why = '';
+  try {
+    const body = await api(`/api/scan/${scanId}/stats`);
+    if (body) { const { scanId: _scanId, status: _status, ...rest } = body; stats = rest; }
+    result = await api(`/api/scan/${scanId}/result`);
+  } catch (e) {
+    why = (e && e.message) || '';
+  }
+  if (state.scanGen !== gen) return;
+  if (!result || result.status !== 'complete' || !result.root) {
+    const words = `The scan of ${path} had already finished when you pressed Stop, but its results could not be shown`;
+    $('scanStatus').innerHTML = icon('alert', 14) + '<span>' + escapeHtml(words + '.') + '</span>';
+    if (noted && state.lastFolder === noted) {
+      state.lastFolder = { ...noted, outcome: 'unshown', reason: why };
+      $('stopAnnounce').textContent = startLastLine(state.lastFolder);
+      withFocusKept(() => { renderStartChoices(); });
+    } else $('stopAnnounce').textContent = words + '.';
+    return;
+  }
+  if (noted && state.lastFolder === noted) state.lastFolder = null; // the tree is on screen: no start screen names it
+  state.scanId = scanId;
+  $('stopAnnounce').textContent = `The scan of ${path} had already finished when you pressed Stop — its results are on screen.`;
+  await finishScan(result.root, stats && stats.durationMs > 0 ? stats.durationMs : 0, stats, { afterStop: true });
 }
 
 /**

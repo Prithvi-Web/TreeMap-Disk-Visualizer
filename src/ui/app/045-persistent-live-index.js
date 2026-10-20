@@ -847,8 +847,11 @@ async function scanStatsFor(scanId, result) {
  * Paint a finished scan. `reopenedAt` is set when the tree is a scan the
  * server still held, reopened after a reload (QA D57): it finished then, not
  * now, so the card says when, and there is no "Scan complete" to announce.
+ * `afterStop`: a scan that finished before the Stop pressed for it reached
+ * the server (J02) — its toast says so, and nothing is indexed behind it: the
+ * person asked for the work to stop.
  */
-async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
+async function finishScan(root, durationMs, stats, { reopenedAt = 0, afterStop = false } = {}) {
   endScanChrome();
   state.root = root;
   // The id that answers questions about the tree we just put on screen — set
@@ -928,8 +931,12 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
     const refusedDirs = stats && stats.refused && stats.refused.dirs > 0 ? stats.refused.dirs : 0;
     const empty = root.size === 0 && !files;
     if (!empty) {
-      toast(`Scan complete — ${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} ${filesWord}`}` +
-        (refusedDirs ? ` — ${formatCount(refusedDirs)} folder${refusedDirs === 1 ? '' : 's'} could not be read` : ''));
+      const counted = `${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} ${filesWord}`}` +
+        (refusedDirs ? ` — ${formatCount(refusedDirs)} folder${refusedDirs === 1 ? '' : 's'} could not be read` : '');
+      // One toast for the one crossing. A scan that finished before the Stop
+      // pressed for it reached the server says so (J02), not "Scan complete".
+      if (afterStop) toast(`The scan had already finished when you pressed Stop — ${counted}`);
+      else toast(`Scan complete — ${counted}`);
     }
     fxScanDonePulse();
   }
@@ -976,7 +983,7 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
   // be pointless work, and a whole disk is not indexed automatically (U-1).
   // This scan's own counts, not state.scanStats: another scan finishing
   // while the lists loaded has replaced those (Track U review L4).
-  if (root.path) buildIndexInBackground(root.path, stats || null);
+  if (root.path && !afterStop) buildIndexInBackground(root.path, stats || null);
   renderGrowthProjection();
   loadBudgets();
   // The snapshot (and its time-slider tree) is saved asynchronously after the

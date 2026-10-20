@@ -389,7 +389,10 @@ function startChoiceList(sys, last, drives, refused = []) {
 function startLastLine(last, refusal = '') {
   if (!last || !last.path) return '';
   const sentence = (s) => (/[.!?…]$/.test(s) ? s : s + '.');
+  // Said while the Stop's cancel is out: the scan may yet prove to have finished (J02).
+  if (last.outcome === 'stopping') return `Stopping the scan of ${last.path}…`;
   if (last.outcome === 'stopped') return `You stopped the scan of ${last.path}.`;
+  if (last.outcome === 'unshown') return `The scan of ${last.path} had already finished when you pressed Stop, but its results could not be shown: ${sentence(last.reason || 'TreeMap could not read them')}`;
   if (last.outcome === 'unstopped') return `TreeMap could not stop the scan of ${last.path}, so it may still be running: ${sentence(last.reason || 'the server did not say why')}`;
   if (last.outcome === 'failed') return `The scan of ${last.path} failed: ${sentence(last.reason || 'it did not finish')}`;
   if (!last.offered) return `Your last scan was of ${last.path}, which cannot be opened now: ${sentence(last.reason || 'TreeMap could not open it')}`;
@@ -411,7 +414,7 @@ function renderStartChoices() {
   const sys = state.system || {};
   const last = state.lastFolder;
   const drives = browseDrivesSeen || browseWholeDrives(sys.platform, null, sys.homeDir);
-  const retry = !!last && (last.outcome === 'stopped' || last.outcome === 'failed');
+  const retry = !!last && ['stopping', 'stopped', 'failed', 'unshown'].includes(last.outcome);
   // Each folder is offered once the server has said a scan may start there —
   // never one a scan would be refused, nor one still being asked about
   // (startJudge, review F3.2) — but for the folder of a scan just stopped or
