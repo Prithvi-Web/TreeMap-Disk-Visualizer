@@ -11,6 +11,7 @@ import { scanPackageEcosystems, brokenVenvInterpreter, PackageEntry } from '../s
 import { loadRuleCatalogFrom, PACK_NAMES } from '../src/services/rulePacks';
 import { compileIgnoreList } from '../src/utils/glob';
 import { FileNode } from '../src/models/types';
+import { buildStoreFromTree, ObjectScanStore } from '../src/services/scanStore';
 
 /**
  * §C6 — package-manager-aware orphan detection.
@@ -224,6 +225,26 @@ test('a claimed directory is never descended into', () => {
   const npm = entries.filter((e) => e.ecosystem === 'npm');
   assert.equal(npm.length, 1);
   assert.equal(npm[0].path, path.join(ROOT, 'proj', 'node_modules'));
+});
+
+test('a node_modules beside its package.json is claimed without reading one name inside it - its rule asks nothing of what it holds (BQL-b1 review F3.3)', () => {
+  // The folder's own child names are read only for a rule that names what it
+  // must hold or must not (a virtualenv's pyvenv.cfg, a .gradle's records).
+  // Read eagerly, a project's 200 packages cost 200 reads for nothing.
+  const packages = Array.from({ length: 200 }, (_, i) => dir(`pkg-${i}`, [file('index.js', 10)]));
+  const root = tree([dir('app', [file('package.json'), dir('node_modules', [file('.package-lock.json'), ...packages])])]);
+  const nmPath = path.join(ROOT, 'app', 'node_modules');
+  for (const [label, store] of [['object store', ObjectScanStore.wrap(root)], ['packed store', buildStoreFromTree(root)]] as const) {
+    const name = store.name.bind(store);
+    const nm = store.findByPath(nmPath);
+    assert.notEqual(nm, -1, `${label}: the node_modules is in the store`);
+    const inside = new Set(store.childIds(nm));
+    let readsInside = 0;
+    store.name = (id: number): string => { if (inside.has(id)) readsInside++; return name(id); };
+    const entries = scanPackageEcosystems(store, compileIgnoreList([]), catalog()).ecosystems.flatMap((e) => e.entries);
+    assert.equal(find(entries, nmPath)?.kind, 'active', `${label}: it is its project's`);
+    assert.equal(readsInside, 0, `${label}: none of the ${inside.size} names in it is read`);
+  }
 });
 
 test('ignored paths are never reported', () => {

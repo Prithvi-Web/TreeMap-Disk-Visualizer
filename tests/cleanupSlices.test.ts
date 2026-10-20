@@ -481,6 +481,36 @@ test('each name is read once, and a folder\'s names again only when a sibling-ga
   }
 });
 
+test('a folder a rule asks about has its own names read once, however many of the rule\'s conditions ask - a .gradle is judged on what it must hold and what it must not from one read (BQL-b1 review F3.3)', () => {
+  // The Gradle project-cache rule names both what a .gradle holds
+  // (requiresChild) and what it must not (forbidsChild). Both look at the
+  // folder's own child names through one memo; without it each condition read
+  // them again, and the test above walks no folder a rule asks this of.
+  const root = absRoot('gradlereads');
+  const proj = path.join(root, 'proj');
+  const dotGradle = path.join(proj, '.gradle');
+  const held = ['buildOutputCleanup', 'file-system.probe', 'notes.txt', 'vcs-1', 'x.bin'];
+  const tree = dirAt(path.dirname(root), 'gradlereads', [
+    dirAt(root, 'proj', [dirAt(proj, '.gradle', held.map((n) => fileAt(dotGradle, n, 10, 0))), fileAt(proj, 'build.gradle', 1, 0)]),
+  ]);
+  for (const [kind, make] of STORES) {
+    const store = make(tree);
+    const name = store.name.bind(store);
+    const childNamed = (at: number, n: string): number => {
+      const id = store.childIds(at).find((c) => name(c) === n);
+      assert.ok(id !== undefined, `${kind}: ${n} is in the tree`);
+      return id;
+    };
+    const inside = store.childIds(childNamed(childNamed(store.rootId, 'proj'), '.gradle'));
+    const reads = new Map<number, number>();
+    store.name = (id: number): string => { reads.set(id, (reads.get(id) ?? 0) + 1); return name(id); };
+    const groups = collectCleanupSuggestions(store, [], loadRuleCatalog());
+    assert.deepEqual(groups.find((g) => g.id === 'gradle-project-cache')?.items.map((i) => i.path), [dotGradle], `${kind}: the .gradle beside build.gradle is offered`);
+    assert.deepEqual(inside.map((c) => [name(c), reads.get(c) ?? 0]).sort(), held.map((n) => [n, 1]),
+      `${kind}: each name in it is read once, for both of its rule's conditions`);
+  }
+});
+
 /**
  * A store that changes during the walk is walked again. `mutateOn` decides,
  * at each turn the walk hands back, whether to change it.
