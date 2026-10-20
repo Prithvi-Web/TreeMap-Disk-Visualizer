@@ -252,6 +252,8 @@ test('every refusal PUT /api/autopilot/policies and POST /api/autopilot/simulate
     ['POLICY_QUERY_INVALID', { path: tmp, match: { kind: 'query', q: 'nosuchfield:1' } }],
     ['POLICY_QUERY_UNANSWERABLE', { path: tmp, match: { kind: 'query', q: 'dupe:yes' } }],
     ['POLICY_MATCH_ADVISORY', { path: tmp, match: { kind: 'suggestion', groupIds: [ADVICE_ONLY_ID] } }],
+    // An id earlier builds' editor offered and no pack ships (BQL-b1 review F3.1).
+    ['POLICY_MATCH_UNKNOWN', { path: tmp, match: { kind: 'suggestion', groupIds: ['cache-general'] } }],
   ];
   if (IS_UNIX) {
     // A folder given as a link (POL item 5); making a link needs a privilege on Windows.
@@ -285,6 +287,18 @@ test('every refusal PUT /api/autopilot/policies and POST /api/autopilot/simulate
     }
   }
   assert.deepEqual(await listPolicies(), [], 'no refused save stored anything');
+});
+
+test('GET /api/autopilot/policies serves every id a suggestion policy can name on this computer, as the published spec says (BQL-b1 review F3.1, F3.5)', async () => {
+  const got = await call('GET', '/api/autopilot/policies', {}) as unknown as { status: number; body: { policies: unknown[]; knownGroupIds: unknown } };
+  const c = loadRuleCatalog();
+  const ids = [...new Set([...c.projectDirectory, ...c.directory, ...c.file, ...c.location, ...c.staleFiles].map((r) => r.id))];
+  assert.equal(got.status, 200);
+  assert.deepEqual(got.body.knownGroupIds, ids, 'the rule ids this computer\'s packs ship, advice-only ones included, once each');
+  assert.ok(!ids.includes('cache-general'), 'control: an id the old editor offered is none of them');
+  const doc = buildOpenApiDocument() as { paths: Record<string, Record<string, { responses: Record<string, { content: { 'application/json': { schema: { properties: Record<string, unknown>; required: string[] } } } }> }>> };
+  const schema = doc.paths['/api/autopilot/policies'].get.responses['200'].content['application/json'].schema;
+  assert.ok(schema.properties.knownGroupIds && schema.required.includes('knownGroupIds'), 'the spec declares it');
 });
 
 test('the editor\'s Preview judges a saved policy as Save does', async () => {
@@ -395,7 +409,7 @@ test('a client cannot grant its own approval by sending the field', () => {
 });
 
 test('a new policy is disabled unless explicitly enabled', () => {
-  const p = normalizePolicy({ path: os.tmpdir(), match: { kind: 'suggestion', groupIds: ['a'] } });
+  const p = normalizePolicy({ path: os.tmpdir(), match: { kind: 'suggestion', groupIds: ['regen-node-modules'] } });
   assert.equal(p.enabled, false);
   assert.equal(p.dryRunFirst, true, 'and previews by default');
 });
@@ -410,7 +424,7 @@ test('editing what a policy matches revokes the approval it already had', async 
   // "Approve a tiny dry run, then edit the policy to match everything" is the
   // exact bypass this closes.
   const edited = await savePolicies([
-    { id: 'edit-me', path: os.tmpdir(), match: { kind: 'suggestion', groupIds: ['regen-node-modules', 'cache-npm'] }, enabled: true },
+    { id: 'edit-me', path: os.tmpdir(), match: { kind: 'suggestion', groupIds: ['regen-node-modules', 'tool-caches'] }, enabled: true }, // kinds the packs ship: another is refused (F3.1)
   ]);
   assert.equal(edited[0].approvedAt, undefined, 'a wider policy must earn approval again');
   await savePolicies([]);

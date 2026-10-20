@@ -14,7 +14,7 @@ import { readJsonFile, writeJsonFile } from '../src/services/storage';
 import { AppError } from '../src/middleware/errorHandler';
 import type { AutopilotPolicy, AutopilotRun, CleanupSuggestionGroup } from '../src/models/types';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
-import { lift } from './fixtures/liftFrontend';
+import { INDEX, lift } from './fixtures/liftFrontend';
 import { collectCleanupSuggestions } from '../src/services/cleanupRules';
 import type { FileNode } from '../src/models/types';
 
@@ -227,4 +227,142 @@ test('a run that left an advice-only group\'s items alone beside parts of an ins
   } finally {
     await savePolicies([]);
   }
+});
+
+/** Every rule id this platform's packs ship that a policy may clean up: none advice-only. */
+function trashableIds(): string[] {
+  const c = loadRuleCatalog();
+  return [...new Set([...c.projectDirectory, ...c.directory, ...c.file, ...c.location, ...c.staleFiles].filter((r) => r.action !== 'advice').map((r) => r.id))];
+}
+
+test('a suggestion policy naming a kind no rule here has is refused where it is saved, naming the kinds a policy may name (BQL-b1 review F3.1)', async () => {
+  // Three boxes of earlier builds' editor named ids no pack ever shipped
+  // (regen-build-output, cache-general, junk-general); the evaluator never
+  // matches one, so a policy of them matched nothing on every run.
+  const dir = fileTempDir('treemap-autopilotAdvisory-unknown-save-');
+  for (const groupIds of [['cache-general'], ['regen-node-modules', 'junk-general']]) {
+    let refused: unknown = null;
+    try {
+      await savePolicies([{ id: 'unknown-kinds', name: 'Old boxes', path: dir, match: { kind: 'suggestion', groupIds }, dryRunFirst: false, enabled: true }]);
+    } catch (err) {
+      refused = err;
+    }
+    assert.ok(refused instanceof AppError, String(refused));
+    assert.equal(refused.code, 'POLICY_MATCH_UNKNOWN', refused.message);
+    assert.equal(refused.status, 400);
+    const unknown = groupIds.filter((id) => id !== 'regen-node-modules');
+    assert.ok(refused.message.startsWith(`The policy "Old boxes" names “${unknown[0]}”, which is no kind of file TreeMap has on this computer`), refused.message);
+    for (const id of trashableIds()) assert.ok(refused.message.includes(id), `it names ${id}, a kind a policy may name: ${refused.message}`);
+    assert.ok(!advisoryIds().some((id) => refused.message.includes(id)), `and no advice-only kind, which a policy may not name: ${refused.message}`);
+  }
+  assert.deepEqual(await listPolicies(), [], 'nothing was saved');
+});
+
+/** What a run says of a policy that names cache-general, which no rule has: alone, and beside a kind TreeMap has. */
+const ONLY_UNKNOWN = 'This policy names only a kind of file TreeMap does not have (cache-general), so it matches nothing: edit the policy and pick again.';
+const ALSO_UNKNOWN = 'This policy also names a kind of file TreeMap does not have (cache-general), which matches nothing: edit the policy and pick again.';
+
+test('a policy an earlier build saved with a kind no rule here has is kept while unchanged, and every run of it says so - never only "Nothing matched" (BQL-b1 review F3.1)', async () => {
+  const dir = fs.realpathSync(fileTempDir('treemap-autopilotAdvisory-unknown-run-'));
+  const deps = path.join(dir, 'proj', 'node_modules', 'dep');
+  fs.mkdirSync(deps, { recursive: true });
+  fs.writeFileSync(path.join(deps, 'index.js'), Buffer.alloc(4096, 5));
+  fs.writeFileSync(path.join(dir, 'proj', 'package.json'), '{}');
+  // As an earlier build saved them: the refusal is at save time, so the ids are planted in the store.
+  const policy = (id: string) => ({ id, name: id, path: dir, match: { kind: 'suggestion', groupIds: ['regen-node-modules'] }, dryRunFirst: false, enabled: true });
+  await savePolicies([policy('old-only'), policy('old-mixed')]);
+  const store = await readJsonFile<{ policies: AutopilotPolicy[]; runs: AutopilotRun[] }>('autopilot.json', { policies: [], runs: [] });
+  store.policies[0].match = { kind: 'suggestion', groupIds: ['cache-general'] };
+  store.policies[1].match = { kind: 'suggestion', groupIds: ['regen-node-modules', 'cache-general'] };
+  await writeJsonFile('autopilot.json', store);
+  const trashedBefore = trashed.length;
+  const named = async (id: string): Promise<AutopilotPolicy> => (await listPolicies()).find((p) => p.id === id)!;
+  try {
+    const listed = await listPolicies();
+    await assert.doesNotReject(savePolicies(listed.map((p) => ({ ...p, name: `${p.name} (renamed)` }))), 'an unrelated edit of the list they ride in is not refused');
+    assert.deepEqual((await listPolicies()).map((p) => p.match), store.policies.map((p) => p.match), 'an unchanged policy is kept as it was saved');
+    let refused: unknown = null;
+    try {
+      await savePolicies([{ ...listed[0], path: path.join(dir, 'proj') }]);
+    } catch (err) {
+      refused = err;
+    }
+    assert.equal((refused as AppError | null)?.code, 'POLICY_MATCH_UNKNOWN', `a changed one is judged as a new one: ${String(refused)}`);
+
+    await approvePolicyForTests('old-only');
+    const only = await withOpenFileCheck('clear', async () => runPolicy(await named('old-only')));
+    assert.deepEqual(only.items, [], 'control: it selects nothing');
+    assert.equal(only.blockedReason, ONLY_UNKNOWN, 'it says the policy names a kind TreeMap does not have, not only that nothing matched');
+
+    await approvePolicyForTests('old-mixed');
+    const mixed = await withOpenFileCheck('clear', async () => runPolicy(await named('old-mixed')));
+    assert.deepEqual(mixed.items.map((i) => i.path), [path.join(dir, 'proj', 'node_modules')], 'control: the kind it has is cleaned up as before');
+    assert.equal(trashed.length, trashedBefore + 1, 'control: through the Trash step');
+    assert.equal(mixed.blockedReason, ALSO_UNKNOWN, 'and the run says what else the policy names');
+    const again = await withOpenFileCheck('clear', async () => runPolicy(await named('old-mixed'), { ignoreCooldown: true }));
+    assert.equal(again.blockedReason, `Nothing matched this time. ${ALSO_UNKNOWN}`, 'nothing left to match: it says both');
+    // A run that failed says it too, as a sentence of its own after the failure's.
+    fs.renameSync(dir, `${dir}-moved`);
+    const failed = await withOpenFileCheck('clear', async () => runPolicy(await named('old-only'), { ignoreCooldown: true }));
+    assert.equal(failed.status, 'failed', `control: its folder is gone: ${failed.blockedReason}`);
+    const reason = failed.blockedReason ?? '';
+    assert.ok(reason.endsWith(`. ${ONLY_UNKNOWN}`) && !reason.startsWith('This policy') && !reason.includes(`.. ${ONLY_UNKNOWN}`),
+      `it follows the failure's own words, as a sentence of its own: ${reason}`);
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+/** The page's own declarations, as they ship, by name: a function, or a `const`. */
+function pageDecl(name: string): string {
+  const fn = INDEX.search(new RegExp(`\\n(async )?function ${name}\\(`));
+  const at = fn !== -1 ? fn + 1 : INDEX.indexOf(`\nconst ${name} =`) + 1;
+  assert.ok(at > 0, `${name} is in the page`);
+  const open = INDEX.indexOf(fn !== -1 ? '{' : '[', fn !== -1 ? INDEX.indexOf(')', at) : at);
+  const [o, c] = fn !== -1 ? ['{', '}'] : ['[', ']'];
+  let depth = 0;
+  for (let i = open; i < INDEX.length; i++) {
+    if (INDEX[i] === o) depth++;
+    else if (INDEX[i] === c && --depth === 0) return INDEX.slice(at, i + 1) + (fn === -1 ? ';' : '');
+  }
+  assert.fail(`${name} does not close`);
+}
+
+test('a policy naming a kind TreeMap does not have says so on its card and in its editor, and counts only the kinds it has (BQL-b1 review F3.1, F3.5)', async () => {
+  const html: Record<string, string> = {};
+  const $ = (id: string) => ({ set innerHTML(v: string) { html[id] = v; }, get innerHTML() { return html[id] ?? ''; } });
+  const served = { policies: [], knownGroupIds: ['regen-node-modules', 'regen-python-venv', 'old-downloads', 'tool-caches'] };
+  const state: { autopilot: { policies?: unknown; runs?: unknown; knownGroupIds?: unknown } } = { autopilot: {} };
+  const page = new Function('state', '$', 'api', 'fxApBreatheSync', 'renderAutopilot',
+    ['escapeHtml', 'AP_GROUPS', 'apUnknownKinds', 'apKinds', 'describeMatch', 'renderApGroupList', 'loadAutopilot'].map(pageDecl).join('\n') +
+    '\nreturn { describeMatch, renderApGroupList, loadAutopilot };',
+  )(state, $, async (url: string) => (url.startsWith('/api/autopilot/runs') ? { runs: [] } : served), () => undefined, () => undefined) as {
+    describeMatch: (m: unknown) => string; renderApGroupList: (ids: string[]) => void; loadAutopilot: () => Promise<void>;
+  };
+  await page.loadAutopilot();
+  assert.deepEqual(state.autopilot.knownGroupIds, served.knownGroupIds, 'the page keeps the kinds the server says this computer has');
+
+  // The card: a stored policy of the three retired boxes.
+  const card = (groupIds: string[]) => page.describeMatch({ kind: 'suggestion', groupIds });
+  assert.equal(card(['cache-general', 'junk-general', 'regen-build-output']), 'only 3 kinds of file TreeMap does not have — edit it and pick again',
+    'a policy of the three retired boxes says it names only kinds TreeMap does not have');
+  assert.equal(card(['regen-node-modules', 'cache-general']), '1 kind of reclaimable file, and 1 kind of file TreeMap does not have — edit it and pick again',
+    'a kind it has beside one it does not: each is said');
+  assert.equal(card(['regen-node-modules', 'old-downloads']), '2 kinds of reclaimable file', 'control: a kind TreeMap has is a kind, listed in the editor or not');
+
+  // The editor: the boxes it ticks, and a line for what it cannot show.
+  page.renderApGroupList(['regen-node-modules', 'cache-general', 'old-downloads']);
+  const list = html.apGroupList ?? '';
+  assert.ok(list.includes('This policy names a kind of file TreeMap does not have (cache-general), which matches nothing, and a kind of file this list does not offer (old-downloads). Saving keeps only the kinds ticked below.'), `the editor says what its boxes cannot show: ${list}`);
+  assert.match(list, /data-ap-group="regen-node-modules" checked/, 'control: the kind it has and the list offers is ticked');
+  page.renderApGroupList(['regen-node-modules']);
+  assert.doesNotMatch(html.apGroupList ?? '', /This policy names/, 'control: a policy of offered kinds gets no such line');
+  page.renderApGroupList(['<img src=x onerror=alert(1)>']);
+  assert.ok((html.apGroupList ?? '').includes('(&lt;img src=x onerror=alert(1)&gt;)') && !(html.apGroupList ?? '').includes('<img'), `an id is escaped: ${html.apGroupList}`);
+
+  // Packs the server could not read: nothing is judged, as before.
+  served.knownGroupIds = 'unreadable' as unknown as string[];
+  await page.loadAutopilot();
+  assert.equal(state.autopilot.knownGroupIds, null, 'a list that is not one is no list');
+  assert.equal(card(['cache-general']), '1 kind of reclaimable file', 'with no list, nothing is judged: every named id is counted, as before');
 });

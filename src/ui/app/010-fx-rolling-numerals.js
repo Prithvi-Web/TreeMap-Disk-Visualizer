@@ -684,7 +684,7 @@ const state = {
   live: { on: false, wanted: false, es: null, engine: '', idleMinutes: 10, pulses: new Map(), window: [], dirty: 0, feedTimer: 0, relayoutTimer: 0, pulseRaf: 0 },
   offload: { index: null, q: '' },
   capsule: { index: null, q: '' },
-  autopilot: { policies: null, runs: null },
+  autopilot: { policies: null, runs: null, knownGroupIds: null },
   cloud: { providers: [], loaded: false },
   donut: { animated: false }, // segs/hover moved into the FxCharts.rings handle
   dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0, shown: DUP_PAGE },

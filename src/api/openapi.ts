@@ -734,7 +734,7 @@ const schemas: Json = {
       at: int('Unix epoch ms'),
       mode: { type: 'string', enum: ['dry-run', 'live'] },
       status: { type: 'string', enum: ['awaiting-approval', 'completed', 'blocked', 'failed'] },
-      blockedReason: str('Why nothing was deleted, when nothing was'),
+      blockedReason: str('Why nothing was deleted, when nothing was. A run that deleted carries one only to say what else it must: that the policy also names a kind no rule on this computer has, which matches nothing (see knownGroupIds), or that copies of what the Trash refused were not all discarded'),
       items: arr(obj(
         { path: str(), name: str(), bytes: int(), reason: str('Why it was selected, in the rule’s own words'), regenerateCmd: str('How this item comes back, for regenerable matches: its group’s regenerateCmd with this item’s own folder name, shell-quoted, in place of a `<folder>`') },
         ['path', 'name', 'bytes', 'reason'],
@@ -3016,7 +3016,10 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Standing cleanup policies',
     tag: 'autopilot',
     destructive: false,
-    responses: { '200': jsonResponse('Configured policies', obj({ policies: arr(ref('AutopilotPolicy')) }, ['policies'])) },
+    responses: { '200': jsonResponse('Configured policies', obj({
+      policies: arr(ref('AutopilotPolicy')),
+      knownGroupIds: nullable(arr(str(), 'Every id a suggestion policy\'s groupIds can name on this computer: the rule ids its packs ship, advice-only ones included (a new or changed policy naming one of those is refused, POLICY_MATCH_ADVISORY). A saved policy naming an id not in this list matches nothing of it, and its runs say so; a new or changed one is refused, POLICY_MATCH_UNKNOWN. Null when the rule packs cannot be read.')),
+    }, ['policies', 'knownGroupIds'])) },
   },
   {
     method: 'put',
@@ -3027,7 +3030,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     requestBody: { required: true, content: { 'application/json': { schema: obj({ policies: arr(ref('AutopilotPolicy')) }, ['policies']) } } },
     responses: {
       '200': jsonResponse('Saved, re-validated', obj({ policies: arr(ref('AutopilotPolicy')) }, ['policies'])),
-      '400': errorResponse('POLICY_MATCH_EMPTY, POLICY_MATCH_INVALID (an unknown match kind, or a custom rule carrying the duplicates flag, which no policy can honour), POLICY_PATH_TOO_BROAD, POLICY_PATH_REQUIRED, POLICY_PATH_IS_LINK (a new or changed folder is a link; the sentence names the folder it leads to, and offers it to choose instead when a policy can be saved there: not a whole drive, nor another link), PATH_INVALID and PATH_BLOCKED (the folder fails the scan-path check), POLICY_QUERY_INVALID (the query does not parse), POLICY_QUERY_UNANSWERABLE (a new or changed query uses a field this build cannot answer, e.g. dupe:), POLICY_MATCH_ADVISORY (a new or changed suggestion match names a group TreeMap only advises on and never deletes — a VM disk, Xcode archives, a photo library\'s derivatives), NOTHING_TO_UPDATE (no "policies" in the body), BAD_POLICIES ("policies" is not a list), TOO_MANY_POLICIES (more than 50), DUPLICATE_POLICY_ID (two entries share an id) — refused rather than saved in a shape that would misbehave'),
+      '400': errorResponse('POLICY_MATCH_EMPTY, POLICY_MATCH_INVALID (an unknown match kind, or a custom rule carrying the duplicates flag, which no policy can honour), POLICY_PATH_TOO_BROAD, POLICY_PATH_REQUIRED, POLICY_PATH_IS_LINK (a new or changed folder is a link; the sentence names the folder it leads to, and offers it to choose instead when a policy can be saved there: not a whole drive, nor another link), PATH_INVALID and PATH_BLOCKED (the folder fails the scan-path check), POLICY_QUERY_INVALID (the query does not parse), POLICY_QUERY_UNANSWERABLE (a new or changed query uses a field this build cannot answer, e.g. dupe:), POLICY_MATCH_ADVISORY (a new or changed suggestion match names a group TreeMap only advises on and never deletes — a VM disk, Xcode archives, a photo library\'s derivatives), POLICY_MATCH_UNKNOWN (a new or changed suggestion match names an id no rule on this computer has, which would match nothing; the sentence names the ids a policy may name — one an earlier build saved is kept while unchanged), NOTHING_TO_UPDATE (no "policies" in the body), BAD_POLICIES ("policies" is not a list), TOO_MANY_POLICIES (more than 50), DUPLICATE_POLICY_ID (two entries share an id) — refused rather than saved in a shape that would misbehave'),
     },
   },
   {
@@ -3054,7 +3057,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     requestBody: { required: true, content: { 'application/json': { schema: obj({ policyId: str('A saved policy'), policy: ref('AutopilotPolicy') }) } } },
     responses: {
       '200': jsonResponse('The projection', opaque('items[], bytesMatched, bytesWouldDelete, skipped[], capBytes, wouldBlockReason?')),
-      '400': errorResponse('POLICY_REQUIRED (neither "policyId" nor "policy"); for a "policy", every refusal a save would give it, judged against the stored policy of the same id as a save judges it: POLICY_MATCH_EMPTY, POLICY_MATCH_INVALID, POLICY_PATH_TOO_BROAD, POLICY_PATH_REQUIRED, POLICY_PATH_IS_LINK, PATH_INVALID, PATH_BLOCKED, POLICY_QUERY_INVALID, POLICY_QUERY_UNANSWERABLE, POLICY_MATCH_ADVISORY'),
+      '400': errorResponse('POLICY_REQUIRED (neither "policyId" nor "policy"); for a "policy", every refusal a save would give it, judged against the stored policy of the same id as a save judges it: POLICY_MATCH_EMPTY, POLICY_MATCH_INVALID, POLICY_PATH_TOO_BROAD, POLICY_PATH_REQUIRED, POLICY_PATH_IS_LINK, PATH_INVALID, PATH_BLOCKED, POLICY_QUERY_INVALID, POLICY_QUERY_UNANSWERABLE, POLICY_MATCH_ADVISORY, POLICY_MATCH_UNKNOWN'),
       '404': errorResponse('POLICY_NOT_FOUND'),
       '409': errorResponse('POLICY_RECORD_INVALID — the stored policy\'s folder is not one TreeMap saved (autopilot.json was changed outside TreeMap), so nothing was scanned; save the policy again'),
     },

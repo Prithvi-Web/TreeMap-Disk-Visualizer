@@ -30,6 +30,9 @@ async function loadAutopilot() {
     ]);
     state.autopilot.policies = policies.policies;
     state.autopilot.runs = runs.runs;
+    // The ids a suggestion policy can name on this computer; null when the server could not read its
+    // rule packs, and then no named id is judged (BQL-b1 review F3.1, F3.5).
+    state.autopilot.knownGroupIds = Array.isArray(policies.knownGroupIds) ? policies.knownGroupIds : null;
   } catch (e) {
     host.innerHTML =
       `<div class="muted">Couldn’t load Autopilot: ${escapeHtml(e.message)}</div>` +
@@ -103,7 +106,14 @@ function renderAutopilot() {
 function describeMatch(match) {
   if (!match) return '';
   if (match.kind === 'suggestion') {
-    return `${match.groupIds.length} kind${match.groupIds.length === 1 ? '' : 's'} of reclaimable file`;
+    // Counted only where a rule here has the kind: an id an earlier build's editor offered and no pack
+    // ever shipped matches nothing, so it is said apart (BQL-b1 review F3.1, F3.5).
+    const gone = apUnknownKinds(match.groupIds);
+    const n = match.groupIds.length - gone.length;
+    const kinds = `${n} kind${n === 1 ? '' : 's'} of reclaimable file`;
+    if (gone.length === 0) return kinds;
+    const goneText = `${gone.length} kind${gone.length === 1 ? '' : 's'} of file TreeMap does not have — edit it and pick again`;
+    return n === 0 ? `only ${goneText}` : `${kinds}, and ${goneText}`;
   }
   // v4 §4.5 — a query policy shows the query itself. The caller escapes; what
   // matters here is that the standing instruction is legible at a glance
@@ -407,6 +417,9 @@ function openPolicyEditor(policy) {
  * "Web build output" is the framework folders and dist beside a JavaScript
  * project file; build-output, a folder named build, dist or target with no
  * project beside it to say what rebuilds it, is not offered for unattended runs.
+ * A policy saved with one of those three, or with any id these boxes do not
+ * show, keeps it while unchanged; its card and editor say so (describeMatch,
+ * renderApGroupList), and the server refuses a new one (POLICY_MATCH_UNKNOWN).
  */
 const AP_GROUPS = [
   { id: 'regen-node-modules', label: 'node_modules folders', hint: 'JavaScript dependencies — npm install restores them' },
@@ -419,9 +432,36 @@ const AP_GROUPS = [
   { id: 'os-junk', label: 'Junk files', hint: '.DS_Store, Thumbs.db and desktop.ini — the system makes them again' },
 ];
 
+/**
+ * The ids a suggestion policy names that no rule on this computer has, by the server's own list
+ * (`knownGroupIds`); none when it could not say, so nothing is judged (BQL-b1 review F3.1, F3.5).
+ */
+function apUnknownKinds(ids) {
+  const known = state.autopilot && state.autopilot.knownGroupIds;
+  return Array.isArray(known) ? ids.filter(id => !known.includes(id)) : [];
+}
+
+/** "a kind of file", "2 kinds of file". */
+function apKinds(n) {
+  return n === 1 ? 'a kind of file' : `${n} kinds of file`;
+}
+
 function renderApGroupList(selected) {
   const chosen = new Set(selected);
-  $('apGroupList').innerHTML = AP_GROUPS.map(g => `
+  // What the boxes cannot show, said above them, so a policy an earlier build saved does not open with
+  // nothing ticked and no word why, and Save's refusal of an empty list does not come out of nowhere
+  // (BQL-b1 review F3.5): ids no rule has, and kinds TreeMap has that these boxes do not offer.
+  const unlisted = selected.filter(id => !AP_GROUPS.some(g => g.id === id));
+  const gone = apUnknownKinds(unlisted);
+  const other = unlisted.filter(id => !gone.includes(id));
+  const parts = [
+    gone.length ? `${apKinds(gone.length)} TreeMap does not have (${gone.join(', ')}), which ${gone.length === 1 ? 'matches' : 'match'} nothing` : null,
+    other.length ? `${apKinds(other.length)} this list does not offer (${other.join(', ')})` : null,
+  ].filter(Boolean);
+  const note = parts.length
+    ? `<div class="muted" style="margin:0 0 8px;line-height:1.5;">This policy names ${escapeHtml(parts.join(', and '))}. Saving keeps only the kinds ticked below.</div>`
+    : '';
+  $('apGroupList').innerHTML = note + AP_GROUPS.map(g => `
     <div class="rule-row">
       <input type="checkbox" id="apg-${escapeHtml(g.id)}" data-ap-group="${escapeHtml(g.id)}"${chosen.has(g.id) ? ' checked' : ''}>
       <label for="apg-${escapeHtml(g.id)}">${escapeHtml(g.label)} <span class="muted">— ${escapeHtml(g.hint)}</span></label>

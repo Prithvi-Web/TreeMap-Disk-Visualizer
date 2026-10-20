@@ -4,6 +4,7 @@ import {
   savePolicies,
   getPolicy,
   approvePolicy,
+  knownGroupIds,
   normalizePolicy,
   simulatePolicy,
   listRuns,
@@ -29,9 +30,13 @@ import { AppError } from '../middleware/errorHandler';
 
 export const autopilotRouter = Router();
 
-/** GET /api/autopilot/policies — every configured policy. */
+/**
+ * GET /api/autopilot/policies — every configured policy, and `knownGroupIds`: every id a suggestion
+ * policy can name on this computer (null when the rule packs cannot be read), so a policy an earlier
+ * build saved with a kind no rule has can say so (BQL-b1 review F3.1, F3.5).
+ */
 autopilotRouter.get('/autopilot/policies', async (_req: Request, res: Response) => {
-  res.json({ policies: await listPolicies() });
+  res.json({ policies: await listPolicies(), knownGroupIds: knownGroupIds() });
 });
 
 /**

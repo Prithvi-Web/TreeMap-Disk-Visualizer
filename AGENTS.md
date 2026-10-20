@@ -142,7 +142,12 @@ OpenAPI 3 spec).
      `advisory: true` must never be deleted** — the file is the data (a VM
      disk) or the OS owns it; use its `adviceCommand` instead. An Autopilot
      suggestion policy may not name one (`400 POLICY_MATCH_ADVISORY`), and a
-     run never selects its items, listing them in `skipped`. If a pack is
+     run never selects its items, listing them in `skipped`. Nor may it name
+     an id no rule on this computer has (`400 POLICY_MATCH_UNKNOWN`, naming
+     the ids it may); `GET /api/autopilot/policies` lists them as
+     `knownGroupIds`. A policy an earlier build saved with such an id is kept
+     while unchanged and matches nothing of it, and each run's
+     `blockedReason` says so. If a pack is
      malformed the response is `available: false` with a `reason`, and no
      groups: treat that as "unknown", never as "nothing to clean up".
    - `GET /api/packages/orphans` — package-manager artifacts split into

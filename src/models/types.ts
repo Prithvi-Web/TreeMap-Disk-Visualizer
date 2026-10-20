@@ -1214,7 +1214,7 @@ export interface AutopilotRun {
   at: number;
   mode: AutopilotRunMode;
   status: AutopilotRunStatus;
-  /** Why nothing was deleted, when nothing was; or what did not finish after the delete. */
+  /** Why nothing was deleted, when nothing was; or what did not finish after the delete; and that the policy names kinds no rule has (BQL-b1 review F3.1). */
   blockedReason?: string;
   items: AutopilotRunItem[];
   /** Bytes the match totalled, before any cap. */

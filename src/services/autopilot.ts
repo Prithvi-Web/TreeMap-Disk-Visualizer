@@ -9,7 +9,7 @@ import {
 import { appDataDir, readJsonFile, writeJsonFile } from './storage';
 import { SPILL_DIR } from './spillSweep';
 import { cleanupSuggestionsFor } from './cleanupMemo';
-import { fillFolder, loadRuleCatalog, ruleCatalogStatus } from './rulePacks';
+import { fillFolder, loadRuleCatalog, ruleCatalogStatus, type Rule } from './rulePacks';
 import { matchCustomRules } from './scanQueries';
 import { parse } from './query/parse';
 import { isEmptyQuery } from './query/evaluate';
@@ -210,8 +210,77 @@ export function normalizePolicy(raw: unknown, existing?: AutopilotPolicy): Autop
   // switching off or deleting any other policy. It selects nothing where it
   // stands (the evaluator never matches an unknown).
   if (match.kind === 'query' && (!existing || !sameScope(existing, policy))) refuseUnanswerable(name, match.q);
-  if (match.kind === 'suggestion' && (!existing || !sameScope(existing, policy))) refuseAdvisory(name, match.groupIds);
+  if (match.kind === 'suggestion' && (!existing || !sameScope(existing, policy))) {
+    refuseUnknownKinds(name, match.groupIds);
+    refuseAdvisory(name, match.groupIds);
+  }
   return policy;
+}
+
+/** Every rule id in this computer's packs, advice-only ones included, in catalog order; null when the packs cannot be read. */
+function catalogRules(): Rule[] | null {
+  const status = ruleCatalogStatus();
+  if (!status.ok) return null;
+  const c = status.catalog;
+  return [...c.projectDirectory, ...c.directory, ...c.file, ...c.location, ...c.staleFiles];
+}
+
+/**
+ * Every id a suggestion policy's `groupIds` can name on this computer: the rule ids its packs ship,
+ * advice-only ones included (a save refuses those, POLICY_MATCH_ADVISORY, and a run leaves them alone,
+ * saying so). Null when the packs cannot be read, when nothing is known. Served beside the policies
+ * (`GET /api/autopilot/policies`), so the page can say which named kinds no rule has (BQL-b1 review
+ * F3.1, F3.5).
+ */
+export function knownGroupIds(): string[] | null {
+  const rules = catalogRules();
+  return rules === null ? null : [...new Set(rules.map((rule) => rule.id))];
+}
+
+/**
+ * The ids a suggestion policy names that no rule on this computer has (BQL-b1 review F3.1): three boxes
+ * of earlier builds' editor named ids no pack ever shipped - regen-build-output, cache-general,
+ * junk-general - and the evaluator never matches one. None is judged when the packs cannot be read.
+ */
+function unknownGroupIds(match: AutopilotMatch): string[] {
+  if (match.kind !== 'suggestion') return [];
+  const known = knownGroupIds();
+  return known === null ? [] : match.groupIds.filter((id) => !known.includes(id));
+}
+
+/**
+ * A suggestion policy may name only a kind this computer's packs have (BQL-b1 review F3.1): another
+ * would match nothing on every run, and the person learns it where they save the policy, with the kinds
+ * they may name. Refused where a person saves it, as an advice-only group is; one an earlier build saved
+ * is kept while unchanged, and its runs say what it names (`runPolicyNow`).
+ */
+function refuseUnknownKinds(policyName: string, groupIds: readonly string[]): void {
+  const rules = catalogRules();
+  if (rules === null) return;
+  const unknown = unknownGroupIds({ kind: 'suggestion', groupIds: [...groupIds] });
+  if (unknown.length === 0) return;
+  const mayName = [...new Set(rules.filter((rule) => rule.action !== 'advice').map((rule) => rule.id))];
+  const one = unknown.length === 1;
+  throw new AppError(400, 'POLICY_MATCH_UNKNOWN',
+    `The policy "${policyName}" names ${unknown.map((id) => `“${id}”`).join(' and ')}, which ${one ? 'is no kind' : 'are no kinds'} of file TreeMap has on this computer, ` +
+    `so it would never match ${one ? 'it' : 'them'}. A cleanup-suggestion policy may name: ${mayName.join(', ')}.`);
+}
+
+/**
+ * What a run says of a policy naming kinds no rule here has (BQL-b1 review F3.1): "Nothing matched"
+ * alone read as a policy working as meant, run after run.
+ */
+function unknownKindsSentence(unknown: readonly string[], only: boolean): string {
+  const kinds = unknown.length === 1 ? 'a kind of file' : `${unknown.length} kinds of file`;
+  return only
+    ? `This policy names only ${kinds} TreeMap does not have (${unknown.join(', ')}), so it matches nothing: edit the policy and pick again.`
+    : `This policy also names ${kinds} TreeMap does not have (${unknown.join(', ')}), which ${unknown.length === 1 ? 'matches' : 'match'} nothing: edit the policy and pick again.`;
+}
+
+/** `first` then `next`, as two sentences. */
+function withSentence(first: string | undefined, next: string): string {
+  if (!first) return next;
+  return /[.!?]$/.test(first) ? `${first} ${next}` : `${first}. ${next}`;
 }
 
 /**
@@ -284,11 +353,9 @@ function linkFolderAdvice(leadsTo: string | null): string {
  * packs that cannot be read leave nothing to check here; nothing is selected from them either.
  */
 function refuseAdvisory(policyName: string, groupIds: readonly string[]): void {
-  const status = ruleCatalogStatus();
-  if (!status.ok) return;
-  const c = status.catalog;
-  const advice = new Map([...c.projectDirectory, ...c.directory, ...c.file, ...c.location, ...c.staleFiles]
-    .filter((rule) => rule.action === 'advice').map((rule) => [rule.id, rule]));
+  const rules = catalogRules();
+  if (rules === null) return;
+  const advice = new Map(rules.filter((rule) => rule.action === 'advice').map((rule) => [rule.id, rule]));
   const named = groupIds.map((id) => advice.get(id)).filter((rule) => rule !== undefined);
   if (named.length === 0) return;
   const insteads = named.map((rule) => rule.adviceCommand).filter((cmd): cmd is string => typeof cmd === 'string' && cmd.length > 0);
@@ -943,8 +1010,13 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
   };
   /** Set once this run reaches the "Ask me first above" check: the allowance it read is spent (F1.10). */
   let spentAllowance: number | undefined;
+  // Kinds no rule here has, which an earlier build saved and the evaluator never matches: every run
+  // record says so, whatever else it says, never only "Nothing matched" (BQL-b1 review F3.1).
+  const unknown = unknownGroupIds(policy.match);
+  const onlyUnknown = unknown.length > 0 && policy.match.kind === 'suggestion' && unknown.length === policy.match.groupIds.length;
 
   const record = (): Promise<AutopilotRun> => withAutopilotStore(async () => {
+    if (unknown.length > 0) run.blockedReason = withSentence(run.blockedReason, unknownKindsSentence(unknown, onlyUnknown));
     const fresh = await loadStore();
     fresh.runs.unshift(run);
     const live = fresh.policies.find((p) => p.id === policy.id);
@@ -1083,8 +1155,9 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
       refusedByPolicy > 0 ? 'refused by your agent-policy.json' : null,
       candidates.length > 0 ? 'larger than the remaining allowance' : null,
     ].filter((w): w is string => w !== null);
+    // A policy naming only kinds no rule has matched nothing because it can match nothing: record() says that instead.
     run.blockedReason = run.skipped.length === 0
-      ? 'Nothing matched this time.'
+      ? (onlyUnknown ? undefined : 'Nothing matched this time.')
       : heldBack.otherwise === 0 && why.length > 0
         ? `Everything that matched is ${why.join(' or ')} — nothing was deleted.`
         : 'Everything that matched was left alone — nothing was deleted.';
