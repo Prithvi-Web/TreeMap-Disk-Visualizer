@@ -599,8 +599,9 @@ const state = {
   // next ends: the scan behind that tree is requested only as the paint
   // returns (startScan → startScanRequest), and finishScan has ended the scan
   // chrome by then, so `scanning` alone says no scan will land. What says
-  // whether a scan will draw the tree on screen reads `scanning ||
-  // indexScanDue` (Disk City's line, the Reclaim legend; review F3.1).
+  // whether a scan of the tree on screen is coming reads it through
+  // treeScanComing (015): Disk City's line, the Reclaim legend, every view's
+  // "fills in once the scan finishes" (review F3.1, BQJ-1b).
   indexScanDue: false,
   scanning: false,
   es: null,
