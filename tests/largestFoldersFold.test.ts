@@ -281,6 +281,16 @@ test('J55: a row\'s accessible name says its size, its file count and its share 
   assert.match(one, /aria-label="solo, 2\.0 GB, 1 file, 100% of the largest folder listed — open it in the treemap"/, 'one file, said in the singular');
 });
 
+test('J55: a folder of 1,234 files is said with its thousands separator — in its accessible name and in the count the row shows (review F1.11)', () => {
+  const { html } = renderCard([
+    { name: 'big', path: '/A/big', size: 3_200_000_000, fileCount: 1234 },
+    { name: 'small', path: '/A/small', size: 1_000_000_000, fileCount: 12 },
+  ]);
+  const row = html.split('<div class="bigfile"').slice(1)[0];
+  assert.equal(/aria-label="([^"]*)"/.exec(row)?.[1], 'big, 3.2 GB, 1,234 files, 100% of the largest folder listed — open it in the treemap', 'the accessible name says 1,234 files');
+  assert.equal(/<span class="cnt muted num"[^>]*>([^<]+)<\/span>/.exec(row)?.[1], '1,234 files', 'and so does the row');
+});
+
 test('H55: the "%" column says what it is a share of — the largest folder listed — in the card\'s heading and on each figure', () => {
   const card = INDEX.slice(INDEX.indexOf('<span data-icon="folder"></span>Largest Folders'), INDEX.indexOf('id="bigFolders"'));
   assert.match(card, /% of the largest/, 'the heading says what the percentages are');
