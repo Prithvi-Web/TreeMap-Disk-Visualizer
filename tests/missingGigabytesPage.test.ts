@@ -71,7 +71,13 @@ function page(): { body: El; info: El; asks: Ask[]; view: View; state: { scanId:
   // The reference paint is a fresh statement's (not being updated), and leaves
   // the page's own state as it found it: it shares nothing mutable with the
   // page under test, so a flag the page fails to clear shows (review F1.6).
-  const render = new Function(...keys, `'use strict'; ${INDEX.slice(start, end)}\n` +
+  // With the app's one rule for the scan the tree on screen came from (treeScanId, treeScanComing), which loadMissing asks.
+  const rule = ['function treeScanId(', 'function treeScanComing('].map((d) => {
+    const at = INDEX.indexOf(d);
+    assert.ok(at > 0, `${d} is in the built page`);
+    return INDEX.slice(at, INDEX.indexOf('\n}', at) + 2);
+  }).join('\n');
+  const render = new Function(...keys, `'use strict'; ${rule}\n${INDEX.slice(start, end)}\n` +
     'return (d) => { const data = missingData, updating = missingUpdating; missingData = d; missingUpdating = false; ' +
     'try { renderMissing(); } finally { missingData = data; missingUpdating = updating; } };')(
     ...keys.map((k) => deps[k]),

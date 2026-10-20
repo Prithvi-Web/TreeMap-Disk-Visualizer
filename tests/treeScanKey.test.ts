@@ -125,7 +125,8 @@ class El {
     toggle: (c: string, on?: boolean) => { const n = on === undefined ? !this.cls.has(c) : on; if (n) this.cls.add(c); else this.cls.delete(c); return n; },
     contains: (c: string) => this.cls.has(c),
   };
-  querySelector(): El | null { return null; }
+  /** Whatever a view looks for inside an element it just wrote is there, as a browser's would be. */
+  querySelector(): El | null { return new El(); }
   querySelectorAll(): El[] { return []; }
   addEventListener(): void {}
   setAttribute(k: string, v: string): void { this.attrs[k] = v; }
@@ -187,7 +188,10 @@ function page<T>(decls: string[], given: Record<string, unknown>, returns: strin
   };
   const all = [...RULE, ...decls];
   const own = new Set(all.map((d) => /function (\w+)\(/.exec(d)![1]));
-  const scope = new Proxy({ api, apiPaced: api, ...given }, {
+  // `given` itself is the scope, so what the page assigns to its own top-level bindings is read back from it.
+  if (!('api' in given)) given.api = api;
+  if (!('apiPaced' in given)) given.apiPaced = api;
+  const scope = new Proxy(given, {
     has: (t, k) => typeof k === 'string' && k in t && !own.has(k),
     get: (t, k) => (k === Symbol.unscopables ? undefined : (t as Record<string, unknown>)[k as string]),
     set: (t, k, v) => { (t as Record<string, unknown>)[k as string] = v; return true; },
@@ -416,4 +420,71 @@ test('Duplicates: the side-by-side viewer asks the scan the tree on screen came 
   assert.equal($('ndTrashBtn').disabled, true, 'and nothing they hold is offered to the Trash');
   await fns.open('exact', 0);
   assert.equal(asks.length, 1, 'nor does the viewer ask anything — not of the running scan');
+});
+
+/* ───────────────────────────── Calendar, Missing GB ───────────────────────────── */
+
+test('Calendar: bytes per day are counted by the scan the tree on screen came from — never the running scan — and over the saved index\'s tree nothing is asked: it says it fills in once the scan finishes, then that the tree is the saved index', async () => {
+  const $ = stubDom();
+  const state: Record<string, unknown> = { root: TREE, view: 'history', ...HELD };
+  const { fns, asks } = page<{ load: () => Promise<void> }>(['async function loadCalendar('], {
+    state, $, calChannel: 'modified', calSeq: 0, calData: null, skeletonRows: () => '<i>loading</i>', renderCalendar: noop,
+    escapeHtml: esc, icon: () => '', openBrowse: noop,
+  }, '{ load: loadCalendar }', () => ({ modified: [], degraded: [] }));
+  await throughThePhases('Calendar', state, asks, fns.load, noop);
+  const before = asks.length;
+  Object.assign(state, INDEX_RUNNING);
+  await fns.load();
+  assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked — not of the running scan');
+  assert.match($('calBody').innerHTML, COMING, 'it says it fills in once the scan finishes');
+  assert.doesNotMatch($('calBody').innerHTML, /Choose a folder|Once a folder is scanned/, 'not the welcome\'s words, over a folder on screen');
+  assert.equal($('calControls').hidden, true, 'with no days to pick from, no controls');
+  Object.assign(state, INDEX_STOPPED);
+  await fns.load();
+  assert.equal(asks.length, before);
+  assert.match($('calBody').innerHTML, /Opened from the saved index — scan this folder to /, 'once nothing will land, the tree is said to be the saved index');
+});
+
+test('Missing GB: the statement is asked of the scan the tree on screen came from — never the running scan — an answer is kept only for that scan, and over the saved index\'s tree nothing is asked: loading, then the saved index', async () => {
+  const $ = stubDom();
+  const state: Record<string, unknown> = { root: TREE, ...HELD };
+  const given: Record<string, unknown> = {
+    state, $, missingSeq: 0, missingData: null, missingAsking: null, missingUpdating: false, missingCache: new Map(), MISSING_CACHE_SCANS: 4,
+    renderMissing: noop, skeletonRows: () => '<i>loading</i>', escapeHtml: esc,
+  };
+  let hold: ((r: (v: unknown) => void) => void) | null = null;
+  const { fns, asks } = page<{ load: () => Promise<void> }>(['async function loadMissing(', 'function mgRemember('], given, '{ load: loadMissing }',
+    () => (hold ? new Promise((resolve) => { const h = hold!; hold = null; h(resolve); }) : { lines: [] }));
+  await throughThePhases('Missing GB', state, asks, fns.load, noop);
+  // A statement asked while the rescan's request is out, landing after it answered (followScanProgress): the
+  // tree on screen is still that scan's, so it is kept — not dropped as "another scan's".
+  let release: (v: unknown) => void = noop;
+  Object.assign(state, { scanning: true, scanId: 'scan-old', settledScanId: 'scan-old', indexScanDue: false });
+  hold = (r: (v: unknown) => void) => { release = r; };
+  let out = fns.load();
+  await turns();
+  state.scanId = 'scan-new';
+  const theTrees = { lines: ['scan-old, asked during the rescan'] };
+  release(theTrees);
+  await out;
+  assert.equal(given.missingData, theTrees, 'a statement of the tree on screen is kept when the rescan\'s request answers meanwhile');
+  // One asked of the older scan that lands once the rescan landed: not put on screen over the new tree.
+  Object.assign(state, HELD);
+  hold = (r: (v: unknown) => void) => { release = r; };
+  out = fns.load();
+  await turns();
+  Object.assign(state, LANDED);
+  const stale = { lines: ['scan-old, landing after scan-new'] };
+  release(stale);
+  await out;
+  assert.notEqual(given.missingData, stale, 'the older scan\'s statement is not put on screen over the new tree');
+  const before = asks.length;
+  Object.assign(state, INDEX_RUNNING);
+  await fns.load();
+  assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked');
+  assert.match($('missingBody').innerHTML, COMING, 'it says it fills in once the scan finishes');
+  Object.assign(state, INDEX_STOPPED);
+  await fns.load();
+  assert.equal(asks.length, before);
+  assert.match($('missingBody').innerHTML, OPENED, 'then that the tree is the saved index');
 });

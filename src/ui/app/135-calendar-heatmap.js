@@ -33,10 +33,24 @@ function calQuarterOf(iso) {
 
 async function loadCalendar() {
   const body = $('calBody');
+  // Counted by the scan the tree on screen came from (treeScanId) — never a
+  // scan still walking, which answers 409 (BQJ-1b).
+  const scanId = treeScanId();
   // Nothing to count: what the calendar will show and the action that fills
   // it, without "Click a day…" and a channel switch over no days (G02).
-  $('calControls').hidden = !state.scanId;
-  if (!state.scanId) {
+  $('calControls').hidden = !scanId;
+  if (!scanId && state.root) {
+    // The saved index's tree, which no scan stands behind: a folder is on
+    // screen, so not the welcome's words — what the calendar waits for.
+    calSeq++; // an answer for the tree before is not painted here
+    calData = null;
+    body.innerHTML = `<div class="cal-empty"><p class="muted">${escapeHtml(treeScanComing()
+      ? 'The calendar is counted from a finished scan — it fills in once the scan finishes.'
+      : 'Opened from the saved index — scan this folder to see its files by the day they last changed or were created.')}</p></div>`;
+    $('calDegraded').hidden = true; $('calLegend').hidden = true;
+    return;
+  }
+  if (!scanId) {
     calData = null;
     body.innerHTML = '<div class="cal-empty"><p class="muted">Once a folder is scanned, the calendar shows its files by the day they last changed or were created, one square per day.</p>' +
       `<button class="btn btn-primary" data-cal-browse>${icon('folder', 15)}Choose a folder</button></div>`;
@@ -49,7 +63,7 @@ async function loadCalendar() {
   // with the sentence kept as the status label for screen readers.
   body.innerHTML = skeletonRows(4, 30, 'Counting bytes per day…');
   try {
-    const url = `/api/scan/${encodeURIComponent(state.scanId)}/calendar` + (calChannel === 'created' ? '?channel=created' : '');
+    const url = `/api/scan/${encodeURIComponent(scanId)}/calendar` + (calChannel === 'created' ? '?channel=created' : '');
     const data = await api(url);
     if (seq !== calSeq || state.view !== 'history') return; // superseded
     calData = data;

@@ -63,12 +63,18 @@ function mgRemember(scanId, statement, seq) {
 /** Fetch the statement. A failure says so; it never leaves a stale receipt up. */
 async function loadMissing() {
   const body = $('missingBody');
-  const scanId = state.scanId;
+  // Asked of the scan the tree on screen came from (treeScanId) — never a
+  // scan still walking, which answers 409 — and kept only for it (BQJ-1b).
+  const scanId = treeScanId();
   if (!scanId) {
     missingSeq++;
     missingData = null;
     body.classList.remove('fx-chart-loading');
-    body.innerHTML = '<div class="muted">Run a scan to reconcile this disk.</div>';
+    // The saved index's tree, which no scan stands behind, is a folder on
+    // screen: said as what the statement waits for, not "Run a scan".
+    body.innerHTML = `<div class="muted">${escapeHtml(!state.root ? 'Run a scan to reconcile this disk.'
+      : treeScanComing() ? 'This statement is worked out from a finished scan — it fills in once the scan finishes.'
+        : 'Opened from the saved index — scan this folder to reconcile this disk.')}</div>`;
     $('missingInfo').textContent = '';
     return;
   }
@@ -96,12 +102,12 @@ async function loadMissing() {
   try {
     const statement = await api(`/api/missing-gigabytes?scanId=${encodeURIComponent(scanId)}`);
     mgRemember(scanId, statement, seq); // its own scan's, whatever is on screen now
-    if (seq !== missingSeq || scanId !== state.scanId) return; // a newer ask, another scan, or the view left
+    if (seq !== missingSeq || scanId !== treeScanId()) return; // a newer ask, another scan, or the view left
     missingData = statement;
     missingUpdating = false;
     renderMissing();
   } catch (e) {
-    if (seq !== missingSeq || scanId !== state.scanId) return;
+    if (seq !== missingSeq || scanId !== treeScanId()) return;
     body.classList.remove('fx-chart-loading');
     missingCache.delete(scanId);
     missingData = null;
@@ -362,9 +368,10 @@ registerView({
   // page of blanks.
   capabilityKey: 'volumeTopology',
   onScanChange() {
-    // Entering mid-scan gets a truthful "still running" from the server, and a
-    // user left looking at it would have no way back: nothing re-fetches on its
-    // own. So a scan landing while this view is open re-reconciles immediately.
+    // Entering mid-scan shows the statement of the scan the tree on screen
+    // came from, or — over the saved index's tree — that it fills in once the
+    // scan finishes; nothing else re-fetches on its own, so a scan landing
+    // while this view is open re-reconciles immediately.
     missingData = null;
     if (mountedView && mountedView.id === 'missing') loadMissing();
   },

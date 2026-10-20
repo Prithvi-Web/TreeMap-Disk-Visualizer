@@ -278,7 +278,9 @@ test('Trends with no history says what it will show and offers the action, inste
 async function calendarWith(scanId: string | null, dom = makeDom()) {
   const { $ } = dom;
   const browsed: unknown[] = [];
-  const src = slice('async function loadCalendar(', 'function renderCalendar(');
+  // With the app's one rule for the scan behind the tree on screen (treeScanId, treeScanComing).
+  const rule = ['function treeScanId(', 'function treeScanComing('].map((d) => `${slice(d, '\n}\n')}\n}\n`).join('');
+  const src = rule + slice('async function loadCalendar(', 'function renderCalendar(');
   const load = new Function('$', 'state', 'api', 'escapeHtml', 'icon', 'skeletonRows', 'renderCalendar', 'openBrowse', 'calChannel', 'calSeq', 'calData',
     `'use strict'; ${src} return loadCalendar;`)(
     $, { scanId, view: 'history' }, async () => ({ modified: [], degraded: [] }), (s: string) => s, () => '', () => '<skeleton>', () => {},
