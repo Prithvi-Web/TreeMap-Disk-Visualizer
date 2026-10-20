@@ -37593,7 +37593,8 @@ function browseRows(data, showHidden, platform) {
   if (cut && (showHidden || hiddenSent === 0)) {
     rows.push(`<div class="muted" role="note" style="padding:8px 12px; font-size:12px;">Showing the first ${formatCount(dirs.length)} of ${formatCount(total)} folders. Type a path above to open one that is not listed.</div>`);
   }
-  if (data.parent) rows.push(`<button class="browse-item" data-p="${escapeHtml(data.parent)}" aria-label="Up one level">${icon('arrowUp', 14)} <b>..</b></button>`);
+  // Nor is ".." to one: /run/media lists (its drives) while /run is refused (BQL-a review F3.3).
+  if (data.parent && !browseRefuses(data.parent, platform)) rows.push(`<button class="browse-item" data-p="${escapeHtml(data.parent)}" aria-label="Up one level">${icon('arrowUp', 14)} <b>..</b></button>`);
   rows.push(...dirs.map(d =>
     `<button class="browse-item" data-p="${escapeHtml(d.path)}" aria-label="Open ${escapeHtml(d.name)}">${icon('folder', 14)} <span class="${d.isHidden ? 'hid' : ''}">${escapeHtml(d.name)}</span></button>`));
   if (!showHidden && !ordinary.length && hidden) {

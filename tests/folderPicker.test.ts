@@ -761,6 +761,25 @@ test('the folders the picker leaves out are the server\'s own refusals by name: 
   assert.deepEqual(drawn, [], 'no folder the server refuses by its name is drawn as a row');
 });
 
+/*
+ * The BQL-a review, F3.3: /run/media lists (udisks2 mounts drives there, so it is let out of the "/run"
+ * blocklist entry) while /run stays refused, and GET /api/fs/list answers /run/media with parent "/run" — so
+ * its ".." row opened only an error toast, the case G26 review F3.1 removed for the rows below.
+ */
+test('the picker draws no "Up one level" row to a folder the server refuses — /run/media lists, /run does not — while ".." to a folder it opens is drawn (BQL-a review F3.3)', async () => {
+  const listing = (p: string) => (p === '/run/media'
+    ? { path: '/run/media', parent: '/run', dirs: [{ name: 'me', path: '/run/media/me', isHidden: false }] }
+    : { path: p, parent: '/run/media', dirs: [{ name: 'USB', path: `${p}/USB`, isHidden: false }] });
+  const t = browseRuntime(listing, undefined, { platform: 'linux' });
+  const ups = () => [...t.$('browseList').innerHTML.matchAll(/data-p="([^"]*)" aria-label="Up one level"/g)].map((m) => m[1]);
+  assert.equal(await t.rt.browseTo('/run/media'), true, 'control: /run/media opens');
+  assert.deepEqual(t.rows(), ['me'], 'control: its drives are listed');
+  assert.deepEqual(ups(), [], 'no ".." row to /run, which the server refuses');
+  assert.equal(await t.rt.browseTo('/run/media/me'), true, 'control: a drive under it opens');
+  assert.deepEqual(ups(), ['/run/media'], 'from a drive, ".." opens /run/media');
+  assert.deepEqual(t.toasts, [], 'and nothing was refused');
+});
+
 test('the whole-drive choice sits at the top of the sheet, and the sheet still opens on its path field; the hidden-folders box is a labelled checkbox (G26)', () => {
   const sheet = INDEX.slice(INDEX.indexOf('<div class="modal-backdrop" id="browseModal"'), INDEX.indexOf('<!-- ═══════════ Confirm modal'));
   const at = (needle: string) => sheet.indexOf(needle);
