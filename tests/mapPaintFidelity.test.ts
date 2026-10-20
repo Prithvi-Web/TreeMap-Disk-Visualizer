@@ -145,7 +145,9 @@ function mapFill(tile: typeof TILE = TILE, colour: number[] = GREEN) {
   const draw = load<() => void>(['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'tmDiffWashes', 'tmWashesOver', 'tmSeenThrough', 'TM_DIFF_WASH', 'mix', 'containerListable',
     // The outline rules the passes read (the owner's outline decision, 20 Oct 2026; J51).
     'tmLeafEdged', 'TM_DENSE_PX', 'tmSnap', 'tmTone', 'TM_EDGE_MIN', 'TM_LIT', 'tmKidsOf', 'tmParentPath', 'tmFramesDeepestFirst',
-    'tmFrameBands', 'tmEdgeContent', 'tmTouches', 'TM_SIDES', 'TM_FRAME_MIN', 'TM_FRAME_W_TOP', 'TM_FRAME_W'], {
+    'tmFrameBands', 'tmEdgeContent', 'tmTouches', 'TM_SIDES', 'TM_FRAME_MIN', 'TM_FRAME_W_TOP', 'TM_FRAME_W',
+    // The map's ground, which a band beside a hollow or staged cell is toned against (review F1.5).
+    'tmGroundRgb', 'tmCssRgba', 'tmOver'], {
     $: () => ({ clientWidth: 120 }),
     treemapCanvasHeight: () => 100,
     window: { devicePixelRatio: 1 },

@@ -818,6 +818,32 @@ function tmTone(base, beside, target) {
   if (light !== null) return { rgb: mix(base, [255, 255, 255], light / 32), light: true };
   return worst([0, 0, 0]) >= worst([255, 255, 255]) ? { rgb: [0, 0, 0], light: false } : { rgb: [255, 255, 255], light: true };
 }
+/** A CSS colour — #rgb, #rrggbb, rgb() or rgba() — as [r, g, b, a]; null when it is none of those. */
+function tmCssRgba(v) {
+  const s = String(v || '').trim();
+  let m = /^#([0-9a-f]{3})$/i.exec(s);
+  if (m) return [...m[1]].map((h) => parseInt(h + h, 16)).concat(1);
+  m = /^#([0-9a-f]{6})$/i.exec(s);
+  if (m) return [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16)).concat(1);
+  m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/i.exec(s);
+  if (m) return [Number(m[1]), Number(m[2]), Number(m[3]), m[4] === undefined ? 1 : Number(m[4])];
+  return null;
+}
+/** The colour `fg` ([r, g, b, a], or null: nothing) laid over the opaque `bg`. */
+function tmOver(fg, bg) {
+  return fg ? mix(bg, fg, fg[3]) : bg;
+}
+/**
+ * The map's ground as the screen shows it, [r, g, b]: --tm-canvas-bg over the
+ * map's glass card over the page. A cell the painter clears to the ground — a
+ * hollow cloud cell, a staged block — and the part of a folder an online-only
+ * file is hidden in show it, so a folder's band beside one is toned against
+ * it; it was black there, unseen on the dark theme's ground (review F1.5).
+ */
+function tmGroundRgb() {
+  const page = tmCssRgba(cssVar('--bg-1'));
+  return tmOver(tmCssRgba(cssVar('--tm-canvas-bg')), tmOver(tmCssRgba(cssVar('--glass')), page ? page.slice(0, 3) : [12, 13, 20]));
+}
 /**
  * Each folder's drawn rectangles, by the folder's path. A staged block (the
  * cart preview's) is filed under the folder it lies in, its `parentPath`: its
@@ -851,14 +877,15 @@ function tmTouches(c, r, side) {
  * What lies just inside `side` of the folder `r`, stretch by stretch along
  * it, as { lo, hi, base, beside }: each leaf along that edge (its colour, and
  * its cushion's ends as shown, its highlight with them), each nested folder's
- * own edge in turn, and the folder's own fill between them. `beside` is null
- * where only the map's ground shows (a hollow or staged cell, or a folder
- * left unfilled).
+ * own edge in turn, and the folder's own fill between them. Where a cell
+ * shows the map's ground — a hollow or staged cell (r.shows), or a folder
+ * left unfilled (r.groundSeen) — `beside` is what it shows there, and `base`
+ * the cell's own colour, or the folder's where it has none (review F1.5).
  */
 function tmEdgeContent(r, side, kids) {
   const [p, s] = TM_SIDES[side];
   const lo = r[p], hi = r[p] + r[s];
-  const own = { base: r.bgBase || null, beside: r.bgSeen || null };
+  const own = { base: r.bgBase || r.ownRgb || null, beside: r.bgSeen || r.groundSeen || null };
   const out = [];
   let at = lo;
   const along = (kids.get(r.n.path) || []).filter((c) => tmTouches(c, r, side)).sort((a, b) => a[p] - b[p]);
@@ -872,7 +899,7 @@ function tmEdgeContent(r, side, kids) {
         if (sb > sa) out.push({ ...seg, lo: sa, hi: sb });
       }
     } else {
-      out.push({ lo: a, hi: b, base: c.fillRgb || null, beside: c.seen ? (c.litSeen ? [...c.seen, c.litSeen] : c.seen) : null });
+      out.push({ lo: a, hi: b, base: c.fillRgb || c.showsRgb || own.base, beside: c.seen ? (c.litSeen ? [...c.seen, c.litSeen] : c.seen) : (c.shows || null) });
     }
     at = b;
   }
@@ -894,7 +921,7 @@ function tmFrameBands(r, kids) {
     for (const seg of tmEdgeContent(r, side, kids)) {
       const a = Math.max(from, seg.lo), b = Math.min(to, seg.hi);
       if (b <= a) continue;
-      const rgb = seg.beside ? tmTone(seg.base, seg.beside, TM_FRAME_MIN).rgb : [0, 0, 0];
+      const rgb = seg.beside && seg.base ? tmTone(seg.base, seg.beside, TM_FRAME_MIN).rgb : [0, 0, 0];
       const tone = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
       if (last && last.tone === tone && Math.abs(last.b - a) < 1e-6) { last.b = b; continue; }
       last = { a, b, tone };
@@ -1122,12 +1149,19 @@ function drawTreemap() {
   // server's breadth-first order, so a folder's fill lies under its contents.
   // Not in a folder an online-only file is hidden in: its bytes are not on
   // this disk, and the folder's colour there would claim the space.
+  const ground = tmGroundRgb();
   for (const r of px) {
-    if (!r.frame || cloudHiddenIn.has(r.n.path)) continue;
+    if (!r.frame) continue;
+    // The folder's colour, and the ground as it shows in it (through any
+    // History diff wash): its band is toned from the one against the other
+    // where the ground shows (review F1.5).
+    r.ownRgb = cellRgb(r.n);
+    r.groundSeen = tmSeenThrough([ground], tmWashesOver(r, washes));
+    if (cloudHiddenIn.has(r.n.path)) continue;
     let covered = 0;
     for (const c of kids.get(r.n.path) || []) covered += c.w * c.h;
     if (covered >= r.w * r.h - 0.5) continue; // its contents tile it: none of it shows
-    r.bgBase = cellRgb(r.n);
+    r.bgBase = r.ownRgb;
     r.bg = tmLeafStops(r.bgBase, r.h, null);
     r.bgSeen = tmSeenThrough(r.bg, tmWashesOver(r, washes));
     ctx.fillStyle = tmLeafFill(ctx, r.bg, r.y, r.h);
@@ -1166,6 +1200,11 @@ function drawTreemap() {
         ctx.strokeRect(r.x + 1, r.y + 1, Math.max(1, r.w - 2), Math.max(1, r.h - 2));
         ctx.restore();
       }
+      // What it shows inside its edge, for a folder's band beside it (F1.5):
+      // the ground laid over once more, and the hatch's amber at half over that.
+      const inside = tmOver(tmCssRgba(cssVar('--tm-canvas-bg')), ground);
+      const amber = tmCssRgba(cssVar('--warn') || '#FF9F0A');
+      r.shows = tmSeenThrough(hatch && amber ? [inside, mix(inside, amber, 0.5)] : [inside], tmWashesOver(r, washes));
       continue;
     }
 
@@ -1189,6 +1228,10 @@ function drawTreemap() {
       ctx.strokeStyle = `rgba(${base[0]},${base[1]},${base[2]},0.85)`;
       ctx.strokeRect(r.x + 1, r.y + 1, Math.max(1, r.w - 2), Math.max(1, r.h - 2));
       ctx.restore();
+      // What it shows inside its dashed edge — its faint wash over the ground —
+      // and its colour, for a folder's band beside it (review F1.5).
+      r.shows = tmSeenThrough([mix(ground, base, 0.16)], tmWashesOver(r, washes));
+      r.showsRgb = base;
       continue;
     }
 

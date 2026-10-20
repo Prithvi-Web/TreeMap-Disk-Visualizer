@@ -184,9 +184,12 @@ function over(fg: RGBA, bg: RGB): RGB {
 }
 /** The ground a tile is painted on: --tm-canvas-bg over the map's glass card over the page. */
 function canvasGround(palette: Record<string, string>): RGB {
+  return over(rgba(palette['--tm-canvas-bg']), cardGround(palette));
+}
+/** What a cleared canvas pixel shows: the map's glass card over the page. */
+function cardGround(palette: Record<string, string>): RGB {
   const page = rgba(palette['--bg-1']).slice(0, 3) as RGB;
-  const card = over(rgba(palette['--glass']), page);
-  return over(rgba(palette['--tm-canvas-bg']), card);
+  return over(rgba(palette['--glass']), page);
 }
 const THEMES = [['dark', canvasGround(DARK)], ['light', canvasGround(LIGHT)]] as const;
 
@@ -1194,13 +1197,14 @@ type Painted = { n: Tile; x: number; y: number; w: number; h: number; frame: boo
 /** `tiles` painted by the real drawTreemap onto a `W`×`H` raster in `palette`'s theme. */
 function rasterPaint(tiles: Tile[], palette: Record<string, string>, W: number, H: number,
   colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.size), history = { active: false, diff: false }, hideCloud = false) {
-  const raster = rasterCtx(W, H, canvasGround(palette));
+  // The grid starts as the card the canvas sits on — what a cleared pixel shows — and the painter lays the
+  // theme's --tm-canvas-bg over it, as on screen: so what the page reckons its ground to be is measured too.
+  const raster = rasterCtx(W, H, cardGround(palette));
   const state = { treemap: { nodes: tiles, hideCloud, rootSize: 1e12, history, pxRects: [] as Painted[], colorMode: 'size', mode: 'treemap', query: '' } };
   const deps = {
     $: () => ({ clientWidth: W + 20 }), treemapCanvasHeight: () => H, window: { devicePixelRatio: 1 },
     tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: raster.ctx,
-    // The grid already starts from the map's real ground, so the painter's own fill of it changes nothing.
-    cssVar: (name: string) => (name === '--tm-canvas-bg' ? 'rgba(0,0,0,0)' : palette[name] ?? 'rgba(0,0,0,0)'),
+    cssVar: (name: string) => palette[name] ?? 'rgba(0,0,0,0)',
     state, tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
     cellRgb: colour, tmHatchPattern: () => null, tmPreview: { on: false }, roundRect() {},
     formatBytes: (n: number) => `${Math.round(n)} B`,
@@ -1227,8 +1231,8 @@ const whole = (r: Painted): Painted => ({ ...r, x: Math.round(r.x), y: Math.roun
  * it, what and where]. Where the lines are is the owner's rule, not what the painter recorded: each
  * leaf of OUTLINED_PX and up, along each side (its own outline, or the folder band laid over it where
  * it lies along its folder's edge); each folder's band (bandOf), along its inner edge, where a tile — a
- * leaf's inside, or the folder's own fill — lies beside it. Two pixels are left out at each end of a
- * side, where lines meet lines.
+ * leaf's inside, the folder's own fill, or the ground a hollow or staged cell shows — lies beside it. Two
+ * pixels are left out at each end of a side, where lines meet lines.
  */
 function edgesOf(painted: Painted[], W: number, H: number) {
   const px = painted.map(whole);
@@ -1240,6 +1244,10 @@ function edgesOf(painted: Painted[], W: number, H: number) {
   for (const r of px) if (r.frame) ring(r.x, r.y, r.w, r.h, bandOf(r));
   const outlined = (r: Painted) => !r.frame && !!r.stops && Math.min(r.w, r.h) >= OUTLINED_PX;
   for (const r of px) if (outlined(r)) ring(r.x, r.y, r.w, r.h, 1);
+  // A hollow cloud cell's or a staged block's dashed edge, stroked 1 px in from its box, is a line too: where it
+  // meets a band end-on, lines meet. Its inside — the ground, or its faint wash over it — is a tile.
+  const dashed = (r: Painted) => !r.frame && !r.stops && !!((r.n as { freed?: boolean }).freed || (r.n as { cloudPlaceholder?: boolean }).cloudPlaceholder) && r.w > 6 && r.h > 6;
+  for (const r of px) if (dashed(r)) ring(r.x, r.y, r.w, r.h, 2);
   const isLine = (x: number, y: number) => x < 0 || y < 0 || x >= W || y >= H || line[y * W + x] === 1;
   const out: Array<{ line: [number, number]; tile: [number, number]; what: string; kind: 'leaf' | 'frame'; r: Painted }> = [];
   // Inward from (x, y) along (dx, dy): the last line pixel and the first tile pixel.
@@ -1548,7 +1556,9 @@ test('J51: a folder whose files are all under the size floor is filled with its 
       { name: 'cloud.mov', path: '/f/cloud.mov', size: 2e9, type: 'file', depth: 2, expanded: false, x: 50, y: 10, w: 30, h: 30, cloudPlaceholder: true } as Tile,
     ], palette, 200, 200);
     assert.ok(hollow.px[0].bg, `${theme}: control — the folder around them is filled`);
-    assert.ok(contrast(hollow.raster.at(50, 50), ground) < 1.01, `${theme}: the staged block shows the ground (${hollow.raster.at(50, 50).map(Math.round)})`);
+    // (inside its edge the page lays --tm-canvas-bg once more, as it always has: a shade under the ground)
+    const stagedGround = over(rgba(palette['--tm-canvas-bg']), ground);
+    assert.ok(contrast(hollow.raster.at(50, 50), stagedGround) < 1.01, `${theme}: the staged block shows the ground (${hollow.raster.at(50, 50).map(Math.round)}, want ${stagedGround.map(Math.round)})`);
     const faint = over([...ramp.sizeRgb(2e9), 0.16] as RGBA, ground);
     assert.ok(contrast(hollow.raster.at(130, 50), faint) < 1.02, `${theme}: the hollow cloud cell is its faint wash over the ground (${hollow.raster.at(130, 50).map(Math.round)}, want ${faint.map(Math.round)})`);
     // With online-only files hidden, a folder holding one is not filled where it would be: its bytes are not
@@ -1626,6 +1636,40 @@ test('J51 in "Preview after": a staged block is counted in the folder it lies in
     const want = lerp(g.bg![0], g.bg![1], (spot![1] + 0.5 - g.y) / g.h);
     assert.ok(contrast(shown, ground) > 1.3, `${theme}: not the map's ground there (${shown.map(Math.round)} on ${ground.map(Math.round)})`);
     assert.ok(contrast(shown, want) < 1.05, `${theme}: /r/g's own cushion there (${shown.map(Math.round)}, want ${want.map(Math.round)})`);
+  }
+});
+
+test('owner\'s outlines: a folder\'s band beside a cell that shows the map\'s ground — a hollow online-only file, a staged block, the part of a folder an online-only file is hidden in — reaches 3:1 against what that cell shows, in both themes (review F1.5)', () => {
+  const dir = (path: string, depth: number, x: number, y: number, w: number, h: number): Tile => ({ name: path, path, size: 4e10 / depth, type: 'dir', depth, expanded: true, x, y, w, h });
+  const file = (path: string, depth: number, x: number, y: number, w: number, h: number, more: object = {}): Tile => ({ name: path, path, size: 3e9, type: 'file', depth, expanded: false, x, y, w, h, ...more } as Tile);
+  const cloud = { cloudPlaceholder: true };
+  // /a: a file and a hollow online-only file, side by side. /b: a nested folder, a file beside a hollow one.
+  const hollow = [
+    dir('/a', 1, 0, 0, 50, 100), file('/a/here.bin', 2, 0, 0, 25, 100), file('/a/away.mov', 2, 25, 0, 25, 100, cloud),
+    dir('/b', 1, 50, 0, 50, 100), dir('/b/n', 2, 55, 5, 40, 90), file('/b/n/here.bin', 3, 55, 5, 20, 90), file('/b/n/away.mov', 3, 75, 5, 20, 90, cloud),
+  ];
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const cases: Array<[string, ReturnType<typeof rasterPaint>, (x: number, y: number) => boolean]> = [];
+    const h = rasterPaint(hollow, palette, 400, 200);
+    const cell = (pxs: Painted[], path: string) => { const r = whole(pxs.find((p) => p.n.path === path)!); return (x: number, y: number) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h; };
+    const inA = cell(h.px, '/a/away.mov'), inN = cell(h.px, '/b/n/away.mov');
+    cases.push(['beside a hollow online-only file', h, (x, y) => inA(x, y) || inN(x, y)]);
+    // The staged block, as the page's own preview lays it out, in the nested folder /r/g/p.
+    const s = rasterPaint(stagedInNestedFolder(), palette, 400, 200);
+    cases.push(['beside a staged block', s, cell(s.px, '/r/g/p — freed')]);
+    // /g holds a file and an online-only file, hidden: /g is not filled where it would be (J51), so the ground shows there.
+    const hid = rasterPaint([dir('/g', 1, 0, 0, 100, 100), file('/g/here.bin', 2, 0, 0, 50, 100), file('/g/away.mov', 2, 50, 0, 50, 100, cloud)], palette, 400, 200, undefined, undefined, true);
+    const g = whole(hid.px[0]);
+    cases.push(['beside the ground where an online-only file is hidden', hid, (x, y) => x >= g.x + g.w / 2 && y >= g.y && y < g.y + g.h]);
+    for (const [what, { raster, px }, inCell] of cases) {
+      const m = measureEdges(raster, px);
+      const beside = m.edges.filter((e) => e.kind === 'frame' && inCell(...e.tile));
+      assert.ok(beside.length > 100, `${theme}, ${what}: control — ${beside.length} places where a band meets that cell were measured`);
+      const weak = beside.map((e) => ({ e, c: contrast(raster.at(...e.line), raster.at(...e.tile)) })).filter(({ c }) => c < EDGE_BAR);
+      assert.deepEqual(weak.slice(0, 6).map(({ e, c }) => `${e.what}: ${fmt(c)}:1 (${raster.at(...e.line).map(Math.round)} on ${raster.at(...e.tile).map(Math.round)})`), [],
+        `${theme}, ${what}: every band reaches ${EDGE_BAR}:1 against what the cell shows (${weak.length} places under)`);
+      assert.deepEqual(m.under, [], `${theme}, ${what}: and every other line on the map`);
+    }
   }
 });
 
