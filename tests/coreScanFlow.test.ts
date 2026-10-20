@@ -1445,7 +1445,7 @@ test('J06: Stop while a folder with a saved index is painted over an older scan 
   }
 });
 
-test('J06 (review F1.8): the Stop that puts the older tree back puts back all of it — its counters, last scan and three lists, the folder the map and the Grid were in, its index of paths — and only while the index\'s tree it stood under is still the one on screen', async () => {
+test('J06 (review F1.8, F2.4): the Stop that puts the older tree back puts back all of it — its counters, last scan and three lists, the folder the map and the Grid were in, its index of paths; every view told its scan is back, its index badge, its Live mode, its "what\'s new", its Last scan tile, an empty Grid selection — and only while the index\'s tree it stood under is still the one on screen', async () => {
   const inbox = `${MAIL}/Inbox`;
   const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [{ name: 'Inbox', path: inbox, size: 37_700_000, type: 'dir', children: [] }] };
   // The older scan's own, each distinct and non-empty, so a field left as the index paint wrote it shows.
@@ -1457,9 +1457,20 @@ test('J06 (review F1.8): the Stop that puts the older tree back puts back all of
     bigFolders: [{ path: inbox, size: 37_700_000 }],
   };
   const h = page({ index: true, root: mail, settledScanId: 'scan-mail',
-    route: server({ roots: [], indexed: [CORPUS], indexTrees: { [CORPUS]: indexTreeOf(CORPUS, 9_500_000_000) } }) });
+    route: server({ roots: [], indexed: [CORPUS, MAIL], indexTrees: { [CORPUS]: indexTreeOf(CORPUS, 9_500_000_000) } }) });
   const indexed: unknown[] = [];
   h.given.indexTree = (root: unknown) => { indexed.push(root); };
+  // What a Stop asks of the rest of the page besides the state (review F2.4), each recorded.
+  const badges: unknown[] = [];
+  const lives: number[] = [];
+  const whatsNew: number[] = [];
+  const selectionBars: number[] = [];
+  const rolls: Array<[string, string]> = [];
+  h.given.renderIndexBadge = (info: unknown) => { badges.push(info); };
+  h.given.enableLive = () => { lives.push(1); };
+  h.given.loadWhatsNew = () => { whatsNew.push(1); };
+  h.given.updateSelectionBar = () => { selectionBars.push((h.state.grid as { selection: Set<string> }).selection.size); };
+  h.given.FxNum = { rollText: (el: { id: string }, text: string) => { rolls.push([el.id, text]); } };
   Object.assign(h.state, { scanStats: old.stats, lastScan: old.lastScan, largest: old.largest, types: old.types, bigFolders: old.bigFolders });
   const treemap = h.state.treemap as { rootPath: string | null };
   const grid = h.state.grid as { path: string | null };
@@ -1474,7 +1485,11 @@ test('J06 (review F1.8): the Stop that puts the older tree back puts back all of
   for (const k of ['largest', 'types', 'bigFolders'] as const) assert.notEqual(h.state[k], old[k], `control: and ${k}`);
   assert.equal(treemap.rootPath, CORPUS, 'control: and pointed the map at corpus');
   assert.equal(grid.path, CORPUS, 'control: and the Grid');
+  assert.deepEqual(h.emitted, [null], 'control: the views were told no scan is behind the tree on screen (the index paint)');
   indexed.length = 0;
+  badges.length = 0; lives.length = 0; whatsNew.length = 0; selectionBars.length = 0; rolls.length = 0;
+  (h.state.live as { wanted: boolean }).wanted = true; // Live was on before the rescan
+  (h.state.grid as { selection: Set<string> }).selection.add(`${CORPUS}/a.emlx`); // a Grid selection of the index's tree
   await pressStop(h);
   assert.equal(h.state.root, mail, 'control: the older tree is back');
   assert.equal(h.state.scanStats, old.stats, 'its counters are back (the Dashboard\'s Files and Folders)');
@@ -1485,6 +1500,14 @@ test('J06 (review F1.8): the Stop that puts the older tree back puts back all of
   assert.equal(treemap.rootPath, inbox, 'the map is back in the folder it was drilled into');
   assert.equal(grid.path, inbox, 'and so is the Grid');
   assert.deepEqual(indexed, [mail], 'and the index of paths is the older tree\'s again, not the saved index\'s');
+  assert.deepEqual(h.emitted, [null, 'scan-mail'], 'every view is told the older scan is the one on screen again (TOPIC.scan), so each repoints at its tree');
+  assert.equal(badges.length, 1, 'its index badge is asked again, which the index paint took down');
+  assert.equal((badges[0] as { path?: string } | null)?.path, MAIL, 'for the older tree\'s folder');
+  assert.deepEqual(lives, [1], 'Live mode, on before the rescan, is on again');
+  assert.deepEqual(whatsNew, [1], 'its "what\'s new" is asked again');
+  assert.deepEqual(rolls, [['statLastScan', String(old.lastScan.when)]], 'the Last scan tile says when the older scan ran');
+  assert.equal((h.state.grid as { selection: Set<string> }).selection.size, 0, 'the Grid selection of the index\'s tree is dropped');
+  assert.deepEqual(selectionBars, [0], 'and the selection bar says so');
 
   // Held, but another tree is on screen since: nothing is put back over it.
   const desk = { name: 'Desktop', path: '/Users/x/Desktop', size: 1000, type: 'dir', children: [] };
