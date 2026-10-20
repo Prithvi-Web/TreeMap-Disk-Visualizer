@@ -5,6 +5,7 @@ import { platform } from '../../platform';
 import { getSettings } from '../settings';
 import { peekDuplicateJob, REPORTED_GROUPS } from '../duplicateFinder';
 import { claimFor, scanInputsFor } from '../reclaimInputs';
+import { fillFolder, remedyIsCommand } from '../rulePacks';
 import {
   ComponentInput,
   ReclaimComponentId,
@@ -247,6 +248,23 @@ function stalenessOf(
   };
 }
 
+/**
+ * " To put it back: `python3 -m venv .venv`, then reinstall the packages it
+ * held." — a rule's restore text for the folder it claimed: its `<folder>`
+ * filled with that folder's name, as a shell reads it back, and each part a
+ * command in backticks or words as words, as the Clean Up card draws the same
+ * text in code pills and plain text. A template set whole in backticks read
+ * "`python3 -m venv <folder>, …`", and in zsh `<folder>` is a redirect; a
+ * sentence in backticks ("`the next test run with coverage writes it again`")
+ * read as something to type (BQL-b1 review F1.2, F1.5).
+ */
+function restoreClause(restoreCommand: string, folder: string): string {
+  const said = fillFolder(restoreCommand, [folder]).split(/(\s+·\s+|,\s+then\s+)/)
+    .map((part, i) => (i % 2 === 1 || !remedyIsCommand(part) ? part : `\`${part}\``))
+    .join('');
+  return ` To put it back: ${said}${/[.!?]$/.test(said) ? '' : '.'}`;
+}
+
 function regenerableOf(
   p: string,
   inputs: Awaited<ReturnType<typeof scanInputsFor>>,
@@ -264,8 +282,8 @@ function regenerableOf(
   // stop, and several rule titles are just the folder name — joining them
   // with a dash produced "node_modules - A folder named node_modules.,
   // restored with npm install". Sentences, in the same voice the Smart
-  // Suggestions "why" panel already uses ("Put it back with:").
-  const restore = claim.restoreCommand ? ` Put it back with \`${claim.restoreCommand}\`.` : '';
+  // Suggestions "why" panel already uses ("To put it back:").
+  const restore = claim.restoreCommand ? restoreClause(claim.restoreCommand, path.basename(claim.claimedPath)) : '';
   // Relative to the scan root, because the absolute form wrapped over three
   // lines of the breakdown panel and buried the sentence that matters. The
   // panel already names the file; what this line has to add is WHICH folder

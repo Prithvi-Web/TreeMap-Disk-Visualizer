@@ -155,6 +155,21 @@ test('a folder named env beside requirements.txt that holds no pyvenv.cfg is no 
   assert.equal(find(entries, path.join(ROOT, 'app', 'env'))?.kind, 'active', 'control: a virtualenv named env, beside requirements.txt, is its project\'s');
 });
 
+test('a virtualenv\'s command names its own folder — never a literal <folder>, which a shell reads as a redirect (BQL-b1 review F1.5)', () => {
+  // GET /api/packages/orphans served "python3 -m venv <folder>, then …" as
+  // "the command that restores" each entry (AGENTS.md), one folder each.
+  const entries = run(tree([
+    dir('live-py', [file('requirements.txt'), dir('.venv', [file('pyvenv.cfg'), file('lib', 3000)])]),
+    dir('dead-py', [dir('env', [file('pyvenv.cfg'), file('lib', 4000)])]),
+    dir('web', [file('package.json'), dir('node_modules', [file('.package-lock.json'), file('dep.js', 5000)])]),
+  ]));
+  assert.equal(find(entries, path.join(ROOT, 'live-py', '.venv'))?.command, 'python3 -m venv .venv, then reinstall the packages it held',
+    'the virtualenv whose project is here: its own folder');
+  assert.equal(find(entries, path.join(ROOT, 'dead-py', 'env'))?.command, 'python3 -m venv env, then reinstall the packages it held',
+    'the orphaned one: its own folder');
+  assert.equal(find(entries, path.join(ROOT, 'web', 'node_modules'))?.command, 'npm install', 'control: a command with no placeholder, as the rule writes it');
+});
+
 /* ─────────────── Not guessing when it cannot know ─────────────── */
 
 test('an unidentifiable "target" is not claimed for any ecosystem', () => {

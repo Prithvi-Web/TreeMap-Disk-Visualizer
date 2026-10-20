@@ -3,7 +3,7 @@ import path from 'path';
 import { ScanStore, TreeSource, asStore } from './scanStore';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { samePath } from '../utils/osPaths';
-import { PackageCacheRule, ProjectDirRule, RuleCatalog, loadRuleCatalog } from './rulePacks';
+import { PackageCacheRule, ProjectDirRule, RuleCatalog, fillFolder, loadRuleCatalog } from './rulePacks';
 
 /**
  * packageEcosystemScanner — package-manager-aware orphan detection (§C6).
@@ -53,7 +53,12 @@ export interface PackageEntry {
   projectName?: string;
   /** Plain-English statement of why it is classified this way. */
   reason: string;
-  /** How to recreate it (orphan/active) or clear it (cache). */
+  /**
+   * How to recreate it (orphan/active) or clear it (cache). A rule's
+   * `<folder>` is filled with this entry's own name, as a shell reads it back
+   * ("python3 -m venv .venv, then …"): each entry is one folder, and in zsh
+   * `<folder>` is a redirect (BQL-b1 review F1.5).
+   */
   command?: string;
   /** True when the entry must not be offered for trashing (root-owned, etc.). */
   advisory?: boolean;
@@ -275,7 +280,7 @@ export function scanPackageEcosystems(
             reason: broken
               ? `Its Python interpreter is gone (${broken}) — this environment cannot run.`
               : `In use by ${projectName}.`,
-            command: owned.restoreCommand,
+            command: fillFolder(owned.restoreCommand, [name]),
           });
           continue; // claimed — never descend into a dependency tree
         }
@@ -298,7 +303,7 @@ export function scanPackageEcosystems(
             // What was found, and only that: a folder of scripts may sit beside a .venv it still uses with no
             // project file at all, so "its project is gone" would claim what nothing checked (review F1.2).
             reason: `No ${missing || 'project manifest'} beside it — TreeMap finds no project that owns it.`,
-            command: identified.restoreCommand,
+            command: fillFolder(identified.restoreCommand, [name]),
           });
           continue;
         }

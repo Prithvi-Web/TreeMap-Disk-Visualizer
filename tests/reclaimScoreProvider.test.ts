@@ -311,6 +311,49 @@ test('a folder whose name only begins with two dots is in the scan: the why name
   }
 });
 
+test('the "regenerable" reason says how the folder it scored comes back: the command for that folder, never a literal <folder>, and only a command in backticks — a sentence as words (BQL-b1 review F1.2, F1.5)', async () => {
+  // review-scratch/r2-provider.ts: a file in proj/.venv read "Put it back
+  // with `python3 -m venv <folder>, then reinstall the packages it held`" — in
+  // zsh `<folder>` is a redirect — and one in web/coverage read "Put it back
+  // with `the next test run with coverage writes it again`", a sentence set
+  // as a command. The breakdown panel shows the sentence as it is.
+  const s = await listen();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-restore-fixture-'));
+  try {
+    const put = (rel: string, bytes = 100): string => {
+      const p = path.join(root, rel);
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, Buffer.alloc(bytes, 0x61));
+      return p;
+    };
+    put(path.join('proj', 'requirements.txt'));
+    put(path.join('proj', '.venv', 'pyvenv.cfg'));
+    const inVenv = put(path.join('proj', '.venv', 'bin', 'activate'), FILE_BYTES);
+    put(path.join('web', 'package.json'));
+    const inCoverage = put(path.join('web', 'coverage', 'lcov.info'), FILE_BYTES);
+    const inModules = put(path.join('web', 'node_modules', 'left-pad', 'index.js'), FILE_BYTES);
+    const started = await req(s.port, 'POST', '/api/scan', { path: root });
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+    const scanId = started.body.scanId as string;
+    await waitFor(() => peekScan(scanId)?.status !== 'running', 'the restore fixture scan settling');
+    assert.equal(peekScan(scanId)?.status, 'complete');
+    clearFactCache();
+    clearScanInputs();
+    const scored = await score(scanId, [inVenv, inCoverage, inModules]);
+    const why = (p: string): string => scored[p]?.components.find((c) => c.id === 'regenerable')?.why ?? '(no regenerable component)';
+    assert.ok(why(inModules).endsWith(' To put it back: `npm install`.'), `control: a command, in backticks: ${why(inModules)}`);
+    assert.doesNotMatch(why(inVenv), /<folder>/, `no placeholder a shell reads as a redirect: ${why(inVenv)}`);
+    assert.ok(why(inVenv).endsWith(' To put it back: `python3 -m venv .venv`, then reinstall the packages it held.'),
+      `the virtualenv: its own folder's command in backticks, the step no command can promise as words: ${why(inVenv)}`);
+    assert.ok(why(inCoverage).endsWith(' To put it back: the next test run with coverage writes it again.'),
+      `the coverage reports: a sentence, said as one: ${why(inCoverage)}`);
+    assert.doesNotMatch(why(inCoverage), /`/, `nothing of the coverage reason is set as a command: ${why(inCoverage)}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    await s.close();
+  }
+});
+
 test('a stale file scores higher on staleness than a fresh one of the same size', async () => {
   const s = await listen();
   const fx = await scannedFixture(s.port);

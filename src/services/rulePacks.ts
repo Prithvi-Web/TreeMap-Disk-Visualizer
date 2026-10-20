@@ -551,6 +551,24 @@ export function fillFolder(command: string, names: readonly string[]): string {
       : part).join('');
 }
 
+/** Small words prose cannot do without and no command holds: the page's list (220-clean-up-modal.js), word for word. */
+const REMEDY_PROSE_WORDS = new Set(['a', 'an', 'and', 'are', 'automatic', 'automatically', 'be', 'first', 'is', 'it', 'its', 'next', 'on', 'or', 'the', 'these', 'this', 'until', 'when', 'will']);
+
+/**
+ * Whether one part of a remedy — a restore or advice text split on " · " and
+ * ", then " — is a command to run or words to read: "npm install" is one, "the
+ * next test run with coverage writes it again" and "Final Cut Pro ▸ File ▸ …"
+ * are not. A command starts the way a program name does — lower case, a digit
+ * or a path — and holds none of REMEDY_PROSE_WORDS. The page's own judgment
+ * (QA fourth pass E03), which sets a command in a code pill; the Reclaim
+ * Score's reason sets one in backticks by the same rule (BQL-b1 review F1.2,
+ * F1.5). tests/rulePacks.test.ts holds the two to one answer.
+ */
+export function remedyIsCommand(part: string): boolean {
+  if (!/^[a-z0-9./~_-]/.test(part) || /[▸—]/.test(part)) return false;
+  return !part.split(/\s+/).some((w) => REMEDY_PROSE_WORDS.has(w.toLowerCase().replace(/[.,;:]+$/, '')));
+}
+
 /**
  * The plain-English "why is this suggested" sentence, derived from what the
  * rule actually matches so it can never drift from the matching itself.

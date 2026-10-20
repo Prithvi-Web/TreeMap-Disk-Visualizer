@@ -16,6 +16,7 @@ import {
   loadRuleCatalogFrom,
   matchReasonFor,
   packForPlatform,
+  remedyIsCommand,
   shellWord,
   validateRulePack,
 } from '../src/services/rulePacks';
@@ -580,4 +581,19 @@ test('the page fills a restore command exactly as the server does: its copy of f
       assert.equal(page.fillFolder(command, names), fillFolder(command, names), `fillFolder(${JSON.stringify(command)}, ${JSON.stringify(names)})`);
     }
   }
+});
+
+test('the server tells a remedy\'s command from its sentence exactly as the page does: its copy of remedyIsCommand is held to this one (BQL-b1 review F1.2, F1.5)', () => {
+  // The Reclaim Score's reason sets a command in backticks and a sentence as
+  // words, as the Clean Up card sets one in a code pill and the other as text.
+  const page = lift<{ remedyIsCommand: (part: string) => boolean }>(['REMEDY_PROSE_WORDS', 'remedyIsCommand'], '{ remedyIsCommand }');
+  const shipped = PACK_NAMES.flatMap((name) => (JSON.parse(fs.readFileSync(path.join(SHIPPED, `${name}.json`), 'utf8')) as { rules: Record<string, unknown>[] }).rules)
+    .flatMap((r) => [r.restoreCommand, r.adviceCommand, r.clearCommand].filter((t): t is string => typeof t === 'string'))
+    .map((t) => fillFolder(t, ['.venv']))
+    .flatMap((t) => t.split(/\s+·\s+|,\s+then\s+/));
+  assert.deepEqual([remedyIsCommand('npm install'), remedyIsCommand('the next test run with coverage writes it again')], [true, false],
+    'control: a command is one, a sentence is not');
+  const parts = [...new Set([...shipped, 'npm install', 'python3 -m venv .venv', 'reinstall the packages it held', 'automatic on next run',
+    'the next test run with coverage writes it again', 'Final Cut Pro ▸ File', '~/bin/tool --flag', 'Remove-Item -Recurse x', 'Run it again', 'make it.', ''])];
+  for (const part of parts) assert.equal(remedyIsCommand(part), page.remedyIsCommand(part), `remedyIsCommand(${JSON.stringify(part)})`);
 });

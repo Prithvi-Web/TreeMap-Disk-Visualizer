@@ -1325,7 +1325,7 @@ const owned = (ecosystem: string, project: string, name: string, size: number, c
 /** The six folders of the QA corpus: every one's project is still there. */
 const CORPUS = pkgReport([
   pkgGroup('gradle', [owned('gradle', 'gradle-app', 'build', 3_400_000, 'gradle build')]),
-  pkgGroup('python', [owned('python', 'pyproj', '.venv', 11_500_000, 'python3 -m venv <folder>, then reinstall the packages it held')]),
+  pkgGroup('python', [owned('python', 'pyproj', '.venv', 11_500_000, 'python3 -m venv .venv, then reinstall the packages it held')]),
   pkgGroup('cargo', [owned('cargo', 'rusty', 'target', 78_800_000, 'cargo build')]),
   pkgGroup('npm', [
     owned('npm', 'webapp', 'node_modules', 20_700_000, 'npm install'),
@@ -1430,8 +1430,8 @@ test('an orphaned folder\'s row names no command as putting it back — no proje
   // Each with the reason and command GET /api/packages/orphans sends for it (packageEcosystemScanner).
   const rows = [
     orphan('npm', 'node_modules', '/corpus/old/node_modules', 'No package.json beside it — TreeMap finds no project that owns it.', 'npm install'),
-    orphan('python', '.venv', '/corpus/gone/.venv', 'No requirements.txt beside it — TreeMap finds no project that owns it.', 'python3 -m venv <folder>, then reinstall the packages it held'),
-    orphan('python', '.venv', '/corpus/Projects/py/.venv', 'Its Python interpreter is gone (/old/py/bin) — this environment cannot run.', 'python3 -m venv <folder>, then reinstall the packages it held', 'py'),
+    orphan('python', '.venv', '/corpus/gone/.venv', 'No requirements.txt beside it — TreeMap finds no project that owns it.', 'python3 -m venv .venv, then reinstall the packages it held'),
+    orphan('python', '.venv', '/corpus/Projects/py/.venv', 'Its Python interpreter is gone (/old/py/bin) — this environment cannot run.', 'python3 -m venv .venv, then reinstall the packages it held', 'py'),
     orphan('cargo', 'target', '/corpus/rusty-old/target', 'No Cargo.toml beside it — TreeMap finds no project that owns it.', 'cargo build'),
     orphan('homebrew', 'ripgrep 13.0.0', '/opt/homebrew/Cellar/ripgrep/13.0.0', 'Superseded — ripgrep has 2 versions installed and only the newest is linked.', 'brew cleanup ripgrep', 'ripgrep'),
   ];
@@ -1517,8 +1517,8 @@ test('the fold never says the command beside its folders puts them back — a vi
     some: await summaryOf(pkgReport([pkgGroup('npm', [named, bare])])),
     none: await summaryOf(pkgReport([pkgGroup('npm', [bare])])),
   };
-  assert.ok(CORPUS.ecosystems.some((g) => g.entries.some((e) => e.name === '.venv' && e.command === 'python3 -m venv <folder>, then reinstall the packages it held')),
-    'control: the corpus holds the virtualenv, with the command its rule names (H08)');
+  assert.ok(CORPUS.ecosystems.some((g) => g.entries.some((e) => e.name === '.venv' && e.command === 'python3 -m venv .venv, then reinstall the packages it held')),
+    'control: the corpus holds the virtualenv, with the command its rule names for its own folder (H08, BQL-b1 review F1.5)');
   assert.deepEqual(
     Object.fromEntries(Object.entries(said).map(([k, s]) => [k, /command beside|puts? (it|them) back/.test(s)])),
     { all: false, some: false, none: false },
@@ -1534,17 +1534,17 @@ test('the fold never says the command beside its folders puts them back — a vi
  * The fold's line then said "each one's project can build it again", and each
  * row's tag "rebuildable". The server's `active` is a folder name its rule
  * knows beside its project's manifest (packageEcosystemScanner): nothing reads
- * what the folder holds, or whether the project lists what is in it. A `.venv`
- * holding hand-installed packages beside nothing but a pyenv pin
- * (`.python-version`) is `active`, and so is a plain folder named `env` there;
- * nothing in that project can build either again. The fold says what the
+ * whether the project lists what is in it. A `.venv` holding hand-installed
+ * packages beside nothing but a pyenv pin (`.python-version`) is `active`, and
+ * so is a virtualenv named `env` there; nothing in that project can build
+ * either again. The fold says what the
  * server knows, in its line and in each row's tag: the project is still here
  * (G05 review F3.3).
  */
 test('the fold says only what the server knows — each folder\'s project is still here — and never that its project can build it again, in its line or in a row\'s tag (G05 review F3.3)', async () => {
   // The two folders the review found classified `active` with nothing to build them from.
-  const pinned = owned('python', 'pinned', '.venv', 2_000_000, 'python3 -m venv <folder>, then reinstall the packages it held');
-  const plain = owned('python', 'nodep', 'env', 1_000_000, 'python3 -m venv <folder>, then reinstall the packages it held');
+  const pinned = owned('python', 'pinned', '.venv', 2_000_000, 'python3 -m venv .venv, then reinstall the packages it held');
+  const plain = owned('python', 'nodep', 'env', 1_000_000, 'python3 -m venv env, then reinstall the packages it held');
   const text = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
   for (const [what, data, rows, line] of [
     ['the QA corpus', CORPUS, 6, 'Folders whose project is still here 6 folders 117900000 B'],
