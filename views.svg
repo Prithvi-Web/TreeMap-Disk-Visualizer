@@ -79,7 +79,7 @@
     <g transform="translate(245,142)">
       <rect width="217" height="52" rx="12" fill="url(#chip)" stroke="#a78bfa" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#a78bfa"/>
-      <text x="48" y="31" fill="#dbe4f3">🕰️ Time&#160;Capsule</text>
+      <text x="48" y="31" fill="#dbe4f3">🗄️ Undo&#160;Vault</text>
     </g>
     <g transform="translate(470,142)">
       <rect width="217" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>

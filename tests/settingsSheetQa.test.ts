@@ -221,8 +221,8 @@ test('the empty Time Capsule view names what is copied and what is not (D72)', (
 
 test('the README describes the capsule the same way (D72)', () => {
   const readme = readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
-  const start = readme.indexOf('### 🕰️ Time Capsule');
-  assert.notEqual(start, -1, 'the README has a Time Capsule section');
+  const start = readme.indexOf('### 🗄️ Undo Vault');
+  assert.notEqual(start, -1, 'the README has an Undo Vault section');
   const para = readme.slice(start, readme.indexOf('</td>', start)).replace(/\*/g, '');
   assertCapsuleSentence('The README', plain(para));
 });

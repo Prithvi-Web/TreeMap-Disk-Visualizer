@@ -561,8 +561,9 @@ OpenAPI 3 spec).
      record at a time, and a drive that does not answer for 60 seconds is
      left to finish on its own while the job says so (the next write of that
      drive's record waits its turn, counted in its own 60 seconds); such a
-     write is not one of the Time Capsule's calls left waiting, so a quiet
-     offload drive never stops a cart commit or Autopilot deletion. Within a
+     write is not one of the calls the Undo Vault (API: timecapsule) left
+     waiting, so a quiet offload drive never stops a cart commit or
+     Autopilot deletion. Within a
      process one save of the app-data record runs at a time; the MCP
      server is a second process with no share in that lock. Each save goes
      through a temp file of its own process and a rename, so the record is
@@ -571,12 +572,12 @@ OpenAPI 3 spec).
      then stand at the destination, where the drive's own record lists them
      unless its two writes crossed the same way.
    - `POST /api/cart/commit` with `{ paths }` is the same delete **as one
-     undoable run**: every item is copied into the Time Capsule and verified
+     undoable run**: every item is copied into the Undo Vault and verified
      before anything is trashed, and the response carries a `runId` that
      `POST /api/cart/undo` restores in full — original paths, byte for byte,
      with their permissions and the dates they were last modified and opened
      (not their creation dates, which nothing sets back), even after the Trash
-     has been emptied, until the Time Capsule removes the copies (after 30 days
+     has been emptied, until the Undo Vault removes the copies (after 30 days
      by default, or sooner to stay under its size cap); a date or permission
      that could not be set back finishes the restore with a warning naming
      it. Each file is written beside its
@@ -592,10 +593,10 @@ OpenAPI 3 spec).
      `DELETE /api/files`
      rather than a flag on it, because the two make different promises and
      `GET /api/capabilities` marks destructive endpoints one by one.
-     **The refusal that matters:** anything the capsule cannot protect whole —
+     **The refusal that matters:** anything the Undo Vault cannot protect whole —
      too large for it, or a folder holding a file that could not be looked at —
      is **left undeleted** and named in `skipped[]` with its reason — never
-     deleted unprotected. Each call the capsule makes on an item — its walk
+     deleted unprotected. Each call the Undo Vault makes on an item — its walk
      of the item (a dry run's too), each file it copies, and its look again
      right before the item's trash step — has a 60-second stall limit, past
      which that item is left undeleted; and while two such calls are still
@@ -619,7 +620,7 @@ OpenAPI 3 spec).
      evicted to make room only once the new copy is whole and verified, so an
      item whose copy fails costs no older copy. A run's copies are never evicted to make room while
      a request of that run is under way — its own, or a later chunk of the
-     same chunked commit — so a batch bigger than the capsule leaves its later
+     same chunked commit — so a batch bigger than the Undo Vault leaves its later
      items undeleted (`CAPSULE_FULL`) rather than dropping its own earlier
      copies. Between the requests of a chunked commit nothing holds the
      earlier chunks' copies: another deletion may evict them then, and an
@@ -640,17 +641,17 @@ OpenAPI 3 spec).
      does not show the copy differs, and the item stays in place all the
      same. A volume that keeps no change time of its own (FAT,
      exFAT) answers with what it has. `dryRun: true` returns that same verdict per
-     path *before* anything happens, along with the older capsule copies that
+     path *before* anything happens, along with the older Undo Vault copies that
      would be evicted to make room and B2's open-handle preflight. At most 500
      paths per commit. Nothing after the trash step can fail the request:
-     should discarding the capsule copies of items the Trash refused not
+     should discarding the Undo Vault copies of items the Trash refused not
      finish, the response still carries `trashed` and `runId`, adds a
      `cleanupError` sentence, and the undo puts back exactly what was trashed,
-     until the Time Capsule removes its copies.
+     until the Undo Vault removes its copies.
      A path inside another path of the same commit gets no copy of its own:
      the item holding it is copied and trashed whole, the inner path is listed
      in `trashed` with it — once the disk no longer shows it — and counted
-     once, and one undo puts both back while the Time Capsule holds that copy
+     once, and one undo puts both back while the Undo Vault holds that copy
      (or, when the item holding it is not confirmed moved, it is in
      `unverified` with it; when that item is not
      deleted, it is in `skipped`, saying so; when the Trash reports taking that
@@ -690,7 +691,7 @@ read-what-you-saw) permission to act.
   `POST /api/trash/empty`, `POST /api/system/snapshots/purge` and
   `POST /api/git/gc` each require `{ "confirm": true }`. Two more cannot be
   taken back and take no confirm flag, so confirm with the user first:
-  `DELETE /api/timecapsule/{id}` discards a Time Capsule copy for good
+  `DELETE /api/timecapsule/{id}` discards an Undo Vault copy for good
   (refused with `409 RESTORE_RUNNING` while a restore is reading it, and
   `409 DELETION_RUNNING` while the deletion that made it is still under way —
   its item may be on its way to the Trash with that copy as its only one), and
@@ -743,7 +744,7 @@ read-what-you-saw) permission to act.
   `/api/system/snapshots/restore` (path and destination). Facts about it still answer, since answering touches nothing;
   the Empty Folders view never offers it; Autopilot leaves it out of every run
   and says so in `skipped`; and the Trash pathway itself (`moveToTrash`, the
-  Time Capsule's `protectAndTrash`) refuses it whatever asked. An Autopilot run
+  Undo Vault's `protectAndTrash`) refuses it whatever asked. An Autopilot run
   whose delete is refused there, or fails before anything is deleted, is
   recorded as a `failed` run with the reason, and the policy waits for its own
   schedule; a failure after the trash step is reported in the run's reason,
@@ -752,7 +753,7 @@ read-what-you-saw) permission to act.
   Trash.
 - **TreeMap's own app-data folder is never a write destination.** It holds
   the files TreeMap trusts — settings, the Autopilot policies and their
-  approval, the offload manifest, the Time Capsule, the spill folder, the
+  approval, the offload manifest, the Undo Vault, the spill folder, the
   record of restores' temporary files — so no
   request names a place in it that a file is written, moved or copied to: a
   relocation's `to`, an offload's `dest` and every copy its plan makes, a
@@ -770,16 +771,16 @@ read-what-you-saw) permission to act.
   private folder it made; nothing restores from that record on the drive or
   follows it, so every entry already in it is carried as it stands, and one
   that cannot be read whole is renamed aside, never replaced. Nor does a record TreeMap keeps lead anywhere it
-  would not have written: a Time Capsule entry whose id is not one TreeMap
+  would not have written: an Undo Vault entry whose id is not one TreeMap
   gives is never made a path (forgetting it, or its expiry, removes nothing
   on disk), and a restore of it — or of an entry whose original place, or
   whose manifest's names, lead outside what capture records — answers
   `409 { code: "CAPSULE_RECORD_INVALID" }`; an Autopilot policy whose folder
   is not one TreeMap saved is a failed run (`POLICY_RECORD_INVALID`) before
   anything is scanned. What a request does write in app-data is TreeMap's own
-  files under names it chose — settings, records, the Time Capsule's copies —
+  files under names it chose — settings, records, the Undo Vault's copies —
   and the one file a request can have put back there is an item TreeMap
-  itself took from there, by an undo or a Time Capsule restore. Reading
+  itself took from there, by an undo or an Undo Vault restore. Reading
   app-data, and deleting what a scan covers there, are unchanged — but for
   **the agent policy and the audit log** (`agent-policy.json`, `audit.jsonl`):
   no request removes or moves either, nor app-data itself or any folder above
@@ -1033,8 +1034,8 @@ read-what-you-saw) permission to act.
   anything whose trash step was not confirmed either way in `unverified`.
   A line's `outcome` is the operation's own: emptying the Trash, purging
   snapshots and a cloud trash that failed, wholly or for some, are `error`
-  with `PARTIAL_FAILURE`, as a local delete is; and a restore's line (Time
-  Capsule, cart undo, offload restore) names the original paths it writes.
+  with `PARTIAL_FAILURE`, as a local delete is; and a restore's line (Undo
+  Vault, cart undo, offload restore) names the original paths it writes.
   `GET /api/audit?limit=100` reads it back, newest first. The MCP tools
   write the same log. Config writes differ by consequence: Autopilot policy
   saves and approvals DO audit (a standing instruction to delete is worth a

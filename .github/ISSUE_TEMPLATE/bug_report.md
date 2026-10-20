@@ -35,7 +35,7 @@ From the Dashboard: the folder's size and item count, the engine line it shows (
 
 
 **Which view**
-Dashboard, Treemap, Disk City, Grid, Apps, Libraries, Security, Fleet, Missing GB, Duplicates, Trends, History, Offloaded, Time Capsule, Autopilot, Clean Up, or Settings.
+Dashboard, Treemap, Disk City, Grid, Apps, Libraries, Security, Fleet, Missing GB, Duplicates, Trends, History, Offloaded, Undo Vault, Autopilot, Clean Up, or Settings.
 
 
 

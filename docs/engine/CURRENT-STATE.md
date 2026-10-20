@@ -198,14 +198,14 @@ nameOff: Uint32Array /* cap+1 */; nameBytes: Uint8Array /* one UTF-8 pool, no de
 * Thumbnails: 256 px WebP, in-memory LRU of 48 MiB keyed on `sha1(path mtime size dim)`, warmed once per completed job for up to 5,000 files (`src/services/thumbnailCache.ts`). Measured (comments): ~20 ms per sharp decode, ~46 ms cold vs ~6 ms warm in the browser.
 * Response, 200: `{ status:'complete', scanId, threshold, available, decoder, reason, clusters, clusterCount, totalReclaimable, truncated, tookMs }`; per cluster `{ files:[{ name, path, size, modifiedAt, distance }], count, reclaimableBytes }` (`insightRoutes.ts:132-144`).
 
-## 8. Digests used for safety (offload, Time Capsule)
+## 8. Digests used for safety (offload, Undo Vault)
 
 `src/utils/copyVerify.ts:44-73`: `copyWithHash` hashes the bytes as they are
 copied and `hashFile` re-reads the destination — both **SHA-256**. Offload
 trashes an original only after the read-back digest matches (`src/services/offload.ts:398-416`);
 restore refuses an occupied path and re-verifies. The offload manifest entry
 is `{ id, name, originalPath, destPath, destRoot, size, hash, offloadedAt,
-restoredAt? }` (`src/models/types.ts:609-623`) and the Time Capsule member is
+restoredAt? }` (`src/models/types.ts:609-623`) and the Undo Vault member is
 `{ rel, kind, size, hash, target?, mtimeMs?, atimeMs? }` — **neither records
 the algorithm's name or a schema version**. Any future algorithm change here
 must add that field first; the new engine does not touch these paths.

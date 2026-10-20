@@ -66,7 +66,7 @@ TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Seventeen v
 **Sizes are decimal**, as Finder counts them: 1 KB = 1,000 bytes, 1 MB = 1,000,000 bytes, 1 GB = 1,000,000,000 bytes — on screen, in exports and reports, in the API's and the MCP tools' formatted strings, in every box where you type a size (budgets, Autopilot limits, the cleanup target), and in the search box (`size>500mb` is 500,000,000 bytes; `kib`, `mib` and `gib` are there for the 1,024-based units). Windows Explorer divides by 1,024 under the same labels, so it shows the same files smaller — by about 7% at gigabyte sizes.
 
 <div align="center">
-  <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Disk City, Grid, Apps, Libraries, Security, Fleet, Missing GB, Duplicates, Trends, History, Offloaded, Time Capsule, Autopilot, Clean Up, Scheduled + Ignore">
+  <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Disk City, Grid, Apps, Libraries, Security, Fleet, Missing GB, Duplicates, Trends, History, Offloaded, Undo Vault, Autopilot, Clean Up, Scheduled + Ignore">
 </div>
 
 <br>
@@ -218,7 +218,7 @@ The weights live in **Settings → Reclaim Score** and are yours to change, with
 
 **Preview after** re-lays the treemap out with the staged items taken out and hatches what would come back, under a banner that says nothing has been deleted. The freed space stays on the map rather than the survivors growing into it: area means bytes, and a rectangle that silently became worth more bytes than it was a second ago would make every size comparison against the live map wrong. Exiting restores the map exactly as it was. It is pure arithmetic in the browser — no scan, no server call, nothing on disk.
 
-Committing runs a **dry run first, always**: the exact manifest, every path with its size, and anything that will be **left in place** with the reason. Then the whole batch goes through the **Time Capsule** as one run — copied, verified, and only then trashed — so **Undo this run** puts every file back at its original path, even after you have emptied the Trash, until the Time Capsule removes its copies (after 30 days by default, or sooner to stay under its size cap). Anything too large for the capsule to protect is **left undeleted rather than deleted unprotected**, said in the manifest before you click rather than in a summary afterwards. Undo puts files back byte for byte while the Time Capsule holds their copies, **with their permissions and the dates they were last modified and opened** — including a folder's own, restored after its contents so that writing the children back does not re-stamp it. (Not the date each was created: no system lets a program set that back.)
+Committing runs a **dry run first, always**: the exact manifest, every path with its size, and anything that will be **left in place** with the reason. Then the whole batch goes through the **Undo Vault** as one run — copied, verified, and only then trashed — so **Undo this run** puts every file back at its original path, even after you have emptied the Trash, until the Undo Vault removes its copies (after 30 days by default, or sooner to stay under its size cap). Anything too large for the Undo Vault to protect is **left undeleted rather than deleted unprotected**, said in the manifest before you click rather than in a summary afterwards. Undo puts files back byte for byte while the Undo Vault holds their copies, **with their permissions and the dates they were last modified and opened** — including a folder's own, restored after its contents so that writing the children back does not re-stamp it. (Not the date each was created: no system lets a program set that back.)
 
 An optional **cleanup target** in Settings — "free 50 GB" — gives the cart a meter filling toward it. A meter, and nothing else: no streaks, no badges, no confetti. A progress meter is information; a reward loop pointed at deleting your own files is manipulation.
 
@@ -239,7 +239,7 @@ The third option next to *keep* and *trash*: **Offload…** copies files to anot
 </td>
 <td width="50%" valign="top">
 
-### 🕰️ Time Capsule
+### 🗄️ Undo Vault
 The safety net for **Autopilot** and the **cleanup cart**. Before either moves anything to the Trash, TreeMap copies it here, **verifies every byte** (SHA-256), and only then moves the original to the Trash — so emptying the Trash doesn't lose it, as long as the copy is kept. Searchable and grouped by run, with one-click verified **Restore** back to the exact original path (never overwriting anything that's there now). It can't fill your disk: a size cap (default 10%) evicts the oldest copies first, and anything too big to protect is **left undeleted rather than deleted unprotected** — with the reason shown, never hidden in a log. Copies are kept 30 days by default; both numbers are in Settings. Files you move to the Trash any other way (right-click, the Grid, Duplicates, Clean Up) go to the Trash as usual and aren't copied here.
 
 </td>
@@ -248,7 +248,7 @@ The safety net for **Autopilot** and the **cleanup cart**. Before either moves a
 <td width="50%" valign="top">
 
 ### ✨ Autopilot
-**Clean Up, but it keeps happening.** Write a policy once — *"clear old build folders in ~/Projects"* — and TreeMap carries it out on its own. Every rail §B1 asks for is here and visible in the editor: **the first run of any new policy is always a preview**, showing exactly what it matched, and it deletes nothing until you approve it; **byte caps** per run and per rolling week; a **cooldown** that doubles as the schedule; and *"ask me first above N GB"* so a policy that suddenly matches far more than expected **stops instead of executing**. Everything it removes goes through the Time Capsule first, so **a run can be undone in one click** until the Time Capsule removes its copies (after 30 days by default, or sooner to stay under its size cap), and the run history shows what each run deleted *and why* — or the reason it decided not to. Clean Up stays exactly as it was: manual, for deleting something right now.
+**Clean Up, but it keeps happening.** Write a policy once — *"clear old build folders in ~/Projects"* — and TreeMap carries it out on its own. Every rail §B1 asks for is here and visible in the editor: **the first run of any new policy is always a preview**, showing exactly what it matched, and it deletes nothing until you approve it; **byte caps** per run and per rolling week; a **cooldown** that doubles as the schedule; and *"ask me first above N GB"* so a policy that suddenly matches far more than expected **stops instead of executing**. Everything it removes goes through the Undo Vault first, so **a run can be undone in one click** until the Undo Vault removes its copies (after 30 days by default, or sooner to stay under its size cap), and the run history shows what each run deleted *and why* — or the reason it decided not to. Clean Up stays exactly as it was: manual, for deleting something right now.
 
 A policy can also match a **query** — the same search language as the treemap box, so a saved view becomes a Clean Up rule and a Clean Up rule becomes a policy, with one matching engine the whole way up. The query is checked by that same parser before the policy can be saved, and one with no conditions is refused outright: it would select every file in the folder, unattended. Promotion pre-fills the editor and saves nothing — the policy that comes out still starts switched off, still previews every run, and still cannot delete anything until you have seen its first run and approved it.
 
@@ -395,7 +395,7 @@ SmartScreen shows a blue box once. Click **More info**, then **Run anyway**. Tha
 - 🔄 **Auto-updates** from GitHub Releases, checked shortly after launch and every 6 hours. Windows downloads the new version and asks before restarting. macOS cannot install an update into an un-notarized app, so there TreeMap only *checks* and offers a **Download** dialog that opens the Releases page — drag the new build into Applications yourself. Decline once with "Skip This Version" and that version stays quiet.
 - 🔔 **Growth alerts** from scheduled scans arrive as native notifications.
 - 🖱️ **"Scan with TreeMap" in the right-click menu** — a Finder Quick Action on macOS, a shell entry on Windows, and a Nautilus / Dolphin / Thunar entry on Linux (for a build you made yourself). Add or remove it from Settings; it applies to **your account only and needs no administrator rights**. TreeMap asks the OS whether it's installed every single time rather than remembering, so uninstalling TreeMap can never leave a dead menu entry behind claiming otherwise.
-- 🧳 **Portable, no-trace mode** — run TreeMap from a USB stick and it writes **nothing to the host machine**: settings, index and history all live beside the executable. If the medium is read-only it goes fully **ephemeral** — memory-backed storage, an in-memory database, an audit ring buffer, and the Time Capsule switched off *with the reason shown* rather than silently — and the same when the `TreeMap-Data` folder beside it is a link or holds one, since whoever prepared the drive could have pointed TreeMap's saves elsewhere. Portable builds: `npm run dist:portable-mac` / `-win` / `-linux`.
+- 🧳 **Portable, no-trace mode** — run TreeMap from a USB stick and it writes **nothing to the host machine**: settings, index and history all live beside the executable. If the medium is read-only it goes fully **ephemeral** — memory-backed storage, an in-memory database, an audit ring buffer, and the Undo Vault switched off *with the reason shown* rather than silently — and the same when the `TreeMap-Data` folder beside it is a link or holds one, since whoever prepared the drive could have pointed TreeMap's saves elsewhere. Portable builds: `npm run dist:portable-mac` / `-win` / `-linux`.
 - ⚙️ **How hard a scan works is yours to set.** Settings › Scanning budget: Eco (about a quarter of the computer), Balanced (about half), Turbo (up to nine-tenths), or Automatic — Turbo for a scan you start and watch, Balanced for the ones that run on their own, a step lower on battery, and Eco when the system reports serious heat. Settings › Scan engine picks the engine — Automatic, the native engine, gdu or the built-in walker — and on Windows offers the opt-in **NTFS turbo** mode, which reads a drive's file table directly with administrator permission, after asking, for TreeMap installed for everyone who uses the computer. The Dashboard says which engine and budget every scan used, and why.
 
 <img src="divider.svg" width="100%" alt="">
@@ -541,8 +541,8 @@ A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows in
 | `GET /api/autopilot/policies` · `PUT …` | Standing cleanup policies (re-validated on save; editing a policy's scope revokes its approval) |
 | `POST /api/autopilot/simulate` | Exactly what a policy would delete — writes nothing, touches no schedule |
 | `POST /api/autopilot/policies/:id/approve` | Let a policy start deleting, after its mandatory first preview |
-| `GET /api/autopilot/runs` · `POST …/runs/:id/undo` | Run history, and a verified one-click undo from the Time Capsule |
-| `GET /api/timecapsule` | Items copied aside before an automated delete, with capacity + history |
+| `GET /api/autopilot/runs` · `POST …/runs/:id/undo` | Run history, and a verified one-click undo from the Undo Vault |
+| `GET /api/timecapsule` | The Undo Vault: what the cleanup cart and Autopilot copied aside before trashing it, with capacity + history |
 | `POST /api/timecapsule/:id/restore` · `DELETE /api/timecapsule/:id` | Verified restore to the original path (202 + SSE job), or forget one copy |
 | `GET /api/timecapsule/jobs/:jobId/progress` | Restore progress (Server-Sent Events), cancellable |
 | `GET /api/settings` · `PUT /api/settings` | Ignore list, scheduled scans, folder budgets, the Scan engine and the scanning budget |
@@ -704,7 +704,7 @@ Disk tools should never lose your data. TreeMap is built defensively:
 - 🧬 The Duplicates view refuses to trash *every* copy in a group — at least one always stays.
 - 🧬 The duplicate finder never opens an online-only file (an iCloud, OneDrive or Dropbox placeholder): reading one would download it. It says how many it left unchecked instead.
 - 🚦 Token-bucket rate limiting per client IP, in three lanes priced by what a request costs the server — 10 requests/s sustained (bursts of 20) for the API, 150/s (300) for thumbnails, 60/s (120) for cheap metadata — plus graceful SIGTERM shutdown that drains live SSE streams and stops background hashing, scheduled scans & live-activity watchers.
-- ⏳ Scan results live in memory only and auto-expire after 30 minutes. What does reach disk — history snapshots, settings, the SQLite live index, Time Capsule copies, the offload catalog, the journal and the audit log — sits in the platform app-data folder (`~/Library/Application Support/TreeMap`, `%APPDATA%\TreeMap`, or `~/.config/treemap`) and never leaves the machine. [SECURITY.md](SECURITY.md) lists every file, and every outbound connection the app can make.
+- ⏳ Scan results live in memory only and auto-expire after 30 minutes. What does reach disk — history snapshots, settings, the SQLite live index, Undo Vault copies, the offload catalog, the journal and the audit log — sits in the platform app-data folder (`~/Library/Application Support/TreeMap`, `%APPDATA%\TreeMap`, or `~/.config/treemap`) and never leaves the machine. [SECURITY.md](SECURITY.md) lists every file, and every outbound connection the app can make.
 
 <img src="divider.svg" width="100%" alt="">
 
@@ -721,8 +721,9 @@ src/
                 after any edit; never edit the generated page (the suite fails
                 if it drifts from its sources). See src/ui/README.md.
   api/          Express routes — scan, files, insights, facts, query, cart,
-                offload, cloud, fleet, autopilot, time capsule, notes, journal,
-                platform, settings, and meta (capabilities + OpenAPI)
+                offload, cloud, fleet, autopilot, the Undo Vault (timecapsule),
+                notes, journal, platform, settings, and meta (capabilities +
+                OpenAPI)
   services/     ScanStore (packed Structure-of-Arrays scan memory),
                 DiskScanner (engine choice + the built-in walker), scan/ (the
                 native engine's Node side: loader, eligibility, memory store,
@@ -732,10 +733,11 @@ src/
                 CleanupRules + rulepacks/ (smart suggestions), AppAttribution,
                 Forecast (disk-full projection), Watcher (live activity),
                 ContainerScanner (archive drill-down), Offload (copy-verify-trash),
-                TimeCapsule, Autopilot, facts/ (per-path providers incl. the
-                Reclaim score), query/ (the search grammar), cloud/ (Google Drive,
-                Dropbox, OneDrive), fleet/ (LAN summaries + mDNS), Scheduler,
-                Settings, Storage (app-data files), DiskUsage
+                TimeCapsule (the Undo Vault), Autopilot, facts/ (per-path
+                providers incl. the Reclaim score), query/ (the search
+                grammar), cloud/ (Google Drive, Dropbox, OneDrive), fleet/
+                (LAN summaries + mDNS), Scheduler, Settings, Storage (app-data
+                files), DiskUsage
   platform/     OS-specific mechanisms — trash, shell integration, snapshots,
                 SMART, last-used, backups — under macos/, windows/, linux/
   mcp/          The stdio MCP server (`npm run mcp`)
