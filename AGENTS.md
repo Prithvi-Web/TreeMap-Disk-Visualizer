@@ -45,7 +45,9 @@ OpenAPI 3 spec).
    `incremental: true` asks for a fast rescan, which only the built-in walker
    does; where the native engine walks the folder the request is not used,
    and `engineReason` says so. The walker reads the cache the last scan of
-   the folder saved: it reuses the last scan's listing of a folder only when
+   the folder saved (a cache an earlier build saved in an older format is
+   not read, and is removed: the first fast rescan after such an update
+   lists every folder afresh): it reuses the last scan's listing of a folder only when
    the folder's modified time is unchanged and was more than 5 seconds older
    than the start of that scan — a folder changed in the 5 seconds before
    that scan, or while it ran, is listed afresh, because a change in the same

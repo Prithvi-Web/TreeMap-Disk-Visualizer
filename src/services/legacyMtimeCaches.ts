@@ -5,13 +5,17 @@ import { appDataDir } from './storage';
 import { isEphemeral } from './portableMode';
 
 /**
- * The fast-rescan caches written before a cache's name carried its format
- * (U-4c L2: `mtime-cache-v2-<hash>.json` since): `mtime-cache-<16 hex>.json`,
- * the hash of a root (and of its "cross" variant). Nothing reads one any more
- * — its partial listings would lose the `unlisted` mark — yet every root ever
- * scanned left one in app-data, up to tens of MB each (the U-4c review, F1.2).
+ * The fast-rescan caches of a format no build reads any more, by their exact
+ * names, each the hash of a root (and of its "cross" variant):
+ *  - `mtime-cache-<16 hex>.json`, written before a cache's name carried its
+ *    format (U-4c L2): its partial listings would lose the `unlisted` mark;
+ *  - `mtime-cache-v2-<16 hex>.json`, format 2 (5–18 Oct 2026): it can spell a
+ *    name that begins with U+FEFF without the mark, so a reused listing would
+ *    name the file beside it (BQL item 8; diskScanner writes format 3 since).
+ * Every root ever scanned left one in app-data, up to tens of MB each, which
+ * nothing reads (the U-4c review, F1.2).
  */
-export const LEGACY_MTIME_CACHE = /^mtime-cache-[0-9a-f]{16}\.json$/;
+export const LEGACY_MTIME_CACHE = /^mtime-cache-(?:v2-)?[0-9a-f]{16}\.json$/;
 
 /**
  * Removes every legacy fast-rescan cache from app-data: TreeMap's own files,

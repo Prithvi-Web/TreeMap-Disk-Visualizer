@@ -1165,8 +1165,16 @@ const MTIME_CACHE_MAX_NODES = 300_000;
  * folder's partial listing unmarked — reused, it would read as complete, and
  * the next cache would be written from that tree — so it is never read: the
  * first fast rescan after the change walks in full.
+ *
+ * Format 3 (BQL item 8) keeps a name that begins with U+FEFF as it is on disk.
+ * The builds that wrote format 2 read stored names through a decoder that
+ * dropped a leading mark (fixed in 134674f6), so their cache can list the
+ * 900-byte "\uFEFFfoo" as "foo", at the path of the 5-byte file beside it;
+ * reused, that listing would point an action on one file at the other. A
+ * format-2 cache is therefore never read, and leaves app-data as the
+ * unversioned ones do (legacyMtimeCaches.ts).
  */
-const MTIME_CACHE_FORMAT = 2;
+const MTIME_CACHE_FORMAT = 3;
 
 function cacheFileName(rootPath: string, rule: BoundaryRule): string {
   const key = rule === 'cross' ? `${rootPath}\0cross` : rootPath;

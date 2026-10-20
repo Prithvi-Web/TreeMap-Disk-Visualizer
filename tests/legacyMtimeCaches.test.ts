@@ -10,27 +10,33 @@ import { dropLegacyMtimeCaches, LEGACY_MTIME_CACHE } from '../src/services/legac
 import { initPortableMode, isEphemeral, resetPortableMode } from '../src/services/portableMode';
 
 /**
- * The U-4c review, F1.2: since U-4c L2 a fast-rescan cache is named
- * `mtime-cache-v2-<hash>.json`, and one under the old name is never read. Each
- * root ever scanned left one in app-data (up to tens of MB), which nothing
- * read, listed or removed. A completed scan now removes them
- * (tests/emptyFolders.test.ts holds the scan to it); here, exactly what is
- * removed: TreeMap's own old caches by their exact name, and nothing else.
+ * The U-4c review, F1.2: since U-4c L2 a fast-rescan cache's name carries its
+ * format, and one of an older format is never read: the unversioned
+ * `mtime-cache-<hash>.json`, and since BQL item 8 format 2,
+ * `mtime-cache-v2-<hash>.json` (it can spell a name that begins with U+FEFF
+ * without the mark). Each root ever scanned left one in app-data (up to tens
+ * of MB), which nothing read, listed or removed. A completed scan now removes
+ * them (tests/emptyFolders.test.ts and tests/incrementalRescan.test.ts hold the
+ * scan to it); here, exactly what is removed: TreeMap's own old caches by their
+ * exact name, and nothing else.
  */
 
 const names = (): string[] => fs.readdirSync(APP).sort();
 
-test('only the old caches go: a regular file named exactly mtime-cache-<16 hex>.json, and nothing else in app-data', async () => {
+test('only the old caches go: a regular file named exactly mtime-cache-<16 hex>.json or mtime-cache-v2-<16 hex>.json, and nothing else in app-data', async () => {
   const keep = [
-    'mtime-cache-v2-0123456789abcdef.json', // today's cache
+    'mtime-cache-v3-0123456789abcdef.json', // today's cache (format 3, BQL item 8)
     'mtime-cache-0123456789abcdef.json.tmp', // a write in progress, under the old name
+    'mtime-cache-v2-0123456789abcdef.json.tmp', // and under format 2's
+    'mtime-cache-v2-0123456789abcde.json', // format 2's name one hex digit short
+    'mtime-cache-v4-0123456789abcdef.json', // a later format: not this build's to remove
     'mtime-cache-ABCDEF0123456789.json', // not a hash this build or an older one wrote (a hex hash is lower case)
     'mtime-cache-0123456789abcde.json', // one hex digit short
     'mtime-cache-0123456789abcdef0.json', // one long
     'settings.json',
     'snapshots.json',
   ];
-  const old = ['mtime-cache-0123456789abcdef.json', 'mtime-cache-fedcba9876543210.json'];
+  const old = ['mtime-cache-0123456789abcdef.json', 'mtime-cache-fedcba9876543210.json', 'mtime-cache-v2-0123456789abcdef.json', 'mtime-cache-v2-fedcba9876543210.json'];
   for (const name of [...keep, ...old]) fs.writeFileSync(path.join(APP, name), '{}');
   // A folder under an old cache's name, holding a file: not a cache, and never removed.
   const folder = 'mtime-cache-1111111111111111.json';
@@ -47,12 +53,14 @@ test('only the old caches go: a regular file named exactly mtime-cache-<16 hex>.
     linked = false; // Windows without the right to make links
   }
   const dropped = await dropLegacyMtimeCaches();
-  assert.deepEqual(names(), [...keep, folder, ...(linked ? [link] : [])].sort(), 'the two old caches went, and nothing else');
+  assert.deepEqual(names(), [...keep, folder, ...(linked ? [link] : [])].sort(), 'the four old caches went, and nothing else');
   assert.equal(fs.readFileSync(path.join(APP, folder, 'inside.txt'), 'utf8'), 'kept');
   assert.equal(fs.readFileSync(outside, 'utf8'), '{"kept":true}');
-  assert.equal(dropped, 2, 'and it says how many');
+  assert.equal(dropped, 4, 'and it says how many');
   assert.equal(await dropLegacyMtimeCaches(), 0, 'once gone, nothing more');
   assert.ok(LEGACY_MTIME_CACHE.test('mtime-cache-0123456789abcdef.json'));
+  assert.ok(LEGACY_MTIME_CACHE.test('mtime-cache-v2-0123456789abcdef.json'), 'format 2 is an old cache now (BQL item 8)');
+  assert.ok(!LEGACY_MTIME_CACHE.test('mtime-cache-v3-0123456789abcdef.json'), 'and format 3 is the one this build reads');
 });
 
 test('a read-only portable session removes nothing: its app-data is not TreeMap\'s to touch', async () => {

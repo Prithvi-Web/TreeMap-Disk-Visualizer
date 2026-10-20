@@ -39,10 +39,10 @@ import { ageFolders } from './fixtures/folderTimes';
  * folder time they are about.
  */
 
-/** diskScanner's cacheFileName under "Stay on this drive": format 2 since U-4c L2. */
+/** diskScanner's cacheFileName under "Stay on this drive": format 3 since BQL item 8 (2 since U-4c L2). */
 function cacheFileFor(rootPath: string): string {
   const h = crypto.createHash('sha1').update(rootPath).digest('hex').slice(0, 16);
-  return path.join(process.env.TREEMAP_DATA_DIR!, `mtime-cache-v2-${h}.json`);
+  return path.join(process.env.TREEMAP_DATA_DIR!, `mtime-cache-v3-${h}.json`);
 }
 
 /**
@@ -446,4 +446,62 @@ test('a tree that never stops changing keeps the previous cache, and says why', 
   assert.deepEqual(temps, [], 'no half-written file is left');
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /changed while it was being written, 3 times/);
+});
+
+/** The fast-rescan cache file of `rootPath` the last scan left in app-data, whatever its format number. */
+function cacheOnDisk(rootPath: string): string {
+  const h = crypto.createHash('sha1').update(rootPath).digest('hex').slice(0, 16);
+  const found = fs.readdirSync(process.env.TREEMAP_DATA_DIR!).filter((n) => new RegExp(`^mtime-cache-v\\d+-${h}\\.json$`).test(n));
+  assert.equal(found.length, 1, `one cache of the folder: ${found.join(', ')}`);
+  return path.join(process.env.TREEMAP_DATA_DIR!, found[0]);
+}
+
+test('a fast-rescan cache an earlier build saved (format 2) is never read: a name it wrote without its leading byte-order mark does not come back as the file beside it, and the old file leaves app-data (BQL item 8)', async () => {
+  // Builds before 134674f6 (5–18 Oct 2026) read a stored name through a decoder that
+  // dropped a leading U+FEFF, and wrote their cache from it: the 900-byte "\uFEFFfoo"
+  // went in as "foo" at <root>/foo, the 5-byte file beside it. A walker fast rescan
+  // reused that listing as written, so the 900-byte row was spelled as the 5-byte
+  // file's path, and a Trash or offload of it acted on the wrong file.
+  const BOM = '\uFEFF';
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'treemap-bom-cache-'));
+  try {
+    await fsp.writeFile(path.join(root, 'foo'), Buffer.alloc(5, 1));
+    await fsp.writeFile(path.join(root, `${BOM}foo`), Buffer.alloc(900, 2));
+    ageFolders(root);
+    const first = await scanOnce(root, false);
+    assert.equal(first.status, 'complete');
+    await writesSettled();
+    const h = crypto.createHash('sha1').update(first.rootPath).digest('hex').slice(0, 16);
+    const written = cacheOnDisk(first.rootPath);
+    // The same folder as such a build cached it, under the name it used: the
+    // 900-byte file's name without its mark, at the 5-byte file's path.
+    const tree = JSON.parse(fs.readFileSync(written, 'utf8')) as FileNode;
+    let restyled = 0;
+    for (const child of tree.children ?? []) {
+      if (child.size !== 900) continue;
+      child.name = 'foo';
+      child.path = path.join(path.dirname(child.path), 'foo');
+      restyled++;
+    }
+    assert.equal(restyled, 1, 'control: the 900-byte file is in the cache, and the stale copy names it as the file beside it');
+    const v2 = path.join(process.env.TREEMAP_DATA_DIR!, `mtime-cache-v2-${h}.json`);
+    fs.writeFileSync(v2, JSON.stringify(tree));
+    if (written !== v2) fs.unlinkSync(written);
+
+    const second = await scanOnce(root, true);
+    assert.equal(second.status, 'complete');
+    assert.equal(second.cachedDirs, 0, 'no listing came from the old cache');
+    assert.equal(second.incremental, false, 'and the answer says no saved listing was read');
+    const store = second.store!;
+    // The paths an action is sent with: each finds its own file.
+    const found = ['foo', `${BOM}foo`].map((name) => store.findByPath(path.join(second.rootPath, name)));
+    assert.deepEqual(found.map((id) => (id === -1 ? null : store.size(id))), [5, 900], '<root>/foo is the 5-byte file and <root>/\\uFEFFfoo the 900-byte one');
+    const kids = store.childIds(store.rootId).map((id) => [store.name(id), store.size(id)] as const).sort((a, b) => a[1] - b[1]);
+    assert.deepEqual(kids, [['foo', 5], [`${BOM}foo`, 900]], 'each name as it is on disk, with its own size');
+    await writesSettled();
+    assert.equal(fs.existsSync(v2), false, 'the old cache left app-data');
+    assert.equal(path.basename(cacheOnDisk(second.rootPath)), `mtime-cache-v3-${h}.json`, 'and the rescan saved one of the current format');
+  } finally {
+    await fsp.rm(root, { recursive: true, force: true });
+  }
 });
