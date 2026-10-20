@@ -7659,6 +7659,36 @@ function graftSubtree(sub) {
 }
 
 /**
+ * The scan the tree on screen came from: what every request about that tree
+ * names — a subtree, the map, a score, a fact, a query, a view's report — and
+ * what an answer is checked against before it is kept. One rule, here, so no
+ * view keeps a copy of its own (BQJ-1b; three review rounds each found more).
+ *
+ * While a scan runs, its id is on hand once its request answers
+ * (followScanProgress), but the tree on screen is still the one before it: an
+ * older scan's (settledScanId), or the saved index's (none — nothing is asked
+ * of it). A scan still walking answers nothing about a tree: 202, 409
+ * SCAN_RUNNING, or every path "unavailable" (review F1.5, F2.2). Once it lands
+ * (finishScan) or is stopped (stopScan, failScan) the scan on hand is the
+ * tree's own again.
+ */
+function treeScanId() {
+  return state.scanning ? state.settledScanId : state.scanId;
+}
+
+/**
+ * Whether a scan will land behind a tree no scan stands behind yet — the saved
+ * index's, while its scan runs (scanning) or is due (indexScanDue: the paint
+ * returns before the scan is requested, review F3.1). What a view says there in
+ * place of what it would ask the tree's scan: that it fills in once the scan
+ * finishes while one is coming, and that the tree is the saved index once
+ * nothing will land (a Stop, a failure).
+ */
+function treeScanComing() {
+  return state.scanning || state.indexScanDue;
+}
+
+/**
  * Make sure we hold the children of `path`, fetching them if the server pruned
  * this branch. Views that lay out from the tree (grid, sunburst) must call this
  * before deciding a folder is empty — "we weren't sent it" is not "it's empty".
@@ -7670,11 +7700,9 @@ async function ensureSubtree(path) {
   if (!path) return null;
   const have = state.pathIndex.get(path);
   if (have && !have.pruned) return have;
-  // The scan the tree on screen came from. While a scan runs, its id is on
-  // hand once its request answers, but the tree on screen is still the one
-  // before it — an older scan's (settledScanId) or the saved index's (none) —
-  // and a scan still walking answers a subtree with 202 (review F1.5).
-  const treeScan = () => (state.scanning ? state.settledScanId : state.scanId);
+  // The scan the tree on screen came from (treeScanId): a scan still walking
+  // answers a subtree with 202 (review F1.5).
+  const treeScan = treeScanId;
   const scanId = treeScan();
   if (!scanId) {
     // No scan yet — we are looking at the instant paint from the index, which
@@ -7921,8 +7949,8 @@ const VIEWS = [
       // canvas under the tree's name (seventh browser pass, J05). What asks
       // the scan itself waits for one: not the scan running behind the
       // tree, whose id is on hand once its request answers, and which
-      // answers nothing until it lands (review F1.5).
-      if (!(state.scanning ? state.settledScanId : state.scanId)) { loadTreemap(state.treemap.rootPath); return; }
+      // answers nothing until it lands (treeScanId, review F1.5).
+      if (!treeScanId()) { loadTreemap(state.treemap.rootPath); return; }
       loadSavedViews(); // Phase 2 §2.4 — the chip strip, fetched lazily on entry
       refreshDock(); // §8.3 — connected drives, fetched lazily on entry like the chips
       loadTreemap(state.treemap.rootPath);
@@ -12416,8 +12444,8 @@ async function loadTreemap(rootPath, animate = false) {
   // older scan's (settledScanId), or the saved index's (none) — and a scan
   // still walking answers a map with 202: asked of it, the map stayed blank,
   // or kept the older drawing under the new folder's name, for the whole
-  // scan (review F1.5).
-  const scanAtRequest = state.scanning ? state.settledScanId : state.scanId;
+  // scan (treeScanId, review F1.5).
+  const scanAtRequest = treeScanId();
   state.treemap.kbSel = null;
   // Captured before the tree is replaced: which node will still be on screen
   // afterwards, and where it is right now. Drilling in, that is the folder
@@ -20632,8 +20660,8 @@ const TM_SCORE_CAP = 6000;
  */
 let tmScoreChain = null;
 function tmScoreKey() {
-  // The tree's scan, as the scores are asked of it (reclaimTreeScan, review F3.2).
-  return `${reclaimTreeScan()}\n${state.treemap.rootPath}\n${state.treemap.mode}\n${state.treemap.colorMode}`;
+  // The tree's scan, as the scores are asked of it (treeScanId, review F3.2).
+  return `${treeScanId()}\n${state.treemap.rootPath}\n${state.treemap.mode}\n${state.treemap.colorMode}`;
 }
 
 function fetchScoresForTreemap() {
@@ -26037,9 +26065,10 @@ const hsPending = new Set();
 function resolveHumanScale(node) {
   if (!humanScaleOn || !node || !node.path || node.type !== 'dir') return;
   if (node.size < HS_MIN_BYTES || node.virtual || node.path.startsWith('cloud://')) return;
-  // Asked of the scan the tree on screen came from — not a scan running
-  // behind it, which answers "unavailable", kept as asked and none (review F2.2).
-  const treeScan = () => (state.scanning ? state.settledScanId : state.scanId);
+  // Asked of the scan the tree on screen came from (treeScanId) — not a scan
+  // running behind it, which answers "unavailable", kept as asked and none
+  // (review F2.2).
+  const treeScan = treeScanId;
   if (!treeScan() || hsFacts.has(node.path) || hsPending.has(node.path)) return;
   hsPending.add(node.path);
   const scanAtRequest = treeScan();
@@ -28561,7 +28590,7 @@ function buildCity() {
   // page laid out of the saved index's tree is no scan's, and the city,
   // which asks a scan for its facts, never stands on one.
   const held = state.treemap.nodesFor;
-  const scanId = state.scanning ? state.settledScanId : state.scanId;
+  const scanId = treeScanId();
   const from = held && !!held.scanId && held.nodes === state.treemap.nodes && held.scanId === scanId
     && held.path === state.treemap.rootPath ? held : null;
   // The record the city stands on: its line and size say what these nodes
@@ -29591,7 +29620,8 @@ function renderCityChrome() {
       // The index paint itself runs with the scan chrome ended and its scan
       // not yet requested: that scan is due (indexScanDue), and the city is
       // loading, not "scan this folder" of the folder being scanned (F3.1).
-      const fromIndex = !!state.root && !state.scanId && !state.scanning && !state.indexScanDue;
+      // No scan behind the tree (treeScanId) and none coming (treeScanComing).
+      const fromIndex = !!state.root && !treeScanId() && !treeScanComing();
       if (!failed) parts.push(fromIndex ? 'Opened from the saved index — scan this folder to see its city.' : 'loading this folder…');
     } else {
       // §6.1 forbids a silent threshold. A map drawing 4,120 of 251,000 things
@@ -29733,8 +29763,8 @@ async function loadCity(rootPath) {
   // The scan the tree on screen came from: while a scan runs its id is on
   // hand once its request answers, but the tree on screen is still an older
   // scan's (settledScanId) or the saved index's (none), and a scan still
-  // walking answers a map with 202 (review F1.5). None: no city.
-  const scanAtRequest = state.scanning ? state.settledScanId : state.scanId;
+  // walking answers a map with 202 (treeScanId, review F1.5). None: no city.
+  const scanAtRequest = treeScanId();
   if (!state.root) return;
   const want = rootPath || state.treemap.rootPath || state.root.path;
   const seq = ++cityLoadSeq; // a load of the tree before, still out, is overtaken
@@ -29825,8 +29855,8 @@ async function loadCity(rootPath) {
 function cityFetchFacts() {
   const c = state.city;
   // Asked of the scan the city stands on — the tree on screen's, not a scan
-  // running behind it, which answers "unavailable" (review F2.2).
-  if (!(state.scanning ? state.settledScanId : state.scanId) || !c.blocks.length) return;
+  // running behind it, which answers "unavailable" (treeScanId, review F2.2).
+  if (!treeScanId() || !c.blocks.length) return;
   const paths = c.blocks.map((b) => b.n.path).filter((p) => p && !p.startsWith('cloud://') && !p.includes('!/')).slice(0, TM_SCORE_CAP);
 
   if (c.colour === 'reclaim') {
@@ -29855,8 +29885,8 @@ function cityFetchFacts() {
 
 /** Fetch subtree counts in the fact layer's own batches. */
 async function cityLoadCounts(paths) {
-  // The scan the city stands on (cityFetchFacts), never a scan still walking (review F2.2).
-  const treeScan = () => (state.scanning ? state.settledScanId : state.scanId);
+  // The scan the city stands on (treeScanId), never a scan still walking (review F2.2).
+  const treeScan = treeScanId;
   const scanAtRequest = treeScan();
   // The scan's own record of what has been asked: a scan change replaces it,
   // so this ask can release only its own scan's paths.
@@ -33804,20 +33834,15 @@ function reclaimReset() {
   reclaim.failed.clear();
 }
 
-/**
- * The scan the tree on screen came from: what a score is asked of
- * (ensureScores), what a failed one is remembered for (reclaimFailureScope)
- * and what the map's score chain is for (tmScoreKey) — one rule, so the three
- * cannot drift. While a scan runs its id is on hand once its request answers,
- * but the tree on screen is still the older scan's (settledScanId) or the
- * saved index's (none: nothing is asked), and a scan still walking answers
- * every path "unavailable" (review F2.2). Keyed on the scan on hand, the
- * chain took a rescan's request answering for another map, and a batch still
- * out was filed with no repaint and no legend (review F3.2).
+/*
+ * A score is asked of the scan the tree on screen came from (treeScanId, 015),
+ * a failed one is remembered for it (reclaimFailureScope) and the map's score
+ * chain is for it (tmScoreKey) — the app's one rule, so the three cannot
+ * drift. A scan still walking answers every path "unavailable" (review F2.2);
+ * keyed on the scan on hand, the chain took a rescan's request answering for
+ * another map, and a batch still out was filed with no repaint and no legend
+ * (review F3.2).
  */
-function reclaimTreeScan() {
-  return state.scanning ? state.settledScanId : state.scanId;
-}
 
 /**
  * What the Reclaim colour mode says of a tree no scan stands behind — the
@@ -33825,23 +33850,23 @@ function reclaimTreeScan() {
  * or null while one stands behind it. Nothing is asked of such a tree
  * (ensureScores) and nothing is pending, so neither the legend nor the
  * breakdown may say its scores are loading (review F3.3): while the scan
- * behind it is due or runs (indexScanDue, scanning), scoring waits on that
- * scan; once nothing will land, a scan of the folder is what would score it.
+ * behind it is due or runs (treeScanComing), scoring waits on that scan;
+ * once nothing will land, a scan of the folder is what would score it.
  */
 function reclaimNoScanWords() {
-  if (reclaimTreeScan()) return null;
-  return state.scanning || state.indexScanDue
+  if (treeScanId()) return null;
+  return treeScanComing()
     ? 'Not scored yet — scoring starts once this folder’s scan finishes.'
     : 'Not scored — opened from the saved index; scan this folder to score it.';
 }
 
 /**
  * What a failed request is remembered for: the scan the tree on screen came
- * from (reclaimTreeScan — not a scan running behind it), this view, this
- * folder on screen.
+ * from (treeScanId — not a scan running behind it), this view, this folder
+ * on screen.
  */
 function reclaimFailureScope() {
-  return `${reclaimTreeScan()}\n${state.view}\n${(state.treemap && state.treemap.rootPath) || ''}`;
+  return `${treeScanId()}\n${state.view}\n${(state.treemap && state.treemap.rootPath) || ''}`;
 }
 
 /**
@@ -33919,11 +33944,11 @@ function scoreKnown(path) { return reclaim.scores.has(path); }
  * by a request that will never answer for it.
  */
 async function ensureScores(paths, onLanded, onFailed, { signal = null, isCurrent = null } = {}) {
-  // Asked of the scan the tree on screen came from (reclaimTreeScan): asked
+  // Asked of the scan the tree on screen came from (treeScanId): asked
   // of a scan still walking, every path was filed as asked and none, and a
   // Stop then left the map grey and the tooltip saying no signal could be
   // read, until the next scan (review F2.2).
-  const treeScan = reclaimTreeScan;
+  const treeScan = treeScanId;
   if (!treeScan() || (signal && signal.aborted)) return;
   const scope = reclaimFailureScope();
   if (reclaim.failedFor !== scope) {
@@ -33976,7 +34001,7 @@ async function ensureScores(paths, onLanded, onFailed, { signal = null, isCurren
  * whether anything landed and whether anything failed.
  */
 async function reclaimScoreBatch(batch, scanAtRequest, scope, outcome, signal = null) {
-  const treeScan = reclaimTreeScan; // as ensureScores asks (review F2.2)
+  const treeScan = treeScanId; // as ensureScores asks (review F2.2)
   let res;
   try {
     res = await api('/api/facts', {

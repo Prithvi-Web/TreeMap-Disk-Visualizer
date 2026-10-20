@@ -70,8 +70,8 @@ const VIEWS = [
       // canvas under the tree's name (seventh browser pass, J05). What asks
       // the scan itself waits for one: not the scan running behind the
       // tree, whose id is on hand once its request answers, and which
-      // answers nothing until it lands (review F1.5).
-      if (!(state.scanning ? state.settledScanId : state.scanId)) { loadTreemap(state.treemap.rootPath); return; }
+      // answers nothing until it lands (treeScanId, review F1.5).
+      if (!treeScanId()) { loadTreemap(state.treemap.rootPath); return; }
       loadSavedViews(); // Phase 2 §2.4 — the chip strip, fetched lazily on entry
       refreshDock(); // §8.3 — connected drives, fetched lazily on entry like the chips
       loadTreemap(state.treemap.rootPath);

@@ -594,7 +594,7 @@ test('Disk City asks for the map with the Treemap\'s 4 KB floor, and records it 
     treemap: { rootPath: '/r', maxDepth: 3, nodes: [] as unknown[], minSize: undefined as number | undefined },
   };
   const loadCity = run<(p: string) => Promise<void>>(
-    `let cityLoadSeq = 0;\n${pageConst('TM_MIN_SIZE')}\n${braced('async function loadCity(')}`,
+    `let cityLoadSeq = 0;\n${pageConst('TM_MIN_SIZE')}\n${braced('function treeScanId(')}\n${braced('async function loadCity(')}`,
     {
       state, $: dom().$,
       api: async (u: string) => { asked.push(u); return { root: { path: '/r', name: 'r', size: 9000 }, nodes: [{ path: '/r/f', size: 4000 }] }; },
@@ -616,7 +616,7 @@ function cityLoader(serve: (root: string, minSize: number) => Promise<{ root: { 
     treemap: { rootPath: '/r', maxDepth: 3, nodes: [] as unknown[], minSize: undefined as number | undefined },
   };
   const loadCity = run<(p: string) => Promise<void>>(
-    `let cityLoadSeq = 0;\n${pageConst('TM_MIN_SIZE')}\n${braced('async function loadCity(')}`,
+    `let cityLoadSeq = 0;\n${pageConst('TM_MIN_SIZE')}\n${braced('function treeScanId(')}\n${braced('async function loadCity(')}`,
     {
       state, $: dom().$,
       api: async (u: string) => {
@@ -680,7 +680,7 @@ function cityNote(o: { drawn: number; total: number; nodes?: Array<{ isTrash?: b
     treemap: { history: { active: o.history === true } },
   };
   run<() => void>(
-    `${pageConst('UNITS')}\n${braced('function formatBytes(')}\n${pageConst('TM_SERVER_NODE_CAP')}\n${braced('function renderCityChrome(')}`,
+    `${pageConst('UNITS')}\n${braced('function formatBytes(')}\n${pageConst('TM_SERVER_NODE_CAP')}\n${braced('function treeScanId(')}\n${braced('function treeScanComing(')}\n${braced('function renderCityChrome(')}`,
     { state, $: (id: string) => (id === 'cityLod' ? lod : null), formatCount: (n: number) => n.toLocaleString('en-US') },
     'renderCityChrome',
   )();

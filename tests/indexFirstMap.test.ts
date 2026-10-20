@@ -137,7 +137,7 @@ test('the map the page lays out of a tree it holds is the map the server lays ou
 
 /* ══════════════ loadTreemap over a tree with no scan behind it ══════════════ */
 
-const MAP_DECLS = ['loadTreemap', 'TM_MIN_SIZE', 'TM_SERVER_NODE_CAP', 'tmHeldTreemap', ...LAYOUT_DECLS];
+const MAP_DECLS = ['treeScanId', 'loadTreemap', 'TM_MIN_SIZE', 'TM_SERVER_NODE_CAP', 'tmHeldTreemap', ...LAYOUT_DECLS];
 
 /** Every node of a tree by its path, as indexTree keeps them. */
 function pathIndexOf(root: FileNode): Map<string, FileNode> {
@@ -288,7 +288,7 @@ test('while a scan runs, a map is asked of the scan the tree on screen came from
 function subtreePage(root: FileNode, s: { scanId: string | null; settledScanId: string | null; scanning: boolean }, answer: (url: string) => unknown) {
   const state = { ...s, root, pathIndex: pathIndexOf(root), nodeCache: new Map<string, unknown>() };
   const asked: string[] = [];
-  const ensureSubtree = load<(p: string) => Promise<FileNode | null>>(['SUBTREE_NODES', 'graftSubtree', 'ensureSubtree'], {
+  const ensureSubtree = load<(p: string) => Promise<FileNode | null>>(['SUBTREE_NODES', 'treeScanId', 'graftSubtree', 'ensureSubtree'], {
     state, apiPaced: async (url: string) => { asked.push(url); return answer(url); },
   }, 'ensureSubtree');
   return { ensureSubtree, state, asked };

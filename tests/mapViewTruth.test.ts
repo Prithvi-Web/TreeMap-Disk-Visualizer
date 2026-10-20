@@ -105,7 +105,7 @@ async function loadInMode(mode: string, colorMode = 'reclaim'): Promise<Calls> {
     fetchScoresForTreemap: count('fetchScoresForTreemap'),
   };
   const loadTreemap = load<(p: string, animate?: boolean) => Promise<void>>(
-    ['loadTreemap', 'drawView', 'TM_MIN_SIZE'], deps, 'loadTreemap', 'let tmLoadSeq = 0;');
+    ['treeScanId', 'loadTreemap', 'drawView', 'TM_MIN_SIZE'], deps, 'loadTreemap', 'let tmLoadSeq = 0;');
   await loadTreemap('/r/a', true);
   return calls;
 }
@@ -143,7 +143,7 @@ function coverage(drawn: number, scored: number, pending: number, unscorable = 0
     else if (i < scored + unscorable) scores.set(c.n.path, null);
     else if (i < scored + unscorable + pending) inFlight.add(c.n.path);
   });
-  const note = load<() => string>(['reclaimCoverageNote', 'reclaimAskableNode', 'reclaimAskablePath', 'reclaimTreeScan', 'reclaimNoScanWords'], {
+  const note = load<() => string>(['reclaimCoverageNote', 'reclaimAskableNode', 'reclaimAskablePath', 'treeScanId', 'treeScanComing', 'reclaimNoScanWords'], {
     // A scan stands behind the tree on screen (a saved index's tree is reclaimScoreLoop's, review F3.3).
     state: { scanId: 's1', scanning: false },
     drawnCells: () => cells,
@@ -1937,7 +1937,7 @@ test('LOW-2: the floor the note names is the one the map is asked for', async ()
   let url = '';
   const state = { scanId: 's1', root: { path: '/r' }, pathIndex: new Map(),
     treemap: { mode: 'treemap', colorMode: 'size', rootPath: '/r', maxDepth: 4, nodes: [], history: { scrubbing: false } } };
-  const loadTreemap = load<(p: string) => Promise<void>>(['loadTreemap', 'TM_MIN_SIZE'], {
+  const loadTreemap = load<(p: string) => Promise<void>>(['treeScanId', 'loadTreemap', 'TM_MIN_SIZE'], {
     state, REDUCED: true, isSun: () => false, isCells: () => false, exitCartPreview() {}, $: () => ({ classList: { add() {}, remove() {} } }),
     api: async (u: string) => { url = u; throw new Error('stop here'); }, toast() {},
   }, 'loadTreemap', 'let tmLoadSeq = 0;');
@@ -1961,7 +1961,7 @@ function mapAndNote(serve: (minSize: number, state: { treemap: { rootPath: strin
       hover: null, kbSel: null, history: { scrubbing: false, active: false } },
   };
   const page = load<{ loadTreemap: (p: string) => Promise<void>; liveRelayout: () => Promise<void>; note: () => string }>(
-    ['loadTreemap', 'liveRelayout', ...CAP_NOTE_DECLS], {
+    ['treeScanId', 'loadTreemap', 'liveRelayout', ...CAP_NOTE_DECLS], {
       state, REDUCED: true, isSun: () => false, isCells: () => false, exitCartPreview() {},
       $: () => ({ classList: { add() {}, remove() {} }, disabled: false }),
       api: async (u: string) => { const m = Number(/[?&]minSize=(\d+)/.exec(u)![1]); asked.push(m); return serve(m, state); },

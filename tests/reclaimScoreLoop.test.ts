@@ -65,7 +65,7 @@ function declSource(name: string): string {
  * a ReferenceError in the test that reaches it.
  */
 const SHIPPED = [
-  'reclaim', 'RECLAIM_PATH_REFUSALS', 'reclaimTreeScan', 'reclaimFailureScope', 'reclaimAskablePath', 'reclaimAskableNode',
+  'reclaim', 'RECLAIM_PATH_REFUSALS', 'treeScanId', 'treeScanComing', 'reclaimFailureScope', 'reclaimAskablePath', 'reclaimAskableNode',
   'ensureScores', 'reclaimScoreBatch', 'fetchScoresForTreemap', 'reclaimCoverageNote',
   'tmScoreChain', 'tmScoreKey', 'reclaimNoScanWords', 'scoreFor', 'scoreKnown', 'openReclaimWhy',
 ];

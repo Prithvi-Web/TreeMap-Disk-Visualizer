@@ -634,6 +634,10 @@ test('review F2.2: while a rescan runs over an older scan\'s tree, the tooltip\'
     if (html[i] === '{') depth++;
     else if (html[i] === '}' && --depth === 0) { end = i + 1; break; }
   }
+  // The app's one rule for the scan behind the tree on screen (treeScanId), lifted with it.
+  const ruleAt = html.indexOf('function treeScanId(');
+  assert.notEqual(ruleAt, -1, 'the rule is in the page');
+  const rule = html.slice(ruleAt, html.indexOf('\n}', ruleAt) + 2);
   const asks: Array<{ scanId: string; paths: string[]; answer: (res: unknown) => void }> = [];
   const state: Record<string, unknown> = { scanning: true, settledScanId: 'A', scanId: 'B' }; // followScanProgress set B; the tree on screen is A's
   const hsFacts = new Map<string, unknown>();
@@ -647,7 +651,7 @@ test('review F2.2: while a rescan runs over an older scan\'s tree, the tooltip\'
   };
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const resolve = new Function(...keys, `${html.slice(start, end)}\nreturn resolveHumanScale;`)(...keys.map((k) => deps[k])) as (n: unknown) => void;
+  const resolve = new Function(...keys, `${rule}\n${html.slice(start, end)}\nreturn resolveHumanScale;`)(...keys.map((k) => deps[k])) as (n: unknown) => void;
   const settle = () => new Promise((r) => setImmediate(r));
   const fact = { equivalents: [{ kind: 'photos', equivalentCount: 3100, sampleCount: 56, avgBytes: 4_000_000 }] };
   const answerFor = (p: string) => ({ providers: { humanScale: { available: true, values: { [p]: fact } } } });

@@ -211,9 +211,10 @@ const hsPending = new Set();
 function resolveHumanScale(node) {
   if (!humanScaleOn || !node || !node.path || node.type !== 'dir') return;
   if (node.size < HS_MIN_BYTES || node.virtual || node.path.startsWith('cloud://')) return;
-  // Asked of the scan the tree on screen came from — not a scan running
-  // behind it, which answers "unavailable", kept as asked and none (review F2.2).
-  const treeScan = () => (state.scanning ? state.settledScanId : state.scanId);
+  // Asked of the scan the tree on screen came from (treeScanId) — not a scan
+  // running behind it, which answers "unavailable", kept as asked and none
+  // (review F2.2).
+  const treeScan = treeScanId;
   if (!treeScan() || hsFacts.has(node.path) || hsPending.has(node.path)) return;
   hsPending.add(node.path);
   const scanAtRequest = treeScan();

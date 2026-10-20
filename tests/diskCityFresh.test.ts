@@ -248,7 +248,7 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; r
       setHeight: (m: string) => void;
       jitter: (rgb: number[], path: string) => number[];
     };
-  }>(['TM_MIN_SIZE', 'loadTreemap', 'loadCity', 'finishScan', 'setHistoryIndex', ...(opts.realCard ? cardNames : []), ...(opts.lapse ? lapseNames : []),
+  }>(['TM_MIN_SIZE', 'treeScanId', 'treeScanComing', 'loadTreemap', 'loadCity', 'finishScan', 'setHistoryIndex', ...(opts.realCard ? cardNames : []), ...(opts.lapse ? lapseNames : []),
     ...(opts.facts ? factNames : []), ...(opts.realBuild ? buildNames : []), ...(opts.realChrome ? chromeNames : [])], deps,
     `{ loadTreemap, loadCity, finishScan, setHistoryIndex${opts.realCard
       ? ', card: { show: cityShowCard, up: cityUp, setColour: citySetColour, setHeight: citySetHeight, jitter: cityJitter }'

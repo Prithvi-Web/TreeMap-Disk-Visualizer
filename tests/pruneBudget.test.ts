@@ -339,7 +339,7 @@ test('the window opens a folder the first frame left closed: ensureSubtree fetch
       return JSON.parse(answer.body);
     };
     const page = new Function('state', 'apiPaced', 'allocationCache', 'hsFacts', 'SUBTREE_NODES',
-      `'use strict'; ${declaration('function indexTree(')} ${declaration('function graftSubtree(')} ${declaration('async function ensureSubtree(')} return { indexTree, ensureSubtree };`,
+      `'use strict'; ${declaration('function indexTree(')} ${declaration('function graftSubtree(')} ${declaration('function treeScanId(')} ${declaration('async function ensureSubtree(')} return { indexTree, ensureSubtree };`,
     )(state, apiPaced, new Map(), new Map(), 20_000) as {
       indexTree: (root: FileNode) => void;
       ensureSubtree: (p: string) => Promise<FileNode | null>;

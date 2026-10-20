@@ -168,6 +168,8 @@ const LIFTED = [
   'async function startJudge(', 'function startNoteAllowed(', 'function startRejudgeRefused(',
   'function requestedPath(', 'async function restoreLastSession(', 'function showRestoredPath(', 'async function reopenScan(',
   'async function startCloudScan(', 'async function loadSystem(',
+  // The app's one rule for the scan the tree on screen came from (015).
+  'function treeScanId(', 'function treeScanComing(',
 ];
 const OWN = new Set(LIFTED.map((d) => /function (\w+)\(/.exec(d)![1]));
 /**

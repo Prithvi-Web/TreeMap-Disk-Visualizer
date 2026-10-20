@@ -86,6 +86,36 @@ function graftSubtree(sub) {
 }
 
 /**
+ * The scan the tree on screen came from: what every request about that tree
+ * names — a subtree, the map, a score, a fact, a query, a view's report — and
+ * what an answer is checked against before it is kept. One rule, here, so no
+ * view keeps a copy of its own (BQJ-1b; three review rounds each found more).
+ *
+ * While a scan runs, its id is on hand once its request answers
+ * (followScanProgress), but the tree on screen is still the one before it: an
+ * older scan's (settledScanId), or the saved index's (none — nothing is asked
+ * of it). A scan still walking answers nothing about a tree: 202, 409
+ * SCAN_RUNNING, or every path "unavailable" (review F1.5, F2.2). Once it lands
+ * (finishScan) or is stopped (stopScan, failScan) the scan on hand is the
+ * tree's own again.
+ */
+function treeScanId() {
+  return state.scanning ? state.settledScanId : state.scanId;
+}
+
+/**
+ * Whether a scan will land behind a tree no scan stands behind yet — the saved
+ * index's, while its scan runs (scanning) or is due (indexScanDue: the paint
+ * returns before the scan is requested, review F3.1). What a view says there in
+ * place of what it would ask the tree's scan: that it fills in once the scan
+ * finishes while one is coming, and that the tree is the saved index once
+ * nothing will land (a Stop, a failure).
+ */
+function treeScanComing() {
+  return state.scanning || state.indexScanDue;
+}
+
+/**
  * Make sure we hold the children of `path`, fetching them if the server pruned
  * this branch. Views that lay out from the tree (grid, sunburst) must call this
  * before deciding a folder is empty — "we weren't sent it" is not "it's empty".
@@ -97,11 +127,9 @@ async function ensureSubtree(path) {
   if (!path) return null;
   const have = state.pathIndex.get(path);
   if (have && !have.pruned) return have;
-  // The scan the tree on screen came from. While a scan runs, its id is on
-  // hand once its request answers, but the tree on screen is still the one
-  // before it — an older scan's (settledScanId) or the saved index's (none) —
-  // and a scan still walking answers a subtree with 202 (review F1.5).
-  const treeScan = () => (state.scanning ? state.settledScanId : state.scanId);
+  // The scan the tree on screen came from (treeScanId): a scan still walking
+  // answers a subtree with 202 (review F1.5).
+  const treeScan = treeScanId;
   const scanId = treeScan();
   if (!scanId) {
     // No scan yet — we are looking at the instant paint from the index, which

@@ -93,8 +93,8 @@ async function loadTreemap(rootPath, animate = false) {
   // older scan's (settledScanId), or the saved index's (none) — and a scan
   // still walking answers a map with 202: asked of it, the map stayed blank,
   // or kept the older drawing under the new folder's name, for the whole
-  // scan (review F1.5).
-  const scanAtRequest = state.scanning ? state.settledScanId : state.scanId;
+  // scan (treeScanId, review F1.5).
+  const scanAtRequest = treeScanId();
   state.treemap.kbSel = null;
   // Captured before the tree is replaced: which node will still be on screen
   // afterwards, and where it is right now. Drilling in, that is the folder

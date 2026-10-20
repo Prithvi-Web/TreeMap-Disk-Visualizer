@@ -395,7 +395,7 @@ function buildCity() {
   // page laid out of the saved index's tree is no scan's, and the city,
   // which asks a scan for its facts, never stands on one.
   const held = state.treemap.nodesFor;
-  const scanId = state.scanning ? state.settledScanId : state.scanId;
+  const scanId = treeScanId();
   const from = held && !!held.scanId && held.nodes === state.treemap.nodes && held.scanId === scanId
     && held.path === state.treemap.rootPath ? held : null;
   // The record the city stands on: its line and size say what these nodes
@@ -1425,7 +1425,8 @@ function renderCityChrome() {
       // The index paint itself runs with the scan chrome ended and its scan
       // not yet requested: that scan is due (indexScanDue), and the city is
       // loading, not "scan this folder" of the folder being scanned (F3.1).
-      const fromIndex = !!state.root && !state.scanId && !state.scanning && !state.indexScanDue;
+      // No scan behind the tree (treeScanId) and none coming (treeScanComing).
+      const fromIndex = !!state.root && !treeScanId() && !treeScanComing();
       if (!failed) parts.push(fromIndex ? 'Opened from the saved index — scan this folder to see its city.' : 'loading this folder…');
     } else {
       // §6.1 forbids a silent threshold. A map drawing 4,120 of 251,000 things
@@ -1567,8 +1568,8 @@ async function loadCity(rootPath) {
   // The scan the tree on screen came from: while a scan runs its id is on
   // hand once its request answers, but the tree on screen is still an older
   // scan's (settledScanId) or the saved index's (none), and a scan still
-  // walking answers a map with 202 (review F1.5). None: no city.
-  const scanAtRequest = state.scanning ? state.settledScanId : state.scanId;
+  // walking answers a map with 202 (treeScanId, review F1.5). None: no city.
+  const scanAtRequest = treeScanId();
   if (!state.root) return;
   const want = rootPath || state.treemap.rootPath || state.root.path;
   const seq = ++cityLoadSeq; // a load of the tree before, still out, is overtaken
@@ -1659,8 +1660,8 @@ async function loadCity(rootPath) {
 function cityFetchFacts() {
   const c = state.city;
   // Asked of the scan the city stands on — the tree on screen's, not a scan
-  // running behind it, which answers "unavailable" (review F2.2).
-  if (!(state.scanning ? state.settledScanId : state.scanId) || !c.blocks.length) return;
+  // running behind it, which answers "unavailable" (treeScanId, review F2.2).
+  if (!treeScanId() || !c.blocks.length) return;
   const paths = c.blocks.map((b) => b.n.path).filter((p) => p && !p.startsWith('cloud://') && !p.includes('!/')).slice(0, TM_SCORE_CAP);
 
   if (c.colour === 'reclaim') {
@@ -1689,8 +1690,8 @@ function cityFetchFacts() {
 
 /** Fetch subtree counts in the fact layer's own batches. */
 async function cityLoadCounts(paths) {
-  // The scan the city stands on (cityFetchFacts), never a scan still walking (review F2.2).
-  const treeScan = () => (state.scanning ? state.settledScanId : state.scanId);
+  // The scan the city stands on (treeScanId), never a scan still walking (review F2.2).
+  const treeScan = treeScanId;
   const scanAtRequest = treeScan();
   // The scan's own record of what has been asked: a scan change replaces it,
   // so this ask can release only its own scan's paths.

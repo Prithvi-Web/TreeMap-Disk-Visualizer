@@ -52,20 +52,15 @@ function reclaimReset() {
   reclaim.failed.clear();
 }
 
-/**
- * The scan the tree on screen came from: what a score is asked of
- * (ensureScores), what a failed one is remembered for (reclaimFailureScope)
- * and what the map's score chain is for (tmScoreKey) — one rule, so the three
- * cannot drift. While a scan runs its id is on hand once its request answers,
- * but the tree on screen is still the older scan's (settledScanId) or the
- * saved index's (none: nothing is asked), and a scan still walking answers
- * every path "unavailable" (review F2.2). Keyed on the scan on hand, the
- * chain took a rescan's request answering for another map, and a batch still
- * out was filed with no repaint and no legend (review F3.2).
+/*
+ * A score is asked of the scan the tree on screen came from (treeScanId, 015),
+ * a failed one is remembered for it (reclaimFailureScope) and the map's score
+ * chain is for it (tmScoreKey) — the app's one rule, so the three cannot
+ * drift. A scan still walking answers every path "unavailable" (review F2.2);
+ * keyed on the scan on hand, the chain took a rescan's request answering for
+ * another map, and a batch still out was filed with no repaint and no legend
+ * (review F3.2).
  */
-function reclaimTreeScan() {
-  return state.scanning ? state.settledScanId : state.scanId;
-}
 
 /**
  * What the Reclaim colour mode says of a tree no scan stands behind — the
@@ -73,23 +68,23 @@ function reclaimTreeScan() {
  * or null while one stands behind it. Nothing is asked of such a tree
  * (ensureScores) and nothing is pending, so neither the legend nor the
  * breakdown may say its scores are loading (review F3.3): while the scan
- * behind it is due or runs (indexScanDue, scanning), scoring waits on that
- * scan; once nothing will land, a scan of the folder is what would score it.
+ * behind it is due or runs (treeScanComing), scoring waits on that scan;
+ * once nothing will land, a scan of the folder is what would score it.
  */
 function reclaimNoScanWords() {
-  if (reclaimTreeScan()) return null;
-  return state.scanning || state.indexScanDue
+  if (treeScanId()) return null;
+  return treeScanComing()
     ? 'Not scored yet — scoring starts once this folder’s scan finishes.'
     : 'Not scored — opened from the saved index; scan this folder to score it.';
 }
 
 /**
  * What a failed request is remembered for: the scan the tree on screen came
- * from (reclaimTreeScan — not a scan running behind it), this view, this
- * folder on screen.
+ * from (treeScanId — not a scan running behind it), this view, this folder
+ * on screen.
  */
 function reclaimFailureScope() {
-  return `${reclaimTreeScan()}\n${state.view}\n${(state.treemap && state.treemap.rootPath) || ''}`;
+  return `${treeScanId()}\n${state.view}\n${(state.treemap && state.treemap.rootPath) || ''}`;
 }
 
 /**
@@ -167,11 +162,11 @@ function scoreKnown(path) { return reclaim.scores.has(path); }
  * by a request that will never answer for it.
  */
 async function ensureScores(paths, onLanded, onFailed, { signal = null, isCurrent = null } = {}) {
-  // Asked of the scan the tree on screen came from (reclaimTreeScan): asked
+  // Asked of the scan the tree on screen came from (treeScanId): asked
   // of a scan still walking, every path was filed as asked and none, and a
   // Stop then left the map grey and the tooltip saying no signal could be
   // read, until the next scan (review F2.2).
-  const treeScan = reclaimTreeScan;
+  const treeScan = treeScanId;
   if (!treeScan() || (signal && signal.aborted)) return;
   const scope = reclaimFailureScope();
   if (reclaim.failedFor !== scope) {
@@ -224,7 +219,7 @@ async function ensureScores(paths, onLanded, onFailed, { signal = null, isCurren
  * whether anything landed and whether anything failed.
  */
 async function reclaimScoreBatch(batch, scanAtRequest, scope, outcome, signal = null) {
-  const treeScan = reclaimTreeScan; // as ensureScores asks (review F2.2)
+  const treeScan = treeScanId; // as ensureScores asks (review F2.2)
   let res;
   try {
     res = await api('/api/facts', {
