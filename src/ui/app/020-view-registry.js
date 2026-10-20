@@ -71,7 +71,8 @@ const VIEWS = [
       // the scan itself waits for one: not the scan running behind the
       // tree, whose id is on hand once its request answers, and which
       // answers nothing until it lands (treeScanId, review F1.5).
-      if (!treeScanId()) { loadTreemap(state.treemap.rootPath); return; }
+      // The highlight box's query typed over it says again what it waits for (review F1.2).
+      if (!treeScanId()) { loadTreemap(state.treemap.rootPath); tmRejudgeQueryWait(); return; }
       loadSavedViews(); // Phase 2 §2.4 — the chip strip, fetched lazily on entry
       refreshDock(); // §8.3 — connected drives, fetched lazily on entry like the chips
       loadTreemap(state.treemap.rootPath);

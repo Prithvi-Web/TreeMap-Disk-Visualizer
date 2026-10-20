@@ -514,7 +514,7 @@ test('the highlight box\'s query runs on the scan the tree on screen came from �
   const messages: string[] = [];
   const reasked: string[] = [];
   const state: Record<string, unknown> = { root: TREE, ...HELD, treemap: { rootPath: '/r', query: 'size>1gb', queryMode: 'bare', queryScanId: null, matches: 0 } };
-  const { fns, asks } = page<{ run: (q: string) => Promise<void>; rejudge: () => void }>(['async function tmRunGrammarQuery(', 'function tmRejudgeQuery('], {
+  const { fns, asks } = page<{ run: (q: string) => Promise<void>; rejudge: () => void }>(['async function tmRunGrammarQuery(', 'function tmRejudgeQuery(', 'function tmNoScanQueryWords('], {
     state, $, tmQuerySeq: 0, tmQueryAbort: null, tmLastHits: null, AbortController,
     tmSetQueryMessage: (m: string) => { messages.push(m); }, tmStageable: () => ({ paths: [] }), seedNodes: noop, tmSyncStageButton: noop,
     renderSearchOverlay: noop, presentView: noop, formatCount: String, tmUndrawnMessage: () => '', tmClearHits: noop,
@@ -535,7 +535,7 @@ test('the highlight box\'s query runs on the scan the tree on screen came from �
   Object.assign(state, INDEX_RUNNING);
   await fns.run('size>1gb');
   assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked — not of the running scan');
-  assert.equal(messages.at(-1), 'The search runs on a finished scan — search again once the scan finishes.', 'it says what the search waits for');
+  assert.equal(messages.at(-1), 'The search runs on a finished scan — it runs once the scan finishes.', 'it says what the search waits for');
   Object.assign(state, INDEX_STOPPED);
   await fns.run('size>1gb');
   assert.equal(asks.length, before);
@@ -543,6 +543,110 @@ test('the highlight box\'s query runs on the scan the tree on screen came from �
   state.root = null;
   await fns.run('size>1gb');
   assert.equal(messages.at(-1), 'Scan a folder first — there is nothing to search yet.', 'with no tree at all, as before');
+});
+
+/** The highlight box over a tree, with the Treemap's own mount and the query's scan bookkeeping. */
+function queryPage(state: Record<string, unknown>, answer: (url: string, signal: AbortSignal) => Promise<unknown> | unknown) {
+  const $ = stubDom();
+  const messages: string[] = [];
+  const reasked: string[] = [];
+  const asks: Ask[] = [];
+  const cleared: unknown[] = [];
+  const given: Record<string, unknown> = {
+    state, $, tmQuerySeq: 0, tmQueryAbort: null, tmQueryDeb: 0, tmLastHits: null, AbortController, clearTimeout: (t: unknown) => { cleared.push(t); },
+    api: async (url: string, init: { body: string; signal: AbortSignal }) => { asks.push({ url, scanId: scanOf(url, init.body) }); return answer(url, init.signal); },
+    tmSetQueryMessage: (m: string) => { messages.push(m); }, tmStageable: () => ({ paths: [] }), seedNodes: noop, tmSyncStageButton: noop,
+    renderSearchOverlay: noop, presentView: noop, formatCount: String, tmUndrawnMessage: () => '', tmClearHits: noop,
+    tmApplyQuery: (q: string) => { reasked.push(q); },
+    fxTmPillBeamsSync: noop, loadTreemap: noop, loadSavedViews: noop, refreshDock: noop,
+  };
+  const { fns } = page<{ run: (q: string) => Promise<void>; mount: () => void; changed: () => void }>(
+    ['async function tmRunGrammarQuery(', 'function tmRejudgeQuery(', 'function tmRejudgeQueryWait(', 'function tmNoScanQueryWords(', 'function tmQueryScanChanged(', 'function tmCancelQueries('],
+    given, `{ run: tmRunGrammarQuery, mount: () => (${pageView('treemap')}).mount(), changed: tmQueryScanChanged }`);
+  return { fns, messages, reasked, asks, given, cleared };
+}
+
+test('the highlight box\'s query typed over the saved index\'s tree is said again as that changes — "it runs once the scan finishes" once a scan of the folder starts, the saved index again after a Stop — and is asked of the scan that lands, never left saying "scan this folder" over a scanned one', async () => {
+  const state: Record<string, unknown> = { root: TREE, ...INDEX_STOPPED, scanningPath: null, view: 'treemap',
+    treemap: { rootPath: '/r', query: 'size>1gb', queryRoot: '/r', queryMode: 'bare', queryScanId: null, matches: 0, matchedPaths: null } };
+  const { fns, messages, reasked, asks } = queryPage(state, () => ({ hits: [], total: 0 }));
+  await fns.run('size>1gb');
+  assert.equal(messages.at(-1), 'Opened from the saved index — scan this folder to search it.', 'control: a Stop left the saved index\'s tree');
+  // The scan chrome begins for this folder: beginScanChrome re-enters the view (BQJ-1b (2)).
+  Object.assign(state, { scanning: true, scanId: null, settledScanId: null, indexScanDue: false, scanningPath: '/r' });
+  fns.mount();
+  assert.equal(messages.at(-1), 'The search runs on a finished scan — it runs once the scan finishes.', 'once a scan of the folder starts, the box says the search waits for it — not "scan this folder"');
+  Object.assign(state, INDEX_RUNNING); // the index painted, its scan answered
+  fns.mount();
+  assert.equal(messages.at(-1), 'The search runs on a finished scan — it runs once the scan finishes.');
+  assert.deepEqual(asks, [], 'and nothing is asked of the running scan');
+  // Stopped: stopScan re-enters the view.
+  Object.assign(state, INDEX_STOPPED);
+  fns.mount();
+  assert.equal(messages.at(-1), 'Opened from the saved index — scan this folder to search it.', 'a Stop says the saved index again');
+  assert.deepEqual(reasked, [], 'control: nothing to ask yet');
+  // Scanned again, and it lands: finishScan re-enters the view, and the query is asked of the scan that landed.
+  Object.assign(state, LANDED);
+  fns.mount();
+  assert.deepEqual(reasked, ['size>1gb'], 'once a scan lands, the query typed over the saved index is asked of it');
+  // A query an earlier scan of this folder answered, its tree now behind the saved index's paint: its answer stands,
+  // for a Stop puts that scan's tree back, and "it runs once the scan finishes" would then be untrue of it.
+  Object.assign(state, INDEX_RUNNING);
+  Object.assign(state.treemap as object, { queryMode: 'grammar', queryScanId: 'scan-old' });
+  const said = messages.length;
+  fns.mount();
+  assert.equal(messages.length, said, 'a query an earlier scan answered keeps its answer over the saved index\'s paint');
+});
+
+test('the highlight box\'s query asked of the older scan during a rescan is not installed over the new tree when it answers after the rescan landed — the new scan is asked — and a scan of the same folder landing stops it on the server', async () => {
+  const tm = () => ({ rootPath: '/r', query: 'used>1y', queryRoot: '/r', queryMode: 'bare', queryScanId: null, matches: 0, matchedPaths: null });
+  let release: (v: unknown) => void = noop;
+  const signals: AbortSignal[] = [];
+  const state: Record<string, unknown> = { root: TREE, ...HELD, view: 'treemap', treemap: tm() };
+  const held = queryPage(state, (_url, signal) => { signals.push(signal); return new Promise((r) => { release = r; }); });
+  const out = held.fns.run('used>1y');
+  await turns();
+  assert.deepEqual(held.asks.map((a) => a.scanId), ['scan-old'], 'control: asked of the scan the tree on screen came from');
+  Object.assign(state, LANDED); // finishScan: the new tree is on screen before the answer
+  held.fns.mount(); // re-entered: the query is asked of the scan that landed
+  assert.deepEqual(held.reasked, ['used>1y'], 'a query still out when the rescan lands is asked of the new scan');
+  release({ hits: [{ path: '/r/old', name: 'old', size: 1 }], total: 1 });
+  await out;
+  const t = state.treemap as { queryScanId: unknown; matchedPaths: unknown };
+  assert.notEqual(t.queryScanId, 'scan-old', 'the older scan\'s answer is not installed over the new tree');
+  assert.equal(t.matchedPaths, null, 'nor its matches highlighted');
+  // Its failure, landing after the rescan landed: said over no tree of its own.
+  Object.assign(state, HELD, { treemap: tm() });
+  let fail: (e: unknown) => void = noop;
+  const failing = queryPage(state, () => new Promise((_r, reject) => { fail = reject; }));
+  const failed = failing.fns.run('used>1y');
+  await turns();
+  Object.assign(state, LANDED);
+  fail(new Error('Scan is still running'));
+  await failed;
+  assert.deepEqual(failing.messages, [], 'the older scan\'s failure is not said under the box over the new tree');
+
+  // A query answered by this tree's scan, then another typed and stopped while out (leaving the Treemap,
+  // tmCancelQueries): coming back, the text in the box is asked — not taken as answered by the earlier one.
+  Object.assign(state, LANDED, { treemap: { ...tm(), query: 'used>2y', queryMode: 'grammar', queryScanId: 'scan-new' } });
+  const left = queryPage(state, () => new Promise(noop));
+  void left.fns.run('used>2y');
+  await turns();
+  (left.given as { tmQuerySeq: number }).tmQuerySeq++; // the unmount's tmCancelQueries
+  left.fns.mount();
+  assert.deepEqual(left.reasked, ['used>2y'], 'a query stopped while out is asked again when the map is shown');
+
+  // TOPIC.scan for the same folder (tmQueryScanChanged): the query still out is stopped, here and on the server.
+  Object.assign(state, HELD, { treemap: tm() });
+  const again = queryPage(state, (_url, signal) => { signals.push(signal); return new Promise(noop); });
+  void again.fns.run('used>1y');
+  await turns();
+  assert.equal(signals.at(-1)!.aborted, false, 'control: out');
+  Object.assign(state, LANDED);
+  again.given.tmQueryDeb = 7; // the next text, typed and waiting out its debounce
+  again.fns.changed();
+  assert.equal(signals.at(-1)!.aborted, true, 'a rescan of the same folder landing stops the older scan\'s query on the server');
+  assert.deepEqual(again.cleared, [], 'and leaves the text being typed to run');
 });
 
 test('opening an archive or disk image on the map asks the scan the tree on screen came from — never the running scan, which answers 409', async () => {

@@ -344,7 +344,7 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
             root: r ? { path: r.path } : null, scanningPath: state.scanningPath } });
         draws.push(draw);
       },
-      fxTmPillBeamsSync: noop, loadSavedViews: noop, refreshDock: noop, tmRejudgeQuery: () => { rejudged.push(state.scanId); }, exitHistoryState: noop,
+      fxTmPillBeamsSync: noop, loadSavedViews: noop, refreshDock: noop, tmRejudgeQuery: () => { rejudged.push(state.scanId); }, tmRejudgeQueryWait: noop, exitHistoryState: noop,
     } : {}),
   };
   if (o.realTreemap) {

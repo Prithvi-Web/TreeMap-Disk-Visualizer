@@ -286,20 +286,34 @@ function tmUndrawnMessage(found, drawn, paths, viewRoot) {
   return `${head} ${why.join('; ').replace(/^./, (c) => c.toUpperCase())}.${advice}`;
 }
 
+/**
+ * What the box says of a grammar query over a tree no scan stands behind.
+ * Said rather than doing nothing: a silent no-op reads as a broken search
+ * box. Over the saved index's tree a folder IS on screen: what the search
+ * waits for — the scan that lands asks it (tmRejudgeQuery) — or what would
+ * make it searchable.
+ */
+function tmNoScanQueryWords() {
+  return !state.root ? 'Scan a folder first — there is nothing to search yet.'
+    : treeScanComing() ? 'The search runs on a finished scan — it runs once the scan finishes.'
+      : 'Opened from the saved index — scan this folder to search it.';
+}
+
 /** Run a grammar query on the server and highlight what comes back. */
 async function tmRunGrammarQuery(q) {
   // Run on the scan the tree on screen came from (treeScanId): a scan still
   // walking answers 409 SCAN_RUNNING, and its error stood under the box over
   // a tree it could have searched (BQJ-1b).
   const scanAtRequest = treeScanId();
+  // Asked, and answered for no tree yet (queryScanId null): a scan that lands
+  // first asks it again (tmRejudgeQuery) — over the saved index's tree too,
+  // where its words are said again as that changes (tmRejudgeQueryWait). Left
+  // 'bare' there, the query typed was never run on the scan that landed, and
+  // "scan this folder" stood under the box over a scanned one (review F1.2).
+  state.treemap.queryMode = 'grammar';
+  state.treemap.queryScanId = null;
   if (!scanAtRequest) {
-    // Say so rather than doing nothing. A silent no-op here reads as a broken
-    // search box; the user has no way to know a scan is what is missing. Over
-    // the saved index's tree, which no scan stands behind, a folder IS on
-    // screen: what the search waits for, or what would make it searchable.
-    tmSetQueryMessage(!state.root ? 'Scan a folder first — there is nothing to search yet.'
-      : treeScanComing() ? 'The search runs on a finished scan — search again once the scan finishes.'
-        : 'Opened from the saved index — scan this folder to search it.', false);
+    tmSetQueryMessage(tmNoScanQueryWords(), false);
     return;
   }
   const seq = ++tmQuerySeq;
@@ -322,6 +336,10 @@ async function tmRunGrammarQuery(q) {
       signal: ctl.signal,
     });
     if (seq !== tmQuerySeq) return; // a newer keystroke, a clear, or an unmount won
+    // Another tree is on screen — the rescan landed while this was out: these
+    // are the older scan's matches, and the new tree's query is asked of its
+    // own scan (tmRejudgeQuery), never shown over it (review F1.6).
+    if (scanAtRequest !== treeScanId()) return;
     state.treemap.matchedPaths = new Set((out.hits || []).map((h) => h.path));
     state.treemap.queryMode = 'grammar';
     state.treemap.queryScanId = scanAtRequest; // whose tree these matches are (tmRejudgeQuery)
@@ -370,6 +388,7 @@ async function tmRunGrammarQuery(q) {
     }
   } catch (e) {
     if (seq !== tmQuerySeq) return; // superseded, which is also how an aborted request ends
+    if (scanAtRequest !== treeScanId()) return; // the older scan's failure, said over no tree of its own
     if (typeof e.offset === 'number') {
       // A query that does not parse yet — usually one still being typed. The
       // parser hands back the offending span and the valid alternatives;
@@ -474,7 +493,13 @@ function tmApplyQuery(raw) {
 function tmQueryScanChanged() {
   if (!state.treemap.query.trim()) return;
   const root = state.root ? state.root.path : null;
-  if (root !== null && root === state.treemap.queryRoot) return;
+  if (root !== null && root === state.treemap.queryRoot) {
+    // The same folder, another scan's tree: a query still out was asked of
+    // the tree before, so it stops, here and on the server — the text being
+    // typed, debounced, still runs (review F1.6).
+    if (tmQueryAbort) { tmQuerySeq++; tmQueryAbort.abort(); tmQueryAbort = null; }
+    return;
+  }
   tmCancelQueries();
   $('tmSearch').value = '';
   state.treemap.query = '';
@@ -496,6 +521,21 @@ function tmRejudgeQuery() {
   const q = state.treemap.query;
   if (!q.trim() || state.treemap.queryMode !== 'grammar' || state.treemap.queryScanId === treeScanId()) return;
   tmApplyQuery(q);
+}
+
+/**
+ * Over a tree no scan stands behind — the saved index's — a grammar query in
+ * the box, asked and answered for no tree, waits for a scan, and the box says
+ * so (tmNoScanQueryWords). Said again as that changes: a scan of the folder
+ * starting makes "scan this folder to search it" untrue, and a Stop or a
+ * failure "it runs once the scan finishes" — the Treemap's mount calls this,
+ * as the scan chrome's start and end re-enter the view, and nothing else
+ * re-judged it (review F1.2). Asks nothing: a scan that lands asks the query
+ * itself (tmRejudgeQuery).
+ */
+function tmRejudgeQueryWait() {
+  if (!state.treemap.query.trim() || state.treemap.queryMode !== 'grammar' || state.treemap.queryScanId !== null || treeScanId()) return;
+  tmSetQueryMessage(tmNoScanQueryWords(), false);
 }
 
 $('tmSearch').addEventListener('input', (e) => {
