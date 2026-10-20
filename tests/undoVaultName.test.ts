@@ -243,7 +243,7 @@ test('the sidebar, the view and Settings call it the Undo Vault', () => {
 
   assert.match(INDEX, /<div class="set-h"[^>]*><span data-icon="clock"><\/span>Undo Vault<\/div>/, 'the Settings section heading');
   assert.match(INDEX, /registerView\(\{\s+id: 'capsule',\s+label: 'Undo Vault',/, 'the view registry\'s label');
-  assert.match(INDEX, /\{ name: 'Undo Vault', hint: '[^']+' \}/, 'the command palette finds it by its name');
+  assert.match(INDEX, /\{ name: 'Undo Vault', hint: '[^']+'(?:, aliases: \[[^\]]*\])? \}/, 'the command palette finds it by its name');
 });
 
 /* ══════════════ What a program reads keeps its name ══════════════ */

@@ -341,6 +341,9 @@ registerView({
   // Reads persisted history, exactly like Trends/Compare/Offloaded, so it is
   // useful with no scan loaded and never shows the empty-state screen.
   needsScan: false,
+  // The ⌘K palette also finds it by the name it had before 5.2.0, never shown
+  // (cmdkAliasScore in 165-command-palette.js).
+  paletteAliases: ['timecapsule'],
   mount() { loadCapsule(); },
   unmount() {
     // The cap meter and the events list are live handles; a view stops what

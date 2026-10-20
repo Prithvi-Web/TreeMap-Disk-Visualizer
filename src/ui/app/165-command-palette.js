@@ -37,6 +37,24 @@ function cmdkScore(query, label) {
   return score;
 }
 
+/**
+ * Words an entry answers to that are never on screen — the name a feature had
+ * before it was renamed, so a returning user's habit still lands — scored like
+ * a hint, at the same discount. Each alias is written as one word and the
+ * query's spaces are taken out before it is matched, so the old name typed as
+ * two words finds it too while the page never spells it. Pure, like cmdkScore,
+ * and extracted by tests/commandPalette.test.ts in the same way.
+ */
+function cmdkAliasScore(query, aliases) {
+  const q = String(query).replace(/\s+/g, '');
+  let best = null;
+  for (const alias of aliases || []) {
+    const s = cmdkScore(q, alias);
+    if (s !== null && (best === null || s > best)) best = s;
+  }
+  return best === null ? null : best - 8;
+}
+
 /** Actions by name. `when` gates entries that would be dead where you are. */
 const CMDK_ACTIONS = [
   { label: 'Scan a folder…', hint: 'pick a folder to map', run: () => {
@@ -77,7 +95,7 @@ const CMDK_SETTINGS_SECTIONS = [
   { name: 'Drives mounted inside a folder', hint: 'mount, mounted, disk image, simulator, stay on this drive, include' },
   { name: 'Disk-full forecast', hint: 'warning, days, projection' },
   { name: 'Live activity', hint: 'watch, auto-pause' },
-  { name: 'Undo Vault', hint: 'retention, undo copies' },
+  { name: 'Undo Vault', hint: 'retention, undo copies', aliases: ['timecapsule'] },
   { name: 'Reclaim Score', hint: 'weights, sliders, signals' },
   { name: 'Cleanup target', hint: 'goal, free up, meter' },
   { name: 'Human-scale sizes', hint: 'photo equivalents, tooltips' },
@@ -131,14 +149,14 @@ function cmdkItems() {
     // reason as its hint. Landing on it shows the full notice; hiding it
     // would make the palette lie about what this app has.
     const blocked = viewBlockedReason(v);
-    items.push({ label: v.label, hint: blocked || 'view', run: () => switchView(v.id) });
+    items.push({ label: v.label, hint: blocked || 'view', aliases: v.paletteAliases, run: () => switchView(v.id) });
   }
   for (const a of CMDK_ACTIONS) {
     if (a.when && !a.when()) continue;
     items.push({ label: a.label, hint: a.hint, run: a.run });
   }
   for (const sec of CMDK_SETTINGS_SECTIONS) {
-    items.push({ label: `Settings: ${sec.name}`, hint: sec.hint, run: () => cmdkOpenSettingsSection(sec.name) });
+    items.push({ label: `Settings: ${sec.name}`, hint: sec.hint, aliases: sec.aliases, run: () => cmdkOpenSettingsSection(sec.name) });
   }
   for (const sv of (state.savedViews || [])) {
     items.push({ label: `Saved view: ${sv.name}`, hint: sv.q, run: () => {
@@ -170,6 +188,7 @@ function cmdkRender() {
       const hs = cmdkScore(q, item.hint);
       if (hs !== null) s = hs - 8;
     }
+    if (s === null) s = cmdkAliasScore(q, item.aliases);
     if (s === null) continue;
     scored.push({ item, s });
   }

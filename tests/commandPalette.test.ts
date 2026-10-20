@@ -215,3 +215,58 @@ test('typing a setting WORD finds its section — hints are a scoring fallback',
   assert.match(sections, /weights/, 'the Reclaim section is findable by its famous word');
   assert.match(sections, /schedule/, 'and schedules by theirs');
 });
+
+/* ═══════════ The Undo Vault rename (review F1.7) ═══════════ */
+
+/** The page's cmdkScore and cmdkAliasScore together, and the settings sections defined beside them. */
+function aliasScoring(): {
+  cmdkScore: (q: string, label: string) => number | null;
+  cmdkAliasScore: (q: string, aliases: unknown) => number | null;
+  sections: { name: string; hint: string; aliases?: string[] }[];
+} {
+  const pick = (name: string): string => {
+    const start = INDEX.indexOf(`function ${name}(`);
+    assert.notEqual(start, -1, `${name} exists in index.html`);
+    const end = INDEX.indexOf('\nfunction ', start + 1);
+    return INDEX.slice(start, end === -1 ? INDEX.length : end);
+  };
+  // cmdkAliasScore's slice runs on through the action and settings registries, which are plain
+  // data here (their run/when functions are never called).
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function(`${pick('cmdkScore')}\n${pick('cmdkAliasScore')}\n` +
+    'return { cmdkScore, cmdkAliasScore, sections: CMDK_SETTINGS_SECTIONS };')();
+}
+
+test('a returning user finds the Undo Vault by the name it had before 5.2.0, which the palette never shows', () => {
+  const { cmdkScore, cmdkAliasScore, sections } = aliasScoring();
+  const settings = sections.find((s) => s.name === 'Undo Vault');
+  assert.ok(settings, 'the Settings section is listed');
+  const view = /registerView\(\{\s+id: 'capsule',\s+label: 'Undo Vault',(?:(?!registerView\(|mount\(\))[\s\S])*?paletteAliases: (\[[^\]]*\]),/.exec(INDEX);
+  assert.ok(view, 'the view registers the words the palette finds it by');
+  const viewAliases = JSON.parse(view![1].replace(/'/g, '"')) as string[];
+
+  for (const [where, label, hint, aliases] of [
+    ['the view', 'Undo Vault', 'view', viewAliases],
+    ['the Settings section', 'Settings: Undo Vault', settings!.hint, settings!.aliases],
+  ] as const) {
+    // On screen it is the Undo Vault only: neither its label nor its hint answers the old word…
+    assert.equal(cmdkScore('capsule', label), null, `${where}'s label never shows the old word`);
+    assert.equal(cmdkScore('capsule', hint), null, `${where}'s hint never shows the old word`);
+    // …but the old name still finds it, typed as one word or two, in any case.
+    for (const typed of ['time capsule', 'Time Capsule', 'timecapsule', 'capsule']) {
+      assert.notEqual(cmdkAliasScore(typed, aliases), null, `typing "${typed}" finds ${where}`);
+    }
+    assert.equal(cmdkAliasScore('weights', aliases), null, `${where} answers only to its own words`);
+  }
+  assert.equal(cmdkAliasScore('capsule', ['timecapsule']), cmdkScore('capsule', 'timecapsule')! - 8,
+    'an alias scores at the hint\'s discount, so a label or hint match always ranks above it');
+  assert.equal(cmdkAliasScore('capsule', undefined), null, 'an entry with no aliases matches nothing through them');
+
+  const items = INDEX.slice(INDEX.indexOf('function cmdkItems'), INDEX.indexOf('function cmdkItems') + 4000);
+  assert.match(items, /label: v\.label, hint: blocked \|\| 'view', aliases: v\.paletteAliases,/, 'a view\'s aliases join its palette row');
+  assert.match(items, /hint: sec\.hint, aliases: sec\.aliases,/, 'and a settings section\'s');
+  const render = INDEX.slice(INDEX.indexOf('function cmdkRender'), INDEX.indexOf('function cmdkRender') + 2400);
+  assert.match(render, /if \(s === null\) s = cmdkAliasScore\(q, item\.aliases\);/, 'aliases are scored when the label and the hint miss');
+  const row = render.slice(render.indexOf("$('cmdkList').innerHTML"), render.indexOf(".join('')", render.indexOf("$('cmdkList').innerHTML")));
+  assert.ok(row.includes('item.label') && !row.includes('aliases'), 'a row shows its label and hint, never its aliases');
+});
