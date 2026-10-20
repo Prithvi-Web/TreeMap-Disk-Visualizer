@@ -718,9 +718,7 @@ test('the welcome tour\'s card stands where it covers no control on screen — a
   // A canvas is the view's surface, not a control: over the map — or a small chart under it — the card rests.
   assert.equal(placeTour(1024, 700, 195, [{ left: 268, top: 100, right: 1004, bottom: 680, tag: 'CANVAS' }]).bottom, 86, 'over the map it rests');
   assert.equal(placeTour(1024, 700, 195, [{ left: 700, top: 450, right: 1000, bottom: 600, tag: 'CANVAS' }]).bottom, 86, 'over a chart it rests');
-  // And it is placed again whenever what is under it can move: a resize, and a scroll of any part of the page.
-  assert.match(INDEX, /window\.addEventListener\('resize', tourPlaceSoon\);/, 'placed again on a resize');
-  assert.match(INDEX, /document\.addEventListener\('scroll', tourPlaceSoon, \{ capture: true, passive: true \}\);/, 'and on a scroll anywhere');
+  // It is placed again whenever what is under it can move — a resize, a scroll of any part of the page: the next test runs the listeners.
   // Never lower than its rest: the window's bottom-right corner is the cart pill's and the toasts'.
   // A control at y 430–450 is cleared from above (the card at y 223–418), not by dropping the card under it to 43 px up.
   const low = placeTour(1024, 700, 195, [{ left: 700, top: 430, right: 900, bottom: 450 }]);
@@ -728,6 +726,68 @@ test('the welcome tour\'s card stands where it covers no control on screen — a
   // A column full of controls from top to bottom: nowhere is clear, and it rests, in the window.
   const full = Array.from({ length: 30 }, (_, i) => ({ left: 600, top: i * 24, right: 1000, bottom: i * 24 + 20 }));
   assert.equal(placeTour(1024, 700, 195, full).bottom, 86, 'nowhere clear: it rests, never off screen');
+});
+
+test('the tour card is placed at the next frame, once however often that is asked for in one frame, and again on every resize and on a scroll of any part of the page — the page\'s own tourPlaceSoon and the listeners it registers, run (review F1.9)', () => {
+  // The Dashboard's Browse… and Scan at 1024 × 700, which the card covered at rest (J04).
+  const controls: Box[] = [{ left: 792, top: 605, right: 872, bottom: 631 }, { left: 884, top: 605, right: 966, bottom: 631 }];
+  const els = controls.map((c) => ({ tagName: 'BUTTON', getClientRects: () => [c], getBoundingClientRect: () => c }));
+  const win = { innerHeight: 700, addEventListener: (n: string, fn: () => void) => { (listeners[`window:${n}`] ??= []).push(fn); } };
+  const props: Record<string, string> = {};
+  const listeners: Record<string, Array<() => void>> = {};
+  let scrollOptions: unknown = null;
+  const frames: Array<() => void> = [];
+  let placed = 0; // tourPlace runs: each asks which controls are on screen
+  const tour = { active: true };
+  const cardH = 195;
+  const restPx = sheetPx(declsAt('body', 1024).get('--tour-b'), '--tour-b');
+  const card = () => {
+    const b = props['--tour-b'] ? sheetPx(props['--tour-b'], 'the --tour-b set') : restPx;
+    return { left: 1024 - 18 - 360, right: 1024 - 18, width: 360, height: cardH, top: win.innerHeight - b - cardH, bottom: win.innerHeight - b };
+  };
+  const fns = runPageDecls<{ tourPlaceSoon(): void }>(['TOUR_REST_BOTTOM', 'TOUR_GAP', 'TOUR_EDGE', 'TOUR_CONTROLS', 'tourPlace'], {
+    tour,
+    $: (id: string) => (id === 'tourCard' ? { getBoundingClientRect: card } : id === 'tourOverlay' ? { hidden: false } : null),
+    document: {
+      body: { style: { setProperty: (k: string, v: string) => { props[k] = v; }, removeProperty: (k: string) => { delete props[k]; } } },
+      querySelectorAll: () => { placed++; return els; },
+      addEventListener: (n: string, fn: () => void, o: unknown) => { (listeners[n] ??= []).push(fn); if (n === 'scroll') scrollOptions = o; },
+    },
+    window: win,
+    requestAnimationFrame: (fn: () => void) => { frames.push(fn); return frames.length; },
+  }, '{ tourPlaceSoon }', pageBetween('let tourPlaceRaf = 0;', 'async function tourLoadWins'));
+
+  // Asked three times in one frame — the card's paint, a view change, a resize — one frame is asked for.
+  fns.tourPlaceSoon(); fns.tourPlaceSoon(); fns.tourPlaceSoon();
+  assert.equal(frames.length, 1, 'one frame is asked for, however often a placement is asked for before it comes');
+  assert.equal(placed, 0, 'and nothing is placed until it comes');
+  frames.shift()!();
+  assert.equal(placed, 1, 'the frame places the card, once');
+  assert.equal(props['--tour-b'], `${700 - 605 + 12}px`, 'clear of Browse… and Scan');
+  fns.tourPlaceSoon();
+  assert.equal(frames.length, 1, 'asked again once that frame ran: a new frame');
+  frames.shift()!();
+  assert.equal(placed, 2, 'and a new placement');
+
+  // The listeners the page registered: a resize places it again — here a taller window, with nothing under the card at rest.
+  win.innerHeight = 1000; // the card's rest is y 719–914 there, below Browse… and Scan
+  for (const fn of listeners['window:resize'] ?? []) fn();
+  assert.equal(frames.length, 1, 'a resize asks for a placement');
+  frames.shift()!();
+  assert.equal(placed, 3, 'and gets one');
+  assert.equal('--tour-b' in props, false, 'which puts the card back at rest: nothing is under it there now');
+  win.innerHeight = 700;
+  for (const fn of listeners.scroll ?? []) fn();
+  assert.equal(frames.length, 1, 'a scroll asks for one too');
+  frames.shift()!();
+  assert.equal(props['--tour-b'], `${700 - 605 + 12}px`, 'and the card stands clear of the controls again');
+  assert.deepEqual(scrollOptions, { capture: true, passive: true }, 'heard from any part of the page that scrolls — a scroll does not bubble — and never held up');
+
+  // With the tour down, nothing is asked for.
+  tour.active = false;
+  fns.tourPlaceSoon();
+  for (const fn of listeners['window:resize'] ?? []) fn();
+  assert.equal(frames.length, 0, 'with the tour down, no frame is asked for');
 });
 
 /* ══════════════ B26 — the map refits when a row around it changes height ══════════════ */
