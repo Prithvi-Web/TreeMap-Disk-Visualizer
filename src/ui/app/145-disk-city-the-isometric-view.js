@@ -1655,7 +1655,9 @@ async function loadCity(rootPath) {
  */
 function cityFetchFacts() {
   const c = state.city;
-  if (!state.scanId || !c.blocks.length) return;
+  // Asked of the scan the city stands on — the tree on screen's, not a scan
+  // running behind it, which answers "unavailable" (review F2.2).
+  if (!(state.scanning ? state.settledScanId : state.scanId) || !c.blocks.length) return;
   const paths = c.blocks.map((b) => b.n.path).filter((p) => p && !p.startsWith('cloud://') && !p.includes('!/')).slice(0, TM_SCORE_CAP);
 
   if (c.colour === 'reclaim') {
@@ -1684,7 +1686,9 @@ function cityFetchFacts() {
 
 /** Fetch subtree counts in the fact layer's own batches. */
 async function cityLoadCounts(paths) {
-  const scanAtRequest = state.scanId;
+  // The scan the city stands on (cityFetchFacts), never a scan still walking (review F2.2).
+  const treeScan = () => (state.scanning ? state.settledScanId : state.scanId);
+  const scanAtRequest = treeScan();
   // The scan's own record of what has been asked: a scan change replaces it,
   // so this ask can release only its own scan's paths.
   const asked = state.city.countsAsked;
@@ -1696,7 +1700,7 @@ async function cityLoadCounts(paths) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scanId: scanAtRequest, paths: batch, providers: ['subtreeCount'] }),
       });
-      if (state.scanId !== scanAtRequest) return;
+      if (treeScan() !== scanAtRequest) return;
       const provider = (res.providers && res.providers.subtreeCount) || null;
       const values = (provider && provider.available && provider.values) || {};
       // A path absent from `values` stays absent from the map: unknown is not

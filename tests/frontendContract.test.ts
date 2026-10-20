@@ -3064,7 +3064,8 @@ test('a score request that outlives its scan is discarded, not misfiled', () => 
   const start = code.indexOf('async function ensureScores');
   const fn = code.slice(start, code.indexOf('function reclaimConfidenceWording', start));
   assert.ok(fn.length > 400, 'the ensureScores slice is non-empty');
-  assert.match(fn, /if \(state\.scanId !== scanAtRequest\) return;/,
+  // The scan the tree on screen came from (review F2.2; reclaimScoreLoop runs it).
+  assert.match(fn, /if \(treeScan\(\) !== scanAtRequest\) return;/,
     'a scan that changed mid-flight must not have the previous tree’s verdicts filed against it');
   // The three-state contract: absent from `values` is recorded as null.
   assert.match(fn, /hasOwnProperty\.call\(values, p\) \? values\[p\] : null/,

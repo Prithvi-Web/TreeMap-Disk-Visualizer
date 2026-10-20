@@ -78,6 +78,8 @@ interface Harness {
   cells: Cell[];
   /** Every path set the stubbed POST /api/facts was asked about, in order. */
   asked: string[][];
+  /** The scan each of those requests was asked of. */
+  askedScans: string[];
   /** The AbortSignal each of those requests carried (null when none). */
   signals: Array<AbortSignal | null>;
   calls: { drawView: number; repaintCells: number; renderTmLegend: number };
@@ -92,7 +94,8 @@ interface Harness {
 const open: Harness[] = [];
 afterEach(() => { for (const h of open.splice(0)) h.close(); });
 
-type Answer = (paths: string[]) => { code?: string; values?: Record<string, unknown> };
+/** `unavailable`: the provider answers `available: false`, as reclaimScoreProvider does for a scan still running. */
+type Answer = (paths: string[], scanId: string) => { code?: string; values?: Record<string, unknown>; unavailable?: boolean };
 
 /**
  * The shipped functions in one scope, with `answer` as the server: an object
@@ -105,6 +108,7 @@ function harness(answer: Answer, opts: { batch?: number; cap?: number } = {}): H
     state: { scanId: 's1', view: 'treemap', treemap: { colorMode: 'reclaim', rootPath: '/r', mode: 'treemap' } },
     cells: [] as Cell[],
     asked: [] as string[][],
+    askedScans: [] as string[],
     signals: [] as Array<AbortSignal | null>,
     calls: { drawView: 0, repaintCells: 0, renderTmLegend: 0 },
   } as Harness;
@@ -114,8 +118,9 @@ function harness(answer: Answer, opts: { batch?: number; cap?: number } = {}): H
   const api = (url: string, init: { body: string; signal?: AbortSignal }): Promise<unknown> => new Promise((resolve, reject) => {
     if (closed) return; // never settles, and holds nothing open
     assert.equal(url, '/api/facts');
-    const paths = (JSON.parse(init.body) as { paths: string[] }).paths;
+    const { paths, scanId } = JSON.parse(init.body) as { paths: string[]; scanId: string };
     h.asked.push(paths);
+    h.askedScans.push(scanId);
     h.signals.push(init.signal ?? null);
     // As fetch does (and api() passes on): an abort rejects with an AbortError at once.
     const aborted = () => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' }));
@@ -123,8 +128,9 @@ function harness(answer: Answer, opts: { batch?: number; cap?: number } = {}): H
     init.signal?.addEventListener('abort', aborted, { once: true });
     setImmediate(() => {
       if (closed || init.signal?.aborted) return;
-      const a = answer(paths);
+      const a = answer(paths, scanId);
       if (a.code) reject(Object.assign(new Error(`refused: ${a.code}`), { code: a.code, status: 400 }));
+      else if (a.unavailable) resolve({ providers: { reclaimScore: { available: false, reason: 'The scan is still running.' } } });
       else resolve({ providers: { reclaimScore: { available: true, values: a.values ?? {} } } });
     });
   });
@@ -400,4 +406,64 @@ test('MEDIUM-2: choosing a colour mode always lets the score chain know', () => 
   assert.equal(asked, 1, 'turning Reclaim off is how its chain learns to stop now, not after the batch in flight');
   setMode('reclaim');
   assert.equal(asked, 2);
+});
+
+/* ── Review F2.2: the scores are asked of the scan the tree on screen came from ──
+   While a rescan runs over an older scan's tree, the map draws that tree,
+   asked of its own scan (settledScanId, review F1.5), and the running scan's
+   id is on hand once its request answers (state.scanId). A score asked of
+   the running scan is answered "unavailable" for every path, filed as asked
+   and none, and a Stop — which puts the older scan back without a TOPIC.scan
+   — left the map grey and the tooltip saying no signal could be read, until
+   the next scan. */
+
+test('review F2.2: while a rescan runs over an older scan\'s tree, its scores are asked of that older scan — never the running one, which answers "unavailable" — and a Stop keeps them; an answer landing after the rescan landed is not filed against the new tree', async () => {
+  const RUNNING = 'B';
+  const h = harness((paths, scanId) => (scanId === RUNNING ? { unavailable: true } : { values: scoreOf(paths) }));
+  // followScanProgress has set the running scan's id; the tree on screen is A's.
+  Object.assign(h.state, { scanId: RUNNING, settledScanId: 'A', scanning: true });
+  h.cells = files(2, '/r/');
+  h.fetchScoresForTreemap();
+  await turns(60);
+  assert.deepEqual(h.askedScans, ['A'], 'the scores are asked of the scan the tree on screen came from');
+  assert.deepEqual([...h.reclaim.scores.entries()], [['/r/0', { score: 50 }], ['/r/1', { score: 50 }]], 'and filed as scores — never as asked and none');
+  assert.equal(h.calls.drawView, 1, 'and the map repaints in their colours');
+  // Stop: the older scan is the one behind the tree again (stopScan), with no TOPIC.scan to reset the scores.
+  Object.assign(h.state, { scanning: false, scanId: 'A' });
+  h.fetchScoresForTreemap();
+  await turns(60);
+  assert.deepEqual(h.askedScans, ['A'], 'after the Stop nothing more is asked: the scores on hand are that tree\'s');
+  assert.equal(h.reclaim.scores.size, 2, 'and they stay');
+
+  // An answer asked of A that lands once the rescan has landed (its tree on screen now) is not filed against it.
+  const late = harness((paths) => ({ values: scoreOf(paths) }));
+  Object.assign(late.state, { scanId: RUNNING, settledScanId: 'A', scanning: true });
+  late.cells = files(2, '/r/');
+  late.fetchScoresForTreemap();
+  assert.deepEqual(late.askedScans, ['A'], 'control: asked of A');
+  Object.assign(late.state, { scanning: false, scanId: RUNNING, settledScanId: RUNNING }); // finishScan, before the answer
+  await turns(60);
+  assert.equal(late.reclaim.scores.size, 0, 'A\'s scores are not filed against B\'s tree');
+
+  // The saved index's tree on screen, its scan running: no scan stands behind the tree, so nothing is asked.
+  const idx = harness((paths) => ({ values: scoreOf(paths) }));
+  Object.assign(idx.state, { scanId: RUNNING, settledScanId: null, scanning: true });
+  idx.cells = files(2, '/r/');
+  idx.fetchScoresForTreemap();
+  await turns(60);
+  assert.deepEqual(idx.askedScans, [], 'a saved index\'s tree is asked no scores — not of the running scan, not of no scan');
+});
+
+test('review F2.2: a failed score request asked while a rescan runs is remembered for the tree on screen — its scan\'s request answering meanwhile changes nothing about that tree, so the cells are not asked again', async () => {
+  const h = harness(() => ({ code: 'INTERNAL' }));
+  // A rescan has started; its request has not answered yet: the scan on hand is still the tree's own.
+  Object.assign(h.state, { scanId: 'A', settledScanId: 'A', scanning: true });
+  h.cells = files(2, '/r/');
+  h.fetchScoresForTreemap();
+  h.state.scanId = 'B'; // followScanProgress: the rescan's request answers while the scores are out
+  await turns(60);
+  assert.equal(h.asked.length, 1, 'control: asked once, and it failed');
+  h.fetchScoresForTreemap(); // the next repaint of the same tree
+  await turns(60);
+  assert.equal(h.asked.length, 1, `not asked again: the tree on screen, A's, is the one the failure was for (${JSON.stringify(h.askedScans)})`);
 });

@@ -622,7 +622,53 @@ test('the tooltip line shows nothing without comparables, and always carries its
   const resolver = html.slice(html.indexOf('function resolveHumanScale'), html.indexOf('function humanScaleTooltipLine'));
   assert.match(resolver, /node\.type !== 'dir'/, 'directories only');
   assert.match(resolver, /HS_MIN_BYTES/, 'only over the ~1 GB floor');
-  assert.match(resolver, /state\.scanId !== scanAtRequest\) return/, 'a stale answer cannot cross scans');
+  assert.match(resolver, /treeScan\(\) !== scanAtRequest\) return/, 'a stale answer cannot cross scans');
+});
+
+test('review F2.2: while a rescan runs over an older scan\'s tree, the tooltip\'s equivalents are asked of the scan that tree came from — never the running scan, which answers "unavailable" — and an answer landing after the rescan landed is not kept for the new tree', async () => {
+  const html = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const start = html.indexOf('function resolveHumanScale(');
+  assert.notEqual(start, -1, 'the resolver is in the page');
+  let end = -1;
+  for (let i = html.indexOf('{', html.indexOf(')', start)), depth = 0; i < html.length; i++) {
+    if (html[i] === '{') depth++;
+    else if (html[i] === '}' && --depth === 0) { end = i + 1; break; }
+  }
+  const asks: Array<{ scanId: string; paths: string[]; answer: (res: unknown) => void }> = [];
+  const state: Record<string, unknown> = { scanning: true, settledScanId: 'A', scanId: 'B' }; // followScanProgress set B; the tree on screen is A's
+  const hsFacts = new Map<string, unknown>();
+  const deps: Record<string, unknown> = {
+    state, hsFacts, hsPending: new Set<string>(), humanScaleOn: true, HS_MIN_BYTES: 1e9, showTooltip: () => {},
+    $: () => ({ style: { display: 'none' }, dataset: {} }),
+    api: (_url: string, init: { body: string }) => new Promise((answer) => {
+      const b = JSON.parse(init.body) as { scanId: string; paths: string[] };
+      asks.push({ scanId: b.scanId, paths: b.paths, answer });
+    }),
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const resolve = new Function(...keys, `${html.slice(start, end)}\nreturn resolveHumanScale;`)(...keys.map((k) => deps[k])) as (n: unknown) => void;
+  const settle = () => new Promise((r) => setImmediate(r));
+  const fact = { equivalents: [{ kind: 'photos', equivalentCount: 3100, sampleCount: 56, avgBytes: 4_000_000 }] };
+  const answerFor = (p: string) => ({ providers: { humanScale: { available: true, values: { [p]: fact } } } });
+
+  resolve({ path: '/r/big', type: 'dir', size: 2e9 });
+  assert.deepEqual(asks.map((a) => a.scanId), ['A'], 'asked of the scan the tree on screen came from');
+  asks[0].answer(answerFor('/r/big'));
+  await settle();
+  assert.deepEqual(hsFacts.get('/r/big'), fact, 'and kept as it lands, while the rescan still runs');
+
+  resolve({ path: '/r/other', type: 'dir', size: 2e9 });
+  assert.deepEqual(asks.map((a) => a.scanId), ['A', 'A'], 'control: asked of A too');
+  Object.assign(state, { scanning: false, scanId: 'B', settledScanId: 'B' }); // the rescan lands before the answer
+  asks[1].answer(answerFor('/r/other'));
+  await settle();
+  assert.equal(hsFacts.has('/r/other'), false, 'A\'s answer is not kept for B\'s tree');
+
+  // The saved index's tree on screen, its scan running: no scan stands behind the tree, so nothing is asked.
+  Object.assign(state, { scanning: true, settledScanId: null, scanId: 'C' });
+  resolve({ path: '/r/indexed', type: 'dir', size: 2e9 });
+  assert.equal(asks.length, 2, 'a saved index\'s tree is asked nothing — not of the running scan, not of no scan');
 });
 
 test('the human-scale sentence wraps between words — only the path line may break inside one (B10)', () => {

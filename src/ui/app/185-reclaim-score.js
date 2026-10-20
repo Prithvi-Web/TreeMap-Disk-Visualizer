@@ -52,9 +52,14 @@ function reclaimReset() {
   reclaim.failed.clear();
 }
 
-/** What a failed request is remembered for: this scan, this view, this folder on screen. */
+/**
+ * What a failed request is remembered for: the scan the tree on screen came
+ * from (as ensureScores asks it — not a scan running behind it), this view,
+ * this folder on screen.
+ */
 function reclaimFailureScope() {
-  return `${state.scanId}\n${state.view}\n${(state.treemap && state.treemap.rootPath) || ''}`;
+  const treeScan = state.scanning ? state.settledScanId : state.scanId;
+  return `${treeScan}\n${state.view}\n${(state.treemap && state.treemap.rootPath) || ''}`;
 }
 
 /**
@@ -132,7 +137,14 @@ function scoreKnown(path) { return reclaim.scores.has(path); }
  * by a request that will never answer for it.
  */
 async function ensureScores(paths, onLanded, onFailed, { signal = null, isCurrent = null } = {}) {
-  if (!state.scanId || (signal && signal.aborted)) return;
+  // Asked of the scan the tree on screen came from. While a rescan runs, its
+  // id is on hand once its request answers, but the tree on screen is still
+  // the older scan's (settledScanId) or the saved index's (none: nothing is
+  // asked), and a scan still walking answers every path "unavailable" — filed
+  // as asked and none, a Stop then left the map grey and the tooltip saying
+  // no signal could be read, until the next scan (review F2.2).
+  const treeScan = () => (state.scanning ? state.settledScanId : state.scanId);
+  if (!treeScan() || (signal && signal.aborted)) return;
   const scope = reclaimFailureScope();
   if (reclaim.failedFor !== scope) {
     reclaim.failed.clear();
@@ -151,14 +163,14 @@ async function ensureScores(paths, onLanded, onFailed, { signal = null, isCurren
   const release = () => { for (const p of wanted) reclaim.pending.delete(p); };
   if (signal) signal.addEventListener('abort', release, { once: true });
 
-  const scanAtRequest = state.scanId;
+  const scanAtRequest = treeScan();
   const outcome = { landed: false, failed: false };
   try {
     for (let i = 0; i < wanted.length; i += RECLAIM_BATCH) {
       await reclaimScoreBatch(wanted.slice(i, i + RECLAIM_BATCH), scanAtRequest, scope, outcome, signal);
       // A scan that changed under a request in flight would otherwise file
       // the previous tree's verdicts against the new one's paths.
-      if (state.scanId !== scanAtRequest) return;
+      if (treeScan() !== scanAtRequest) return;
       // Called off, or its map is gone: no more batches, and no callbacks.
       if ((signal && signal.aborted) || (isCurrent && !isCurrent())) return;
     }
@@ -184,6 +196,7 @@ async function ensureScores(paths, onLanded, onFailed, { signal = null, isCurren
  * whether anything landed and whether anything failed.
  */
 async function reclaimScoreBatch(batch, scanAtRequest, scope, outcome, signal = null) {
+  const treeScan = () => (state.scanning ? state.settledScanId : state.scanId); // as ensureScores asks (review F2.2)
   let res;
   try {
     res = await api('/api/facts', {
@@ -196,7 +209,7 @@ async function reclaimScoreBatch(batch, scanAtRequest, scope, outcome, signal = 
   } catch (err) {
     // Called off (ensureScores): not a failure, and nothing to remember.
     if (err && err.name === 'AbortError') return;
-    if (state.scanId !== scanAtRequest) return;
+    if (treeScan() !== scanAtRequest) return;
     if (err && RECLAIM_PATH_REFUSALS.has(err.code) && batch.length > 1) {
       const half = Math.ceil(batch.length / 2);
       await reclaimScoreBatch(batch.slice(0, half), scanAtRequest, scope, outcome, signal);
@@ -212,7 +225,7 @@ async function reclaimScoreBatch(batch, scanAtRequest, scope, outcome, signal = 
     if (window.TREEMAP_DEBUG) console.warn('[treemap] reclaim scores failed:', err);
     return;
   }
-  if (state.scanId !== scanAtRequest) return;
+  if (treeScan() !== scanAtRequest) return;
   const provider = (res.providers && res.providers.reclaimScore) || null;
   const values = (provider && provider.available && provider.values) || {};
   for (const p of batch) {

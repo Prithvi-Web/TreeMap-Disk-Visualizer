@@ -920,6 +920,29 @@ test('review F1.5: while a rescan runs over an older scan\'s tree, Disk City sta
   assert.deepEqual(cityNames(h), ['s1:/corpus/Mail'], 'and drawn');
 });
 
+test('review F2.2: while a rescan runs over an older scan\'s tree, Disk City\'s file counts are asked of the scan that tree came from — never the running scan, which answers "unavailable" — and an answer landing after the rescan landed is not filed against the new tree', async () => {
+  const h = cityHarness(); // Files height: every building's count is asked
+  h.state.scanId = 's1';
+  h.state.root = { path: '/corpus', size: 1 };
+  await h.loadTreemap('/corpus');
+  Object.assign(h.state, { scanning: true, settledScanId: 's1', scanId: 's-run' });
+  h.state.view = 'city';
+  h.views.city.mount();
+  await settle();
+  assert.deepEqual(cityNames(h), ['s1:/corpus'], 'control: the city of the tree on screen is built');
+  assert.deepEqual(h.countAsks.map((a) => a.scanId), ['s1'], 'its buildings\' counts are asked of the scan it came from');
+  h.countAsks[0].answer(countAnswer(h.countAsks[0].paths));
+  await settle();
+  assert.equal(h.state.city.counts.size, h.countAsks[0].paths.length, 'and filed as they land, while the rescan still runs');
+  await h.loadCity('/corpus/Mail'); // a click on a building
+  assert.deepEqual(h.countAsks.map((a) => a.scanId), ['s1', 's1'], 'control: the drilled folder\'s counts are asked of it too');
+  // The rescan lands (finishScan) before that answer does.
+  Object.assign(h.state, { scanning: false, scanId: 's-run', settledScanId: 's-run' });
+  h.countAsks[1].answer(countAnswer(h.countAsks[1].paths));
+  await settle();
+  assert.ok(!h.countAsks[1].paths.some((p) => h.state.city.counts.has(p)), 'the older scan\'s counts are not filed against the new tree');
+});
+
 /** What Disk City says over a saved index's tree with no scan behind it and none running (review F2.1, F2.3): the Dashboard's own words. */
 const FROM_INDEX = { lod: 'Opened from the saved index — scan this folder to see its city.', status: '' };
 

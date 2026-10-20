@@ -211,16 +211,19 @@ const hsPending = new Set();
 function resolveHumanScale(node) {
   if (!humanScaleOn || !node || !node.path || node.type !== 'dir') return;
   if (node.size < HS_MIN_BYTES || node.virtual || node.path.startsWith('cloud://')) return;
-  if (!state.scanId || hsFacts.has(node.path) || hsPending.has(node.path)) return;
+  // Asked of the scan the tree on screen came from — not a scan running
+  // behind it, which answers "unavailable", kept as asked and none (review F2.2).
+  const treeScan = () => (state.scanning ? state.settledScanId : state.scanId);
+  if (!treeScan() || hsFacts.has(node.path) || hsPending.has(node.path)) return;
   hsPending.add(node.path);
-  const scanAtRequest = state.scanId;
+  const scanAtRequest = treeScan();
   void (async () => {
     try {
       const res = await api('/api/facts', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scanId: scanAtRequest, paths: [node.path], providers: ['humanScale'] }),
       });
-      if (state.scanId !== scanAtRequest) return; // a new tree answered an old question
+      if (treeScan() !== scanAtRequest) return; // a new tree answered an old question
       const provider = (res.providers && res.providers.humanScale) || null;
       const values = (provider && provider.available && provider.values) || {};
       // Absent from values means the provider could not answer; null keeps us
