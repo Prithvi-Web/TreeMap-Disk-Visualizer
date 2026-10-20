@@ -929,7 +929,10 @@ function drawTreemap() {
   state.treemap.altNote = tmNodeCapNote();
   renderAltNote();
   const wrap = $('treemapWrap');
-  const cssW = wrap.clientWidth - 20;
+  // While the map previews beside the open cart its card is padded on the
+  // right by the clearance tmCartClearSync measured, 0 otherwise (seventh
+  // browser pass J52): the canvas fills the card's content box.
+  const cssW = wrap.clientWidth - 20 - (wrap._tmCartClear || 0);
   const cssH = treemapCanvasHeight(wrap);
   const dpr = window.devicePixelRatio || 1;
   tmCanvas.style.width = cssW + 'px';

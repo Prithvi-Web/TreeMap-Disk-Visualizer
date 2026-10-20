@@ -999,7 +999,7 @@ function previewPage(cart: string[]) {
   };
   const names = ['tmPreview', 'TM_PREVIEW_BANNER_INSET', 'tmWorstRatio', 'tmSquarify', 'tmParentPath', 'tmIsInside', 'tmDrawnTree',
     'tmCartRoots', 'tmBuildPreview', 'tmPreviewRefusal', 'enterCartPreview', 'exitCartPreview', 'syncCartPreviewChrome', 'tmPreviewPadSync',
-    'tmPreviewWatch', 'cartPreviewInvalidated', 'cartNode', 'nodeFor', 'cartToggle', 'tmStageMatches', 'cartSpaceSaid'];
+    'TM_CART_GAP', 'tmCartClearSync', 'tmPreviewWatch', 'cartPreviewInvalidated', 'cartNode', 'nodeFor', 'cartToggle', 'tmStageMatches', 'cartSpaceSaid'];
   const keys = Object.keys(deps);
   // The query box's last answer, which the real tmStageMatches stages from:
   // `stageMatches(paths)` sets it to those files and presses Stage.

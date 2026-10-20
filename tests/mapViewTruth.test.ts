@@ -2258,7 +2258,7 @@ function previewChrome() {
   const observers: Array<() => void> = [];
   class FakeRO { cb: () => void; constructor(cb: () => void) { this.cb = cb; } observe() { observers.push(this.cb); } }
   const counts = { draws: 0 };
-  const sync = load<() => void>(['syncCartPreviewChrome', 'cartSpaceSaid', 'TM_PREVIEW_BANNER_INSET', 'tmPreviewPadSync', 'tmPreviewWatch'], {
+  const sync = load<() => void>(['syncCartPreviewChrome', 'cartSpaceSaid', 'TM_PREVIEW_BANNER_INSET', 'tmPreviewPadSync', 'TM_CART_GAP', 'tmCartClearSync', 'tmPreviewWatch'], {
     $: (id: string) => els[id], tmPreview,
     escapeHtml: (s: string) => s, formatBytes: (n: number) => `${n} B`, formatCount: String,
     ResizeObserver: FakeRO, state: { view: 'treemap' }, isRectMap: () => true,
@@ -2339,7 +2339,7 @@ test('D64: the map the preview draws is shorter by the banner\'s pad, re-measure
   const nodes = [{ path: '/r/x' }];
   const state = { view: 'treemap', cart: { size: 1 }, treemap: { history: { active: false }, nodes, hover: null, kbSel: null } };
   const out = load<{ enter: () => void; exit: () => void; heightOf: (w: unknown) => number }>(
-    ['enterCartPreview', 'exitCartPreview', 'syncCartPreviewChrome', 'cartSpaceSaid', 'TM_PREVIEW_BANNER_INSET', 'tmPreviewPadSync', 'tmPreviewWatch', 'tmUnscrolledTop', 'treemapCanvasHeight'], {
+    ['enterCartPreview', 'exitCartPreview', 'syncCartPreviewChrome', 'cartSpaceSaid', 'TM_PREVIEW_BANNER_INSET', 'tmPreviewPadSync', 'TM_CART_GAP', 'tmCartClearSync', 'tmPreviewWatch', 'tmUnscrolledTop', 'treemapCanvasHeight'], {
       $: (id: string) => els[id], state, tmPreview: { on: false },
       isSun: () => false, isCells: () => false, isRectMap: () => true,
       toast: (m: string) => { throw new Error('refused: ' + m); },

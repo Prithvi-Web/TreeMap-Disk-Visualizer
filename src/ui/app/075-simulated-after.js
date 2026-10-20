@@ -426,7 +426,15 @@ function syncCartPreviewChrome() {
   const banner = $('tmPreviewBanner');
   if (!banner) return;
   banner.hidden = !tmPreview.on;
-  if (!tmPreview.on) { wrap.style.removeProperty('--tm-preview-pad'); return; }
+  if (!tmPreview.on) {
+    wrap.style.removeProperty('--tm-preview-pad');
+    // The right pad goes too (J52): the canvas takes its width back, and the
+    // view drops the clearance, so the next preview measures its own.
+    wrap._tmCartClear = 0;
+    const view = $('view-treemap');
+    if (view) view.style.removeProperty('--tm-cart-clear');
+    return;
+  }
   // A not-shown item with no size here is unknown, never 0 B (B06): the figure
   // covers the sized ones and is marked a floor, as the cart's own total is,
   // and when none is sized there is no figure at all.
@@ -457,26 +465,70 @@ function syncCartPreviewChrome() {
 }
 
 /**
- * Pad the wrap by the banner's height now; answers whether the pad changed.
- * Nothing to do outside the preview, where syncCartPreviewChrome took it off.
+ * Pad the wrap by the banner's height now, and on the right by what the open
+ * cart reaches over (tmCartClearSync); answers whether either pad changed.
+ * Nothing to do outside the preview, where syncCartPreviewChrome took the top
+ * pad off and the stylesheet stops reading the right one.
  */
 function tmPreviewPadSync() {
   const banner = $('tmPreviewBanner');
   if (!tmPreview.on || !banner || banner.hidden) return false;
   const wrap = $('treemapWrap');
   const pad = `${Math.ceil(banner.offsetHeight) + 2 * TM_PREVIEW_BANNER_INSET}px`;
-  if (wrap.style.getPropertyValue('--tm-preview-pad') === pad) return false;
+  const cleared = tmCartClearSync();
+  if (wrap.style.getPropertyValue('--tm-preview-pad') === pad) return cleared;
   wrap.style.setProperty('--tm-preview-pad', pad);
   return true;
 }
 
+/** The gap the previewed map and the rows under it keep from the open cart dock. */
+const TM_CART_GAP = 14;
+
 /**
- * Keep the pad true while the preview is up (QA-6 review LOW-3). The banner
+ * Keep the previewed map, its key, its status line and its hint clear of the
+ * open cart (seventh browser pass J52). The dock floats over the bottom right
+ * of the window, and at 1024 it covered the right part of the hatched "Staged
+ * 700.0 MB" label, the key's two marks and the hint; at 1440 the end of the
+ * footer's "Preview · …" line. The banner already keeps left of it (C04); now
+ * the map's card is padded on the right, and the rows under it held in, by as
+ * much as the open dock reaches over the view's column plus a 14 px gap —
+ * measured, because the dock stands at its resting edge, left of the preview
+ * pane or over it, by the window's width (060-preview-pane.css). The card is
+ * padded rather than narrowed, so the banner inside it keeps its own room.
+ *
+ * The amount goes on the view as --tm-cart-clear, which the stylesheet reads
+ * only while the card is .previewing, and on the card as _tmCartClear, which
+ * drawTreemap takes off the canvas's width while the preview is on. A cart
+ * collapsed to its pill needs none: <main> keeps the bottom clear for it.
+ * Answers whether the clearance changed.
+ */
+function tmCartClearSync() {
+  const wrap = $('treemapWrap');
+  const view = $('view-treemap');
+  const dock = $('cartDock');
+  let clear = 0;
+  if (tmPreview.on && view && dock && dock.classList.contains('open')) {
+    const reach = view.getBoundingClientRect().right - (dock.getBoundingClientRect().left - TM_CART_GAP);
+    clear = Math.max(0, Math.ceil(reach));
+  }
+  if ((wrap._tmCartClear || 0) === clear) return false;
+  wrap._tmCartClear = clear;
+  if (view) {
+    if (clear) view.style.setProperty('--tm-cart-clear', `${clear}px`);
+    else view.style.removeProperty('--tm-cart-clear');
+  }
+  return true;
+}
+
+/**
+ * Keep the pads true while the preview is up (QA-6 review LOW-3). The banner
  * changes height without the preview starting or ending: it narrows and wraps
  * beside the open cart dock (body.cart-open), and on a window resize. Measured
  * only on enter and exit, the pad went stale and the banner sat on the top
- * row again — or left a gap. One observer per banner; a change redraws the
- * map under the new pad, and a callback with no change of height does nothing.
+ * row again — or left a gap. The dock opening or closing, and the view
+ * changing width (a resize, the preview pane), move the right pad (J52). One
+ * observer per banner; a change redraws the map under the new pads, and a
+ * callback with no change does nothing.
  */
 function tmPreviewWatch(banner) {
   if (banner._tmPadRo || typeof ResizeObserver === 'undefined') return;
@@ -484,6 +536,10 @@ function tmPreviewWatch(banner) {
     if (tmPreviewPadSync() && state.view === 'treemap' && isRectMap()) drawTreemap();
   });
   banner._tmPadRo.observe(banner);
+  for (const id of ['cartDock', 'view-treemap']) {
+    const el = $(id);
+    if (el) banner._tmPadRo.observe(el);
+  }
 }
 
 $('cartPreview').addEventListener('click', () => enterCartPreview());

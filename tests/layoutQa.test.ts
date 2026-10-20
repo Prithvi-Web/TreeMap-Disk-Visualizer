@@ -607,6 +607,139 @@ test('with the cart open beside the open preview pane, the cart dock covers neit
   assert.ok(beside >= 8, `control: in ${beside} of them the banner and the dock fit beside the pane`);
 });
 
+/* ══════════════ J52 — in "Preview after" the open cart covers none of the preview's marks ══════════════ */
+
+/** Where the open cart dock's left edge stands in a window `W` px wide, from the stylesheet: at rest, beside the pane, or over it. */
+function openDockLeft(W: number, rail: boolean, pane: boolean): number {
+  const stated = (base: string) => base.replace(/^(body\S*)/, `$1:has(#sideNav${rail ? '.collapsed' : ':not(.collapsed)'})`);
+  const sels = pane ? ['#cartDock', 'body.preview-open #cartDock', 'body.preview-open.cart-open #cartDock'] : ['#cartDock'];
+  const dock = new Map([...sels.flatMap((sel) => [...declsAt(sel, W)]), ...sels.filter((sel) => sel.startsWith('body')).flatMap((sel) => [...declsAt(stated(sel), W)])]);
+  const vw = (v: string) => v.replace(/(\d+(?:\.\d+)?)vw/g, (_m, n: string) => `${(Number(n) / 100) * W}px`);
+  const w = Math.min(cssPx(dock.get('width')!, W), cssPx(vw(dock.get('max-width')!), W));
+  return W - cssPx(dock.get('right')!, W) - w;
+}
+
+/**
+ * The page's tmCartClearSync (with tmPreviewPadSync and tmPreviewWatch, which call and wire it) over
+ * the Treemap view in a window `W` px wide: the view's column runs from the sidebar to <main>'s padding
+ * (left of the preview pane when it is open), and the cart dock stands where the stylesheet puts it.
+ */
+function cartClearWorld(W: number, rail: boolean, pane: boolean) {
+  const root = declsFor(':root');
+  const side = sheetPx(root.get(rail ? '--side-w-rail' : '--side-w'), 'the sidebar width') + 12;
+  const mainPad = sheetPx((declsFor('main').get('padding') || '').split(/\s+/)[1], "<main>'s side padding");
+  const paneW = pane ? sheetPx(declsFor('#previewPane').get('width'), 'the pane width') : 0;
+  const col = { left: side + mainPad, right: W - paneW - mainPad };
+  const dockLeft = openDockLeft(W, rail, pane);
+  const viewProps: Record<string, string> = {};
+  const dockCls = new Set(['show', 'open']);
+  const observed: string[] = [];
+  const els: Record<string, unknown> = {
+    'view-treemap': {
+      id: 'view-treemap', getBoundingClientRect: () => ({ left: col.left, right: col.right, top: 20, bottom: 680 }),
+      style: { setProperty: (k: string, v: string) => { viewProps[k] = v; }, removeProperty: (k: string) => { delete viewProps[k]; } },
+    },
+    treemapWrap: { id: 'treemapWrap', style: { getPropertyValue: () => '64px', setProperty() {} } },
+    cartDock: { id: 'cartDock', classList: { contains: (c: string) => dockCls.has(c) }, getBoundingClientRect: () => ({ left: dockLeft, right: dockLeft + 366, top: 260, bottom: 678 }) },
+    tmPreviewBanner: { id: 'tmPreviewBanner', hidden: false, offsetHeight: 44 },
+  };
+  const tmPreview = { on: true };
+  let redraws = 0;
+  class FakeRO { cb: () => void; constructor(cb: () => void) { this.cb = cb; } observe(el: { id: string }) { observed.push(el.id); } }
+  const fns = runPageDecls<{ sync(): boolean; pad(): boolean; watch(b: unknown): void }>(
+    ['TM_PREVIEW_BANNER_INSET', 'TM_CART_GAP', 'tmCartClearSync', 'tmPreviewPadSync', 'tmPreviewWatch'], {
+      $: (id: string) => els[id] ?? null, tmPreview, ResizeObserver: FakeRO,
+      state: { view: 'treemap' }, isRectMap: () => true, drawTreemap: () => { redraws++; },
+    }, '{ sync: tmCartClearSync, pad: tmPreviewPadSync, watch: tmPreviewWatch }');
+  const wrap = els.treemapWrap as { _tmCartClear?: number };
+  /** The stylesheet's px for `prop` of `selector` while the map previews, the measured clearance put in for its variable. */
+  const withClear = (selector: string, prop: string, fallback: string): number => {
+    const v = declsFor(selector).get(prop) ?? fallback;
+    return cssPx(v.replace(/var\(--tm-cart-clear,\s*0px\)/g, viewProps['--tm-cart-clear'] ?? '0px'), W);
+  };
+  const border = sheetPx(declsFor('.glass').get('border'), "the card's border");
+  /** Where each mark of the preview ends on the right, as the page lays it out now. */
+  const marks = () => ({
+    // The map (and the hatched "Staged …" labels inside it): the card's content box.
+    map: col.right - border - withClear('#treemapWrap.previewing', 'padding-right', declsFor('#treemapWrap').get('padding')!),
+    // The footer — the key's marks, "Preview · … staged for the Trash", the hint — inside its own padding.
+    foot: col.right - withClear('#view-treemap:has(> #treemapWrap.previewing) > .tm-foot', 'margin-right', '0px') - sheetPx((declsFor('.tm-foot').get('padding') || '').split(/\s+/)[1], "the footer's side padding"),
+    // The drive dock and the alternate renderers' note under it.
+    drives: col.right - withClear('#view-treemap:has(> #treemapWrap.previewing) > .drive-dock', 'margin-right', '0px'),
+    note: col.right - withClear('#view-treemap:has(> #treemapWrap.previewing) > .tm-altnote', 'margin-right', '4px'),
+  });
+  return { fns, col, dockLeft, viewProps, dockCls, tmPreview, wrap, marks, observed, border, redraws: () => redraws };
+}
+
+test('in "Preview after" with the cart open, the map, its key, its status line and its hint keep clear of the open cart — at 1024 and 1440 px, the preview pane open or not, in both sidebar states (seventh browser pass J52)', () => {
+  // QA (B/shots/060, 053): at 1024 the open cart covered the right part of the hatched "Staged
+  // 700.0 MB" label, the key's two marks and the hint line; at 1440 the end of the footer's
+  // "Preview …" line. The banner already kept left of the dock (C04); the map and its rows did not.
+  let checked = 0;
+  for (const W of [1024, 1440]) {
+    for (const rail of [false, true]) {
+      for (const pane of [false, true]) {
+        const label = `${W} px, sidebar ${rail ? 'rail' : 'open'}, preview pane ${pane ? 'open' : 'shut'}`;
+        const w = cartClearWorld(W, rail, pane);
+        const before = w.marks();
+        // Control: the open dock reaches over the map's column, so without the clearance it covers the map's right side and the footer's end.
+        assert.ok(before.map > w.dockLeft && before.foot > w.dockLeft,
+          `${label}: control — unpadded, the map runs to x ${before.map} and the footer to x ${before.foot}, past the open cart at x ${w.dockLeft}`);
+        assert.equal(w.fns.sync(), true, `${label}: the clearance is measured and set`);
+        const m = w.marks();
+        for (const [what, right] of Object.entries(m)) {
+          assert.ok(right <= w.dockLeft, `${label}: the ${what} ends at x ${right}; the open cart starts at x ${w.dockLeft}`);
+        }
+        const mapW = m.map - (w.col.left + w.border + sheetPx(declsFor('#treemapWrap').get('padding'), "the card's padding"));
+        assert.ok(mapW >= 300, `${label}: and the map keeps a usable width (${mapW} px)`);
+        assert.equal(w.wrap._tmCartClear, w.col.right - w.dockLeft + 14, `${label}: the canvas is told the same clearance (drawTreemap takes it off its width)`);
+        assert.equal(w.fns.sync(), false, `${label}: measured again with nothing moved, nothing changes (no redraw)`);
+        checked++;
+      }
+    }
+  }
+  assert.equal(checked, 8, 'every state was checked');
+});
+
+test('the clearance is there only while the map previews with the cart open, follows the dock, and is wired to redraw the map (seventh browser pass J52)', () => {
+  const w = cartClearWorld(1024, false, false);
+  w.dockCls.delete('open'); // the cart collapsed to its pill: main already keeps room for that
+  assert.equal(w.fns.sync(), false, 'with the cart collapsed there is nothing to clear');
+  assert.equal(w.viewProps['--tm-cart-clear'], undefined);
+  w.dockCls.add('open');
+  assert.equal(w.fns.pad(), true, 'the cart opening changes only the clearance, and the pad sync says so — the ResizeObserver redraws on that answer');
+  assert.equal(w.viewProps['--tm-cart-clear'], `${w.col.right - w.dockLeft + 14}px`, 'the view carries it for the footer\'s rows');
+  w.dockCls.delete('open');
+  assert.equal(w.fns.pad(), true, 'collapsing the cart gives the room back');
+  assert.equal(w.viewProps['--tm-cart-clear'], undefined);
+  assert.equal(w.wrap._tmCartClear, 0, 'and the canvas its width');
+  w.dockCls.add('open');
+  w.fns.sync();
+  w.tmPreview.on = false;
+  assert.equal(w.fns.sync(), true, 'leaving the preview gives the room back too');
+  assert.equal(w.viewProps['--tm-cart-clear'], undefined);
+  // What it watches: the banner (its height), the dock (opening and closing) and the view (a resize, the preview pane).
+  w.tmPreview.on = true;
+  w.fns.watch({ id: 'tmPreviewBanner' });
+  assert.deepEqual(w.observed.sort(), ['cartDock', 'tmPreviewBanner', 'view-treemap'], 'the banner, the cart dock and the view are watched');
+  // The canvas takes the clearance off its width, as the card's padding does.
+  assert.match(pageBetween('function drawTreemap() {', 'const cssH = treemapCanvasHeight(wrap);'),
+    /const cssW = wrap\.clientWidth - 20 - \(wrap\._tmCartClear \|\| 0\);/, 'drawTreemap narrows the canvas by the clearance');
+  // Leaving the preview however it is left (Exit, a view switch, a rescan) gives the width back at once:
+  // the next preview, or the next plain draw, must not inherit the last one's clearance.
+  const viewProps: Record<string, string> = { '--tm-cart-clear': '378px' };
+  const wrap = { _tmCartClear: 378, classList: { toggle() {} }, style: { removeProperty() {} } };
+  runPageDecls<() => void>(['TM_PREVIEW_BANNER_INSET', 'syncCartPreviewChrome'], {
+    $: (id: string) => ({
+      treemapWrap: wrap, tmPreviewBanner: { hidden: false },
+      'view-treemap': { style: { removeProperty: (k: string) => { delete viewProps[k]; } } },
+    } as Record<string, unknown>)[id] ?? null,
+    tmPreview: { on: false },
+  }, 'syncCartPreviewChrome')();
+  assert.equal(wrap._tmCartClear, 0, 'leaving the preview gives the canvas its width back');
+  assert.equal(viewProps['--tm-cart-clear'], undefined, 'and the view drops the clearance');
+});
+
 test('while the cart is open the welcome tour\'s card covers none of it — at every window size, the preview pane open or not, in both sidebar states (sixth browser pass H51)', () => {
   // QA: the tour card (z 96, 18 px from the right, 86 px up) sat on the open cart (z 80): a hit test
   // at the centre of Preview after, Clear, Move all to Trash and each row's × returned the card, so

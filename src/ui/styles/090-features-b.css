@@ -298,9 +298,17 @@ body.cart-open .tm-preview-banner .tm-pv-cart-said { display: none; }
 .tm-preview-banner #tmPreviewExit { flex: none; white-space: nowrap; }
 .tm-preview-banner #tmPreviewText { min-width: 0; line-height: 1.4; }
 .tm-preview-banner b { font-weight: 700; }
-/* Padded below the banner (QA D64): the JS measures it into --tm-preview-pad. */
+/* Padded below the banner (QA D64): the JS measures it into --tm-preview-pad.
+   And on the right, beside the open cart, by as much as the dock reaches over
+   the view (seventh browser pass J52): tmCartClearSync measures it into
+   --tm-cart-clear, and the rows under the card are held in by the same, so the
+   map, its key, its status line and its hint all end left of the dock. 10 px
+   is the card's own padding (#treemapWrap); the note keeps its 4 px inset. */
 #treemapWrap.previewing { outline: 2px dashed var(--warn); outline-offset: -2px;
-  padding-top: var(--tm-preview-pad, 64px); }
+  padding-top: var(--tm-preview-pad, 64px); padding-right: calc(10px + var(--tm-cart-clear, 0px)); }
+#view-treemap:has(> #treemapWrap.previewing) > .tm-foot,
+#view-treemap:has(> #treemapWrap.previewing) > .drive-dock { margin-right: var(--tm-cart-clear, 0px); }
+#view-treemap:has(> #treemapWrap.previewing) > .tm-altnote { margin-right: calc(4px + var(--tm-cart-clear, 0px)); }
 /* The time-lapse bar steps aside while the map previews. The preview is of
    the live map — it will not start on a scrubbed one, and a scrub drew
    history under a banner about the cart — and at the desktop window's
