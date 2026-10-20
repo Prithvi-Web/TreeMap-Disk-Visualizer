@@ -685,16 +685,16 @@ test('after a commit, the cart says where the files went, not that space was rec
   assert.doesNotMatch(html, /recovered/i, `nothing is recovered by a move to the Trash: ${html}`);
   assert.match(html, /Moved <b>2<\/b> items \(<b>6500000000 B<\/b>\) to the Trash/, html);
   assert.match(html, /Up to that much space comes back, but only when you empty the Trash\./, html);
-  assert.match(html, /The Time Capsule also keeps a copy so you can undo this, and that copy takes up space until the Time Capsule removes it\./, html);
+  assert.match(html, /The Undo Vault also keeps a copy so you can undo this, and that copy takes up space until the Undo Vault removes it\./, html);
   const bare = summary({ trashed: ['/c/a'], bytesFreed: 10, capsuleUnavailable: 'No capsule in a portable session.' });
   assert.match(bare, /Up to that much space comes back, but only when you empty the Trash\./, 'with no capsule copy, the space still comes back only when the Trash is emptied');
-  assert.doesNotMatch(bare, /Time Capsule also keeps a copy/, 'no capsule copy is mentioned when none was made');
+  assert.doesNotMatch(bare, /Undo Vault also keeps a copy/, 'no capsule copy is mentioned when none was made');
 });
 
 /* ══════════════════════ D07 — before the commit, the cart says what the summary says ══════════════════════ */
 
 const SPACE_LATER = 'Up to that much space comes back, but only when you empty the Trash.';
-const CAPSULE_SPACE = 'The Time Capsule also keeps a copy so you can undo this, and that copy takes up space until the Time Capsule removes it.';
+const CAPSULE_SPACE = 'The Undo Vault also keeps a copy so you can undo this, and that copy takes up space until the Undo Vault removes it.';
 
 /** The confirm sheet's manifest for a dry run that would move `MOV`, the capsule on or off. */
 function sheetSays(capsule: { available: boolean; reason?: string }, moving: Node[] = [MOV], conflicts: string[] = []): string {
@@ -764,7 +764,7 @@ test('before the commit the cart says what the summary says: space comes back on
 });
 
 /** The confirm sheet's one sentence about its copy ends by saying the copy takes up space until the capsule removes it. */
-const SHEET_COPY_SPACE = /until the Time Capsule removes the cop(?:y, which takes|ies, which take) up space until then\./;
+const SHEET_COPY_SPACE = /until the Undo Vault removes the cop(?:y, which takes|ies, which take) up space until then\./;
 
 test('the cart\'s confirm sheet names the Time Capsule\'s copy once — never "copied into the Time Capsule" and then "also keeps a copy" (QA fourth pass E14b)', () => {
   // QA fourth pass E14b: "It is copied into the Time Capsule … The Time
@@ -773,7 +773,7 @@ test('the cart\'s confirm sheet names the Time Capsule\'s copy once — never "c
   for (const moving of [[MOV], [MOV, DMG]]) {
     const text = plainText(sheetSays({ available: true }, moving));
     const said = `${moving.length} item(s): ${text}`;
-    const introduced = text.match(/copied into the Time Capsule|keeps? a copy|Time Capsule also/g) || [];
+    const introduced = text.match(/copied into the Undo Vault|keeps? a copy|Undo Vault also/g) || [];
     assert.equal(introduced.length, 1, `the copy is introduced once (${introduced.join(' | ')}) — ${said}`);
     assert.match(text, SHEET_COPY_SPACE, `and that sentence says the copy takes up space until it is removed — ${said}`);
     assert.ok(text.includes(SPACE_LATER), `the space still comes back only when the Trash is emptied — ${said}`);
@@ -812,23 +812,23 @@ test('the cart\'s two sentences about space are written once, and a portable ses
 test('a one-item run is spoken of as one: "Puts it back where it was", never "all 1" (QA third pass D08)', () => {
   // QA third pass D08: "Puts all 1 back where they were" under a one-item run.
   const one = plainText(summarySays());
-  assert.match(one, /Puts it back where it was, from the Time Capsule — byte for byte, with its permissions and the dates it was last modified and opened\./, one);
+  assert.match(one, /Puts it back where it was, from the Undo Vault — byte for byte, with its permissions and the dates it was last modified and opened\./, one);
   assert.doesNotMatch(one, /\ball 1\b|where they were|their permissions/, one);
   const two = plainText(summarySays({ trashed: [MOV.path, DMG.path] }));
-  assert.match(two, /Puts all 2 back where they were, from the Time Capsule — byte for byte, with their permissions and the dates they were last modified and opened\./, two);
+  assert.match(two, /Puts all 2 back where they were, from the Undo Vault — byte for byte, with their permissions and the dates they were last modified and opened\./, two);
   // Nothing confirmed moved, one item the Trash may have taken.
   const unsure = plainText(summarySays({ trashed: [], unverified: [{ path: MOV.path, reason: 'The Trash did not answer.' }] }));
-  assert.match(unsure, /Puts it back if the Trash has taken it, from the Time Capsule/, unsure);
+  assert.match(unsure, /Puts it back if the Trash has taken it, from the Undo Vault/, unsure);
   const unsureTwo = plainText(summarySays({ trashed: [], unverified: [{ path: MOV.path, reason: 'r' }, { path: DMG.path, reason: 'r' }] }));
-  assert.match(unsureTwo, /Puts back any of them the Trash has taken, from the Time Capsule/, unsureTwo);
+  assert.match(unsureTwo, /Puts back any of them the Trash has taken, from the Undo Vault/, unsureTwo);
 });
 
 test('the rest of the cart\'s one-item sentences agree in number: the sheet, a refused move, an open file, the undo (QA third pass D08)', async () => {
   const sheet = plainText(sheetSays({ available: true }));
-  assert.match(sheet, /It is copied into the Time Capsule and checked before anything is deleted, so it can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copy, which takes up space until then\./, sheet);
+  assert.match(sheet, /It is copied into the Undo Vault and checked before anything is deleted, so it can be undone in one click — even after you empty the Trash, until the Undo Vault removes the copy, which takes up space until then\./, sheet);
   assert.doesNotMatch(sheet, /Each one|whole batch/, sheet);
   const sheetTwo = plainText(sheetSays({ available: true }, [MOV, DMG]));
-  assert.match(sheetTwo, /Each one is copied into the Time Capsule .* so the whole batch can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copies, which take up space until then\./, sheetTwo);
+  assert.match(sheetTwo, /Each one is copied into the Undo Vault .* so the whole batch can be undone in one click — even after you empty the Trash, until the Undo Vault removes the copies, which take up space until then\./, sheetTwo);
   const open = plainText(sheetSays({ available: true }, [MOV], [MOV.path]));
   assert.match(open, /It is open in another program right now, which will stop the move\./, open);
   const openTwo = plainText(sheetSays({ available: true }, [MOV, DMG], [MOV.path]));

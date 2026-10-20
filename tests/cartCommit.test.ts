@@ -782,7 +782,7 @@ test('a cart commit stopped by a later batch never says nothing was deleted whil
 
 test('the result summary never calls a move to the Trash "recovered": the space comes back only when the Trash is emptied, and the Time Capsule\'s copy takes up space until the Time Capsule removes it (final review F1.14)', () => {
   // With the cart's own sentences about space (cartSpaceSaid, D07).
-  const src = slice('function cartCommitSummary', '/** Restore a whole committed run from the Time Capsule') + slice('function cartSpaceSaid', '/**\n * Protect');
+  const src = slice('function cartCommitSummary', '/** Restore a whole committed run from the Undo Vault') + slice('function cartSpaceSaid', '/**\n * Protect');
   const els: Record<string, { innerHTML: string; hidden: boolean; classList: { add: () => void } }> = {};
   const el = (id: string): { innerHTML: string; hidden: boolean; classList: { add: () => void } } =>
     (els[id] ??= { innerHTML: '', hidden: false, classList: { add: () => undefined } });
@@ -794,7 +794,7 @@ test('the result summary never calls a move to the Trash "recovered": the space 
   assert.doesNotMatch(text, /recovered|freed/i, `nothing is freed by a move to the Trash with a copy kept: "${text}"`);
   assert.match(text, /Moved 3 items \(5 GB\) to the Trash/, text);
   assert.match(text, /Up to that much space comes back, but only when you empty the Trash\./, text);
-  assert.match(text, /The Time Capsule also keeps a copy so you can undo this, and that copy takes up space until the Time Capsule removes it\./, text);
+  assert.match(text, /The Undo Vault also keeps a copy so you can undo this, and that copy takes up space until the Undo Vault removes it\./, text);
 });
 
 test('items the capsule could not protect are shown as left behind, never as deleted', () => {
@@ -1038,7 +1038,7 @@ test('the cart dry run threads the carry-over between batches', () => {
   assert.match(dry, /carryOver: merged\.carryOver/, 'each batch sends the previous one back');
   assert.match(dry, /merged\.carryOver = part\.carryOver/, 'and keeps what came out');
   const manifest = slice('function cartManifestHtml', 'async function cartExecuteCommit');
-  assert.match(manifest, /each counting the Time Capsule room the one before it would have used/);
+  assert.match(manifest, /each counting the Undo Vault room the one before it would have used/);
   assert.ok(!manifest.includes('may end up left in place than this says'),
     'the optimism caveat is gone, because the optimism is gone');
 });

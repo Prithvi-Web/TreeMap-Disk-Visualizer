@@ -2125,7 +2125,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .modal-foot { padding: 14px 22px 20px; display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--hairline); }
 /* A footer button keeps its label on one line; the note beside it wraps
    instead. In the Autopilot editor "Save policy" shrank to its longest word
-   beside the Time Capsule note and read "Save / policy" (QA C01, B31). */
+   beside the Undo Vault note and read "Save / policy" (QA C01, B31). */
 .modal-foot .btn { white-space: nowrap; }
 .close-x { border: none; background: var(--surface-2); width: 28px; height: 28px; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
@@ -2143,7 +2143,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .rule-row input[type="text"] { flex: 1; }
 /* A search .field (icon + box) that a rule row grows: it has to be a row
    itself, or its input keeps its intrinsic ~172 px however wide the field
-   gets — the Offloaded and Time Capsule searches read "Search by name or
+   gets — the Offloaded and Undo Vault searches read "Search by name or
    origi" inside a 420 px field (QA B01). */
 .rule-row > .field { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .rule-row > .field > input[type="text"] { flex: 1; min-width: 0; }
@@ -2764,7 +2764,7 @@ body.preview-open.cart-open:has(#sideNav.collapsed) { --tour-w: min(360px, calc(
   background: var(--warn-soft); border: 1px solid var(--warn-line); font-size: 12.5px; line-height: 1.5; color: var(--text-1); }
 .app-part-warn .ic { color: var(--warn); flex: none; margin-top: 2px; }
 
-/* ── Time Capsule (B3) ── */
+/* ── Undo Vault (B3) ── */
 /* v4 §7.2 — the calendar heatmap. Levels are opacity steps of one hue so the
    scale reads in both themes; an absent day keeps the bare surface colour —
    visually distinct from level 1, because "nothing counted" is not "a little". */
@@ -2947,7 +2947,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   max-width: max(240px, calc(100% - 402px)); }
 /* In that narrow strip the whole message ran to twelve lines at 1024 and took
    the map down to about 245 px (sixth browser pass H52). Its second half —
-   when the space comes back, and the Time Capsule's copy — is what the open
+   when the space comes back, and the Undo Vault's copy — is what the open
    cart's footer says right beside it, so the banner leaves it to the cart. */
 body.cart-open .tm-preview-banner .tm-pv-cart-said { display: none; }
 .tm-preview-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
@@ -3949,7 +3949,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
     <button role="tab" aria-selected="false" data-view="trends" title="Trends"><span data-icon="trendUp"></span><span class="side-label">Trends</span></button>
     <button role="tab" aria-selected="false" data-view="history" title="History"><span data-icon="calendar"></span><span class="side-label">History</span></button>
     <button role="tab" aria-selected="false" data-view="offloaded" title="Offloaded"><span data-icon="archive"></span><span class="side-label">Offloaded</span></button>
-    <button role="tab" aria-selected="false" data-view="capsule" title="Time Capsule"><span data-icon="clock"></span><span class="side-label">Time Capsule</span></button>
+    <button role="tab" aria-selected="false" data-view="capsule" title="Undo Vault"><span data-icon="clock"></span><span class="side-label">Undo Vault</span></button>
     <button role="tab" aria-selected="false" data-view="autopilot" title="Autopilot"><span data-icon="autopilot"></span><span class="side-label">Autopilot</span></button>
   </nav>
 
@@ -4725,13 +4725,13 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
   </div>
   </section>
 
-  <!-- ═══════════ Time Capsule (B3) ═══════════ -->
-  <section class="view" id="view-capsule" role="tabpanel" aria-label="Time Capsule" hidden>
+  <!-- ═══════════ Undo Vault (B3) ═══════════ -->
+  <section class="view" id="view-capsule" role="tabpanel" aria-label="Undo Vault" hidden>
     <div class="card glass">
-      <h2><span data-icon="clock"></span>Time Capsule</h2>
+      <h2><span data-icon="clock"></span>Undo Vault</h2>
       <div class="apps-info muted" id="capsuleInfo"></div>
       <div class="capsule-gauge" id="capsuleGauge" hidden>
-        <div class="cap-gauge-wrap"><canvas id="capsuleGaugeCanvas" aria-label="Time Capsule space used against its cap" role="img"></canvas></div>
+        <div class="cap-gauge-wrap"><canvas id="capsuleGaugeCanvas" aria-label="Undo Vault space used against its cap" role="img"></canvas></div>
         <div class="muted num" id="capsuleGaugeText"></div>
       </div>
       <!-- Hidden while the summary line above is empty, i.e. while there is
@@ -4855,7 +4855,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <div id="apPreview"></div>
       </div>
       <div class="modal-foot">
-        <span class="muted" style="font-size:11.5px;">Anything deleted is copied to the Time Capsule first, and can be undone until the Time Capsule removes the copy.</span>
+        <span class="muted" style="font-size:11.5px;">Anything deleted is copied to the Undo Vault first, and can be undone until the Undo Vault removes the copy.</span>
         <div style="flex:1"></div>
         <button class="btn" id="apPreviewBtn"><span data-icon="search"></span>Preview</button>
         <button class="btn btn-primary" id="apSaveBtn">Save policy</button>
@@ -5302,16 +5302,16 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <span class="muted">minutes without disk activity</span>
       </div>
 
-      <div class="set-h" style="margin-top:22px;"><span data-icon="clock"></span>Time Capsule</div>
+      <div class="set-h" style="margin-top:22px;"><span data-icon="clock"></span>Undo Vault</div>
       <div class="muted" style="margin-bottom:10px;">Everything <b>Autopilot</b> or the <b>cleanup cart</b> moves to the Trash is copied here first and checked — so you can undo it even after emptying the Trash, until the copy expires or is dropped to make room (the two settings below). Files you move to the Trash any other way (right-click, the Grid, Duplicates, Clean Up) go to the Trash only and aren't copied.</div>
       <div class="rule-row">
         <span data-icon="clock"></span><label for="capsuleRetentionDays">Keep copies for</label>
-        <input type="number" id="capsuleRetentionDays" min="1" max="365" value="30" aria-label="How many days to keep Time Capsule copies">
+        <input type="number" id="capsuleRetentionDays" min="1" max="365" value="30" aria-label="How many days to keep Undo Vault copies">
         <span class="muted">days</span>
       </div>
       <div class="rule-row" style="margin-top:8px;">
         <span data-icon="gauge"></span><label for="capsuleMaxPercent">Never use more than</label>
-        <input type="number" id="capsuleMaxPercent" min="1" max="90" value="10" aria-label="Time Capsule size cap as a percentage of disk space">
+        <input type="number" id="capsuleMaxPercent" min="1" max="90" value="10" aria-label="Undo Vault size cap as a percentage of disk space">
         <span class="muted">% of this disk — oldest copies go first, and anything too big to fit is left undeleted rather than deleted unprotected</span>
       </div>
 
@@ -7473,7 +7473,7 @@ const state = {
   games: { loadedFor: null, report: null }, media: { loadedFor: null, report: null },
   security: { loadedFor: null, report: null },
   cost: null,
-  capsuleOff: false, // a portable session that saves nothing: the Time Capsule keeps no copy (D07)
+  capsuleOff: false, // a portable session that saves nothing: the Undo Vault keeps no copy (D07)
   fleet: { data: null, timer: 0 },
   live: { on: false, wanted: false, es: null, engine: '', idleMinutes: 10, pulses: new Map(), window: [], dirty: 0, feedTimer: 0, relayoutTimer: 0, pulseRaf: 0 },
   offload: { index: null, q: '' },
@@ -26071,7 +26071,7 @@ async function runRestoreJob(ids) {
 /**
  * Drive the shared progress modal from any copy-and-verify job's SSE stream.
  *
- * Offload and Time Capsule restore are the same shape — phases, per-file
+ * Offload and Undo Vault restore are the same shape — phases, per-file
  * progress, cooperative cancel, rollback — so they share one implementation
  * and one dialog rather than each rendering its own (§3.4). Only the URLs and
  * the wording differ, which is what `opts` carries.
@@ -26242,7 +26242,7 @@ $('offloadSearch').addEventListener('input', () => {
   renderOffloadIndex();
 });
 
-/* ───────────────────────────── Time Capsule tab (B3) ─────────────────────────────
+/* ───────────────────────────── Undo Vault tab (B3) ─────────────────────────────
    Structurally the Offloaded tab: a searchable index of things TreeMap moved
    somewhere safe, grouped by the run that moved them, each restorable.
 
@@ -26275,7 +26275,7 @@ async function loadCapsule() {
   // the list gets skeleton rows only when empty, and a standing gauge is
   // swept by the veil instead of vanishing.
   if (!host.querySelector('.cap-item') && !state.capsule.index) {
-    host.innerHTML = skeletonRows(4, 38, 'Reading the Time Capsule…');
+    host.innerHTML = skeletonRows(4, 38, 'Reading the Undo Vault…');
   }
   if (!gaugeEl.hidden) gaugeEl.classList.add('fx-chart-loading');
   try {
@@ -26285,7 +26285,7 @@ async function loadCapsule() {
     gaugeEl.classList.remove('fx-chart-loading');
     state.capsule.index = null;
     host.innerHTML =
-      `<div class="muted">Couldn’t read the Time Capsule: ${escapeHtml(e.message)}</div>` +
+      `<div class="muted">Couldn’t read the Undo Vault: ${escapeHtml(e.message)}</div>` +
       `<button class="pill" id="capsuleRetry" style="margin-top:8px;">Try again</button>`;
     capsuleGaugeHide();
     $('capsuleInfo').textContent = '';
@@ -26309,7 +26309,7 @@ function renderCapsule() {
     $('capsuleInfo').textContent = '';
     host.innerHTML =
       `<div class="muted" style="display:flex;gap:8px;align-items:flex-start;padding:4px 2px;">${icon('alert', 14)}` +
-      `<span style="line-height:1.5;">${escapeHtml(idx.status.reason || 'The Time Capsule isn’t available on this computer.')}</span></div>`;
+      `<span style="line-height:1.5;">${escapeHtml(idx.status.reason || 'The Undo Vault isn’t available on this computer.')}</span></div>`;
     renderCapsuleEvents(idx.events);
     return;
   }
@@ -26344,7 +26344,7 @@ function renderCapsule() {
     $('capsuleInfo').textContent = '';
     host.innerHTML =
       `<div class="muted" style="line-height:1.6;">Nothing here yet — and that’s the normal state.<br>` +
-      `The Time Capsule keeps a checked copy of everything <b>Autopilot</b> or the <b>cleanup cart</b> moves to the Trash, ` +
+      `The Undo Vault keeps a checked copy of everything <b>Autopilot</b> or the <b>cleanup cart</b> moves to the Trash, ` +
       `so you can undo it even after emptying the Trash, until the copy expires or is dropped to make room. Files you move to the Trash any other way (right-click, the Grid, ` +
       `Duplicates, Clean Up) go to the Trash only and aren’t copied here.</div>`;
     renderCapsuleEvents(idx.events);
@@ -26435,7 +26435,7 @@ function renderCapsuleEvents(events) {
   const host = $('capsuleEvents');
   capsuleEventsDrop(); // the rewrite below would strand a live handle
   if (!events || !events.length) { host.innerHTML = ''; return; }
-  host.innerHTML = `<h3>What the Time Capsule couldn’t keep</h3><div id="capsuleEventsList"></div>`;
+  host.innerHTML = `<h3>What the Undo Vault couldn’t keep</h3><div id="capsuleEventsList"></div>`;
   // Concatenation, not template interpolation of the event name: it only
   // ever reaches barList's textContent (a safe sink), and the XSS scan is
   // anchored on name interpolations near innerHTML — plain strings state
@@ -26478,7 +26478,7 @@ function restoreFromCapsule(id) {
         cancelUrl: `/api/timecapsule/jobs/${resp.jobId}/cancel`,
         footNote: 'Every byte is checked against the fingerprint taken when it was protected.',
         cancelledMessage: 'Restore cancelled — nothing was left half-written',
-        lostMessage: 'Lost the progress stream — reopen the Time Capsule tab for the result',
+        lostMessage: 'Lost the progress stream — reopen the Undo Vault tab for the result',
         // A restore that could not set a date or a permission back finishes with a warning, which the
         // dialog shows: no green "verified" beside it (FG3g L9), as the offload restore already does.
         onComplete: (ev) => {
@@ -26860,7 +26860,7 @@ function journalOpen(entry) {
 
 registerView({
   id: 'capsule',
-  label: 'Time Capsule',
+  label: 'Undo Vault',
   icon: 'clock',
   // Reads persisted history, exactly like Trends/Compare/Offloaded, so it is
   // useful with no scan loaded and never shows the empty-state screen.
@@ -29483,7 +29483,7 @@ function renderAutopilot() {
       `<div class="muted" style="line-height:1.6;">No policies yet. A policy is a standing instruction — ` +
       `"clear old build folders in my Projects folder", say — that TreeMap carries out on its own.<br>` +
       `<b>Nothing is ever deleted on the first run:</b> you always see exactly what it matched and approve it first, ` +
-      `and everything it removes is copied to the Time Capsule so you can undo it, until the Time Capsule removes the copy.</div>`;
+      `and everything it removes is copied to the Undo Vault so you can undo it, until the Undo Vault removes the copy.</div>`;
   } else {
     const live = policies.filter(p => p.enabled && p.approvedAt && !p.dryRunFirst).length;
     $('apInfo').innerHTML =
@@ -29720,7 +29720,7 @@ function approveAutopilotRun(runId) {
         : '')
     : `<b>${escapeHtml(policy.name)}</b>'s next run will remove what it matches ${scope}, up to <b>${formatBytes(run.bytesMatched)}</b>, once. ` +
       `A later run that matches more than ${formatBytes(policy.requireConfirmationAbove || 0)} asks again.`) +
-    `<br><span style="color:var(--text-3)">Everything it removes is copied to the Time Capsule first, and a run can be undone from here until the Time Capsule removes its copies.</span>`;
+    `<br><span style="color:var(--text-3)">Everything it removes is copied to the Undo Vault first, and a run can be undone from here until the Undo Vault removes its copies.</span>`;
   setConfirmButton('Approve', 'check');
   $('confirmModal').classList.add('open');
 }
@@ -31167,7 +31167,7 @@ const CMDK_SETTINGS_SECTIONS = [
   { name: 'Drives mounted inside a folder', hint: 'mount, mounted, disk image, simulator, stay on this drive, include' },
   { name: 'Disk-full forecast', hint: 'warning, days, projection' },
   { name: 'Live activity', hint: 'watch, auto-pause' },
-  { name: 'Time Capsule', hint: 'retention, undo copies' },
+  { name: 'Undo Vault', hint: 'retention, undo copies' },
   { name: 'Reclaim Score', hint: 'weights, sliders, signals' },
   { name: 'Cleanup target', hint: 'goal, free up, meter' },
   { name: 'Human-scale sizes', hint: 'photo equivalents, tooltips' },
@@ -31450,7 +31450,7 @@ function tourRender(takeFocus = true) {
     // what to scan — the home folder among its choices — and holds the one
     // primary action, "Choose a folder…" (G03; the owner, 17 Oct 2026): the
     // card offers none of it again, and narrates. Where the start screen is
-    // not on screen — Offloaded, Time Capsule, Autopilot, Fleet — the card is
+    // not on screen — Offloaded, Undo Vault, Autopilot, Fleet — the card is
     // the one prompt, so it offers the folder browser and the home folder
     // itself, neither one blue (review F1.2); a change of view repaints it
     // (tourFollowView).
@@ -31536,7 +31536,7 @@ function tourRender(takeFocus = true) {
       ${head('The cart · step 4 of 4', false)}
       <h4>${icon('cart', 16)}Staged — deleted only when you say so</h4>
       <p>${where}
-        Committing the cart runs a preview first, protects files in the Time Capsule, and a run can be undone in one click until the Time Capsule removes its copies.</p>
+        Committing the cart runs a preview first, protects files in the Undo Vault, and a run can be undone in one click until the Undo Vault removes its copies.</p>
       <div class="tour-row"><button class="btn btn-primary" data-tour-done>Finish</button></div>`;
     host.querySelector('[data-tour-done]').addEventListener('click', () => { void tourFinish('Tour complete — the map is yours'); });
   }
@@ -32022,7 +32022,7 @@ async function renderCart() {
   // What a move to the Trash frees, said as the summary says it after the
   // commit (cartSpaceSaid, D07): nothing until the Trash is emptied, then at
   // most the size the files report — a sparse or shared file frees less —
-  // and the Time Capsule's copy takes space of its own (D54, B29).
+  // and the Undo Vault's copy takes space of its own (D54, B29).
   FxNum.rollHtml($('cartFootTotal'), allUnknown
     ? `${formatCount(n)} item${n === 1 ? '' : 's'} not in this scan — size unknown`
     : `<b>${formatBytes(total)}</b> staged for the Trash` +
@@ -32058,7 +32058,7 @@ async function renderCart() {
 
      1. a dry run FIRST, always, showing the exact manifest — every path, its
         bytes, and any refusals with their reasons;
-     2. the commit routed through the Time Capsule, so the whole batch is one
+     2. the commit routed through the Undo Vault, so the whole batch is one
         undoable run — and anything too large to protect is left UNDELETED
         rather than deleted unprotected, with the reason in the manifest;
      3. one result summary with a one-click Undo this run;
@@ -32204,15 +32204,15 @@ function cartManifestHtml(plan, missingFromScan) {
 
   const capsuleOff = !!(plan.capsule && plan.capsule.available === false);
   if (capsuleOff) {
-    html += `<div class="cart-mf-note">${escapeHtml(plan.capsule.reason || 'The Time Capsule is unavailable.')}</div>`;
+    html += `<div class="cart-mf-note">${escapeHtml(plan.capsule.reason || 'The Undo Vault is unavailable.')}</div>`;
   } else if (going.length) {
     // One item is "it", not "each one" of a "batch" (D08). The copy is named
     // once, here, with the space it takes (D07): the space sentence below
-    // used to name it again — "The Time Capsule also keeps a copy …" right
-    // after "It is copied into the Time Capsule" (QA fourth pass E14b).
+    // used to name it again — "The Undo Vault also keeps a copy …" right
+    // after "It is copied into the Undo Vault" (QA fourth pass E14b).
     html += going.length === 1
-      ? `<div class="cart-mf-note">It is copied into the <b>Time Capsule</b> and checked before anything is deleted, so it can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copy, which takes up space until then.</div>`
-      : `<div class="cart-mf-note">Each one is copied into the <b>Time Capsule</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copies, which take up space until then.</div>`;
+      ? `<div class="cart-mf-note">It is copied into the <b>Undo Vault</b> and checked before anything is deleted, so it can be undone in one click — even after you empty the Trash, until the Undo Vault removes the copy, which takes up space until then.</div>`
+      : `<div class="cart-mf-note">Each one is copied into the <b>Undo Vault</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash, until the Undo Vault removes the copies, which take up space until then.</div>`;
   }
   // The sheet the person decides on says what the summary will after it (D07);
   // its copy and the space that takes are said in the note above.
@@ -32225,14 +32225,14 @@ function cartManifestHtml(plan, missingFromScan) {
       `</div>`;
   }
   if (plan.evicts && plan.evicts.length) {
-    html += `<div class="cart-mf-note">${formatCount(plan.evicts.length)} older Time Capsule ${plan.evicts.length === 1 ? 'copy' : 'copies'} will be dropped to make room, and can no longer be restored from there.</div>`;
+    html += `<div class="cart-mf-note">${formatCount(plan.evicts.length)} older Undo Vault ${plan.evicts.length === 1 ? 'copy' : 'copies'} will be dropped to make room, and can no longer be restored from there.</div>`;
   }
   if (plan.batches > 1) {
     // Each batch carries the capsule state the previous one would have left,
     // so the arithmetic is cumulative and this figure is not optimistic. The
     // batch count is still worth saying — it explains the pause — but it is no
     // longer a caveat about accuracy.
-    html += `<div class="cart-mf-note">Checked in ${formatCount(plan.batches)} batches, each counting the Time Capsule room the one before it would have used.</div>`;
+    html += `<div class="cart-mf-note">Checked in ${formatCount(plan.batches)} batches, each counting the Undo Vault room the one before it would have used.</div>`;
   }
   const oh = plan.openHandles;
   const conflicts = (oh && oh.conflicts) || [];
@@ -32262,7 +32262,7 @@ function cartManifestHtml(plan, missingFromScan) {
  * says it with (QA third pass D07): the footer, the Preview banner and the
  * confirm sheet before the commit, the summary after it. Only the summary
  * used to say either: the footer promised the space back "when you empty
- * the Trash" and nothing before the decision said the Time Capsule's copy —
+ * the Trash" and nothing before the decision said the Undo Vault's copy —
  * room the dry run already reserves in the capsule — takes space of its
  * own. `capsule` is false where no copy is kept: a portable session that
  * saves nothing (state.capsuleOff), a dry run or a commit that found the
@@ -32270,7 +32270,7 @@ function cartManifestHtml(plan, missingFromScan) {
  */
 function cartSpaceSaid(capsule = !state.capsuleOff) {
   return 'Up to that much space comes back, but only when you empty the Trash.' +
-    (capsule ? ' The Time Capsule also keeps a copy so you can undo this, and that copy takes up space until the Time Capsule removes it.' : '');
+    (capsule ? ' The Undo Vault also keeps a copy so you can undo this, and that copy takes up space until the Undo Vault removes it.' : '');
 }
 
 /**
@@ -32373,11 +32373,11 @@ function cartCommitSummary(result) {
   // The Trash reported failing, and the disk could not show either way: their copies were kept.
   const unverified = result.unverified || [];
 
-  // Moved, not recovered (B29): the Trash still holds them, and the Time
-  // Capsule keeps a copy of each for the undo below.
+  // Moved, not recovered (B29): the Trash still holds them, and the Undo
+  // Vault keeps a copy of each for the undo below.
   let html = trashed.length
     // Nothing is freed yet (final review F1.14): the originals are in the Trash and a whole copy of
-    // each was just written to the Time Capsule, which keeps it after the Trash is emptied, until the
+    // each was just written to the Undo Vault, which keeps it after the Trash is emptied, until the
     // copy expires or is dropped to make room: until then the copy takes space of its own.
     ? `Moved <b>${formatCount(trashed.length)}</b> item${trashed.length === 1 ? '' : 's'} (<b>${escapeHtml(formatBytes(result.bytesFreed || 0))}</b>) to the Trash. ` +
       cartSpaceSaid(!result.capsuleUnavailable)
@@ -32414,7 +32414,7 @@ function cartCommitSummary(result) {
       `${icon('refresh', 14)}Undo this run</button>` +
       `<span class="muted">${trashed.length
         ? (one ? 'Puts it back where it was' : `Puts all ${formatCount(trashed.length)} back where they were`)
-        : (one ? 'Puts it back if the Trash has taken it' : 'Puts back any of them the Trash has taken')}, from the Time Capsule — ` +
+        : (one ? 'Puts it back if the Trash has taken it' : 'Puts back any of them the Trash has taken')}, from the Undo Vault — ` +
       (one
         ? 'byte for byte, with its permissions and the dates it was last modified and opened.'
         : 'byte for byte, with their permissions and the dates they were last modified and opened.') + `</span></div>`;
@@ -32432,7 +32432,7 @@ function cartCommitSummary(result) {
   $('confirmModal').classList.add('open');
 }
 
-/** Restore a whole committed run from the Time Capsule (§4.4 step 3). */
+/** Restore a whole committed run from the Undo Vault (§4.4 step 3). */
 async function cartUndoRun(runId) {
   let job;
   try {
@@ -32455,10 +32455,10 @@ async function cartUndoRun(runId) {
     cancelUrl: `/api/timecapsule/jobs/${encodeURIComponent(job.jobId)}/cancel`,
     footNote: 'Every byte is checked against the fingerprint taken when it was protected.',
     cancelledMessage: 'Undo cancelled — nothing was left half-written',
-    lostMessage: 'Lost the progress stream — reopen the Time Capsule tab for the result',
+    lostMessage: 'Lost the progress stream — reopen the Undo Vault tab for the result',
     onComplete: (ev) => {
       // Each copy it passed over (an unconfirmed item whose place is not empty) is named with what
-      // the disk showed of it (FG3c, FG3d #7). The copy stays in the Time Capsule, whose tab restores
+      // the disk showed of it (FG3c, FG3d #7). The copy stays in the Undo Vault, whose tab restores
       // it once its place is empty: the summary that held this Undo closed when the undo began.
       // And each item whose copy is gone, which no undo can put back (FG3f #3): then not everything
       // from that run is back.
@@ -36782,7 +36782,7 @@ let cleanPane = 'rules';
 /**
  * Where what Clean Up removes goes, said for the scan the sheet opens on
  * (QA third pass D06; review F1.4). A local scan's go to the system Trash
- * through DELETE /api/files, which keeps no Time Capsule copy, so they come
+ * through DELETE /api/files, which keeps no Undo Vault copy, so they come
  * back only until the Trash is emptied; Shrink Video's original follows a
  * lossy re-encode there. A cloud account's go to that provider's own trash
  * (confirmTrash, cloudTrashPaths), which the provider empties after the time
@@ -36790,10 +36790,10 @@ let cleanPane = 'rules';
  */
 function cleanUpWhereItGoes() {
   if (isCloudScan()) {
-    return `Nothing is removed until you confirm. What Clean Up removes goes to ${cloudProviderOfScan().trashLabel} and is not copied to the Time Capsule, `
+    return `Nothing is removed until you confirm. What Clean Up removes goes to ${cloudProviderOfScan().trashLabel} and is not copied to the Undo Vault, `
       + 'so it can be put back only until that trash is emptied — by you, or by the provider after the time it keeps deleted files.';
   }
-  return 'Nothing is removed until you confirm. What Clean Up removes goes to the system Trash and is not copied to the Time Capsule, '
+  return 'Nothing is removed until you confirm. What Clean Up removes goes to the system Trash and is not copied to the Undo Vault, '
     + 'so it can be put back only until the Trash is emptied. Shrink Video’s re-encode loses a little quality for good, and the original then goes to the Trash too.';
 }
 
@@ -37608,7 +37608,7 @@ async function loadSmartSuggestions() {
    The rails are worth naming, because §4.5 is explicit that none of them may
    be weakened, bypassed or special-cased for this path: the first run of any
    new policy is always a preview a human approves; per-run and rolling-weekly
-   byte caps; a cooldown; "ask me first above N GB"; and the Time Capsule on
+   byte caps; a cooldown; "ask me first above N GB"; and the Undo Vault on
    everything. Promotion opens the *existing* editor pre-filled and saves
    through the *existing* endpoint, so it inherits all of them by construction
    rather than by remembering to re-apply them. `tests/queryToPolicy.test.ts`
@@ -38785,7 +38785,7 @@ let portableInfo = null;
 async function loadPortableMode() {
   try { portableInfo = await api('/api/platform/portable'); } catch { return; }
   if (!portableInfo.portable) return;
-  // It saves nothing, so the Time Capsule keeps no copy (timeCapsule's isEphemeral), and the cart must not say it does (D07).
+  // It saves nothing, so the Undo Vault keeps no copy (timeCapsule's isEphemeral), and the cart must not say it does (D07).
   if (!portableInfo.writable) { state.capsuleOff = true; void renderCart(); }
   document.body.classList.add('is-portable');
   renderPortableScreen();

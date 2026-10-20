@@ -289,7 +289,7 @@ let portableInfo = null;
 async function loadPortableMode() {
   try { portableInfo = await api('/api/platform/portable'); } catch { return; }
   if (!portableInfo.portable) return;
-  // It saves nothing, so the Time Capsule keeps no copy (timeCapsule's isEphemeral), and the cart must not say it does (D07).
+  // It saves nothing, so the Undo Vault keeps no copy (timeCapsule's isEphemeral), and the cart must not say it does (D07).
   if (!portableInfo.writable) { state.capsuleOff = true; void renderCart(); }
   document.body.classList.add('is-portable');
   renderPortableScreen();

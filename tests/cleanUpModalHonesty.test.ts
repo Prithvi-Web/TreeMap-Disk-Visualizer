@@ -1128,7 +1128,7 @@ test('the Clean Up sheet says where its removals go: the Trash, until it is empt
   assert.match(said, /Nothing is removed until you confirm/, said);
   assert.match(said, /system Trash/, said);
   assert.match(said, /until the Trash is emptied/, `the way back ends when the Trash is emptied: ${said}`);
-  assert.match(said, /not copied to the Time Capsule/, `and no capsule copy outlives it: ${said}`);
+  assert.match(said, /not copied to the Undo Vault/, `and no capsule copy outlives it: ${said}`);
   assert.match(said, /Shrink Video/, said);
   assert.match(said, /quality/, `the re-encode loses quality for good: ${said}`);
   // What the sentence says of Clean Up is what Clean Up does: its moves are trashPaths, never the cart commit.
@@ -1144,7 +1144,7 @@ test('on a cloud account\'s scan the Clean Up sheet says its removals go to that
   assert.doesNotMatch(said, /system Trash/, `a cloud scan's removals never reach the system Trash: ${said}`);
   assert.match(said, /Nothing is removed until you confirm/, said);
   assert.match(said, /goes to Google Drive trash\b/, `it names where they do go: ${said}`);
-  assert.match(said, /not copied to the Time Capsule/, said);
+  assert.match(said, /not copied to the Undo Vault/, said);
   assert.match(said, /until that trash is emptied — by you, or by the provider after the time it keeps deleted files/, `and when that way back ends: ${said}`);
   assert.doesNotMatch(said, /any ?time|Shrink Video/i, `nothing a cloud scan cannot do: ${said}`);
   // The same page, a local scan next: the sheet says the local thing again.
@@ -1167,7 +1167,7 @@ test('no sentence on any page promises a way back "any time", and every promise 
     assert.doesNotMatch(s, /any ?time|forever|always/i, `a way back with no end is promised: "${s}"`);
     if (/even after (you )?empty(ing)? the Trash/i.test(s)) assert.match(s, /\buntil\b/, `"even after emptying the Trash" says until when: "${s}"`);
     // An undo from the Time Capsule lasts as long as its copy: retention and the size cap let copies go.
-    if (/Time Capsule/.test(s) && /can be undone|you can undo|undo (it|this|them)\b/i.test(s)) assert.match(s, /\buntil\b/, `an undo from the Time Capsule says until when: "${s}"`);
+    if (/Undo Vault/.test(s) && /can be undone|you can undo|undo (it|this|them)\b/i.test(s)) assert.match(s, /\buntil\b/, `an undo from the Undo Vault says until when: "${s}"`);
   }
 });
 

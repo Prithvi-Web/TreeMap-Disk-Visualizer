@@ -928,19 +928,20 @@ function bannerBesideCart(spaceSaid: string): { lines: number; height: number; t
 }
 
 test('in "Preview after" at 1024 px with the cart open, the banner keeps to a few lines and the map keeps a usable height — the sentence the open cart says beside it is not said twice (sixth browser pass H52b)', () => {
-  const said = 'Up to that much space comes back, but only when you empty the Trash. The Time Capsule also keeps a copy so you can undo this, and that copy takes up space until the Time Capsule removes it.';
+  const said = 'Up to that much space comes back, but only when you empty the Trash. The Undo Vault also keeps a copy so you can undo this, and that copy takes up space until the Undo Vault removes it.';
   // The premise: the open cart's footer already says this (cartFootTotal ends with cartSpaceSaid()).
   assert.match(pageBetween('function renderCart(', 'function cartSpaceSaid('), /cartFootTotal[\s\S]*?cartSpaceSaid\(\)/, 'the open cart says when its space comes back');
   const b = bannerBesideCart(said);
-  assert.doesNotMatch(b.text, /comes back|Time Capsule/, 'beside the open cart the banner does not say it again');
+  assert.doesNotMatch(b.text, /comes back|Undo Vault/, 'beside the open cart the banner does not say it again');
   assert.match(b.text, /^Preview — nothing has been deleted\. The hatched areas are the 3\.2 GB this cart stages for the Trash\.$/, 'and still says what the preview is');
   assert.ok(b.lines <= 5, `the banner takes ${b.lines} lines (QA: 12)`);
   // QA's scene (B/shots/062): 1024×768, the map's card starting at about y 100, a one-line key and status.
   const m = mapWithCart(768, 100, 40, b.height + 2 * 10);
   assert.ok(m.height >= 330, `the map keeps ${m.height} px under a ${b.height.toFixed(0)} px banner (QA: about 245)`);
   // Control: the whole text, as it was, on the same column, is the banner QA saw — about 12 lines,
-  // and about 245 px of map.
-  const whole = `Preview — nothing has been deleted. The hatched areas are the 3.2 GB this cart stages for the Trash. ${said}`;
+  // and about 245 px of map. QA saw it before the rename (20 Oct 2026), under the old name.
+  const saidThen = said.replaceAll('Undo Vault', 'Time Capsule');
+  const whole = `Preview — nothing has been deleted. The hatched areas are the 3.2 GB this cart stages for the Trash. ${saidThen}`;
   const wholeLines = Math.ceil(whole.length / b.perLine);
   assert.ok(wholeLines >= 10 && wholeLines <= 14, `control: the old banner measures ${wholeLines} lines here, as QA's 12`);
   const before = mapWithCart(768, 100, 40, b.heightFor(wholeLines) + 2 * 10);

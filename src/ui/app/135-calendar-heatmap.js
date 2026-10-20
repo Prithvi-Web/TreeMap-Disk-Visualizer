@@ -336,7 +336,7 @@ function journalOpen(entry) {
 
 registerView({
   id: 'capsule',
-  label: 'Time Capsule',
+  label: 'Undo Vault',
   icon: 'clock',
   // Reads persisted history, exactly like Trends/Compare/Offloaded, so it is
   // useful with no scan loaded and never shows the empty-state screen.

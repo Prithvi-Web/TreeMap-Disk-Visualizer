@@ -244,7 +244,7 @@ async function renderCart() {
   // What a move to the Trash frees, said as the summary says it after the
   // commit (cartSpaceSaid, D07): nothing until the Trash is emptied, then at
   // most the size the files report — a sparse or shared file frees less —
-  // and the Time Capsule's copy takes space of its own (D54, B29).
+  // and the Undo Vault's copy takes space of its own (D54, B29).
   FxNum.rollHtml($('cartFootTotal'), allUnknown
     ? `${formatCount(n)} item${n === 1 ? '' : 's'} not in this scan — size unknown`
     : `<b>${formatBytes(total)}</b> staged for the Trash` +
@@ -280,7 +280,7 @@ async function renderCart() {
 
      1. a dry run FIRST, always, showing the exact manifest — every path, its
         bytes, and any refusals with their reasons;
-     2. the commit routed through the Time Capsule, so the whole batch is one
+     2. the commit routed through the Undo Vault, so the whole batch is one
         undoable run — and anything too large to protect is left UNDELETED
         rather than deleted unprotected, with the reason in the manifest;
      3. one result summary with a one-click Undo this run;
@@ -426,15 +426,15 @@ function cartManifestHtml(plan, missingFromScan) {
 
   const capsuleOff = !!(plan.capsule && plan.capsule.available === false);
   if (capsuleOff) {
-    html += `<div class="cart-mf-note">${escapeHtml(plan.capsule.reason || 'The Time Capsule is unavailable.')}</div>`;
+    html += `<div class="cart-mf-note">${escapeHtml(plan.capsule.reason || 'The Undo Vault is unavailable.')}</div>`;
   } else if (going.length) {
     // One item is "it", not "each one" of a "batch" (D08). The copy is named
     // once, here, with the space it takes (D07): the space sentence below
-    // used to name it again — "The Time Capsule also keeps a copy …" right
-    // after "It is copied into the Time Capsule" (QA fourth pass E14b).
+    // used to name it again — "The Undo Vault also keeps a copy …" right
+    // after "It is copied into the Undo Vault" (QA fourth pass E14b).
     html += going.length === 1
-      ? `<div class="cart-mf-note">It is copied into the <b>Time Capsule</b> and checked before anything is deleted, so it can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copy, which takes up space until then.</div>`
-      : `<div class="cart-mf-note">Each one is copied into the <b>Time Capsule</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copies, which take up space until then.</div>`;
+      ? `<div class="cart-mf-note">It is copied into the <b>Undo Vault</b> and checked before anything is deleted, so it can be undone in one click — even after you empty the Trash, until the Undo Vault removes the copy, which takes up space until then.</div>`
+      : `<div class="cart-mf-note">Each one is copied into the <b>Undo Vault</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash, until the Undo Vault removes the copies, which take up space until then.</div>`;
   }
   // The sheet the person decides on says what the summary will after it (D07);
   // its copy and the space that takes are said in the note above.
@@ -447,14 +447,14 @@ function cartManifestHtml(plan, missingFromScan) {
       `</div>`;
   }
   if (plan.evicts && plan.evicts.length) {
-    html += `<div class="cart-mf-note">${formatCount(plan.evicts.length)} older Time Capsule ${plan.evicts.length === 1 ? 'copy' : 'copies'} will be dropped to make room, and can no longer be restored from there.</div>`;
+    html += `<div class="cart-mf-note">${formatCount(plan.evicts.length)} older Undo Vault ${plan.evicts.length === 1 ? 'copy' : 'copies'} will be dropped to make room, and can no longer be restored from there.</div>`;
   }
   if (plan.batches > 1) {
     // Each batch carries the capsule state the previous one would have left,
     // so the arithmetic is cumulative and this figure is not optimistic. The
     // batch count is still worth saying — it explains the pause — but it is no
     // longer a caveat about accuracy.
-    html += `<div class="cart-mf-note">Checked in ${formatCount(plan.batches)} batches, each counting the Time Capsule room the one before it would have used.</div>`;
+    html += `<div class="cart-mf-note">Checked in ${formatCount(plan.batches)} batches, each counting the Undo Vault room the one before it would have used.</div>`;
   }
   const oh = plan.openHandles;
   const conflicts = (oh && oh.conflicts) || [];
@@ -484,7 +484,7 @@ function cartManifestHtml(plan, missingFromScan) {
  * says it with (QA third pass D07): the footer, the Preview banner and the
  * confirm sheet before the commit, the summary after it. Only the summary
  * used to say either: the footer promised the space back "when you empty
- * the Trash" and nothing before the decision said the Time Capsule's copy —
+ * the Trash" and nothing before the decision said the Undo Vault's copy —
  * room the dry run already reserves in the capsule — takes space of its
  * own. `capsule` is false where no copy is kept: a portable session that
  * saves nothing (state.capsuleOff), a dry run or a commit that found the
@@ -492,7 +492,7 @@ function cartManifestHtml(plan, missingFromScan) {
  */
 function cartSpaceSaid(capsule = !state.capsuleOff) {
   return 'Up to that much space comes back, but only when you empty the Trash.' +
-    (capsule ? ' The Time Capsule also keeps a copy so you can undo this, and that copy takes up space until the Time Capsule removes it.' : '');
+    (capsule ? ' The Undo Vault also keeps a copy so you can undo this, and that copy takes up space until the Undo Vault removes it.' : '');
 }
 
 /**
@@ -595,11 +595,11 @@ function cartCommitSummary(result) {
   // The Trash reported failing, and the disk could not show either way: their copies were kept.
   const unverified = result.unverified || [];
 
-  // Moved, not recovered (B29): the Trash still holds them, and the Time
-  // Capsule keeps a copy of each for the undo below.
+  // Moved, not recovered (B29): the Trash still holds them, and the Undo
+  // Vault keeps a copy of each for the undo below.
   let html = trashed.length
     // Nothing is freed yet (final review F1.14): the originals are in the Trash and a whole copy of
-    // each was just written to the Time Capsule, which keeps it after the Trash is emptied, until the
+    // each was just written to the Undo Vault, which keeps it after the Trash is emptied, until the
     // copy expires or is dropped to make room: until then the copy takes space of its own.
     ? `Moved <b>${formatCount(trashed.length)}</b> item${trashed.length === 1 ? '' : 's'} (<b>${escapeHtml(formatBytes(result.bytesFreed || 0))}</b>) to the Trash. ` +
       cartSpaceSaid(!result.capsuleUnavailable)
@@ -636,7 +636,7 @@ function cartCommitSummary(result) {
       `${icon('refresh', 14)}Undo this run</button>` +
       `<span class="muted">${trashed.length
         ? (one ? 'Puts it back where it was' : `Puts all ${formatCount(trashed.length)} back where they were`)
-        : (one ? 'Puts it back if the Trash has taken it' : 'Puts back any of them the Trash has taken')}, from the Time Capsule — ` +
+        : (one ? 'Puts it back if the Trash has taken it' : 'Puts back any of them the Trash has taken')}, from the Undo Vault — ` +
       (one
         ? 'byte for byte, with its permissions and the dates it was last modified and opened.'
         : 'byte for byte, with their permissions and the dates they were last modified and opened.') + `</span></div>`;
@@ -654,7 +654,7 @@ function cartCommitSummary(result) {
   $('confirmModal').classList.add('open');
 }
 
-/** Restore a whole committed run from the Time Capsule (§4.4 step 3). */
+/** Restore a whole committed run from the Undo Vault (§4.4 step 3). */
 async function cartUndoRun(runId) {
   let job;
   try {
@@ -677,10 +677,10 @@ async function cartUndoRun(runId) {
     cancelUrl: `/api/timecapsule/jobs/${encodeURIComponent(job.jobId)}/cancel`,
     footNote: 'Every byte is checked against the fingerprint taken when it was protected.',
     cancelledMessage: 'Undo cancelled — nothing was left half-written',
-    lostMessage: 'Lost the progress stream — reopen the Time Capsule tab for the result',
+    lostMessage: 'Lost the progress stream — reopen the Undo Vault tab for the result',
     onComplete: (ev) => {
       // Each copy it passed over (an unconfirmed item whose place is not empty) is named with what
-      // the disk showed of it (FG3c, FG3d #7). The copy stays in the Time Capsule, whose tab restores
+      // the disk showed of it (FG3c, FG3d #7). The copy stays in the Undo Vault, whose tab restores
       // it once its place is empty: the summary that held this Undo closed when the undo began.
       // And each item whose copy is gone, which no undo can put back (FG3f #3): then not everything
       // from that run is back.

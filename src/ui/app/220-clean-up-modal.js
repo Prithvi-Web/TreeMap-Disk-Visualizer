@@ -40,7 +40,7 @@ let cleanPane = 'rules';
 /**
  * Where what Clean Up removes goes, said for the scan the sheet opens on
  * (QA third pass D06; review F1.4). A local scan's go to the system Trash
- * through DELETE /api/files, which keeps no Time Capsule copy, so they come
+ * through DELETE /api/files, which keeps no Undo Vault copy, so they come
  * back only until the Trash is emptied; Shrink Video's original follows a
  * lossy re-encode there. A cloud account's go to that provider's own trash
  * (confirmTrash, cloudTrashPaths), which the provider empties after the time
@@ -48,10 +48,10 @@ let cleanPane = 'rules';
  */
 function cleanUpWhereItGoes() {
   if (isCloudScan()) {
-    return `Nothing is removed until you confirm. What Clean Up removes goes to ${cloudProviderOfScan().trashLabel} and is not copied to the Time Capsule, `
+    return `Nothing is removed until you confirm. What Clean Up removes goes to ${cloudProviderOfScan().trashLabel} and is not copied to the Undo Vault, `
       + 'so it can be put back only until that trash is emptied — by you, or by the provider after the time it keeps deleted files.';
   }
-  return 'Nothing is removed until you confirm. What Clean Up removes goes to the system Trash and is not copied to the Time Capsule, '
+  return 'Nothing is removed until you confirm. What Clean Up removes goes to the system Trash and is not copied to the Undo Vault, '
     + 'so it can be put back only until the Trash is emptied. Shrink Video’s re-encode loses a little quality for good, and the original then goes to the Trash too.';
 }
 
@@ -866,7 +866,7 @@ async function loadSmartSuggestions() {
    The rails are worth naming, because §4.5 is explicit that none of them may
    be weakened, bypassed or special-cased for this path: the first run of any
    new policy is always a preview a human approves; per-run and rolling-weekly
-   byte caps; a cooldown; "ask me first above N GB"; and the Time Capsule on
+   byte caps; a cooldown; "ask me first above N GB"; and the Undo Vault on
    everything. Promotion opens the *existing* editor pre-filled and saves
    through the *existing* endpoint, so it inherits all of them by construction
    rather than by remembering to re-apply them. `tests/queryToPolicy.test.ts`

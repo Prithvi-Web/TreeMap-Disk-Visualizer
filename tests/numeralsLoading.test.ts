@@ -311,7 +311,7 @@ test('the muted-text loaders became skeletons, keeping their §3.5 copy for scre
   assert.match(slice('async function loadJournal', 'function renderJournal'),
     /skeletonRows\(\d+, \d+, 'Reading the journal…'\)/);
   assert.match(slice('async function loadCapsule', 'function renderCapsule'),
-    /skeletonRows\(\d+, \d+, 'Reading the Time Capsule…'\)/);
+    /skeletonRows\(\d+, \d+, 'Reading the Undo Vault…'\)/);
   // The History calendar can count for seconds on a big root — its pending
   // state is the same skeleton language, not a bare muted sentence.
   assert.match(slice('async function loadCalendar', 'function renderCalendar'),

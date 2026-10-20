@@ -60,7 +60,7 @@ function renderAutopilot() {
       `<div class="muted" style="line-height:1.6;">No policies yet. A policy is a standing instruction — ` +
       `"clear old build folders in my Projects folder", say — that TreeMap carries out on its own.<br>` +
       `<b>Nothing is ever deleted on the first run:</b> you always see exactly what it matched and approve it first, ` +
-      `and everything it removes is copied to the Time Capsule so you can undo it, until the Time Capsule removes the copy.</div>`;
+      `and everything it removes is copied to the Undo Vault so you can undo it, until the Undo Vault removes the copy.</div>`;
   } else {
     const live = policies.filter(p => p.enabled && p.approvedAt && !p.dryRunFirst).length;
     $('apInfo').innerHTML =
@@ -297,7 +297,7 @@ function approveAutopilotRun(runId) {
         : '')
     : `<b>${escapeHtml(policy.name)}</b>'s next run will remove what it matches ${scope}, up to <b>${formatBytes(run.bytesMatched)}</b>, once. ` +
       `A later run that matches more than ${formatBytes(policy.requireConfirmationAbove || 0)} asks again.`) +
-    `<br><span style="color:var(--text-3)">Everything it removes is copied to the Time Capsule first, and a run can be undone from here until the Time Capsule removes its copies.</span>`;
+    `<br><span style="color:var(--text-3)">Everything it removes is copied to the Undo Vault first, and a run can be undone from here until the Undo Vault removes its copies.</span>`;
   setConfirmButton('Approve', 'check');
   $('confirmModal').classList.add('open');
 }

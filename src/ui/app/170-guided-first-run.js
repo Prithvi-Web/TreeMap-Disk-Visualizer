@@ -101,7 +101,7 @@ function tourRender(takeFocus = true) {
     // what to scan — the home folder among its choices — and holds the one
     // primary action, "Choose a folder…" (G03; the owner, 17 Oct 2026): the
     // card offers none of it again, and narrates. Where the start screen is
-    // not on screen — Offloaded, Time Capsule, Autopilot, Fleet — the card is
+    // not on screen — Offloaded, Undo Vault, Autopilot, Fleet — the card is
     // the one prompt, so it offers the folder browser and the home folder
     // itself, neither one blue (review F1.2); a change of view repaints it
     // (tourFollowView).
@@ -187,7 +187,7 @@ function tourRender(takeFocus = true) {
       ${head('The cart · step 4 of 4', false)}
       <h4>${icon('cart', 16)}Staged — deleted only when you say so</h4>
       <p>${where}
-        Committing the cart runs a preview first, protects files in the Time Capsule, and a run can be undone in one click until the Time Capsule removes its copies.</p>
+        Committing the cart runs a preview first, protects files in the Undo Vault, and a run can be undone in one click until the Undo Vault removes its copies.</p>
       <div class="tour-row"><button class="btn btn-primary" data-tour-done>Finish</button></div>`;
     host.querySelector('[data-tour-done]').addEventListener('click', () => { void tourFinish('Tour complete — the map is yours'); });
   }

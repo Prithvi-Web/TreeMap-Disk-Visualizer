@@ -77,7 +77,7 @@ const CMDK_SETTINGS_SECTIONS = [
   { name: 'Drives mounted inside a folder', hint: 'mount, mounted, disk image, simulator, stay on this drive, include' },
   { name: 'Disk-full forecast', hint: 'warning, days, projection' },
   { name: 'Live activity', hint: 'watch, auto-pause' },
-  { name: 'Time Capsule', hint: 'retention, undo copies' },
+  { name: 'Undo Vault', hint: 'retention, undo copies' },
   { name: 'Reclaim Score', hint: 'weights, sliders, signals' },
   { name: 'Cleanup target', hint: 'goal, free up, meter' },
   { name: 'Human-scale sizes', hint: 'photo equivalents, tooltips' },

@@ -1,4 +1,4 @@
-/* ───────────────────────────── Time Capsule tab (B3) ─────────────────────────────
+/* ───────────────────────────── Undo Vault tab (B3) ─────────────────────────────
    Structurally the Offloaded tab: a searchable index of things TreeMap moved
    somewhere safe, grouped by the run that moved them, each restorable.
 
@@ -31,7 +31,7 @@ async function loadCapsule() {
   // the list gets skeleton rows only when empty, and a standing gauge is
   // swept by the veil instead of vanishing.
   if (!host.querySelector('.cap-item') && !state.capsule.index) {
-    host.innerHTML = skeletonRows(4, 38, 'Reading the Time Capsule…');
+    host.innerHTML = skeletonRows(4, 38, 'Reading the Undo Vault…');
   }
   if (!gaugeEl.hidden) gaugeEl.classList.add('fx-chart-loading');
   try {
@@ -41,7 +41,7 @@ async function loadCapsule() {
     gaugeEl.classList.remove('fx-chart-loading');
     state.capsule.index = null;
     host.innerHTML =
-      `<div class="muted">Couldn’t read the Time Capsule: ${escapeHtml(e.message)}</div>` +
+      `<div class="muted">Couldn’t read the Undo Vault: ${escapeHtml(e.message)}</div>` +
       `<button class="pill" id="capsuleRetry" style="margin-top:8px;">Try again</button>`;
     capsuleGaugeHide();
     $('capsuleInfo').textContent = '';
@@ -65,7 +65,7 @@ function renderCapsule() {
     $('capsuleInfo').textContent = '';
     host.innerHTML =
       `<div class="muted" style="display:flex;gap:8px;align-items:flex-start;padding:4px 2px;">${icon('alert', 14)}` +
-      `<span style="line-height:1.5;">${escapeHtml(idx.status.reason || 'The Time Capsule isn’t available on this computer.')}</span></div>`;
+      `<span style="line-height:1.5;">${escapeHtml(idx.status.reason || 'The Undo Vault isn’t available on this computer.')}</span></div>`;
     renderCapsuleEvents(idx.events);
     return;
   }
@@ -100,7 +100,7 @@ function renderCapsule() {
     $('capsuleInfo').textContent = '';
     host.innerHTML =
       `<div class="muted" style="line-height:1.6;">Nothing here yet — and that’s the normal state.<br>` +
-      `The Time Capsule keeps a checked copy of everything <b>Autopilot</b> or the <b>cleanup cart</b> moves to the Trash, ` +
+      `The Undo Vault keeps a checked copy of everything <b>Autopilot</b> or the <b>cleanup cart</b> moves to the Trash, ` +
       `so you can undo it even after emptying the Trash, until the copy expires or is dropped to make room. Files you move to the Trash any other way (right-click, the Grid, ` +
       `Duplicates, Clean Up) go to the Trash only and aren’t copied here.</div>`;
     renderCapsuleEvents(idx.events);
@@ -191,7 +191,7 @@ function renderCapsuleEvents(events) {
   const host = $('capsuleEvents');
   capsuleEventsDrop(); // the rewrite below would strand a live handle
   if (!events || !events.length) { host.innerHTML = ''; return; }
-  host.innerHTML = `<h3>What the Time Capsule couldn’t keep</h3><div id="capsuleEventsList"></div>`;
+  host.innerHTML = `<h3>What the Undo Vault couldn’t keep</h3><div id="capsuleEventsList"></div>`;
   // Concatenation, not template interpolation of the event name: it only
   // ever reaches barList's textContent (a safe sink), and the XSS scan is
   // anchored on name interpolations near innerHTML — plain strings state
@@ -234,7 +234,7 @@ function restoreFromCapsule(id) {
         cancelUrl: `/api/timecapsule/jobs/${resp.jobId}/cancel`,
         footNote: 'Every byte is checked against the fingerprint taken when it was protected.',
         cancelledMessage: 'Restore cancelled — nothing was left half-written',
-        lostMessage: 'Lost the progress stream — reopen the Time Capsule tab for the result',
+        lostMessage: 'Lost the progress stream — reopen the Undo Vault tab for the result',
         // A restore that could not set a date or a permission back finishes with a warning, which the
         // dialog shows: no green "verified" beside it (FG3g L9), as the offload restore already does.
         onComplete: (ev) => {

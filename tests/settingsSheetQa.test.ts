@@ -203,8 +203,8 @@ test('the capsule copies exactly the deletes of Autopilot and the cleanup cart â
 });
 
 test('Settings â€º Time Capsule names what is copied and what is not (D72)', () => {
-  const head = INDEX.indexOf('></span>Time Capsule</div>');
-  assert.notEqual(head, -1, 'the Settings sheet has a Time Capsule section');
+  const head = INDEX.indexOf('></span>Undo Vault</div>');
+  assert.notEqual(head, -1, 'the Settings sheet has an Undo Vault section');
   const blurb = INDEX.slice(head, INDEX.indexOf('id="capsuleRetentionDays"', head));
   const at = blurb.indexOf('<div class="muted"');
   assertCapsuleSentence('Settings', plain(blurb.slice(at, blurb.indexOf('</div>', at))));

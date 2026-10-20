@@ -53,7 +53,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .modal-foot { padding: 14px 22px 20px; display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--hairline); }
 /* A footer button keeps its label on one line; the note beside it wraps
    instead. In the Autopilot editor "Save policy" shrank to its longest word
-   beside the Time Capsule note and read "Save / policy" (QA C01, B31). */
+   beside the Undo Vault note and read "Save / policy" (QA C01, B31). */
 .modal-foot .btn { white-space: nowrap; }
 .close-x { border: none; background: var(--surface-2); width: 28px; height: 28px; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
@@ -71,7 +71,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .rule-row input[type="text"] { flex: 1; }
 /* A search .field (icon + box) that a rule row grows: it has to be a row
    itself, or its input keeps its intrinsic ~172 px however wide the field
-   gets — the Offloaded and Time Capsule searches read "Search by name or
+   gets — the Offloaded and Undo Vault searches read "Search by name or
    origi" inside a 420 px field (QA B01). */
 .rule-row > .field { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .rule-row > .field > input[type="text"] { flex: 1; min-width: 0; }

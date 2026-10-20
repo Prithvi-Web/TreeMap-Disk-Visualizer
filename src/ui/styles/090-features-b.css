@@ -98,7 +98,7 @@
   background: var(--warn-soft); border: 1px solid var(--warn-line); font-size: 12.5px; line-height: 1.5; color: var(--text-1); }
 .app-part-warn .ic { color: var(--warn); flex: none; margin-top: 2px; }
 
-/* ── Time Capsule (B3) ── */
+/* ── Undo Vault (B3) ── */
 /* v4 §7.2 — the calendar heatmap. Levels are opacity steps of one hue so the
    scale reads in both themes; an absent day keeps the bare surface colour —
    visually distinct from level 1, because "nothing counted" is not "a little". */
@@ -281,7 +281,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   max-width: max(240px, calc(100% - 402px)); }
 /* In that narrow strip the whole message ran to twelve lines at 1024 and took
    the map down to about 245 px (sixth browser pass H52). Its second half —
-   when the space comes back, and the Time Capsule's copy — is what the open
+   when the space comes back, and the Undo Vault's copy — is what the open
    cart's footer says right beside it, so the banner leaves it to the cart. */
 body.cart-open .tm-preview-banner .tm-pv-cart-said { display: none; }
 .tm-preview-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);

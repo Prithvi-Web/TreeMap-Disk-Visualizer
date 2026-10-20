@@ -1822,8 +1822,8 @@ test('forgetting a copy uses the shared destructive confirmation', () => {
 
 test('the capsule panel implements the §3.5 states', () => {
   const code = appCode();
-  assert.match(code, /Reading the Time Capsule/, 'loading');
-  assert.match(code, /Couldn.t read the Time Capsule/, 'error, from the envelope message');
+  assert.match(code, /Reading the Undo Vault/, 'loading');
+  assert.match(code, /Couldn.t read the Undo Vault/, 'error, from the envelope message');
   assert.match(code, /capsuleRetry/, 'with a retry');
   const render = code.slice(code.indexOf('function renderCapsule('), code.indexOf('function renderCapsuleEvents'));
   assert.match(render, /status\.available/, 'unavailable, with the reason');
@@ -1872,7 +1872,7 @@ test('the empty state explains that nothing is deleted on a first run', () => {
   // The single most important thing to know before writing a policy.
   const code = appCode();
   assert.match(code, /Nothing is ever deleted on the first run/i);
-  assert.match(code, /Time Capsule/, 'and that deletions are recoverable');
+  assert.match(code, /Undo Vault/, 'and that deletions are recoverable');
 });
 
 test('a run awaiting approval opens itself and offers the approval', () => {

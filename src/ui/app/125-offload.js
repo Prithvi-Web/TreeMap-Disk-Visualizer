@@ -396,7 +396,7 @@ async function runRestoreJob(ids) {
 /**
  * Drive the shared progress modal from any copy-and-verify job's SSE stream.
  *
- * Offload and Time Capsule restore are the same shape — phases, per-file
+ * Offload and Undo Vault restore are the same shape — phases, per-file
  * progress, cooperative cancel, rollback — so they share one implementation
  * and one dialog rather than each rendering its own (§3.4). Only the URLs and
  * the wording differ, which is what `opts` carries.
