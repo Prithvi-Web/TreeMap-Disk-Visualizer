@@ -7,6 +7,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-cleanupRules-data-');
 
 import { collectCleanupSuggestions } from '../src/services/cleanupRules';
+import { loadRuleCatalog } from '../src/services/rulePacks';
 import { CleanupSuggestionGroup, FileNode } from '../src/models/types';
 import { compileIgnoreList, CompiledIgnore } from '../src/utils/glob';
 
@@ -89,9 +90,27 @@ test('a virtualenv is flagged only next to a Python manifest', () => {
   for (const name of ['.venv', 'venv', 'env']) {
     assert.ok(groupById(run(tree([pkg(name), file('pyproject.toml')])), 'regen-python-venv'), `${name} is a venv name`);
   }
-  // No manifest: `.venv` still matches the generic tool-cache rule, but never
-  // the regenerable one — the distinction is what carries the restore command.
+  // No manifest: no rule offers it (the test below) — Package leftovers
+  // reports it, saying no project file is beside it.
   assert.equal(groupById(run(tree([pkg('env')])), 'regen-python-venv'), undefined);
+});
+
+/** Every item any group offers, by path. */
+function offered(groups: CleanupSuggestionGroup[]): string[] {
+  return groups.flatMap((g) => g.items.map((i) => i.path)).sort();
+}
+
+test('a virtualenv with no project file beside it is offered by no rule: nothing makes it again by itself, so it is no tool cache "rebuilt automatically when needed" (BQL item 7b)', () => {
+  // W/bql/scratch/r7-venv-rules.ts: /root/scripts/.venv beside run.py alone
+  // was a "Tool caches" item, "Caches left by dev tools — rebuilt
+  // automatically when needed", and an approved Autopilot policy on that group
+  // trashed it unattended with that reason. The scripts that use it stop
+  // working until someone makes it again and reinstalls what it held.
+  for (const name of ['.venv', 'venv', 'env']) {
+    const venv = dir(name, [file('pyvenv.cfg', 200), dir('lib', [file('site.py', 90_000)])]);
+    const groups = run(tree([dir('scripts', [venv, file('run.py', 300)])]));
+    assert.deepEqual(offered(groups), [], `${name} beside run.py alone is offered by no rule: ${JSON.stringify(groups.map((g) => g.id))}`);
+  }
 });
 
 test('__pycache__ is flagged and says it regenerates itself', () => {
@@ -132,15 +151,19 @@ test('Pods is flagged next to a Podfile', () => {
   assert.equal(groupById(run(tree([pkg('Pods')])), 'regen-cocoapods'), undefined);
 });
 
-test('framework build dirs are flagged, and dist only beside a JS project file', () => {
-  for (const name of ['.next', '.nuxt', '.output', '.svelte-kit', '.angular']) {
+test('framework build dirs are flagged, and dist and .output only beside a JS project file', () => {
+  for (const name of ['.next', '.nuxt', '.svelte-kit', '.angular']) {
     const g = groupById(run(tree([pkg(name)])), 'regen-web-build');
     assert.ok(g, `${name} needs no sibling`);
     assert.equal(g.regenerateCmd, 'npm run build');
   }
   for (const manifest of ['package.json', 'next.config.js', 'nuxt.config.ts', 'vite.config.js', 'svelte.config.js', 'angular.json']) {
     assert.ok(groupById(run(tree([pkg('dist'), file(manifest)])), 'regen-web-build'), `dist beside ${manifest}`);
+    assert.ok(groupById(run(tree([pkg('.output'), file(manifest)])), 'regen-web-build'), `.output beside ${manifest}`);
   }
+  // "output" is any tool's word, not only Nuxt's: alone, `npm run build`
+  // would make nothing there, so no rule says it does (BQL item 7b).
+  assert.deepEqual(offered(run(tree([pkg('.output')]))), [], '.output alone is offered by no rule');
   // `foo.*` patterns must not match a bare prefix.
   assert.equal(groupById(run(tree([pkg('dist'), file('vite.config')])), 'regen-web-build'), undefined);
 });
@@ -163,13 +186,59 @@ test('unqualified build output is flagged regenerable without a restore command'
   }
 });
 
-test('every tool cache directory is flagged as a cache', () => {
-  const names = ['.pytest_cache', '.mypy_cache', '.ruff_cache', '.gradle', '.turbo', '.parcel-cache', '.eslintcache', 'coverage', '.venv', '.tox'];
-  for (const name of names) {
+test('every tool cache directory is flagged as a cache, and the rule names only folders no person names their own', () => {
+  // Matched by name alone, with "rebuilt automatically when needed": each name
+  // is one tool's own folder (BQL item 7b). `.venv` (nothing makes it again by
+  // itself), `coverage` (a person's own word) and `.gradle` (in a home folder,
+  // Gradle's own settings and downloads) left it; the tests below.
+  const REVIEWED = ['.pytest_cache', '.mypy_cache', '.ruff_cache', '.turbo', '.parcel-cache', '.eslintcache', '.tox'];
+  assert.deepEqual(loadRuleCatalog().directory.find((r) => r.id === 'tool-caches')?.names, REVIEWED,
+    'a name added to the rule is reviewed here first');
+  for (const name of REVIEWED) {
     const g = groupById(run(tree([pkg(name)])), 'tool-caches');
     assert.ok(g, `${name} must be flagged`);
     assert.equal(g.category, 'cache');
   }
+});
+
+test('a coverage folder is offered only beside a project file whose test tools write their reports there — never by its name alone, where it may hold a person\'s own papers (BQL item 7b)', () => {
+  // Alone, and beside the project file of a language whose own source
+  // folders may be called coverage: coverage.py's repository holds its
+  // package `coverage/` beside pyproject.toml, a Go package is a folder beside
+  // go.mod, and a Cargo workspace lists member crates beside Cargo.toml.
+  for (const beside of [[], ['pyproject.toml'], ['setup.cfg'], ['setup.py'], ['go.mod'], ['Cargo.toml']]) {
+    const groups = run(tree([pkg('coverage'), ...beside.map((f) => file(f))]));
+    assert.deepEqual(offered(groups), [], `coverage beside ${beside.join(', ') || 'nothing'} is offered by no rule`);
+  }
+  // Jest, Vitest, c8 and nyc (package.json), SimpleCov (Gemfile) and
+  // `flutter test --coverage` (pubspec.yaml) write `coverage/` by default.
+  for (const manifest of ['package.json', 'Gemfile', 'pubspec.yaml']) {
+    const g = groupById(run(tree([pkg('coverage'), file(manifest)])), 'test-coverage');
+    assert.ok(g, `coverage beside ${manifest} is offered`);
+    assert.equal(g.category, 'regenerable', 'coverage reports: a regenerable group, as every rule with a way back is');
+    assert.deepEqual(paths(g), [R('coverage')], 'the coverage folder itself is offered');
+  }
+  assert.equal(groupById(run(tree([pkg('coverage'), file('Gemfile')])), 'test-coverage')?.why,
+    'A folder named coverage sitting next to package.json, Gemfile or pubspec.yaml.', 'its why says what matched');
+});
+
+test('a .gradle folder is offered only beside a Gradle build file: the one in a home folder is Gradle\'s own settings and downloads, and only its caches folder is a cache (BQL item 7b)', () => {
+  for (const manifest of ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts']) {
+    const g = groupById(run(tree([pkg('.gradle'), file(manifest)])), 'gradle-project-cache');
+    assert.ok(g, `.gradle beside ${manifest} is offered`);
+    assert.equal(g.category, 'regenerable', 'the Gradle project cache: a regenerable group, as every rule with a way back is');
+    assert.equal(g.regenerateCmd, 'gradle build', 'the Gradle project cache: the command that writes it again');
+  }
+  // ~/.gradle holds gradle.properties (often signing and repository
+  // passwords) and init scripts a person wrote. Matched by its name, it was
+  // offered whole as a tool cache, and the walk never reached the known
+  // location ~/.gradle/caches inside it.
+  const home = os.homedir();
+  const userHome = tree([dir('.gradle', [
+    file('gradle.properties', 300), dir('init.d', [file('repos.gradle', 200)]), dir('caches', [file('modules-2.bin', 9000)]),
+  ])], home);
+  const expected = process.platform === 'win32' ? [] : [path.join(home, '.gradle', 'caches')]; // dev-caches names it on macOS and Linux
+  assert.deepEqual(offered(run(userHome)), expected, 'only the caches folder inside the Gradle user home is offered');
 });
 
 test('OS junk files are flagged as junk, matched case-insensitively', () => {

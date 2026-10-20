@@ -2345,6 +2345,7 @@ const REMEDY_CODE: Record<string, string[]> = {
   'npm install': ['npm install'],
   'python3 -m venv <folder>, then reinstall the packages it held': ['python3 -m venv <folder>'],
   'automatic on next run': [],
+  'the next test run with coverage writes it again': [],
   'cargo build': ['cargo build'],
   'mvn package': ['mvn package'],
   'gradle build': ['gradle build'],

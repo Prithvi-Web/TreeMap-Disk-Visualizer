@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "pack": "common",
-  "updated": "2026-10-17",
+  "updated": "2026-10-20",
   "rules": [
     {
       "id": "regen-node-modules",
@@ -163,7 +163,6 @@
       "names": [
         ".next",
         ".nuxt",
-        ".output",
         ".svelte-kit",
         ".angular"
       ],
@@ -188,7 +187,8 @@
       "confidence": "high",
       "ecosystem": "npm",
       "names": [
-        "dist"
+        "dist",
+        ".output"
       ],
       "requiresSibling": [
         "package.json",
@@ -209,6 +209,41 @@
         "prerender-manifest.json"
       ],
       "restoreCommand": "npm run build"
+    },
+    {
+      "id": "test-coverage",
+      "kind": "project-directory",
+      "title": "Test coverage reports",
+      "description": "Where JavaScript, Ruby and Flutter test tools write coverage reports — the next test run with coverage writes them again",
+      "category": "regenerable",
+      "confidence": "high",
+      "names": [
+        "coverage"
+      ],
+      "requiresSibling": [
+        "package.json",
+        "Gemfile",
+        "pubspec.yaml"
+      ],
+      "restoreCommand": "the next test run with coverage writes it again"
+    },
+    {
+      "id": "gradle-project-cache",
+      "kind": "project-directory",
+      "title": "Gradle project cache",
+      "description": "Gradle's own records for this project — the next Gradle build writes them again",
+      "category": "regenerable",
+      "confidence": "high",
+      "names": [
+        ".gradle"
+      ],
+      "requiresSibling": [
+        "build.gradle",
+        "build.gradle.kts",
+        "settings.gradle",
+        "settings.gradle.kts"
+      ],
+      "restoreCommand": "gradle build"
     },
     {
       "id": "build-output",
@@ -234,12 +269,9 @@
         ".pytest_cache",
         ".mypy_cache",
         ".ruff_cache",
-        ".gradle",
         ".turbo",
         ".parcel-cache",
         ".eslintcache",
-        "coverage",
-        ".venv",
         ".tox"
       ]
     },

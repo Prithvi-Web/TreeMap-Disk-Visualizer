@@ -569,6 +569,33 @@ test('an unattended run never selects a file inside an installed app, whatever i
   }
 });
 
+test('a "Tool caches" policy never selects a virtualenv with no project beside it, or a folder named coverage on its name alone: nothing makes either again by itself (BQL item 7b)', async () => {
+  // An approved policy on "Tool caches" trashed both unattended, recording
+  // "Caches left by dev tools — rebuilt automatically when needed" as the
+  // reason in the run record and the Undo Vault entry.
+  const dir = fs.realpathSync(await mkTmp());
+  try {
+    await writeFile(path.join(dir, 'scripts', '.venv', 'pyvenv.cfg'), 200);
+    await writeFile(path.join(dir, 'scripts', '.venv', 'lib', 'site.py'), 4096);
+    await writeFile(path.join(dir, 'scripts', 'run.py'), 300);
+    await writeFile(path.join(dir, 'Insurance', 'coverage', 'home-policy.pdf'), 4096);
+    await writeFile(path.join(dir, 'proj', '.pytest_cache', 'v', 'cache', 'lastfailed'), 4096);
+    await writeFile(path.join(dir, 'web', 'package.json'), 100);
+    await writeFile(path.join(dir, 'web', 'coverage', 'lcov.info'), 4096);
+    const rel = (items: { path: string }[]) => items.map((i) => path.relative(dir, i.path)).sort();
+    const [caches] = await savePolicies([{ id: 'tool-caches-7b', name: 'Tool caches', path: dir, match: { kind: 'suggestion', groupIds: ['tool-caches'] }, dryRunFirst: false, enabled: true }]);
+    assert.deepEqual(rel((await simulatePolicy(caches)).items), [path.join('proj', '.pytest_cache')],
+      'control: the pytest cache is selected — and neither the virtualenv nor the folder of insurance papers');
+    // A coverage folder beside package.json is the test tools' own, a group of its own a policy may name.
+    const [both] = await savePolicies([{ id: 'coverage-7b', name: 'Caches and coverage', path: dir, match: { kind: 'suggestion', groupIds: ['tool-caches', 'test-coverage'] }, dryRunFirst: false, enabled: true }]);
+    assert.deepEqual(rel((await simulatePolicy(both)).items), [path.join('proj', '.pytest_cache'), path.join('web', 'coverage')].sort(),
+      'the JavaScript project\'s coverage reports are selected, the insurance papers still are not');
+  } finally {
+    await savePolicies([]);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('a run that left everything it matched alone, as parts of an installed program, says so — never "Nothing matched this time." beside its own list of what it left (review F1.2)', async () => {
   const dir = await mkTmp();
   const trashed: string[] = [];

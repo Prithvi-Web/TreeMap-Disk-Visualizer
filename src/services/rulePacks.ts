@@ -18,9 +18,9 @@ import { winLocalAppData } from '../utils/osPaths';
  *   common.json   rules that apply on every OS (project dirs, tool caches, junk)
  *   macos.json | windows.json | linux.json   OS-specific cache locations
  *
- * `common.json` is not in §C8's file list, and exists deliberately: fifteen of
- * the rules are OS-independent, and triplicating them across three packs makes
- * "add a rule" a three-file edit that drifts. The three named packs are still
+ * `common.json` is not in §C8's file list, and exists deliberately: each of its
+ * rules applies on more than one OS, and triplicating them across three packs
+ * makes "add a rule" a three-file edit that drifts. The three named packs are still
  * exactly what the spec calls for; common.json only spares them the copy.
  */
 

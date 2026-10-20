@@ -341,7 +341,7 @@ test('a group cut off at its 200 listed items keeps the rule\'s full sentence â€
   // review F2.2's, below).
   const caches = (n: number, folder: string, from = 0): Spec[] =>
     Array.from({ length: n }, (_, i) => [`p${from + i}`, [[folder, ['1']]]] as Spec);
-  const FULL = 'A folder named .pytest_cache, .mypy_cache, .ruff_cache, .gradle, .turbo, .parcel-cache, .eslintcache, coverage, .venv or .tox, with no project manifest beside it to say what rebuilds it.';
+  const FULL = 'A folder named .pytest_cache, .mypy_cache, .ruff_cache, .turbo, .parcel-cache, .eslintcache or .tox, with no project manifest beside it to say what rebuilds it.';
   const cut = await served(treeOf(path.resolve('/f12a'), [...caches(200, '.pytest_cache'), ...caches(1, '.mypy_cache', 200)]));
   const g = cut.find((x) => x.id === 'tool-caches')!;
   assert.equal(g.items.length, 200, 'the list stops at 200');
@@ -358,9 +358,12 @@ test('a group cut off at its 200 listed items keeps the rule\'s full sentence â€
     'under the cap every match is listed, and the sentence names what matched');
 });
 
-/** regen-web-build is two rules under one id: framework folders anywhere, and dist beside a JS project file. */
-const WEB_ALL = 'A folder named .next, .nuxt, .output, .svelte-kit or .angular';
-const DIST_ALL = 'a folder named dist sitting next to package.json, next.config.*, nuxt.config.*, vite.config.*, svelte.config.* or angular.json.';
+/** regen-web-build is two rules under one id: framework folders anywhere, and dist or .output beside a JS project file. */
+const WEB_ALL = 'A folder named .next, .nuxt, .svelte-kit or .angular';
+/** The dist rule's sentence, every name: a .output folder, too, is offered only beside a JS project file (BQL item 7b). */
+const DIST_ALL = 'a folder named dist or .output sitting next to package.json, next.config.*, nuxt.config.*, vite.config.*, svelte.config.* or angular.json.';
+/** The same, narrowed to a group whose only match of that rule is dist. */
+const DIST_ONLY = 'a folder named dist sitting next to package.json, next.config.*, nuxt.config.*, vite.config.*, svelte.config.* or angular.json.';
 
 test('a group two rules share names the folders of both, whichever the walk met first (review F2.2)', async () => {
   // The walk writes a group's sentence from the rule that created it, so a
@@ -370,7 +373,7 @@ test('a group two rules share names the folders of both, whichever the walk met 
   for (const order of [[web('site', '.next'), web('lib', 'dist')], [web('lib', 'dist'), web('site', '.next')]]) {
     const g = (await served(treeOf(path.resolve('/f22a'), order))).find((x) => x.id === 'regen-web-build')!;
     assert.equal(g.items.length, 2, 'both folders are in the group');
-    assert.equal(g.why, `A folder named .next; or ${DIST_ALL}`,
+    assert.equal(g.why, `A folder named .next; or ${DIST_ONLY}`,
       `each rule says the names it matched, in the catalog's order, whatever the walk's (${order[0][0]} first)`);
   }
 });
@@ -404,7 +407,7 @@ test('a group that two rules share is said rule by rule when its folders came fr
     why: 'the walk\'s sentence',
   };
   const [out] = withMatchedReasons([group], catalog, 200);
-  assert.equal(out.why, `A folder named .next; or ${DIST_ALL}`, 'no one rule matched both names, so each says its own');
+  assert.equal(out.why, `A folder named .next; or ${DIST_ONLY}`, 'no one rule matched both names, so each says its own');
   const stray = { ...group, items: [group.items[0], { ...group.items[0], name: 'out', path: '/z/out' }] };
   assert.equal(withMatchedReasons([stray], catalog, 200)[0].why, `${WEB_ALL}; or ${DIST_ALL}`,
     'a name no rule of the id names is never narrowed away: the group is said in full');
