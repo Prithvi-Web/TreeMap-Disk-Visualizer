@@ -81,8 +81,9 @@ async function tmHeldTreemap(rootPath) {
 let tmLoadSeq = 0;
 async function loadTreemap(rootPath, animate = false) {
   // A tree with no scan behind it — the saved index's — is drawn too, laid
-  // out here (tmHeldTreemap, J05); with no tree at all there is nothing to draw.
-  if (!state.scanId && !state.root) return;
+  // out here (tmHeldTreemap, J05); with no tree at all there is nothing to draw
+  // — a first scan's id on hand is no tree (BQJ-1b).
+  if (!state.root) return;
   // §4.3 — a preview is a picture of one folder with one cart. Any load
   // replaces both, so it is dropped silently rather than left to go stale.
   exitCartPreview(true);

@@ -619,3 +619,56 @@ test('the welcome tour\'s cleanup wins are asked of the scan the tree on screen 
   assert.equal(asks.length, before);
   assert.equal(tour.unknownReason, 'This folder was opened from its saved index, and suggestions need a scan of it.');
 });
+
+/* ───────────────────────────── the audit, held ───────────────────────────── */
+
+/**
+ * The page functions that ask the server something and still read
+ * state.scanId — the scan on hand, which is the running scan's id once its
+ * request answers — each for its reason. Everything else that asks about the
+ * tree on screen goes through treeScanId (BQJ-1b's audit). A new function
+ * that reads state.scanId beside a request fails here until it is routed, or
+ * added with its reason.
+ */
+const SCAN_ON_HAND: Record<string, string> = {
+  // The scan's own lifecycle: following, stopping, finishing or reopening the scan itself.
+  showFinishedAfterStop: 'reads the scan a Stop proved had finished, by its own id',
+  openFromIndex: 'clears the scan on hand for the saved index\'s tree',
+  followScanProgress: 'follows the running scan — its stream and its watchdog',
+  reopenScan: 'reopens the scan the server still holds at boot',
+  // The Dashboard's own cards for the scan that just landed: run by finishScan or TOPIC.scan once no
+  // scan runs, blanked when one starts, and a late answer is dropped once another scan is on hand.
+  loadDashboardLists: 'the lists finishScan paints for the scan that landed; a scan starting blanks them',
+  loadWhatsNew: 'files the landed scan\'s coverage under its own id',
+  loadBoundary: 'the landed scan\'s drives row (TOPIC.scan), dropped once another scan is on hand',
+  probeRefusedFolders: 'the landed scan\'s refused folders (TOPIC.scan)',
+  openRefusedList: 'the refused row describes the scan whose stats painted it — the running scan\'s progress while one runs',
+  // Live mode watches a finished scan and is off while any scan runs (startScan → disableLive).
+  liveRelayout: 'Live mode, off while a scan runs',
+  enableLive: 'Live mode, off while a scan runs',
+  // Refuses while a scan runs, before asking anything.
+  downloadReport: 'refuses in words while a scan runs, before it asks',
+  // Acts on files: the server refuses a running scan in words ("Wait for the scan to finish"), and a
+  // move or a trash against the older scan while a walk runs would race the rescan the move starts.
+  cloudTrashPaths: 'a destructive act the server refuses for a running scan, in words',
+  confirmOffloadPlan: 'a destructive act the server refuses for a running scan, in words',
+  runOffloadJob: 'a destructive act the server refuses for a running scan, in words',
+  // 220-clean-up-modal.js is BQL-b1's file in this batch: only cleanOnDiskOf's key was routed here.
+  loadVideoCandidates: 'Clean Up (220), left for after BQL-b1',
+  loadEmptyFolders: 'Clean Up (220), left for after BQL-b1',
+  renderGitRepos: 'Clean Up (220), left for after BQL-b1',
+  renderPackageOrphans: 'Clean Up (220), left for after BQL-b1',
+  renderBrowserProfiles: 'Clean Up (220), left for after BQL-b1',
+  loadSmartSuggestions: 'Clean Up (220), left for after BQL-b1',
+  findBySavedView: 'Clean Up (220), left for after BQL-b1',
+};
+
+test('no page function that asks the server reads the scan on hand, but those whose reason is stated — every other ask about the tree on screen goes through treeScanId', () => {
+  const asking = pageFunctions()
+    .filter((f) => /state\.scanId\b/.test(f.body) && /\b(?:api|apiPaced|fetch)\(|new EventSource\(/.test(f.body))
+    .map((f) => f.name);
+  const unlisted = asking.filter((n) => !(n in SCAN_ON_HAND));
+  assert.deepEqual(unlisted, [], `these ask the server and read state.scanId, the running scan's id once its request answers: ${unlisted.join(', ')}`);
+  const gone = Object.keys(SCAN_ON_HAND).filter((n) => !asking.includes(n));
+  assert.deepEqual(gone, [], `listed as reading the scan on hand, but no longer do (take them off the list): ${gone.join(', ')}`);
+});
