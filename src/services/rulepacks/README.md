@@ -31,7 +31,7 @@ typo fails loudly instead of silently doing nothing.
 
 | Kind | Matches | Extra fields |
 | --- | --- | --- |
-| `project-directory` | a folder by name, optionally only when a manifest sits beside it and when it holds a file it always holds | `names`, `requiresSibling?`, `requiresChild?`, `restoreCommand` |
+| `project-directory` | a folder by name, optionally only when a manifest sits beside it, when it holds a file it always holds, and when it holds none a same-named folder of another kind holds | `names`, `requiresSibling?`, `requiresChild?`, `forbidsChild?`, `restoreCommand` |
 | `directory` | a folder by name, with nothing to confirm it | `names` |
 | `file` | a file by name | `names` |
 | `location` | absolute known paths | `paths` |
@@ -52,6 +52,18 @@ Python's venv, and virtualenv since version 20, write in every environment they
 make, and the coverage rule a report a test tool writes (`lcov.info`,
 `clover.xml`, …). The "why" says both — "A folder named env holding pyvenv.cfg,
 sitting next to requirements.txt."
+
+`forbidsChild` names what the folder must hold none of, matched the same way:
+what only another folder of the same name holds. A project's `.gradle` sits
+beside build.gradle, and so does the Gradle user home when a project lives in
+the home folder or CI points `GRADLE_USER_HOME` at the project's `.gradle`.
+Only the user home holds gradle.properties (often passwords), init scripts,
+caches, wrapper and daemon, and no build writes the first two again, so the
+Gradle project-cache rule needs what a build writes there (buildOutputCleanup,
+file-system.probe or vcs-1) and refuses those. The "why" says it — "holding
+buildOutputCleanup, file-system.probe or vcs-1 and no gradle.properties, …".
+The orphan scanner reads it too: a folder holding one is no orphan of that
+rule either.
 
 ### Ecosystem tagging (§C6)
 

@@ -155,6 +155,30 @@ test('a folder named env beside requirements.txt that holds no pyvenv.cfg is no 
   assert.equal(find(entries, path.join(ROOT, 'app', 'env'))?.kind, 'active', 'control: a virtualenv named env, beside requirements.txt, is its project\'s');
 });
 
+test('a folder holding a child its rule refuses is listed for no ecosystem - neither as its project\'s nor as an orphan (BQL-b1 review F2.2)', () => {
+  // `forbidsChild` means what it means in Clean Up: a folder holding one is
+  // not that rule's folder at all, so its manifest being gone says nothing.
+  const dirPacks = fileTempDir('tm-refuse-packs-');
+  for (const name of PACK_NAMES) fs.copyFileSync(path.join(PACKS, `${name}.json`), path.join(dirPacks, `${name}.json`));
+  const common = JSON.parse(fs.readFileSync(path.join(dirPacks, 'common.json'), 'utf8'));
+  common.rules.push({
+    id: 'regen-blorp', kind: 'project-directory', title: 'Blorp output', description: 'Written by blorp',
+    category: 'regenerable', confidence: 'high', ecosystem: 'blorp', names: ['out'], requiresSibling: ['blorp.toml'],
+    forbidsChild: ['Keep.Me'], evidence: ['blorp.stamp'], restoreCommand: 'blorp build',
+  });
+  fs.writeFileSync(path.join(dirPacks, 'common.json'), JSON.stringify(common, null, 2));
+  const entries = scanPackageEcosystems(tree([
+    dir('live', [file('blorp.toml'), dir('out', [file('blorp.stamp'), file('o.bin', 900)])]),
+    dir('live-kept', [file('blorp.toml'), dir('out', [file('blorp.stamp'), file('KEEP.ME'), file('o.bin', 900)])]),
+    dir('dead', [dir('out', [file('blorp.stamp'), file('o.bin', 900)])]),
+    dir('dead-kept', [dir('out', [file('blorp.stamp'), file('keep.me'), file('o.bin', 900)])]),
+  ]), compileIgnoreList([]), loadRuleCatalogFrom(dirPacks, process.platform)).ecosystems.flatMap((e) => e.entries);
+  assert.equal(find(entries, path.join(ROOT, 'live', 'out'))?.kind, 'active', 'control: beside its manifest, holding none, it is its project\'s');
+  assert.equal(find(entries, path.join(ROOT, 'live-kept', 'out')), undefined, 'beside its manifest, holding one (in another case), it is listed for no ecosystem');
+  assert.equal(find(entries, path.join(ROOT, 'dead', 'out'))?.kind, 'orphan', 'control: no manifest, its evidence inside, holding none: an orphan');
+  assert.equal(find(entries, path.join(ROOT, 'dead-kept', 'out')), undefined, 'no manifest, its evidence inside, holding one: no orphan either');
+});
+
 test('a virtualenv\'s command names its own folder — never a literal <folder>, which a shell reads as a redirect (BQL-b1 review F1.5)', () => {
   // GET /api/packages/orphans served "python3 -m venv <folder>, then …" as
   // "the command that restores" each entry (AGENTS.md), one folder each.

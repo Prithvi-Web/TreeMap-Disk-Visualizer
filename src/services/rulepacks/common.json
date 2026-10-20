@@ -255,6 +255,20 @@
         "settings.gradle",
         "settings.gradle.kts"
       ],
+      "requiresChild": [
+        "buildOutputCleanup",
+        "file-system.probe",
+        "vcs-1"
+      ],
+      "forbidsChild": [
+        "gradle.properties",
+        "init.d",
+        "init.gradle",
+        "init.gradle.kts",
+        "caches",
+        "wrapper",
+        "daemon"
+      ],
       "restoreCommand": "gradle build"
     },
     {

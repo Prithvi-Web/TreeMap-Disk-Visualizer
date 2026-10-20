@@ -234,8 +234,9 @@ class SuggestionWalk implements SlicedWalk {
 
   /**
    * A folder's own child basenames, lowercased — read only for a rule that
-   * names what the folder must hold (`requiresChild`), once its name and its
-   * siblings have matched, so a folder no such rule names costs no read.
+   * names what the folder must hold (`requiresChild`) or must not
+   * (`forbidsChild`), once its name and its siblings have matched, so a folder
+   * no such rule names costs no read.
    */
   private namesIn(node: number): Set<string> {
     return new Set(this.store.childIds(node).map((c) => this.store.name(c).toLowerCase()));
@@ -262,9 +263,11 @@ class SuggestionWalk implements SlicedWalk {
       const containsNote = noteRootInside(childPath, this.suppressed) !== null;
 
       // 1. Project dirs (usually sibling-gated) — most specific, checked first.
+      let held: Set<string> | null = null; // the folder's own child names, read once if a rule asks
+      const holds = (patterns: string[]): boolean => siblingPresent(held ??= this.namesIn(child), patterns);
       const project = catalog.projectDirectory.find(
         (r) => r.names.includes(lower) && (!r.requiresSibling || siblingPresent(this.siblingsOf(frame), r.requiresSibling))
-          && (!r.requiresChild || siblingPresent(this.namesIn(child), r.requiresChild)),
+          && (!r.requiresChild || holds(r.requiresChild)) && (!r.forbidsChild || !holds(r.forbidsChild)),
       );
       if (project && store.size(child) > 0) {
         if (containsNote) { this.enter(child, childPath); return; }

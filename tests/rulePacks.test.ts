@@ -131,6 +131,9 @@ const REJECTED: Array<[string, unknown, RegExp]> = [
   ['a project rule whose required children are none', pack({}, { kind: 'project-directory', names: ['x'], restoreCommand: 'x', requiresChild: [] }), /rules\[0\]\.requiresChild must be a non-empty array/],
   ['a project rule whose required child is not a name', pack({}, { kind: 'project-directory', names: ['x'], restoreCommand: 'x', requiresChild: [' '] }), /rules\[0\]\.requiresChild\[0\] must be a non-empty string/],
   ['a required child on a rule that matches by name alone', pack({}, { requiresChild: ['x.cfg'] }), /unknown key "requiresChild" for kind "directory"/],
+  ['a project rule whose refused children are none', pack({}, { kind: 'project-directory', names: ['x'], restoreCommand: 'x', forbidsChild: [] }), /rules\[0\]\.forbidsChild must be a non-empty array/],
+  ['a project rule whose refused child is not a name', pack({}, { kind: 'project-directory', names: ['x'], restoreCommand: 'x', forbidsChild: [' '] }), /rules\[0\]\.forbidsChild\[0\] must be a non-empty string/],
+  ['a refused child on a rule that matches by name alone', pack({}, { forbidsChild: ['x.cfg'] }), /unknown key "forbidsChild" for kind "directory"/],
   ['a location rule with no paths', pack({}, { kind: 'location', names: undefined, paths: [] }), /paths must be a non-empty array/],
   ['a stale rule with a zero age', pack({}, { kind: 'stale-files', names: undefined, withinPath: '{home}/D', olderThanDays: 0, minSizeBytes: 1 }), /olderThanDays must be a number >= 1/],
 ];
@@ -252,6 +255,34 @@ test('a project rule that names a child matches only a folder holding one of the
   assert.deepEqual(claimed(outOf('b', [['blorp-index', ['i']]])), [path.join(ROOT, 'b', 'out')], 'any one of the children will do, a folder too');
   assert.deepEqual(claimed(outOf('c', ['notes.txt'])), [], 'a folder holding none of them is not matched');
   assert.equal(matchReasonFor(rule), 'A folder named out holding Blorp.Stamp or blorp-index, sitting next to blorp.toml.');
+});
+
+test('a project rule that refuses a child matches only a folder holding none of them, matched in any case and said as the pack writes it (BQL-b1 review F2.2)', () => {
+  const dir = tempPacks();
+  const common = JSON.parse(fs.readFileSync(path.join(dir, 'common.json'), 'utf8'));
+  common.rules.unshift({
+    id: 'blorp-out', kind: 'project-directory', title: 'Blorp output', description: 'Written by blorp — blorp writes it again',
+    category: 'regenerable', confidence: 'high', names: ['out'], requiresSibling: ['blorp.toml'], requiresChild: ['blorp.stamp'],
+    forbidsChild: ['Keep.Me', 'notes'], restoreCommand: 'blorp build',
+  }, {
+    id: 'blorp-tmp', kind: 'project-directory', title: 'Blorp scratch', description: 'Written by blorp — blorp writes it again',
+    category: 'regenerable', confidence: 'high', names: ['tmp'], forbidsChild: ['Keep.Me'], restoreCommand: 'blorp build',
+  });
+  fs.writeFileSync(path.join(dir, 'common.json'), JSON.stringify(common, null, 2));
+  const catalog = loadRuleCatalogFrom(dir, process.platform);
+  const rule = catalog.projectDirectory.find((r) => r.id === 'blorp-out')!;
+  assert.deepEqual([rule.forbidsChild, rule.forbiddenLabels], [['keep.me', 'notes'], ['Keep.Me', 'notes']], 'matched lowercased, said as written');
+  const ROOT = path.resolve('/refusing');
+  const outOf = (project: string, kids: Spec[]): FileNode => treeOf(ROOT, [[project, ['blorp.toml', ['out', kids]]]]);
+  const claimed = (t: FileNode, id = 'blorp-out') => collectCleanupSuggestions(t, [], catalog).find((g) => g.id === id)?.items.map((i) => i.path) ?? [];
+  assert.deepEqual(claimed(outOf('a', ['blorp.stamp', 'x.bin'])), [path.join(ROOT, 'a', 'out')], 'control: a folder holding none of them is matched');
+  assert.deepEqual(claimed(outOf('b', ['blorp.stamp', 'KEEP.ME'])), [], 'a folder holding one, named in another case, is not matched');
+  assert.deepEqual(claimed(outOf('c', ['blorp.stamp', ['notes', ['n.txt']]])), [], 'any one of them refuses it, a folder too');
+  assert.deepEqual(claimed(treeOf(ROOT, [['d', [['tmp', ['t.bin', 'keep.me']]]]]), 'blorp-tmp'), [], 'a rule with no sibling and no required child refuses it too');
+  assert.deepEqual(claimed(treeOf(ROOT, [['e', [['tmp', ['t.bin']]]]]), 'blorp-tmp'), [path.join(ROOT, 'e', 'tmp')], 'control: and matches a folder holding none');
+  assert.equal(matchReasonFor(rule), 'A folder named out holding blorp.stamp and no Keep.Me or notes, sitting next to blorp.toml.');
+  assert.equal(matchReasonFor(catalog.projectDirectory.find((r) => r.id === 'blorp-tmp')!), 'A folder named tmp holding no Keep.Me.',
+    'a rule that only refuses a child says so, as the pack writes it');
 });
 
 /* ───────────────────── "Why is this suggested" ───────────────────── */

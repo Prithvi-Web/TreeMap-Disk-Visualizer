@@ -71,6 +71,20 @@ export interface ProjectDirRule extends RuleBase {
   requiresChild?: string[];
   /** The children as the pack writes them, for prose. */
   childLabels?: string[];
+  /**
+   * Lowercased basenames, matched as `requiresChild` is, of which the folder
+   * must hold none: what only another folder of the same name holds. A
+   * project's `.gradle` sits beside build.gradle, and so does the Gradle user
+   * home when a project lives in the home folder, or when CI points
+   * GRADLE_USER_HOME at the project's own `.gradle`; only the user home holds
+   * gradle.properties, init scripts, caches, wrapper and daemon, and no build
+   * writes the first two again (BQL-b1 review F2.2). Read by Smart
+   * Suggestions, and by the orphan scanner for a folder beside its manifest
+   * and for an orphan alike.
+   */
+  forbidsChild?: string[];
+  /** The refused children as the pack writes them, for prose. */
+  forbiddenLabels?: string[];
   restoreCommand: string;
   /**
    * §C6: the manifest that OWNS this directory. Missing ⇒ the parent project is
@@ -167,7 +181,7 @@ const PLATFORMS = ['darwin', 'win32', 'linux'];
 /** Every key a rule may carry, per kind. Anything else is a typo, and rejected. */
 const COMMON_KEYS = ['id', 'kind', 'title', 'description', 'category', 'confidence', 'action', 'os', 'adviceCommand', 'ecosystem'];
 const KIND_KEYS: Record<RuleKind, string[]> = {
-  'project-directory': ['names', 'requiresSibling', 'requiresChild', 'restoreCommand', 'ownerManifest', 'evidence'],
+  'project-directory': ['names', 'requiresSibling', 'requiresChild', 'forbidsChild', 'restoreCommand', 'ownerManifest', 'evidence'],
   directory: ['names'],
   file: ['names'],
   location: ['paths'],
@@ -301,6 +315,11 @@ export function validateRulePack(packName: string, raw: unknown): { rules: Rule[
             ? undefined
             : requireStringArray(packName, `${at}.requiresChild`, entry.requiresChild);
         const requiresChild = childLabels?.map((s) => s.toLowerCase());
+        const forbiddenLabels =
+          entry.forbidsChild === undefined
+            ? undefined
+            : requireStringArray(packName, `${at}.forbidsChild`, entry.forbidsChild);
+        const forbidsChild = forbiddenLabels?.map((s) => s.toLowerCase());
         const ownerManifestLabels =
           entry.ownerManifest === undefined
             ? undefined
@@ -315,7 +334,7 @@ export function validateRulePack(packName: string, raw: unknown): { rules: Rule[
         if (base.ecosystem && !evidence) {
           fail(packName, `${at} is tagged with an ecosystem but has no evidence[] to identify it once its owner manifest is gone`);
         }
-        rule = { ...base, kind, names, labels, restoreCommand, requiresSibling, siblingLabels, requiresChild, childLabels, ownerManifest, ownerManifestLabels, evidence };
+        rule = { ...base, kind, names, labels, restoreCommand, requiresSibling, siblingLabels, requiresChild, childLabels, forbidsChild, forbiddenLabels, ownerManifest, ownerManifestLabels, evidence };
         break;
       }
       case 'directory':
@@ -586,8 +605,10 @@ export function matchReasonFor(rule: Rule, matched?: { names?: readonly string[]
 
   switch (rule.kind) {
     case 'project-directory': {
-      // "holding pyvenv.cfg, sitting next to requirements.txt": what the folder holds, then what is beside it.
-      const holding = rule.requiresChild ? ` holding ${list(rule.childLabels ?? rule.requiresChild)}` : '';
+      // "holding pyvenv.cfg, sitting next to requirements.txt": what the folder holds (and does not), then what is beside it.
+      const holds = rule.requiresChild ? ` holding ${list(rule.childLabels ?? rule.requiresChild)}` : '';
+      const lacks = rule.forbidsChild ? `${holds ? ' and' : ' holding'} no ${list(rule.forbiddenLabels ?? rule.forbidsChild)}` : '';
+      const holding = holds + lacks;
       return rule.requiresSibling
         ? `A folder named ${list(named(rule))}${holding}${holding ? ',' : ''} sitting next to ${list(rule.siblingLabels ?? rule.requiresSibling)}.`
         : `A folder named ${list(named(rule))}${holding}.`;

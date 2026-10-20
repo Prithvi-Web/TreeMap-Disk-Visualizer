@@ -255,13 +255,20 @@ export function scanPackageEcosystems(
       //    ownerManifest, or its requiresSibling when that is the same thing.
       //    A rule that names what the folder holds (requiresChild) is its
       //    project's only when it holds one: a folder of settings named env
-      //    beside requirements.txt is no virtualenv (BQL-b1 review F1.4).
+      //    beside requirements.txt is no virtualenv (BQL-b1 review F1.4). A
+      //    folder holding a child its rule refuses (forbidsChild) is not that
+      //    rule's folder at all, so it is neither its project's nor an orphan
+      //    (BQL-b1 review F2.2).
       const candidates = projectRules.filter((r) => r.names.includes(lower));
       if (candidates.length) {
+        // The folder's own child names, read once, and only when a rule asks.
+        let kidNames: Set<string> | null = null;
+        const kids = (): Set<string> => (kidNames ??= childNames(store, child));
+        const refused = (r: ProjectDirRule): boolean => r.forbidsChild !== undefined && siblingPresent(kids(), r.forbidsChild);
         const owned = candidates.find((r) => {
           const owner = r.ownerManifest ?? r.requiresSibling;
           return (owner ? siblingPresent(siblings, owner) : true)
-            && (!r.requiresChild || siblingPresent(childNames(store, child), r.requiresChild));
+            && (!r.requiresChild || siblingPresent(kids(), r.requiresChild)) && !refused(r);
         });
         if (owned) {
           const projectName = path.basename(nodePath) || nodePath;
@@ -286,8 +293,7 @@ export function scanPackageEcosystems(
         }
 
         // Owner gone. Only claim it for an ecosystem we can actually recognise.
-        const kidNames = childNames(store, child);
-        const identified = candidates.find((r) => r.evidence.some((e) => kidNames.has(e)));
+        const identified = candidates.find((r) => r.evidence.some((e) => kids().has(e)) && !refused(r));
         if (identified) {
           // Named as the pack writes it ("Cargo.toml"); the lowercased lists are match keys.
           const missing = identified.ownerManifest

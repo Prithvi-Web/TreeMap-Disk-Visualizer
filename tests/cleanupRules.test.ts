@@ -396,23 +396,70 @@ test('a coverage folder is offered only beside a project file whose test tools w
     'its why says what matched');
 });
 
-test('a .gradle folder is offered only beside a Gradle build file: the one in a home folder is Gradle\'s own settings and downloads, and only its caches folder is a cache (BQL item 7b)', () => {
+/**
+ * A project's .gradle as Gradle 8 leaves it after a build: one folder per
+ * Gradle version, buildOutputCleanup, vcs-1 and the file-system.probe file
+ * system watching writes.
+ */
+function projectGradle(): FileNode {
+  return dir('.gradle', [
+    dir('8.10', [dir('fileHashes', [file('fileHashes.bin', 20_000)]), dir('executionHistory', [file('executionHistory.bin', 40_000)])]),
+    dir('buildOutputCleanup', [file('cache.properties', 50), file('outputFiles.bin', 18_000)]),
+    dir('vcs-1', [file('gc.properties', 0)]),
+    file('file-system.probe', 8),
+  ]);
+}
+
+test('a .gradle folder is offered only beside a Gradle build file and holding what a build writes: the one in a home folder is Gradle\'s own settings and downloads, and only its caches folder is a cache (BQL item 7b; BQL-b1 review F2.2)', () => {
   for (const manifest of ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts']) {
-    const g = groupById(run(tree([pkg('.gradle'), file(manifest)])), 'gradle-project-cache');
+    const g = groupById(run(tree([projectGradle(), file(manifest)])), 'gradle-project-cache');
     assert.ok(g, `.gradle beside ${manifest} is offered`);
     assert.equal(g.category, 'regenerable', 'the Gradle project cache: a regenerable group, as every rule with a way back is');
     assert.equal(g.regenerateCmd, 'gradle build', 'the Gradle project cache: the command that writes it again');
   }
+  // Any one of the three a build writes will do.
+  for (const keep of ['buildOutputCleanup', 'vcs-1', 'file-system.probe']) {
+    const only = dir('.gradle', projectGradle().children!.filter((c) => c.name === keep || c.name === '8.10'));
+    assert.ok(groupById(run(tree([only, file('build.gradle')])), 'gradle-project-cache'), `.gradle holding ${keep} beside build.gradle is offered`);
+  }
+  // Nothing a build writes in it: no rule vouches that a build makes it again.
+  assert.equal(groupById(run(tree([pkg('.gradle'), file('build.gradle')])), 'gradle-project-cache'), undefined,
+    'a .gradle holding none of what a build writes is not offered');
   // ~/.gradle holds gradle.properties (often signing and repository
   // passwords) and init scripts a person wrote. Matched by its name, it was
   // offered whole as a tool cache, and the walk never reached the known
   // location ~/.gradle/caches inside it.
   const home = os.homedir();
-  const userHome = tree([dir('.gradle', [
-    file('gradle.properties', 300), dir('init.d', [file('repos.gradle', 200)]), dir('caches', [file('modules-2.bin', 9000)]),
-  ])], home);
   const expected = process.platform === 'win32' ? [] : [path.join(home, '.gradle', 'caches')]; // dev-caches names it on macOS and Linux
-  assert.deepEqual(offered(run(userHome)), expected, 'only the caches folder inside the Gradle user home is offered');
+  const userHome = (): FileNode => dir('.gradle', [
+    file('gradle.properties', 300), dir('init.d', [file('repos.gradle', 200)]), dir('caches', [file('modules-2.bin', 9000)]),
+    dir('wrapper', [dir('dists', [file('gradle-8.10-bin.zip', 9000)])]), dir('daemon', [dir('8.10', [file('daemon-1.out.log', 300)])]),
+  ]);
+  assert.deepEqual(offered(run(tree([userHome()], home))), expected, 'only the caches folder inside the Gradle user home is offered');
+  // review-scratch/r6-gradle/probe.ts: with a build file beside it - a stray
+  // build.gradle in the home folder, or CI's GRADLE_USER_HOME=$PWD/.gradle
+  // beside the project's - the user home was offered whole as "Gradle's own
+  // records for this project — the next Gradle build writes them again",
+  // which no build does for gradle.properties or an init script.
+  assert.deepEqual(offered(run(tree([userHome(), file('build.gradle')], home))), expected,
+    'beside a build file too, only the caches folder inside the Gradle user home is offered');
+  const both = dir('.gradle', [...projectGradle().children!, ...userHome().children!]);
+  assert.deepEqual(offered(run(tree([both, file('settings.gradle.kts')], home))), expected,
+    'a .gradle that is both a project\'s and the Gradle user home (CI) is not offered whole');
+  // Each thing only a Gradle user home holds refuses it on its own.
+  for (const [name, node] of [
+    ['gradle.properties', file('gradle.properties', 300)], ['init.d', dir('init.d', [file('repos.gradle', 200)])],
+    ['init.gradle', file('init.gradle', 200)], ['init.gradle.kts', file('init.gradle.kts', 200)],
+    ['caches', dir('caches', [file('modules-2.bin', 9000)])], ['wrapper', dir('wrapper', [file('w.jar', 900)])],
+    ['daemon', dir('daemon', [file('d.log', 300)])],
+  ] as const) {
+    const mixed = dir('.gradle', [...projectGradle().children!, node]);
+    assert.equal(groupById(run(tree([mixed, file('build.gradle')])), 'gradle-project-cache'), undefined,
+      `a project .gradle that also holds ${name} is not offered`);
+  }
+  assert.equal(groupById(run(tree([projectGradle(), file('build.gradle')])), 'gradle-project-cache')?.why,
+    'A folder named .gradle holding buildOutputCleanup, file-system.probe or vcs-1 and no gradle.properties, init.d, init.gradle, init.gradle.kts, caches, wrapper or daemon, sitting next to build.gradle, build.gradle.kts, settings.gradle or settings.gradle.kts.',
+    'its why says what it holds, what it does not, and what sits beside it');
 });
 
 test('OS junk files are flagged as junk, matched case-insensitively', () => {
