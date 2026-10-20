@@ -162,10 +162,10 @@ export async function scanOpenDescriptors(procRoot = '/proc'): Promise<ProcFdSca
  * root's, and one whose account cannot be read, never assumed another
  * account's. Not one that exited meanwhile: it holds nothing now.
  */
-async function answersFor(procRoot: string, pid: number, uid: number | null): Promise<boolean> {
+async function answersFor(procRoot: string, pid: number, uid: number | null, readStatus: ReadStatus = readText): Promise<boolean> {
   let status: string;
   try {
-    status = await fsp.readFile(path.join(procRoot, String(pid), 'status'), 'utf8');
+    status = await readStatus(path.join(procRoot, String(pid), 'status'));
   } catch (err) {
     return !wentAway(err); // refused too (a /proc mounted with hidepid): whose it is cannot be read
   }
@@ -174,10 +174,17 @@ async function answersFor(procRoot: string, pid: number, uid: number | null): Pr
   return uid === null || effective === undefined || Number(effective) === uid;
 }
 
+/**
+ * How a program's /proc/<pid>/status is read: a parameter so a test can answer as a real /proc does when the
+ * program exits mid-read (ESRCH), which no fixture on a real file system can (the BQL-a review, F2.6).
+ */
+type ReadStatus = (p: string) => Promise<string>;
+const readText: ReadStatus = (p) => fsp.readFile(p, 'utf8');
+
 /** How many of the programs a walk could not read (`ProcFdScan.refused`) TreeMap answers for (`answersFor`). */
-async function unreadableProgramsOf(procRoot: string, refused: readonly number[], uid: number | null): Promise<number> {
+async function unreadableProgramsOf(procRoot: string, refused: readonly number[], uid: number | null, readStatus: ReadStatus = readText): Promise<number> {
   let count = 0;
-  for (const pid of refused) if (await answersFor(procRoot, pid, uid)) count++;
+  for (const pid of refused) if (await answersFor(procRoot, pid, uid, readStatus)) count++;
   return count;
 }
 
@@ -328,12 +335,13 @@ export async function zombieHandles(
 /**
  * zombieHandles, with how many held files it could not decide (BQL item 11) and how many programs it
  * answers for whose open files it could not read (the BQL-a review, F1.4). `uid` is the account TreeMap
- * runs as, injectable so a test can stand another in.
+ * runs as, injectable so a test can stand another in, and `readStatus` reads a program's status file (`ReadStatus`).
  */
 export async function zombieHandleScan(
   procRoot = '/proc',
   statOf: (p: string) => Promise<{ ino: number; size: number }> = (p) => fsp.stat(p),
   uid: number | null = process.getuid?.() ?? null,
+  readStatus: ReadStatus = readText,
 ): Promise<ZombieHandleScan> {
   const out: ZombieHandleInfo[] = [];
   const seen = new Set<string>();
@@ -390,5 +398,5 @@ export async function zombieHandleScan(
     seen.add(key);
     out.push({ pid: rec.pid, processName: rec.processName, path: rec.path, bytes, ino });
   }
-  return { handles: out, undecided: undecided.size, unreadablePrograms: await unreadableProgramsOf(procRoot, walk.refused, uid) };
+  return { handles: out, undecided: undecided.size, unreadablePrograms: await unreadableProgramsOf(procRoot, walk.refused, uid, readStatus) };
 }

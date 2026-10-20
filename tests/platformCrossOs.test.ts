@@ -322,6 +322,42 @@ test('linux: a program whose open files TreeMap may not read is counted, never p
   }
 });
 
+/*
+ * The BQL-a review, F2.6: Linux answers a read of /proc/<pid>/status that races the program's exit with
+ * ESRCH, not ENOENT, and a fixture on a real file system cannot give one — so nothing showed that a program
+ * refused and then gone is never counted. The status reader is stood in for here.
+ */
+test('linux: a program whose open files were refused and whose status then answers ESRCH has exited — never counted as one whose open files could not be read — while a refused status read is (BQL-a review F2.6)', {
+  skip: WIN_NO_PROC_FIXTURE || (process.getuid?.() === 0 && 'root can read any folder, so there is no refusal to observe'),
+}, async () => {
+  const root = await mkTmp();
+  const ME = 1000;
+  try {
+    await fakeProc(root, [
+      { pid: 200, comm: 'exiting', fds: [] }, // refused, then gone: its status answers ESRCH
+      { pid: 300, comm: 'hidden', fds: [] }, // refused, and so is its status: whose it is cannot be read
+      { pid: 400, comm: 'ssh-agent', fds: [] }, // refused, and its status says it is this account's
+    ]);
+    await fsp.writeFile(path.join(root, '400', 'status'), `Name:\tssh-agent\nUid:\t${String(ME)}\t${String(ME)}\t${String(ME)}\t${String(ME)}\n`);
+    for (const pid of [200, 300, 400]) await fsp.chmod(path.join(root, String(pid), 'fd'), 0o000);
+    const fail = (code: string) => Object.assign(new Error(code), { code });
+    const asked: string[] = [];
+    const readStatus = async (p: string): Promise<string> => {
+      asked.push(path.relative(root, p));
+      if (p === path.join(root, '200', 'status')) throw fail('ESRCH');
+      if (p === path.join(root, '300', 'status')) throw fail('EACCES');
+      return fsp.readFile(p, 'utf8');
+    };
+    const statOf = async (p: string): Promise<{ ino: number; size: number }> => { throw fail(`ENOENT ${p}`); };
+    const scan = await zombieHandleScan(root, statOf, ME, readStatus);
+    assert.deepEqual(asked.sort(), ['200/status', '300/status', '400/status'], 'control: each refused program\'s status was asked through the stand-in');
+    assert.equal(scan.unreadablePrograms, 2, 'the hidden one and ssh-agent — never the one that exited');
+  } finally {
+    for (const pid of [200, 300, 400]) await fsp.chmod(path.join(root, String(pid), 'fd'), 0o700).catch(() => undefined);
+    await fsp.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('linux: the provider hands on the pass\'s count — a deleted file still held whose path TreeMap may not look at is counted as not checked (BQL-a review F1.6)', {
   skip: WIN_NO_PROC_FIXTURE || (process.getuid?.() === 0 && 'root can look into any folder'),
 }, async () => {
