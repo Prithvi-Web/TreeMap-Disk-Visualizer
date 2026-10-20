@@ -1125,17 +1125,33 @@ function hatchOf(ink: string): Hatch {
  * `ground`: rectangles filled and stroked, axis-aligned path strokes, flat colours, vertical gradients
  * and the staged block's hatch (hatchOf), each at its own alpha and globalAlpha, with partial pixels
  * covered by area; and a rounded rectangle filled (roundRect, then fill), as pass 3 lays the top-level
- * folders' name tags — each pixel it covers is noted (`tagged`). Text is not drawn: what is measured
- * here is the tiles and the lines between them.
+ * folders' name tags — how much of each pixel it covers is noted (`tagged`, `taggedWhole`). A clip
+ * (review F3.1) is a path of rectangles and rounded rectangles — rect, or moveTo and four arcTo then
+ * closePath as Canvas2D.roundRect draws one — filled by the even-odd rule or nonzero, sampled as fill()
+ * samples, and what is painted after it lands by as much of each pixel as it lets through, until
+ * restore(). Text is not drawn: what is measured here is the tiles and the lines between them.
  */
 function rasterCtx(W: number, H: number, ground: RGB) {
   const px = new Float64Array(W * H * 3);
   for (let i = 0; i < W * H; i++) px.set(ground, i * 3);
-  const tag = new Uint8Array(W * H);
-  const st: Record<string, any> = { fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, globalAlpha: 1 };
+  const tag = new Float32Array(W * H);
+  let tagPaint = '';
+  // clipMask: how much of each device pixel the clip lets through (null: all of it), saved and restored with the rest.
+  const st: Record<string, any> = { fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, globalAlpha: 1, clipMask: null };
   const saved: Array<Record<string, any>> = [];
   let path: number[][] = [];
-  let round: { x: number; y: number; w: number; h: number; r: number } | null = null;
+  type Shape = { x: number; y: number; w: number; h: number; r: number };
+  let round: Shape | null = null;
+  // The current path's closed shapes, for clip(): rectangles, and rounded rectangles built from moveTo and four arcTo.
+  let shapes: Shape[] = [];
+  let sub: Array<{ x: number; y: number; r: number }> | null = null;
+  /** Whether the device point (x, y) lies in `s` (device px), inclusive of its edge, as fill() samples it. */
+  const inShape = (s: Shape, x: number, y: number) => {
+    if (x < s.x || x > s.x + s.w || y < s.y || y > s.y + s.h) return false;
+    const qx = Math.min(Math.max(x, s.x + s.r), s.x + s.w - s.r), qy = Math.min(Math.max(y, s.y + s.r), s.y + s.h - s.r);
+    return (x - qx) ** 2 + (y - qy) ** 2 <= s.r * s.r + 1e-9;
+  };
+  const clipAt = (i: number) => (st.clipMask ? (st.clipMask as Float32Array)[i] : 1);
   // The transform's scale (setTransform): the painter works in css px, the grid is the device's pixels.
   let k = 1;
   // The hatch's colour at a device pixel: its ink, as much of it as the tile's pixel there is covered.
@@ -1168,7 +1184,7 @@ function rasterCtx(W: number, H: number, ground: RGB) {
       for (let pxx = Math.max(0, Math.floor(x)); pxx < Math.min(W, Math.ceil(x + w)); pxx++) {
         const cx = Math.min(pxx + 1, x + w) - Math.max(pxx, x);
         const c = row ?? hatchAt(hatch!, pxx, py);
-        const a = c[3] * Number(st.globalAlpha) * cx * cy;
+        const a = c[3] * Number(st.globalAlpha) * cx * cy * clipAt(py * W + pxx);
         const o = (py * W + pxx) * 3;
         for (let i = 0; i < 3; i++) px[o + i] = px[o + i] * (1 - a) + c[i] * a;
       }
@@ -1199,32 +1215,65 @@ function rasterCtx(W: number, H: number, ground: RGB) {
       paintRect(x, y, w, h, `rgb(${ground.join(',')})`);
       st.globalAlpha = keep;
     },
-    beginPath: () => { path = []; round = null; },
-    // A rounded rectangle's path, its radius clamped as the page's Canvas2D.roundRect clamps it.
-    roundRect: (x: number, y: number, w: number, h: number, r: number) => { path = []; round = { x, y, w, h, r: Math.max(0, Math.min(r, w / 2, h / 2)) }; },
+    beginPath: () => { path = []; round = null; shapes = []; sub = null; },
+    // A rounded rectangle's path, its radius clamped as the page's Canvas2D.roundRect clamps it (a path of its own).
+    roundRect: (x: number, y: number, w: number, h: number, r: number) => { path = []; round = { x, y, w, h, r: Math.max(0, Math.min(r, w / 2, h / 2)) }; shapes = [round]; },
+    rect: (x: number, y: number, w: number, h: number) => { shapes.push({ x, y, w, h, r: 0 }); },
+    // Canvas2D.roundRect's own path: moveTo, an arcTo at each corner, closePath — a rounded rectangle, kept for clip().
+    arcTo: (x1: number, y1: number, _x2: number, _y2: number, r: number) => { if (sub) sub.push({ x: x1, y: y1, r }); },
+    closePath: () => {
+      if (sub && sub.length === 4) {
+        const xs = sub.map((c) => c.x), ys = sub.map((c) => c.y);
+        const x = Math.min(...xs), y = Math.min(...ys);
+        shapes.push({ x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y, r: sub[0].r });
+      }
+      sub = null;
+    },
+    clip: (rule?: string) => {
+      const evenOdd = rule === 'evenodd';
+      const dev = shapes.map((s) => ({ x: s.x * k, y: s.y * k, w: s.w * k, h: s.h * k, r: s.r * k }));
+      // A pixel wholly inside a shape, clear of its rounded corners, needs no samples.
+      const whole = (s: Shape, x: number, y: number) => x >= s.x && x + 1 <= s.x + s.w && y >= s.y && y + 1 <= s.y + s.h &&
+        ((x >= s.x + s.r && x + 1 <= s.x + s.w - s.r) || (y >= s.y + s.r && y + 1 <= s.y + s.h - s.r));
+      const lets = (n: number) => (evenOdd ? n % 2 === 1 : n > 0);
+      const next = new Float32Array(W * H);
+      for (let py = 0; py < H; py++) {
+        for (let pxx = 0; pxx < W; pxx++) {
+          const hit = dev.filter((s) => s.x < pxx + 1 && s.x + s.w > pxx && s.y < py + 1 && s.y + s.h > py);
+          let cover = 0;
+          if (hit.every((s) => whole(s, pxx, py))) cover = lets(hit.length) ? 1 : 0;
+          else {
+            let n = 0;
+            for (let sy = 0; sy < 8; sy++) for (let sx = 0; sx < 8; sx++) {
+              const x = pxx + (sx + 0.5) / 8, y = py + (sy + 0.5) / 8;
+              if (lets(hit.filter((s) => inShape(s, x, y)).length)) n++;
+            }
+            cover = n / 64;
+          }
+          next[py * W + pxx] = cover * clipAt(py * W + pxx);
+        }
+      }
+      st.clipMask = next;
+    },
     // Filling it covers each pixel by the share of its 8×8 samples inside the shape.
     fill: () => {
       if (!round) return;
-      const X = round.x * k, Y = round.y * k, RW = round.w * k, RH = round.h * k, R = round.r * k;
+      const s: Shape = { x: round.x * k, y: round.y * k, w: round.w * k, h: round.h * k, r: round.r * k };
       const c = colourAt(st.fillStyle, 0);
-      for (let py = Math.max(0, Math.floor(Y)); py < Math.min(H, Math.ceil(Y + RH)); py++) {
-        for (let pxx = Math.max(0, Math.floor(X)); pxx < Math.min(W, Math.ceil(X + RW)); pxx++) {
+      tagPaint = String(st.fillStyle);
+      for (let py = Math.max(0, Math.floor(s.y)); py < Math.min(H, Math.ceil(s.y + s.h)); py++) {
+        for (let pxx = Math.max(0, Math.floor(s.x)); pxx < Math.min(W, Math.ceil(s.x + s.w)); pxx++) {
           let n = 0;
-          for (let sy = 0; sy < 8; sy++) for (let sx = 0; sx < 8; sx++) {
-            const sxp = pxx + (sx + 0.5) / 8, syp = py + (sy + 0.5) / 8;
-            if (sxp < X || sxp > X + RW || syp < Y || syp > Y + RH) continue;
-            const qx = Math.min(Math.max(sxp, X + R), X + RW - R), qy = Math.min(Math.max(syp, Y + R), Y + RH - R);
-            if ((sxp - qx) ** 2 + (syp - qy) ** 2 <= R * R + 1e-9) n++;
-          }
+          for (let sy = 0; sy < 8; sy++) for (let sx = 0; sx < 8; sx++) if (inShape(s, pxx + (sx + 0.5) / 8, py + (sy + 0.5) / 8)) n++;
           if (!n) continue;
-          const a = c[3] * Number(st.globalAlpha) * (n / 64);
+          const a = c[3] * Number(st.globalAlpha) * (n / 64) * clipAt(py * W + pxx);
           const o = (py * W + pxx) * 3;
           for (let i = 0; i < 3; i++) px[o + i] = px[o + i] * (1 - a) + c[i] * a;
-          tag[py * W + pxx] = 1;
+          tag[py * W + pxx] = Math.max(tag[py * W + pxx], n / 64);
         }
       }
     },
-    moveTo: (x: number, y: number) => { path.push([x, y]); },
+    moveTo: (x: number, y: number) => { path.push([x, y]); sub = []; },
     lineTo: (x: number, y: number) => {
       const [x0, y0] = path[path.length - 1];
       path.push([x, y]);
@@ -1253,8 +1302,12 @@ function rasterCtx(W: number, H: number, ground: RGB) {
   return {
     ctx, nearBlack, W, H, at: (x: number, y: number) => [0, 1, 2].map((i) => px[(Math.round(y) * W + Math.round(x)) * 3 + i]) as RGB,
     /** Whether a name tag (pass 3) covers the pixel, in any part. */
-    tagged: (x: number, y: number) => tag[Math.round(y) * W + Math.round(x)] === 1,
-    taggedShare: () => tag.reduce((n, v) => n + v, 0) / (W * H),
+    tagged: (x: number, y: number) => tag[Math.round(y) * W + Math.round(x)] > 0,
+    /** Whether a name tag covers the whole pixel, every one of its samples. */
+    taggedWhole: (x: number, y: number) => tag[Math.round(y) * W + Math.round(x)] >= 1,
+    taggedShare: () => tag.reduce((n, v) => n + (v > 0 ? 1 : 0), 0) / (W * H),
+    /** The paint the name tags were filled with. */
+    tagPaint: () => tagPaint,
   };
 }
 
@@ -1268,9 +1321,12 @@ type Painted = { n: Tile; x: number; y: number; w: number; h: number; frame: boo
  * amber hatch, as tmHatchPattern builds it (hatchOf), and each top-level folder's name tag, the half-black
  * rounded pill pass 3 fills (the page's roundRect, a rounded rectangle path). They were stubbed out, so the
  * hatch's amber was never beside a band, and the pills never over a line.
+ *
+ * With `bare` (lineCalls of the same map), the map as it would be with no leaf outline, no folder band and no
+ * name tag drawn: what a name tag should lie over (review F3.1).
  */
 function rasterPaint(tiles: Tile[], palette: Record<string, string>, W: number, H: number,
-  colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.size), history = { active: false, diff: false }, hideCloud = false, dpr = 1) {
+  colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.size), history = { active: false, diff: false }, hideCloud = false, dpr = 1, bare?: Set<string>) {
   // The grid starts as the card the canvas sits on — what a cleared pixel shows — and the painter lays the
   // theme's --tm-canvas-bg over it, as on screen: so what the page reckons its ground to be is measured too.
   const raster = rasterCtx(Math.round(W * dpr), Math.round(H * dpr), cardGround(palette));
@@ -1286,10 +1342,57 @@ function rasterPaint(tiles: Tile[], palette: Record<string, string>, W: number, 
     roundRect: (c: { roundRect: (x: number, y: number, w: number, h: number, r: number) => void }, x: number, y: number, w: number, h: number, r: number) => c.roundRect(x, y, w, h, r),
     formatBytes: (n: number) => `${Math.round(n)} B`,
   };
-  // Resolving the helpers runs the painter; the grid is measured after one clean paint of its own.
-  load<() => void>(['drawTreemap'], { ...deps, tmBufCtx: recordingCtx().ctx }, 'drawTreemap', (draw) => draw());
-  load<() => void>(['drawTreemap'], deps, 'drawTreemap', (draw) => draw());
+  const onGrid = !bare ? raster.ctx : new Proxy(raster.ctx, {
+    get(t, k: string) {
+      if (k === 'strokeRect' || k === 'fillRect') {
+        return (...a: number[]) => { if (!bare.has([k, k === 'strokeRect' ? t.strokeStyle : t.fillStyle, ...a].join('|'))) t[k](...a); };
+      }
+      if (k === 'fill') return () => {}; // the name tags, the only shapes this raster fills
+      return t[k];
+    },
+    set(t, k: string, v) { t[k] = v; return true; },
+  });
+  // Resolving the helpers runs the painter, once per helper it turns out to need, each run stopping where a
+  // helper is missing — on a context that keeps what a run left (a clip, a save) that would carry into the
+  // next. So they are resolved on a recording context, and the grid gets one clean paint of its own from the
+  // painter they resolved.
+  let into: any = recordingCtx().ctx;
+  const ctx = new Proxy({}, { get: (_t, k: string) => into[k], set: (_t, k: string, v) => { into[k] = v; return true; } });
+  const draw = load<() => void>(['drawTreemap'], { ...deps, tmBufCtx: ctx }, 'drawTreemap', (d) => d());
+  into = onGrid;
+  draw();
   return { raster, px: state.treemap.pxRects };
+}
+
+/** The calls a paint draws its leaf outlines (pass 2.6) and folder bands (pass 2.7) with, as rasterPaint's `bare` leaves them out. */
+const lineCalls = (px: Painted[]) => new Set(px.flatMap((r) => [
+  ...(r.edge ? [['strokeRect', r.edge, r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1].join('|')] : []),
+  ...(r.bands || []).map((b) => ['fillRect', b.rgb, b.x, b.y, b.w, b.h].join('|')),
+]));
+
+/**
+ * What lies under the top-level folders' name tags (review F3.1): every pixel a tag covers whole should be the
+ * map with no outline or band drawn (`bare`), under the tag's own half black — the tag laid over the tiles
+ * alone. A line stops at a tag's edge, as a frame's border stops at its legend: under the pill it would be
+ * darkened by half with the tile beside it, about 2:1 between them, and on the size ramp's red, its blue or a
+ * mid grey no colour at all reaches 3:1 there. `lines` counts the places where a line would run under a tag
+ * whole (edgesOf), so a map whose tags cover none cannot pass for one whose tags hide its lines.
+ */
+function underTags(raster: ReturnType<typeof rasterCtx>, bare: ReturnType<typeof rasterCtx>, px: Painted[], dpr = 1) {
+  const [tr, tg, tb, ta] = rgba(raster.tagPaint());
+  const shown: string[] = [];
+  let whole = 0;
+  for (let y = 0; y < raster.H; y++) {
+    for (let x = 0; x < raster.W; x++) {
+      if (!raster.taggedWhole(x, y)) continue;
+      whole++;
+      const want = bare.at(x, y).map((v, i) => v * (1 - ta) + [tr, tg, tb][i] * ta);
+      const got = raster.at(x, y);
+      if (got.some((v, i) => Math.abs(v - want[i]) > 0.5) && shown.length < 8) shown.push(`${x},${y}: ${got.map(Math.round)} where the tag over the tiles alone is ${want.map(Math.round)}`);
+    }
+  }
+  const lines = edgesOf(px, raster.W, raster.H, dpr).filter((e) => raster.taggedWhole(...e.line)).length;
+  return { whole, lines, shown };
 }
 
 /** A leaf the owner's rule outlines: 8 px or more on each side. */
@@ -1393,8 +1496,8 @@ function edgesOf(painted: Painted[], W: number, H: number, dpr = 1) {
  *
  * A place where a top-level folder's name tag (pass 3) covers the line's pixel or the tile's, in any part,
  * is left out, and counted in `tagged` (review F2.2): the tag is a label laid over the map — its folder's
- * name in white on a half-black pill — so the lines and tiles under it recede behind the name, both
- * darkened by half, which compresses the contrast between them. Everywhere else the bar holds.
+ * name in white on a half-black pill — and no line is drawn under it (review F3.1; underTags holds that, pixel
+ * by pixel, wherever a tag covers a pixel whole), so there is no line there to measure. Everywhere else the bar holds.
  */
 function measureEdges(raster: ReturnType<typeof rasterCtx>, px: Painted[], dpr = 1) {
   const all = edgesOf(px, raster.W, raster.H, dpr);
@@ -2021,7 +2124,7 @@ const REAL_W = 640, REAL_H = 400;
 /** Near-black: no brighter than relative luminance 0.03 — about L* 20, the map's own dark ground and anything close to it. */
 const NEAR_BLACK = 0.03;
 
-test('map density: a realistic dense map is colour with contrasting lines, not a black mesh — near-black under 2% in dark and light, and every line at 3:1 on its pixels', () => {
+test('map density: a realistic dense map is colour with contrasting lines, not a black mesh — near-black under 2% in dark and light, every line at 3:1 on its pixels, and none under a name tag', () => {
   const nodes = realisticNodes();
   const share: Record<string, number> = {};
   for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
@@ -2054,13 +2157,17 @@ test('map density: a realistic dense map is colour with contrasting lines, not a
     assert.ok(m.tagged > 0, `${theme}: control — ${m.tagged} places where a line meets a tile lie under a name tag`);
     assert.ok(raster.taggedShare() < 0.02 && m.tagged < m.edges.length * 0.02, `${theme}: the name tags cover ${(raster.taggedShare() * 100).toFixed(2)}% of the map and ${m.tagged} places, under 2% of the ${m.edges.length} measured`);
     assert.deepEqual(m.under, [], `${theme}: lines under ${EDGE_BAR}:1 against the tile beside them`);
+    // And under a tag no line is drawn at all (review F3.1): each pixel it covers whole is the tiles, darkened by the tag alone.
+    const t = underTags(raster, rasterPaint(nodes, palette, REAL_W, REAL_H, undefined, undefined, false, 1, lineCalls(px)).raster, px);
+    assert.ok(t.whole > 1000 && t.lines > 100, `${theme}: control — the tags cover ${t.whole} pixels whole, where lines would run in ${t.lines} places`);
+    assert.deepEqual(t.shown, [], `${theme}: under a name tag, pixels that are not the tiles under the tag alone — a leaf's outline or a folder's band shows there, or the tag is not laid`);
   }
   // QA read 8.5% (corpus) and 8.9% (/System/Library) near-black in the real dark map, and 2.3–5.5% in light,
   // painted BQG-5's way; this layout, painted that way (REL-79) on this raster, name tags and all, measures
   // 13.3% dark and 1.7% light — the empty folders' slabs and the 0.35 outlines over a gap of the ground — and
-  // 0.3% in both now, most of it under the name tags' half-black pills (0.1% before they were drawn on this
-  // raster, review F2.2). The lines are dark shades of each tile's own colour, not black: at luminance < 0.08
-  // the share is 26.4% (it was 18.5% dark, 3.2% light) — the outlines the owner asked to see.
+  // 0.1% in both now (0.3% while the lines still ran under the name tags' half-black pills, darkened by half
+  // with the tiles beside them; review F3.1). The lines are dark shades of each tile's own colour, not black: at
+  // luminance < 0.08 the share is 26.1% (it was 18.5% dark, 3.2% light) — the outlines the owner asked to see.
   const over = Object.entries(share).filter(([, v]) => v >= 0.02).map(([theme, v]) => `${theme} ${(v * 100).toFixed(1)}%`);
   assert.deepEqual(over, [], `near-black (luminance < ${NEAR_BLACK}) at or over 2%: ${over.join(', ')} (dark ${(share.dark * 100).toFixed(1)}%, light ${(share.light * 100).toFixed(1)}%)`);
 });
@@ -2102,6 +2209,10 @@ test('owner\'s outlines on a Retina screen and at 150 %: every rectangle lies on
         if (what === 'the dense map') {
           const share = raster.nearBlack(NEAR_BLACK);
           assert.ok(share < 0.02, `${theme}, dpr ${dpr}: near-black ${(share * 100).toFixed(2)}% of the dense map's device pixels`);
+          // No line under a name tag, on the device's pixels (review F3.1).
+          const t = underTags(raster, rasterPaint(nodes, palette, W, H, undefined, undefined, false, dpr, lineCalls(px)).raster, px, dpr);
+          assert.ok(t.whole > 1000 * dpr * dpr && t.lines > 100 * dpr, `${theme}, dpr ${dpr}: control — the tags cover ${t.whole} device pixels whole, where lines would run in ${t.lines} places`);
+          assert.deepEqual(t.shown, [], `${theme}, dpr ${dpr}: under a name tag, device pixels that are not the tiles under the tag alone — a leaf's outline or a folder's band shows there, or the tag is not laid`);
         }
       }
     }
@@ -2170,4 +2281,70 @@ test('the SVG export lays the map\'s ground under a staged block and a hollow on
     assert.ok(dashed, `${path}: control — its dashed outline is in the SVG`);
     assert.ok(fFill.at < ground!.at && ground!.at < dashed!.at, `${path}: the ground is laid after the folder's fill and before the cell's dashed outline (${fFill.at} < ${ground!.at} < ${dashed!.at})`);
   }
+});
+
+/** An SVG path's subpaths (M, L, H, V, A, Z, absolute), each as the points it passes through and the radii of its arcs. */
+function subpaths(d: string) {
+  const tokens = [...d.matchAll(/[MLHVAZ]|-?\d*\.?\d+(?:e-?\d+)?/gi)].map((m) => m[0]);
+  const out: Array<{ pts: number[][]; radii: number[] }> = [];
+  let pen = [0, 0];
+  for (let i = 0; i < tokens.length;) {
+    const cmd = tokens[i++];
+    const num = () => Number(tokens[i++]);
+    if (cmd === 'M') { pen = [num(), num()]; out.push({ pts: [pen], radii: [] }); }
+    else if (cmd === 'L') { pen = [num(), num()]; out[out.length - 1].pts.push(pen); }
+    else if (cmd === 'H') { pen = [num(), pen[1]]; out[out.length - 1].pts.push(pen); }
+    else if (cmd === 'V') { pen = [pen[0], num()]; out[out.length - 1].pts.push(pen); }
+    else if (cmd === 'A') { const rx = num(), ry = num(); i += 3; pen = [num(), num()]; out[out.length - 1].radii.push(rx, ry); out[out.length - 1].pts.push(pen); }
+    else if (cmd !== 'Z') assert.fail(`an unexpected path command ${cmd}`);
+  }
+  return out.map((s) => {
+    const xs = s.pts.map((p) => p[0]), ys = s.pts.map((p) => p[1]);
+    return { box: [Math.min(...xs), Math.min(...ys), Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)], radii: s.radii };
+  });
+}
+
+test('owner\'s outlines: the SVG export\'s outlines and bands stop at its name tags, as the canvas\'s do — each tag clipped out of them by its own box and radius, and the tags and their names laid after, outside the clip (review F3.1)', () => {
+  // Two top-level folders big enough for a tag, each tiled by narrow strips whose outlines run under the tag, and a file.
+  const tiles: Tile[] = [
+    { name: 'Applications', path: '/r/Applications', size: 6e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 60, h: 60 },
+    { name: 'Library', path: '/r/Library', size: 4e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 60, w: 60, h: 40 },
+    { name: 'big.bin', path: '/r/big.bin', size: 4e10, type: 'file', depth: 1, expanded: false, x: 60, y: 0, w: 40, h: 100 },
+  ];
+  for (const [f, y, h] of [['Applications', 0, 60], ['Library', 60, 40]] as const) {
+    for (let k = 0; k < 12; k++) tiles.push({ name: `s${k}`, path: `/r/${f}/s${k}`, size: 5e9 - k * 1e8, type: 'file', depth: 2, expanded: false, x: k * 5, y, w: 5, h });
+  }
+  const { svg, px } = exportSvg(tiles, (n) => ramp.sizeRgb(n.size), '#0e0e13');
+  const painted = px as Painted[];
+  const rects = [...svg.matchAll(/<rect ([^>]*?)\/?>/g)].map((m) => ({ a: attrs(m[1]), at: m.index! }));
+  const tags = rects.filter(({ a }) => a.fill === 'rgba(0,0,0,0.5)' && 'rx' in a);
+  assert.equal(tags.length, 2, 'control: the SVG lays a name tag on each top-level folder big enough for one');
+  // The clip: the map's whole rectangle, with each tag cut out of it by the even-odd rule.
+  const clips = [...svg.matchAll(/<clipPath id="([\w-]+)">\s*<path ([^>]*?)\/?>\s*<\/clipPath>/g)];
+  assert.equal(clips.length, 1, 'the SVG defines one clip for the lines');
+  const [, id, pathAttrs] = clips[0];
+  const p = attrs(pathAttrs);
+  assert.equal(p['clip-rule'], 'evenodd', 'the tags are cut out of the map by the even-odd rule');
+  const subs = subpaths(p.d);
+  const near = (a: number[], b: number[], tol = 0.011) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < tol);
+  assert.ok(near(subs[0].box, [0, 0, MAP_W, MAP_H]) && subs[0].radii.length === 0, `the clip's first shape is the whole map (${subs[0].box})`);
+  assert.equal(subs.length, 1 + tags.length, 'and one more for each tag');
+  for (const { a } of tags) {
+    const box = ['x', 'y', 'width', 'height'].map((k) => Number(a[k]));
+    const radius = Math.min(Number(a.rx), box[2] / 2, box[3] / 2);
+    const cut = subs.slice(1).filter((s) => near(s.box, box));
+    assert.equal(cut.length, 1, `the tag at ${box} is cut out of the clip by its own box`);
+    assert.ok(cut[0].radii.length === 8 && cut[0].radii.every((r) => Math.abs(r - radius) < 0.011), `with the tag's own corner radius ${radius} (${cut[0].radii})`);
+  }
+  // What the clip holds: every leaf outline and every band, and nothing else; the tags and their names come after it.
+  const open = svg.indexOf(`<g clip-path="url(#${id})">`), close = svg.indexOf('</g>', open);
+  assert.ok(open > 0 && close > open, 'the lines are drawn in a group under the clip');
+  const outlines = rects.filter(({ a }) => a.fill === 'none' && painted.some((r) => r.edge === a.stroke) && !('stroke-dasharray' in a));
+  const bands = rects.filter(({ a }) => painted.some((r) => (r.bands || []).some((b) => b.rgb === a.fill && Math.abs(b.x - Number(a.x)) < 0.011 && Math.abs(b.y - Number(a.y)) < 0.011)));
+  assert.ok(outlines.length >= 20 && bands.length >= 8, `control: the leaves' outlines (${outlines.length}) and the folders' bands (${bands.length}) are in the SVG`);
+  const within = (at: number) => at > open && at < close;
+  assert.deepEqual([...outlines, ...bands].filter(({ at }) => !within(at)).map(({ a }) => a.stroke ?? a.fill), [], 'every outline and band is under the clip');
+  assert.equal(rects.filter(({ at }) => within(at)).length, outlines.length + bands.length, 'and nothing else is');
+  assert.ok(tags.every(({ at }) => at > close), 'the tags are laid after the clipped lines, outside the clip');
+  assert.ok([...svg.matchAll(/<text [^>]*font-weight="600"[^>]*>/g)].every((m) => m.index! > close), 'and so are their names');
 });

@@ -1074,6 +1074,34 @@ function tmFolderTags(ctx, px) {
   return tags;
 }
 
+/** A name tag's corner radius (pass 3), which the clip under it follows (tmClipOutTags). */
+const TM_TAG_RADIUS = 9;
+
+/**
+ * Clips what is drawn next to the whole map but the top-level folders' name
+ * tags, each the rounded pill pass 3 lays (review F3.1). A leaf's outline or a
+ * folder's band stops at a tag's edge, as a frame's border stops at its
+ * legend: under the tag's half black the line and the tile beside it were
+ * both darkened by half, about 2:1 between them, under the owner's 3:1 bar —
+ * and on the size ramp's red, its blue or a mid grey no colour at all reaches
+ * 3:1 there. The name reads on the tiles alone.
+ */
+function tmClipOutTags(ctx, tags, w, h) {
+  ctx.beginPath();
+  ctx.rect(0, 0, w, h);
+  for (const t of tags) {
+    // Canvas2D.roundRect's own path, as a subpath of this one.
+    const rr = Math.max(0, Math.min(TM_TAG_RADIUS, t.w / 2, t.h / 2));
+    ctx.moveTo(t.x + rr, t.y);
+    ctx.arcTo(t.x + t.w, t.y, t.x + t.w, t.y + t.h, rr);
+    ctx.arcTo(t.x + t.w, t.y + t.h, t.x, t.y + t.h, rr);
+    ctx.arcTo(t.x, t.y + t.h, t.x, t.y, rr);
+    ctx.arcTo(t.x, t.y, t.x + t.w, t.y, rr);
+    ctx.closePath();
+  }
+  ctx.clip('evenodd');
+}
+
 function drawTreemap() {
   // QA D58 — the server stops a map at 20,000 nodes and its response cannot
   // say so (§12 golden lock), so the note under the map does. Written before
@@ -1275,6 +1303,9 @@ function drawTreemap() {
     ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${TM_DIFF_WASH})`;
     ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
   }
+  // Passes 2.6 and 2.7 stop at the top-level folders' name tags (tmClipOutTags).
+  ctx.save();
+  if (tagRects.length) tmClipOutTags(ctx, tagRects, cssW, cssH);
   // Pass 2.6: leaf outlines, inside each leaf's own box, laid after the
   // washes so a line is seen in the tone it was picked in — under two washes
   // even black reached only 2.3:1 on a grey tile.
@@ -1296,13 +1327,14 @@ function drawTreemap() {
       ctx.fillRect(b.x, b.y, b.w, b.h);
     }
   }
+  ctx.restore();
   // Pass 3: top-level directory name tags.
   ctx.textBaseline = 'middle';
   ctx.font = '600 10.5px -apple-system, sans-serif';
   for (const t of tagRects) {
     const r = t.r;
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    roundRect(ctx, t.x, t.y, t.w, t.h, 9);
+    roundRect(ctx, t.x, t.y, t.w, t.h, TM_TAG_RADIUS);
     ctx.fill();
     ctx.fillStyle = 'rgba(255,255,255,0.92)';
     ctx.fillText(r.n.name, r.x + 12, r.y + 14.5, r.w - 26);

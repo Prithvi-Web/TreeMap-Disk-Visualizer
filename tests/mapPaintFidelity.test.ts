@@ -144,7 +144,9 @@ const MAP_NAMES = ['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT
   'tmLeafEdged', 'TM_DENSE_PX', 'tmSnap', 'tmTone', 'TM_EDGE_MIN', 'TM_LIT', 'tmKidsOf', 'tmParentPath', 'tmFramesDeepestFirst',
   'tmFrameBands', 'tmEdgeContent', 'tmTouches', 'TM_SIDES', 'TM_FRAME_MIN', 'TM_FRAME_W_TOP', 'TM_FRAME_W',
   // The map's ground, which a band beside a hollow or staged cell is toned against (review F1.5).
-  'tmGroundRgb', 'tmCssRgba', 'tmOver'];
+  'tmGroundRgb', 'tmCssRgba', 'tmOver',
+  // The name tags the outlines and bands stop at (review F3.1).
+  'tmClipOutTags', 'TM_TAG_RADIUS'];
 
 /** What the real lensPaint needs from the page — the map's outline rules among them (review F1.2). */
 const LENS_NAMES = ['lensPaint', 'lensActive', 'lensShapes', 'LENS_SCALE', 'LENS_RADIUS', 'Canvas2D', 'mix', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'tmSeenThrough', 'TM_DIFF_WASH',
