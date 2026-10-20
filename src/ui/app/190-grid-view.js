@@ -473,7 +473,10 @@ function costMoney(usd, est) {
 
 async function loadCostEstimate(after) {
   const host = $('costBody');
-  if (!host || !state.scanId) return;
+  // Priced from the scan the tree on screen came from (treeScanId), never a
+  // scan still walking (BQJ-1b).
+  const scanId = treeScanId();
+  if (!host || !scanId) return;
   // First paint loads as labelled skeleton rows; a reload (currency change,
   // rescan) sweeps the standing prices with the veil instead of blanking
   // them. Both painters below settle it.
@@ -486,9 +489,8 @@ async function loadCostEstimate(after) {
   // is stopped — this card has nothing current to show, so it says so rather
   // than stay on its loading state (review of U-16, finding 3).
   if (after) {
-    const scanId = state.scanId;
     try { await after; } catch { /* the lists report their own failure; the card still loads */ }
-    if (scanId !== state.scanId) {
+    if (scanId !== treeScanId()) {
       host.classList.remove('fx-chart-loading');
       host.innerHTML = '<div class="muted">Run a scan to see what this data would cost to keep online.</div>';
       return;
@@ -498,13 +500,13 @@ async function loadCostEstimate(after) {
   // reclaimable, so the two features agree about the same bytes.
   let freeable = 0;
   try {
-    const s = await api('/api/cleanup/suggestions?scanId=' + state.scanId);
+    const s = await api('/api/cleanup/suggestions?scanId=' + scanId);
     freeable = (s.groups || []).reduce((n, g) => n + (g.advisory ? 0 : g.totalSize), 0);
   } catch { /* the estimate is still worth showing without a what-if */ }
 
   let est;
   try {
-    est = await api(`/api/cost/estimate?scanId=${state.scanId}&freeable=${freeable}&currency=${$('costCurrency').value}`);
+    est = await api(`/api/cost/estimate?scanId=${scanId}&freeable=${freeable}&currency=${$('costCurrency').value}`);
   } catch (e) {
     host.classList.remove('fx-chart-loading');
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
@@ -550,7 +552,7 @@ async function loadCostEstimate(after) {
     rows +
     `<div class="cost-foot">Prices as of <b>${escapeHtml(est.asOf)}</b>, shipped with this version — TreeMap never looks them up online, so check the provider before you buy.` +
     (est.approximate ? ` Figures marked ≈ are converted from US dollars at an approximate rate.` : '') + `</div>`,
-    `${state.scanId}:${$('costCurrency').value}`);
+    `${scanId}:${$('costCurrency').value}`);
   fxBarsIn(host);
 }
 
@@ -622,7 +624,10 @@ function smartDeviceFor(topo, rootPath) {
 
 async function loadDriveHealth() {
   const host = $('driveHealthBody');
-  if (!host || !state.scanId) return;
+  // The drive the scan the tree on screen came from is on (treeScanId) —
+  // never a scan still walking (BQJ-1b).
+  const scanId = treeScanId();
+  if (!host || !scanId) return;
   // First paint loads as labelled skeleton rows; a reload sweeps the standing
   // card with the veil instead of blanking it. Every painter settles it.
   if (host.querySelector('.dh-kv') || host.querySelector('.dh-unknown')) host.classList.add('fx-chart-loading');
@@ -635,7 +640,7 @@ async function loadDriveHealth() {
 
   let data;
   try {
-    data = await api(`/api/health/smart?scanId=${state.scanId}` + (device ? `&device=${encodeURIComponent(device)}` : ''));
+    data = await api(`/api/health/smart?scanId=${scanId}` + (device ? `&device=${encodeURIComponent(device)}` : ''));
   } catch (e) {
     host.classList.remove('fx-chart-loading');
     fxDriveGaugeDrop();

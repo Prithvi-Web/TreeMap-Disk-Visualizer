@@ -703,7 +703,7 @@ test('a refused scan is never toasted as a clean success, and the tour refuses t
 
   // The card names the OS that refused (issue #33): the two word helpers ride
   // along with the function, exactly as they sit in the built page.
-  const wins = [braced('function platformWord('), braced('function refusedFolderWords('), braced('async function tourLoadWins(')].join('\n');
+  const wins = [braced('function treeScanId('), braced('function treeScanComing('), braced('function platformWord('), braced('function refusedFolderWords('), braced('async function tourLoadWins(')].join('\n');
   const refusedOn = async (system: { platform: string } | undefined) => {
     const tour: Record<string, unknown> = { step: 'map', wins: [], winIx: 0, unknownReason: '' };
     const run = new Function('state', 'api', 'tour', 'tourRender', `'use strict'; ${wins} return tourLoadWins;`)(

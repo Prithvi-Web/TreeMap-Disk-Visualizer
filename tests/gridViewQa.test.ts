@@ -470,7 +470,8 @@ test('with nothing selected, the selection bar is hidden from focus and assistiv
 /* ══════════════ D21 — no "same plan" for a free plan ══════════════ */
 
 test('the Cost card never tells a free plan that clearing space keeps you on it (D21)', async () => {
-  const src = slice('function costMoney(', '/* ───────────────────────────── Drive Health');
+  // With the app's one rule for the scan the tree on screen came from (treeScanId), which it prices.
+  const src = `${slice('function treeScanId(', '\n}\n')}\n}\n${slice('function costMoney(', '/* ───────────────────────────── Drive Health')}`;
   let painted = '';
   const provider = (name: string, label: string, monthly: number) => ({
     providerName: name, bytes: 8.8e9, current: { tier: { label }, monthly },

@@ -31663,12 +31663,16 @@ function budgetFor(path) { return state.budgets.list.find(b => b.path === path) 
 let loadBudgetsSeq = 0;
 /** Fetch budgets for the current scan, update the dashboard widget + treemap overlay. */
 async function loadBudgets() {
-  if (!state.scanId || !state.root) return;
+  // Of the scan the tree on screen came from (treeScanId): asked of a scan
+  // still walking, a budget saved during a rescan emptied the meters and the
+  // map's borders (BQJ-1b).
+  const scanId = treeScanId();
+  if (!scanId || !state.root) return;
   // FX: a reload sweeps the existing gauges instead of blanking them; a
   // first paint has no card to veil (renderBudgetWidget hides it empty).
   if (!$('budgetCard').hidden) $('budgetList').classList.add('fx-chart-loading');
   try {
-    const data = await api(`/api/scan/${state.scanId}/budgets`);
+    const data = await api(`/api/scan/${scanId}/budgets`);
     state.budgets.list = data.budgets || [];
     // The server measured these folders exactly; seed them so the edit dialog
     // can state a real size even when the folder itself was pruned away.
@@ -31685,7 +31689,7 @@ async function loadBudgets() {
   state.budgets.gauges = new Map();
   renderBudgetWidget();
   try {
-    const g = await api(`/api/scan/${state.scanId}/budget-gauges`);
+    const g = await api(`/api/scan/${scanId}/budget-gauges`);
     if (seq !== loadBudgetsSeq) return;
     state.budgets.gauges = new Map((g.gauges || []).map((x) => [x.path, x]));
     renderBudgetWidget();
@@ -32747,7 +32751,19 @@ window.addEventListener('resize', tourPlaceSoon);
 document.addEventListener('scroll', tourPlaceSoon, { capture: true, passive: true });
 
 async function tourLoadWins() {
-  if (!state.scanId) return;
+  // Of the scan the tree on screen came from (treeScanId), never a scan still
+  // walking. The saved index's tree has none: said, as the card's other
+  // non-answers are, rather than a button that does nothing (BQJ-1b).
+  const scanId = treeScanId();
+  if (!scanId) {
+    if (!state.root) return;
+    tour.step = 'unknown';
+    tour.unknownReason = treeScanComing()
+      ? 'The scan is still running, so there is nothing to suggest yet.'
+      : 'This folder was opened from its saved index, and suggestions need a scan of it.';
+    tourRender();
+    return;
+  }
   // A fourth non-answer, and the loudest: the folder was never read. On a Mac
   // without Full Disk Access a scan of Desktop or Documents returns nothing,
   // and on Windows a folder another account owns does the same,
@@ -32768,7 +32784,7 @@ async function tourLoadWins() {
   // honest card; only a real, complete, empty answer earns "looks clean".
   let groups = [];
   try {
-    const res = await api(`/api/cleanup/suggestions?scanId=${state.scanId}`, undefined, { poll: true });
+    const res = await api(`/api/cleanup/suggestions?scanId=${scanId}`, undefined, { poll: true });
     if (res && res.available === false) {
       tour.step = 'unknown';
       tour.unknownReason = res.reason || 'Suggestions are not available right now.';
@@ -34866,7 +34882,10 @@ function costMoney(usd, est) {
 
 async function loadCostEstimate(after) {
   const host = $('costBody');
-  if (!host || !state.scanId) return;
+  // Priced from the scan the tree on screen came from (treeScanId), never a
+  // scan still walking (BQJ-1b).
+  const scanId = treeScanId();
+  if (!host || !scanId) return;
   // First paint loads as labelled skeleton rows; a reload (currency change,
   // rescan) sweeps the standing prices with the veil instead of blanking
   // them. Both painters below settle it.
@@ -34879,9 +34898,8 @@ async function loadCostEstimate(after) {
   // is stopped — this card has nothing current to show, so it says so rather
   // than stay on its loading state (review of U-16, finding 3).
   if (after) {
-    const scanId = state.scanId;
     try { await after; } catch { /* the lists report their own failure; the card still loads */ }
-    if (scanId !== state.scanId) {
+    if (scanId !== treeScanId()) {
       host.classList.remove('fx-chart-loading');
       host.innerHTML = '<div class="muted">Run a scan to see what this data would cost to keep online.</div>';
       return;
@@ -34891,13 +34909,13 @@ async function loadCostEstimate(after) {
   // reclaimable, so the two features agree about the same bytes.
   let freeable = 0;
   try {
-    const s = await api('/api/cleanup/suggestions?scanId=' + state.scanId);
+    const s = await api('/api/cleanup/suggestions?scanId=' + scanId);
     freeable = (s.groups || []).reduce((n, g) => n + (g.advisory ? 0 : g.totalSize), 0);
   } catch { /* the estimate is still worth showing without a what-if */ }
 
   let est;
   try {
-    est = await api(`/api/cost/estimate?scanId=${state.scanId}&freeable=${freeable}&currency=${$('costCurrency').value}`);
+    est = await api(`/api/cost/estimate?scanId=${scanId}&freeable=${freeable}&currency=${$('costCurrency').value}`);
   } catch (e) {
     host.classList.remove('fx-chart-loading');
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
@@ -34943,7 +34961,7 @@ async function loadCostEstimate(after) {
     rows +
     `<div class="cost-foot">Prices as of <b>${escapeHtml(est.asOf)}</b>, shipped with this version — TreeMap never looks them up online, so check the provider before you buy.` +
     (est.approximate ? ` Figures marked ≈ are converted from US dollars at an approximate rate.` : '') + `</div>`,
-    `${state.scanId}:${$('costCurrency').value}`);
+    `${scanId}:${$('costCurrency').value}`);
   fxBarsIn(host);
 }
 
@@ -35015,7 +35033,10 @@ function smartDeviceFor(topo, rootPath) {
 
 async function loadDriveHealth() {
   const host = $('driveHealthBody');
-  if (!host || !state.scanId) return;
+  // The drive the scan the tree on screen came from is on (treeScanId) —
+  // never a scan still walking (BQJ-1b).
+  const scanId = treeScanId();
+  if (!host || !scanId) return;
   // First paint loads as labelled skeleton rows; a reload sweeps the standing
   // card with the veil instead of blanking it. Every painter settles it.
   if (host.querySelector('.dh-kv') || host.querySelector('.dh-unknown')) host.classList.add('fx-chart-loading');
@@ -35028,7 +35049,7 @@ async function loadDriveHealth() {
 
   let data;
   try {
-    data = await api(`/api/health/smart?scanId=${state.scanId}` + (device ? `&device=${encodeURIComponent(device)}` : ''));
+    data = await api(`/api/health/smart?scanId=${scanId}` + (device ? `&device=${encodeURIComponent(device)}` : ''));
   } catch (e) {
     host.classList.remove('fx-chart-loading');
     fxDriveGaugeDrop();

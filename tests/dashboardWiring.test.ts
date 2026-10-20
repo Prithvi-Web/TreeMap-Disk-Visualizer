@@ -286,8 +286,10 @@ test('cost bars normalize to the priciest plan shown; a provider with no plan ge
 
 test('cost prices roll under a scan+currency key, and the honesty copy survives', () => {
   const fn = slice('async function loadCostEstimate(', 'let dhGauge = null;');
-  assert.match(fn, /FxNum\.rollHtml\(host,[\s\S]+?`\$\{state\.scanId\}:\$\{\$\('costCurrency'\)\.value\}`\)/,
+  // The scan the prices were worked out from (treeScanId, read once at the start), and the currency.
+  assert.match(fn, /FxNum\.rollHtml\(host,[\s\S]+?`\$\{scanId\}:\$\{\$\('costCurrency'\)\.value\}`\)/,
     'a currency or scan change is a new entity and snaps');
+  assert.match(fn, /const scanId = treeScanId\(\);/, 'and that scan is the tree on screen\'s');
   assert.match(fn, /cost-save/, 'the green saving state stays');
   assert.match(fn, /never looks them up online, so check the provider before you buy/, 'the as-of footnote stays');
 });

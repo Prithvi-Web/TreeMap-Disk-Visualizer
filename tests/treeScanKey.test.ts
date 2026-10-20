@@ -574,3 +574,48 @@ test('Clean Up: what a match takes on its disk, and the cloud-safe list, are ask
     assert.equal($('cleanTabCloud').hidden, true, 'the cloud-safe tab claims nothing');
   }
 });
+
+/* ───────────────────────────── the Dashboard's cards, the tour ───────────────────────────── */
+
+test('the Dashboard\'s folder budgets, cost to keep and drive health are asked of the scan the tree on screen came from — never the running scan — and over the saved index\'s tree ask nothing', async () => {
+  const $ = stubDom();
+  const state: Record<string, unknown> = { root: TREE, view: 'dashboard', ...HELD, budgets: { list: [], overPaths: new Set(), gauges: new Map() } };
+  const { fns, asks } = page<{ budgets: () => Promise<void>; cost: () => Promise<void>; health: () => Promise<void> }>(
+    ['async function loadBudgets(', 'async function loadCostEstimate(', 'async function loadDriveHealth('], {
+      state, $, loadBudgetsSeq: 0, seedNodes: noop, renderBudgetWidget: noop, isSun: () => false, presentView: noop,
+      skeletonRows: () => '<i>loading</i>', costMoney: () => '', costSavingHtml: () => '', fxBarStyle: () => '', formatBytes: String,
+      escapeHtml: esc, FxNum: { rollHtml: noop }, fxBarsIn: noop,
+      smartDeviceFor: () => null, topologyAnswer: async () => null, renderDriveHealth: noop, fxDriveGaugeDrop: noop,
+    }, '{ budgets: loadBudgets, cost: loadCostEstimate, health: loadDriveHealth }',
+    (url) => (url.includes('/budgets') ? { budgets: [] } : url.includes('budget-gauges') ? { gauges: [] }
+      : url.includes('suggestions') ? { groups: [] } : url.includes('/cost/') ? { providers: [], asOf: '2026-10-01', approximate: false } : {}));
+  await throughThePhases('The budgets', state, asks, fns.budgets, noop);
+  await throughThePhases('Cost to keep', state, asks, fns.cost, noop);
+  await throughThePhases('Drive health', state, asks, fns.health, noop);
+  for (const phase of [INDEX_RUNNING, INDEX_STOPPED]) {
+    Object.assign(state, phase);
+    const before = asks.length;
+    await fns.budgets(); await fns.cost(); await fns.health();
+    await turns();
+    assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked — not of the running scan');
+  }
+});
+
+test('the welcome tour\'s cleanup wins are asked of the scan the tree on screen came from — never the running scan — and over the saved index\'s tree it says why there is nothing to suggest, instead of doing nothing', async () => {
+  const tour: Record<string, unknown> = { step: 'map', wins: [], winIx: 0, unknownReason: '' };
+  const state: Record<string, unknown> = { root: TREE, ...HELD, scanRefused: null };
+  const { fns, asks } = page<{ wins: () => Promise<void> }>(['async function tourLoadWins('], {
+    state, tour, tourRender: noop, refusedFolderWords: () => '',
+  }, '{ wins: tourLoadWins }', () => ({ groups: [] }));
+  await throughThePhases('The tour\'s wins', state, asks, fns.wins, () => { tour.step = 'map'; });
+  const before = asks.length;
+  Object.assign(state, INDEX_RUNNING);
+  await fns.wins();
+  assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked — not of the running scan');
+  assert.equal(tour.step, 'unknown', 'the card says it cannot tell yet, not "looks clean"');
+  assert.equal(tour.unknownReason, 'The scan is still running, so there is nothing to suggest yet.');
+  Object.assign(state, INDEX_STOPPED);
+  await fns.wins();
+  assert.equal(asks.length, before);
+  assert.equal(tour.unknownReason, 'This folder was opened from its saved index, and suggestions need a scan of it.');
+});

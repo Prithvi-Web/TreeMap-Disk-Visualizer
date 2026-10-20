@@ -131,7 +131,7 @@ test('the tour card never steals focus from a text field', () => {
 
 test("the wins step never reads a non-answer as clean — polls, and shows refusals", () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
-  const fn = html.slice(html.indexOf('async function tourLoadWins'), html.indexOf('async function tourLoadWins') + 1600);
+  const fn = html.slice(html.indexOf('async function tourLoadWins'), html.indexOf('function tourScanStarted', html.indexOf('async function tourLoadWins')));
   assert.match(fn, /poll: true/, 'a still-running scan is waited out, not misread as empty');
   assert.match(fn, /available === false/, "a broken rule catalog becomes 'couldn\u2019t check', with its reason");
   assert.match(fn, /catch \(e\)/, 'so does a transport error');

@@ -4,12 +4,16 @@ function budgetFor(path) { return state.budgets.list.find(b => b.path === path) 
 let loadBudgetsSeq = 0;
 /** Fetch budgets for the current scan, update the dashboard widget + treemap overlay. */
 async function loadBudgets() {
-  if (!state.scanId || !state.root) return;
+  // Of the scan the tree on screen came from (treeScanId): asked of a scan
+  // still walking, a budget saved during a rescan emptied the meters and the
+  // map's borders (BQJ-1b).
+  const scanId = treeScanId();
+  if (!scanId || !state.root) return;
   // FX: a reload sweeps the existing gauges instead of blanking them; a
   // first paint has no card to veil (renderBudgetWidget hides it empty).
   if (!$('budgetCard').hidden) $('budgetList').classList.add('fx-chart-loading');
   try {
-    const data = await api(`/api/scan/${state.scanId}/budgets`);
+    const data = await api(`/api/scan/${scanId}/budgets`);
     state.budgets.list = data.budgets || [];
     // The server measured these folders exactly; seed them so the edit dialog
     // can state a real size even when the folder itself was pruned away.
@@ -26,7 +30,7 @@ async function loadBudgets() {
   state.budgets.gauges = new Map();
   renderBudgetWidget();
   try {
-    const g = await api(`/api/scan/${state.scanId}/budget-gauges`);
+    const g = await api(`/api/scan/${scanId}/budget-gauges`);
     if (seq !== loadBudgetsSeq) return;
     state.budgets.gauges = new Map((g.gauges || []).map((x) => [x.path, x]));
     renderBudgetWidget();

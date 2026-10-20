@@ -358,7 +358,19 @@ window.addEventListener('resize', tourPlaceSoon);
 document.addEventListener('scroll', tourPlaceSoon, { capture: true, passive: true });
 
 async function tourLoadWins() {
-  if (!state.scanId) return;
+  // Of the scan the tree on screen came from (treeScanId), never a scan still
+  // walking. The saved index's tree has none: said, as the card's other
+  // non-answers are, rather than a button that does nothing (BQJ-1b).
+  const scanId = treeScanId();
+  if (!scanId) {
+    if (!state.root) return;
+    tour.step = 'unknown';
+    tour.unknownReason = treeScanComing()
+      ? 'The scan is still running, so there is nothing to suggest yet.'
+      : 'This folder was opened from its saved index, and suggestions need a scan of it.';
+    tourRender();
+    return;
+  }
   // A fourth non-answer, and the loudest: the folder was never read. On a Mac
   // without Full Disk Access a scan of Desktop or Documents returns nothing,
   // and on Windows a folder another account owns does the same,
@@ -379,7 +391,7 @@ async function tourLoadWins() {
   // honest card; only a real, complete, empty answer earns "looks clean".
   let groups = [];
   try {
-    const res = await api(`/api/cleanup/suggestions?scanId=${state.scanId}`, undefined, { poll: true });
+    const res = await api(`/api/cleanup/suggestions?scanId=${scanId}`, undefined, { poll: true });
     if (res && res.available === false) {
       tour.step = 'unknown';
       tour.unknownReason = res.reason || 'Suggestions are not available right now.';

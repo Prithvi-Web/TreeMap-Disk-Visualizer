@@ -999,7 +999,8 @@ test('a finished scan asks for the three dashboard lists first and hands their w
 
 /** The cost card out of the built page, with `api` recording what it asks for. */
 function costCard(populated = false) {
-  const src = pageFunction('async function loadCostEstimate(');
+  // With the app's one rule for the scan the tree on screen came from (treeScanId), which it prices.
+  const src = `${pageFunction('function treeScanId(')}\n${pageFunction('async function loadCostEstimate(')}`;
   const asked: string[] = [];
   const host = {
     innerHTML: '', veiled: false,
