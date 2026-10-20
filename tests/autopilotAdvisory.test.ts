@@ -14,6 +14,9 @@ import { readJsonFile, writeJsonFile } from '../src/services/storage';
 import { AppError } from '../src/middleware/errorHandler';
 import type { AutopilotPolicy, AutopilotRun, CleanupSuggestionGroup } from '../src/models/types';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
+import { lift } from './fixtures/liftFrontend';
+import { collectCleanupSuggestions } from '../src/services/cleanupRules';
+import type { FileNode } from '../src/models/types';
 
 /**
  * A group whose rule only advises (`advisory: true`: a VM disk, Xcode archives, a photo library's
@@ -70,6 +73,53 @@ test('an advice-only group is never selected, whatever the policy asks for', () 
   } as unknown as CleanupSuggestionGroup);
   const picked = selectCandidates([group('vm-disk', true), group('cache', false)], [], { kind: 'suggestion', groupIds: ['vm-disk', 'cache'] });
   assert.deepEqual(picked.map((c) => c.path), ['/x/cache']);
+});
+
+/** A folder or file node at `at`, as the walk reads one; a folder's size is its children's. */
+function node(at: string, name: string, kids?: FileNode[]): FileNode {
+  const here = path.join(at, name);
+  if (!kids) return { name, path: here, size: 4_000, type: 'file', modifiedAt: 0, isHidden: name.startsWith('.') };
+  return { name, path: here, type: 'dir', modifiedAt: 0, isHidden: name.startsWith('.'), size: kids.reduce((n, k) => n + k.size, 0), children: kids };
+}
+
+test('every kind the policy editor offers is a rule the packs ship on every platform, none advice-only, and a policy of all of them selects one of each (BQL-b1 review F2.6)', () => {
+  // Three of its six boxes named ids no pack has - "Web build output"
+  // (regen-build-output), "Application caches" (cache-general), "Junk files"
+  // (junk-general) - and a policy saved, approved and run from them reported
+  // "Nothing matched" every time: the evaluator never matches an unknown id.
+  const offered = lift<Array<{ id: string; label: string; hint: string }>>(['AP_GROUPS'], 'AP_GROUPS');
+  const packs = path.join(__dirname, '..', 'src', 'services', 'rulepacks');
+  const rulesOf = (pack: string): Array<{ id: string; action?: string }> => JSON.parse(fs.readFileSync(path.join(packs, `${pack}.json`), 'utf8')).rules;
+  for (const platform of ['macos', 'linux', 'windows']) {
+    const rules = [...rulesOf('common'), ...rulesOf(platform)];
+    for (const g of offered) {
+      const named = rules.filter((r) => r.id === g.id);
+      assert.ok(named.length > 0, `${platform}: the box "${g.label}" names ${g.id}, a rule the packs ship`);
+      assert.ok(named.every((r) => r.action !== 'advice'), `${platform}: the box "${g.label}" names no advice-only group (${g.id})`);
+    }
+  }
+  // Through the walk and the evaluator a run uses, on this machine.
+  const all = { kind: 'suggestion' as const, groupIds: offered.map((g) => g.id) };
+  const proj = path.resolve('/apgroups/proj');
+  const project = node(path.dirname(proj), 'proj', [
+    node(proj, 'node_modules', [node(path.join(proj, 'node_modules'), 'dep.js')]),
+    node(proj, '.venv', [node(path.join(proj, '.venv'), 'pyvenv.cfg'), node(path.join(proj, '.venv'), 'lib.bin')]),
+    node(proj, 'requirements.txt'), node(proj, 'Cargo.toml'), node(proj, 'package.json'),
+    node(proj, 'target', [node(path.join(proj, 'target'), 'o.rlib')]),
+    node(proj, '.next', [node(path.join(proj, '.next'), 'b.js')]),
+    node(proj, '.pytest_cache', [node(path.join(proj, '.pytest_cache'), 'v.json')]),
+    node(proj, '.DS_Store'),
+  ]);
+  const picked = selectCandidates(collectCleanupSuggestions(project, []), [], all).map((c) => path.basename(c.path)).sort();
+  assert.deepEqual(picked, ['.DS_Store', '.next', '.pytest_cache', '.venv', 'node_modules', 'target'],
+    'a policy of every box selects one of each project kind');
+  const catalog = loadRuleCatalog();
+  for (const id of ['browser-caches', 'dev-caches']) {
+    const at = catalog.location.find((r) => r.id === id)?.paths[0];
+    assert.ok(at, `${id}: this platform's packs name a place`);
+    const tree = node(path.dirname(path.dirname(at)), path.basename(path.dirname(at)), [node(path.dirname(at), path.basename(at), [node(at, 'data.bin')])]);
+    assert.deepEqual(selectCandidates(collectCleanupSuggestions(tree, []), [], all).map((c) => c.path), [at], `${id}: a policy of every box selects ${at}`);
+  }
 });
 
 const LIGHTROOM = process.platform === 'darwin' || process.platform === 'win32' ? false : 'the Lightroom rules are for macOS and Windows';

@@ -30712,14 +30712,24 @@ function openPolicyEditor(policy) {
  * happened to find: a policy has to be writable before any scan exists, and a
  * list that changed shape depending on recent activity would make the same
  * policy mean different things on different days.
+ *
+ * Each id is a rule id the packs ship on every platform, none advice-only
+ * (tests/autopilotAdvisory.test.ts): the evaluator never matches an unknown
+ * one, and three boxes that named none - regen-build-output, cache-general,
+ * junk-general - made policies that matched nothing (BQL-b1 review F2.6).
+ * "Web build output" is the framework folders and dist beside a JavaScript
+ * project file; build-output, a folder named build, dist or target with no
+ * project beside it to say what rebuilds it, is not offered for unattended runs.
  */
 const AP_GROUPS = [
   { id: 'regen-node-modules', label: 'node_modules folders', hint: 'JavaScript dependencies — npm install restores them' },
-  { id: 'regen-python-venv', label: 'Python virtualenvs', hint: 'Recreate from the project manifest' },
+  { id: 'regen-python-venv', label: 'Python virtualenvs', hint: 'Python can make one again; the packages in it must be reinstalled' },
   { id: 'regen-rust-target', label: 'Rust target folders', hint: 'cargo build restores them' },
-  { id: 'regen-build-output', label: 'Web build output', hint: 'dist, build — your build command restores them' },
-  { id: 'cache-general', label: 'Application caches', hint: 'Rebuilt automatically as you use each app' },
-  { id: 'junk-general', label: 'Junk files', hint: '.DS_Store, Thumbs.db and friends' },
+  { id: 'regen-web-build', label: 'Web build output', hint: '.next, .nuxt and the like, and dist beside a JavaScript project — npm run build restores them' },
+  { id: 'browser-caches', label: 'Browser caches', hint: 'Pages reload a bit slower once' },
+  { id: 'dev-caches', label: 'Developer caches', hint: 'Package-manager and tool caches, and Xcode\'s on a Mac — rebuilt when next used' },
+  { id: 'tool-caches', label: 'Tool caches', hint: '.pytest_cache, .mypy_cache and the like — rebuilt automatically when needed' },
+  { id: 'os-junk', label: 'Junk files', hint: '.DS_Store, Thumbs.db and desktop.ini — the system makes them again' },
 ];
 
 function renderApGroupList(selected) {
