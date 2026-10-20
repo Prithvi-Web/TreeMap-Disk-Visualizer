@@ -123,10 +123,12 @@ body.cart-open #treemapWrap > .tm-querybar { left: 18px; transform: none;
    Each sets how far in from the right edge it reaches, the
    stack centres on the strip between the sidebar and the furthest of them,
    and a toast is capped to that strip's width. Below a 240-px strip — the
-   pane AND the cart open in a window under ~1220 px, or the coach card
-   beside the open cart under ~1280 px (~1610 px with the pane open too) —
-   there is no clear room and a toast overlaps them for its few seconds. The
-   stack lifts above the
+   coach card beside the open cart under ~1280 px (~1610 px with the pane
+   open too) — there is no clear room and a toast overlaps them for its few
+   seconds. The pane AND the cart beside it, its drawer shut, leave too
+   little under 1222 px (1054 px with the sidebar a rail): there the stack
+   rises above the cart's pill instead (BQL item 14, below). The stack lifts
+   above the
    selection bar while that is up, and while a dialog is open it moves to the
    top of the scrim, clear of the sheet's buttons; that slot names the
    selection-bar state too, because Move to Trash from the Grid's bar opens a
@@ -151,6 +153,31 @@ body:has(#tourOverlay:not([hidden])) { --tr-tour: calc(var(--tour-r) + var(--tou
 /* Above the selection bar's tallest form: it wraps to two rows beside an open
    preview pane (QA B22). The same line the cart dock steps up to. */
 body:has(#selectionBar.visible) #toasts { bottom: 124px; }
+/* The preview pane open and the cart dock beside it, its drawer shut (BQL
+   item 14): at 1221 px and narrower (1053 px with the sidebar a rail) the strip
+   between the sidebar and the dock is under a toast's 240 px plus its 12-px
+   margins, and the toast lay across the dock — about 186 px of it at 1024.
+   There the stack rises above the cart's pill, to the line <main> keeps
+   clear for it (76 px: the dock's 22-px gutter, the ~42-px pill and 12), or
+   178 px while the dock stands above the selection bar (124 + the same), and
+   centres on the strip the sidebar and the pane leave — and the coach card,
+   which stands at the right edge while the drawer is shut. :where() keeps
+   these two rules under the dialog slot's specificity, so an open dialog
+   still puts the stack at the top, and the second ties with the
+   selection-bar lift above and wins by coming after it. With the drawer
+   open the dock stands over the pane in these windows (060-preview-pane.css)
+   and the strip beside it has room. tests/floatingSurfaces.test.ts checks
+   every width from 1024 to 1440, in both themes and sidebar states. */
+@media (max-width: 1221px) {
+  body:where(.preview-open:not(.cart-open):has(#cartDock.show):has(#sideNav:not(.collapsed))) #toasts {
+    bottom: 76px; --toast-r: max(var(--tr-pane), var(--tr-tour)); }
+  body:where(.preview-open:not(.cart-open):has(#cartDock.show):has(#sideNav:not(.collapsed))):has(#selectionBar.visible) #toasts { bottom: 178px; }
+}
+@media (max-width: 1053px) {
+  body:where(.preview-open:not(.cart-open):has(#cartDock.show)) #toasts {
+    bottom: 76px; --toast-r: max(var(--tr-pane), var(--tr-tour)); }
+  body:where(.preview-open:not(.cart-open):has(#cartDock.show)):has(#selectionBar.visible) #toasts { bottom: 178px; }
+}
 body:has(.modal-backdrop.open) #toasts,
 body:has(.modal-backdrop.open):has(#selectionBar.visible) #toasts { top: 8px; bottom: auto; }
 .toast { display: flex; gap: 10px; align-items: flex-start; padding: 12px 16px; font-size: 13px;

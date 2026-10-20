@@ -148,15 +148,24 @@ function baseAlpha(value: string, tokens: Map<string, string>): number {
  */
 function specificity(sel: string): [number, number, number] {
   let ids = 0, cls = 0, types = 0;
-  const s = sel.replace(/::[\w-]+/g, ' ')
-    .replace(/:(is|not|has|where)\(((?:[^()]|\([^()]*\))*)\)/g, (_m, fn: string, arg: string) => {
-      if (fn !== 'where') {
-        const best = arg.split(',').map((a) => specificity(a.trim()))
-          .reduce((x, y) => (beats(y, x) ? y : x), [0, 0, 0] as [number, number, number]);
-        ids += best[0]; cls += best[1]; types += best[2];
-      }
-      return ' ';
-    });
+  // Each :is()/:not()/:has()/:where(), its parentheses balanced at any depth (BQL item 14: a :where()
+  // holding :has(#id:not(.x)) went two deep, past what one regex level read, and counted its ids).
+  let s = sel.replace(/::[\w-]+/g, ' ');
+  for (let m = /:(is|not|has|where)\(/.exec(s); m; m = /:(is|not|has|where)\(/.exec(s)) {
+    const open = m.index + m[0].length - 1;
+    let depth = 0, end = -1;
+    for (let i = open; i < s.length; i++) {
+      if (s[i] === '(') depth++;
+      else if (s[i] === ')' && --depth === 0) { end = i; break; }
+    }
+    assert.notEqual(end, -1, `balanced parentheses in ${sel}`);
+    if (m[1] !== 'where') {
+      const best = layers(s.slice(open + 1, end)).map((a) => specificity(a))
+        .reduce((x, y) => (beats(y, x) ? y : x), [0, 0, 0] as [number, number, number]);
+      ids += best[0]; cls += best[1]; types += best[2];
+    }
+    s = `${s.slice(0, m.index)} ${s.slice(end + 1)}`;
+  }
   ids += (s.match(/#[\w-]+/g) || []).length;
   cls += (s.match(/\.[\w-]+|\[[^\]]+\]|:[\w-]+(\([^)]*\))?/g) || []).length;
   types += (s.replace(/\[[^\]]+\]/g, '').match(/(^|[\s>+~])[a-z][\w-]*/gi) || []).length;
@@ -247,13 +256,30 @@ function px(v: string | undefined): number {
  */
 type PageState = { active: string[]; preview?: boolean; cartOpen?: boolean; W?: number };
 
-/** `body`, `body.preview-open`, `.cart-open` and any run of `:has(…)` after them: do they hold in `st`? */
+/**
+ * `body`, `body.preview-open`, `.cart-open` or `:not(.cart-open)`, and any run of `:has(…)` after them — also
+ * inside a leading `:where(…)`, which lowers a rule's specificity and changes nothing it matches: do they
+ * hold in `st`?
+ */
 function bodyHolds(prefix: string, st: PageState): boolean {
   if (!prefix.startsWith('body')) return false;
   let rest = prefix.slice(4);
+  if (rest.startsWith(':where(')) {
+    let depth = 0, end = -1;
+    for (let i = 6; i < rest.length; i++) {
+      if (rest[i] === '(') depth++;
+      else if (rest[i] === ')' && --depth === 0) { end = i; break; }
+    }
+    if (end === -1) return false;
+    rest = rest.slice(7, end) + rest.slice(end + 1);
+  }
   if (rest.startsWith('.preview-open')) {
     if (!st.preview) return false;
     rest = rest.slice('.preview-open'.length);
+  }
+  if (rest.startsWith(':not(.cart-open)')) {
+    if (st.cartOpen) return false;
+    rest = rest.slice(':not(.cart-open)'.length);
   }
   if (rest.startsWith('.cart-open')) {
     if (!st.cartOpen) return false;
@@ -350,15 +376,20 @@ function evalLen(src: string, vars: Map<string, string>, W: number, H: number): 
 
 /** Custom properties the cascade gives `el`, on top of the :root tokens and `body`'s own. */
 function scope(st: PageState, ...layers: Map<string, string>[]): Map<string, string> {
-  const vars = new Map([...DARK].filter(([k]) => k.startsWith('--')));
+  return scopeIn(DARK, st, ...layers);
+}
+
+/** `scope` in a theme: the light theme's tokens, or the dark one's. */
+function scopeIn(tokens: Map<string, string>, st: PageState, ...layers: Map<string, string>[]): Map<string, string> {
+  const vars = new Map([...tokens].filter(([k]) => k.startsWith('--')));
   for (const layer of [cascade('body', st), ...layers]) for (const [k, v] of layer) if (k.startsWith('--')) vars.set(k, v);
   return vars;
 }
 
-/** The widest toast's horizontal extent in a W-px window and page state. */
-function toastSpan(W: number, H: number, st: PageState): [number, number] {
+/** The widest toast's horizontal extent in a W-px window and page state (in a theme: the dark one unless named). */
+function toastSpan(W: number, H: number, st: PageState, tokens = DARK): [number, number] {
   const stack = cascade('#toasts', st);
-  const vars = scope(st, stack);
+  const vars = scopeIn(tokens, st, stack);
   const toast = cascade('.toast', st);
   const w = Math.min(evalLen(toast.get('max-width')!, vars, W, H), evalLen(stack.get('max-width')!, vars, W, H));
   const centre = evalLen(stack.get('left')!, vars, W, H);
@@ -371,19 +402,19 @@ function toastSpan(W: number, H: number, st: PageState): [number, number] {
  * from its own rules in that state (the open cart, the preview pane, the window's @media), so a
  * surface that moves is found where it moved to, not where it rests.
  */
-function rightSurfaces(W: number, given: PageState): { name: string; left: number }[] {
+function rightSurfaces(W: number, given: PageState, tokens = DARK): { name: string; left: number }[] {
   const st: PageState = { ...given, W };
   const out: { name: string; left: number }[] = [];
   if (st.preview) out.push({ name: 'the preview pane', left: W - px(declsOf('#previewPane').get('width')) });
   if (st.active.includes('#cartDock.show')) {
     const dock = cascade('#cartDock', st);
-    const vars = scope(st, dock);
+    const vars = scopeIn(tokens, st, dock);
     const w = Math.min(evalLen(dock.get('width')!, vars, W, MIN_H), evalLen(dock.get('max-width')!, vars, W, MIN_H));
     out.push({ name: 'the cart dock', left: W - evalLen(dock.get('right')!, vars, W, MIN_H) - w });
   }
   if (st.active.includes('#tourOverlay:not([hidden])')) {
     const card = cascade('.tour-card', st);
-    const vars = scope(st, card);
+    const vars = scopeIn(tokens, st, card);
     out.push({ name: 'the coach card', left: W - evalLen(card.get('right')!, vars, W, MIN_H) - evalLen(card.get('width')!, vars, W, MIN_H) });
   }
   return out;
@@ -421,12 +452,18 @@ test('a toast stays clear of the sidebar, the preview pane, the cart dock and th
             const sideEdge = 12 + px(collapsed ? declsOf(':root').get('--side-w-rail') : declsOf(':root').get('--side-w'));
             const right = rightSurfaces(W, st);
             const label = `${W}px, sidebar ${collapsed ? 'rail' : 'open'}${preview ? ', preview' : ''}${active.filter((a) => a !== '#sideNav.collapsed').map((a) => ', ' + a).join('')}${cartOpen ? ', cart open' : ''}`;
-            const room = Math.min(W, ...right.map((r) => r.left)) - sideEdge - 24;
+            // A stack lifted above the cart's pill, its drawer shut (BQL item 14), is clear of the dock by
+            // height: only the surfaces beside it are measured across.
+            const dock = right.find((r) => r.name === 'the cart dock');
+            const lifted = dock !== undefined && !cartOpen
+              && px(cascade('#toasts', st).get('bottom')) >= px(cascade('#cartDock', st).get('bottom')) + pillHeight() + 6;
+            const beside = lifted ? right.filter((r) => r !== dock) : right;
+            const room = Math.min(W, ...beside.map((r) => r.left)) - sideEdge - 24;
             if (room < 240) { residual.push(label); continue; }
             checked++;
             if (cartOpen && active.includes('#tourOverlay:not([hidden])')) besideOpenCart++;
             assert.ok(x0 >= sideEdge, `${label}: the toast starts at ${x0}px, the sidebar ends at ${sideEdge}px`);
-            for (const r of right) assert.ok(x1 <= r.left, `${label}: the toast ends at ${x1}px, ${r.name} starts at ${r.left}px`);
+            for (const r of beside) assert.ok(x1 <= r.left, `${label}: the toast ends at ${x1}px, ${r.name} starts at ${r.left}px`);
             assert.ok(x1 - x0 >= 240, `${label}: a toast keeps a readable width (${x1 - x0}px)`);
           }
         }
@@ -437,23 +474,20 @@ test('a toast stays clear of the sidebar, the preview pane, the cart dock and th
   // The coach card stands left of the open cart (H51): those states are
   // checked against where it stands then, not where it rests (review F1.12).
   assert.ok(besideOpenCart >= 7, `the coach card beside the open cart was checked where there is room for a toast (${besideOpenCart})`);
-  // The states with no clear room left: the pane AND the cart open (the dock
-  // then sits left of the pane) in the smallest window; and the coach card
-  // standing left of the open cart in a window under ~1280 px (~1110 px with
-  // the sidebar a rail), or under ~1610 px with the preview pane open too.
+  // The states with no clear room left: the coach card standing left of the
+  // open cart in a window under ~1280 px (~1110 px with the sidebar a rail),
+  // or under ~1610 px with the preview pane open too. The pane AND the cart
+  // beside it, its drawer shut, left none in the smallest window until the
+  // stack rose above the cart's pill there (BQL item 14).
   assert.deepEqual(residual, [
     `${MIN_W}px, sidebar open, #cartDock.show, #tourOverlay:not([hidden]), cart open`,
-    `${MIN_W}px, sidebar open, preview, #cartDock.show`,
-    `${MIN_W}px, sidebar open, preview, #cartDock.show, #tourOverlay:not([hidden])`,
     `${MIN_W}px, sidebar open, preview, #cartDock.show, #tourOverlay:not([hidden]), cart open`,
     `${MIN_W}px, sidebar rail, #cartDock.show, #tourOverlay:not([hidden]), cart open`,
-    `${MIN_W}px, sidebar rail, preview, #cartDock.show`,
-    `${MIN_W}px, sidebar rail, preview, #cartDock.show, #tourOverlay:not([hidden])`,
     `${MIN_W}px, sidebar rail, preview, #cartDock.show, #tourOverlay:not([hidden]), cart open`,
     '1320px, sidebar open, preview, #cartDock.show, #tourOverlay:not([hidden]), cart open',
     '1320px, sidebar rail, preview, #cartDock.show, #tourOverlay:not([hidden]), cart open',
     '1440px, sidebar open, preview, #cartDock.show, #tourOverlay:not([hidden]), cart open',
-  ], 'only the pane-and-cart corner of the smallest window, and the coach card beside the open cart where the window is too narrow for a toast between them and the sidebar, are left without room');
+  ], 'only the coach card beside the open cart, where the window is too narrow for a toast between them and the sidebar, is left without room');
 });
 
 test('while the selection bar is up, toasts sit above it rather than over its buttons (D08)', () => {
@@ -916,4 +950,76 @@ test('the reclaim breakdown scrolls inside its panel, never the panel itself: th
       return at > 0 && at < closedAt;
     }),
   }, { opensWith: true, closesLast: true, holds: true }, 'the head, its close button, the radar and the rows are all inside .rc-pop-scroll');
+});
+
+/* ══════════════ BQL item 14 — the toast beside the open preview and the cart ══════════════ */
+
+test('with the preview pane open and the cart dock beside it, a toast covers neither — above the cart\'s pill where the strip beside it is too narrow, beside it where it is not — at every width from the desktop window\'s minimum to 1440, in both themes and both sidebar states (BQL item 14)', () => {
+  // The slot floored the stack's room at 240 px and centred it no further left than the sidebar's edge + 132 px,
+  // so below ~1,210 px the toast lay across the cart (≈186 px of it at 1,024) whenever the pane was open too.
+  const pillH = pillHeight();
+  const seen = { lifted: 0, beside: 0 };
+  const at: Record<string, 'lifted' | 'beside'> = {};
+  for (const [theme, tokens] of THEMES) {
+    for (let W = MIN_W; W <= 1440; W++) {
+      for (const collapsed of [false, true]) {
+        for (const bar of [false, true]) {
+          for (const tour of [false, true]) {
+            for (const cartOpen of [false, true]) {
+              // The coach card beside the open cart is a residual of its own (the D08 test above lists it).
+              if (tour && cartOpen) continue;
+              const active = ['#cartDock.show', ...(bar ? ['#selectionBar.visible'] : []), ...(tour ? ['#tourOverlay:not([hidden])'] : []), ...(collapsed ? ['#sideNav.collapsed'] : [])];
+              const st: PageState = { active, preview: true, cartOpen, W };
+              const label = `${theme}, ${W}px, sidebar ${collapsed ? 'rail' : 'open'}${bar ? ', selection bar' : ''}${tour ? ', coach card' : ''}${cartOpen ? ', cart open' : ''}`;
+              const [x0, x1] = toastSpan(W, MIN_H, st, tokens);
+              const sideEdge = 12 + px(tokens.get(collapsed ? '--side-w-rail' : '--side-w'));
+              const surfaces = rightSurfaces(W, st, tokens);
+              const pane = surfaces.find((r) => r.name === 'the preview pane')!;
+              const dock = surfaces.find((r) => r.name === 'the cart dock')!;
+              const card = surfaces.find((r) => r.name === 'the coach card');
+              assert.ok(x0 >= sideEdge, `${label}: the toast starts at ${x0}px, the sidebar ends at ${sideEdge}px`);
+              assert.ok(x1 <= pane.left, `${label}: the toast ends at ${x1}px, the preview pane starts at ${pane.left}px`);
+              if (card) assert.ok(x1 <= card.left, `${label}: the toast ends at ${x1}px, the coach card starts at ${card.left}px`);
+              assert.ok(x1 - x0 >= 240, `${label}: a toast keeps a readable width (${x1 - x0}px)`);
+              const stackBottom = px(cascade('#toasts', st).get('bottom'));
+              if (bar) {
+                const b = barBox(W, MIN_H, st);
+                assert.ok(stackBottom >= b.bottom + b.height + 6, `${label}: toasts start at ${stackBottom}px, the selection bar ends at ${(b.bottom + b.height).toFixed(0)}px`);
+              }
+              const key = `${theme} ${W} ${collapsed ? 'rail' : 'open'}${bar ? ' bar' : ''}${tour ? ' tour' : ''}${cartOpen ? ' open' : ''}`;
+              if (x1 <= dock.left) { seen.beside++; at[key] = 'beside'; continue; }
+              // Not beside the dock, so above it: only ever its pill, the drawer shut.
+              assert.equal(cartOpen, false, `${label}: the toast (to ${x1}px) reaches over the open cart, which starts at ${dock.left}px`);
+              const dockBottom = px(cascade('#cartDock', st).get('bottom'));
+              assert.ok(stackBottom >= dockBottom + pillH + 6, `${label}: toasts start at ${stackBottom}px, over the cart's pill (to ${(dockBottom + pillH).toFixed(1)}px), and reach across it to ${x1}px — the dock starts at ${dock.left}px`);
+              // Above the pill the strip is the sidebar's edge to the pane (or the coach card): the toast takes
+              // it, up to its own 380 px, rather than the 240-px floor the dock's strip left it.
+              const strip = Math.min(pane.left, card?.left ?? Infinity) - sideEdge - 24;
+              const toastMax = px(cascade('.toast', st).get('max-width')?.replace(/^min\((\d+px),.*$/, '$1'));
+              assert.ok(Math.abs((x1 - x0) - Math.min(toastMax, Math.max(240, strip))) < 0.01, `${label}: the toast is ${x1 - x0}px wide over a ${strip}px strip`);
+              seen.lifted++;
+              at[key] = 'lifted';
+            }
+          }
+        }
+      }
+    }
+  }
+  assert.ok(seen.lifted > 0 && seen.beside > 0, `both slots were met (${JSON.stringify(seen)})`);
+  for (const theme of ['dark', 'light']) {
+    assert.equal(at[`${theme} 1024 open`], 'lifted', `${theme}, 1024 px: above the pill`);
+    assert.equal(at[`${theme} 1024 rail`], 'lifted', `${theme}, 1024 px, the sidebar a rail: above the pill`);
+    assert.equal(at[`${theme} 1440 open`], 'beside', `${theme}, 1440 px: beside the cart, as before`);
+  }
+});
+
+test('an open dialog still puts the toasts at the top beside the preview pane and the cart, the selection bar up or not (BQL item 14)', () => {
+  for (const W of [MIN_W, 1100]) {
+    for (const bar of [false, true]) {
+      const active = ['#cartDock.show', '.modal-backdrop.open', ...(bar ? ['#selectionBar.visible'] : [])];
+      const stack = cascade('#toasts', { active, preview: true, W });
+      assert.equal(stack.get('top'), '8px', `${W}px${bar ? ', selection bar' : ''}: the stack sits at the top of the scrim`);
+      assert.equal(stack.get('bottom'), 'auto', `${W}px${bar ? ', selection bar' : ''}: and is not pinned to the bottom too`);
+    }
+  }
 });
