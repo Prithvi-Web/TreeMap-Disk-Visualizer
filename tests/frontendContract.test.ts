@@ -1869,10 +1869,14 @@ test('every safety rail is exposed in the editor, not just in the engine', () =>
 });
 
 test('the empty state explains that nothing is deleted on a first run', () => {
-  // The single most important thing to know before writing a policy.
-  const code = appCode();
-  assert.match(code, /Nothing is ever deleted on the first run/i);
-  assert.match(code, /Undo Vault/, 'and that deletions are recoverable');
+  // The single most important thing to know before writing a policy — said in
+  // the empty state itself. Matched against the whole script, "Undo Vault"
+  // passed on any of the page's other mentions with this promise gone (review
+  // F1.6), so the check reads only the empty state's own template.
+  const empty = region('No policies yet.', '} else {', 1000);
+  assert.match(empty, /Nothing is ever deleted on the first run/i);
+  assert.match(empty, /everything it removes is copied to the Undo Vault so you can undo it/, 'and that deletions are recoverable');
+  assert.match(empty, /until the Undo Vault removes the copy/, 'for as long as the Undo Vault keeps the copy, not forever');
 });
 
 test('a run awaiting approval opens itself and offers the approval', () => {
