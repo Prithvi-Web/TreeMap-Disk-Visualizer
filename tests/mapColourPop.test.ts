@@ -1109,6 +1109,8 @@ function rasterCtx(W: number, H: number, ground: RGB) {
   const st: Record<string, any> = { fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, globalAlpha: 1 };
   const saved: Array<Record<string, any>> = [];
   let path: number[][] = [];
+  // The transform's scale (setTransform): the painter works in css px, the grid is the device's pixels.
+  let k = 1;
   const colourAt = (style: any, y: number): RGBA => {
     if (style && typeof style === 'object' && style.stops) {
       const g = style as Grad;
@@ -1123,11 +1125,12 @@ function rasterCtx(W: number, H: number, ground: RGB) {
     }
     return rgba(String(style));
   };
-  const paintRect = (x: number, y: number, w: number, h: number, style: any) => {
+  const paintRect = (cx0: number, cy0: number, cw: number, ch: number, style: any) => {
+    const x = cx0 * k, y = cy0 * k, w = cw * k, h = ch * k;
     if (!(w > 0 && h > 0)) return;
     for (let py = Math.max(0, Math.floor(y)); py < Math.min(H, Math.ceil(y + h)); py++) {
       const cy = Math.min(py + 1, y + h) - Math.max(py, y);
-      const c = colourAt(style, py + 0.5);
+      const c = colourAt(style, (py + 0.5) / k);
       for (let pxx = Math.max(0, Math.floor(x)); pxx < Math.min(W, Math.ceil(x + w)); pxx++) {
         const cx = Math.min(pxx + 1, x + w) - Math.max(pxx, x);
         const a = c[3] * Number(st.globalAlpha) * cx * cy;
@@ -1151,6 +1154,7 @@ function rasterCtx(W: number, H: number, ground: RGB) {
       return Object.assign(g, { addColorStop: (o: number, c: string) => { g.stops.push([o, c]); } });
     },
     createPattern: () => null,
+    setTransform: (a: number) => { k = a; },
     fillRect: (x: number, y: number, w: number, h: number) => paintRect(x, y, w, h, st.fillStyle),
     strokeRect: (x: number, y: number, w: number, h: number) => strokeEdges(x, y, w, h),
     // A cleared pixel shows what is behind the canvas: the map's own ground.
@@ -1194,15 +1198,15 @@ type Band = { x: number; y: number; w: number; h: number; rgb: string };
 /** A rectangle as drawTreemap leaves it in pxRects, with what it recorded painting it. */
 type Painted = { n: Tile; x: number; y: number; w: number; h: number; frame: boolean; edge?: string; lit?: boolean; stops?: RGB[]; fillRgb?: RGB; bg?: RGB[]; bands?: Band[] };
 
-/** `tiles` painted by the real drawTreemap onto a `W`×`H` raster in `palette`'s theme. */
+/** `tiles` painted by the real drawTreemap onto a `W`×`H` css px map in `palette`'s theme, at device pixel ratio `dpr`: a raster of the device's pixels. */
 function rasterPaint(tiles: Tile[], palette: Record<string, string>, W: number, H: number,
-  colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.size), history = { active: false, diff: false }, hideCloud = false) {
+  colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.size), history = { active: false, diff: false }, hideCloud = false, dpr = 1) {
   // The grid starts as the card the canvas sits on — what a cleared pixel shows — and the painter lays the
   // theme's --tm-canvas-bg over it, as on screen: so what the page reckons its ground to be is measured too.
-  const raster = rasterCtx(W, H, cardGround(palette));
+  const raster = rasterCtx(Math.round(W * dpr), Math.round(H * dpr), cardGround(palette));
   const state = { treemap: { nodes: tiles, hideCloud, rootSize: 1e12, history, pxRects: [] as Painted[], colorMode: 'size', mode: 'treemap', query: '' } };
   const deps = {
-    $: () => ({ clientWidth: W + 20 }), treemapCanvasHeight: () => H, window: { devicePixelRatio: 1 },
+    $: () => ({ clientWidth: W + 20 }), treemapCanvasHeight: () => H, window: { devicePixelRatio: dpr },
     tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: raster.ctx,
     cssVar: (name: string) => palette[name] ?? 'rgba(0,0,0,0)',
     state, tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
@@ -1233,69 +1237,87 @@ const whole = (r: Painted): Painted => ({ ...r, x: Math.round(r.x), y: Math.roun
  * it lies along its folder's edge); each folder's band (bandOf), along its inner edge, where a tile — a
  * leaf's inside, the folder's own fill, or the ground a hollow or staged cell shows — lies beside it. Two
  * pixels are left out at each end of a side, where lines meet lines.
+ *
+ * On the device's pixels at ratio `dpr` (review F1.7): a line `t` css px wide is `t`×`dpr` of them, and
+ * where that is not whole (a 1 px line at 150 %) the pixel it covers in part is a transition, neither the
+ * line nor the tile, and is stepped over. The rectangles are placed where the painter put them, rounded
+ * to device pixels: a painter that did not lay them on whole device pixels is measured where they round to.
  */
-function edgesOf(painted: Painted[], W: number, H: number) {
-  const px = painted.map(whole);
+function edgesOf(painted: Painted[], W: number, H: number, dpr = 1) {
+  const dev = (r: Painted): Painted => { const x = Math.round(r.x * dpr), y = Math.round(r.y * dpr); return { ...r, x, y, w: Math.round((r.x + r.w) * dpr) - x, h: Math.round((r.y + r.h) * dpr) - y }; };
+  const items = painted.map((r) => ({ r, d: dev(r) }));
+  // 1: a line's pixel; 2: a pixel a line covers only in part.
   const line = new Uint8Array(W * H);
-  const mark = (x: number, y: number, w: number, h: number) => {
-    for (let yy = Math.max(0, y); yy < Math.min(H, y + h); yy++) for (let xx = Math.max(0, x); xx < Math.min(W, x + w); xx++) line[yy * W + xx] = 1;
+  const mark = (x: number, y: number, w: number, h: number, v: number) => {
+    for (let yy = Math.max(0, y); yy < Math.min(H, y + h); yy++) for (let xx = Math.max(0, x); xx < Math.min(W, x + w); xx++) { const i = yy * W + xx; line[i] = line[i] === 1 ? 1 : v; }
   };
-  const ring = (x: number, y: number, w: number, h: number, t: number) => { mark(x, y, w, t); mark(x, y + h - t, w, t); mark(x, y, t, h); mark(x + w - t, y, t, h); };
-  for (const r of px) if (r.frame) ring(r.x, r.y, r.w, r.h, bandOf(r));
+  const ring = (d: Painted, t: number) => {
+    const full = Math.floor(t * dpr + 1e-9), part = t * dpr - full > 1e-9;
+    const band = (tt: number, v: number) => { mark(d.x, d.y, d.w, tt, v); mark(d.x, d.y + d.h - tt, d.w, tt, v); mark(d.x, d.y, tt, d.h, v); mark(d.x + d.w - tt, d.y, tt, d.h, v); };
+    if (part) band(full + 1, 2);
+    band(full, 1);
+  };
+  for (const { r, d } of items) if (r.frame) ring(d, bandOf(r));
   const outlined = (r: Painted) => !r.frame && !!r.stops && Math.min(r.w, r.h) >= OUTLINED_PX;
-  for (const r of px) if (outlined(r)) ring(r.x, r.y, r.w, r.h, 1);
+  for (const { r, d } of items) if (outlined(r)) ring(d, 1);
   // A hollow cloud cell's or a staged block's dashed edge, stroked 1 px in from its box, is a line too: where it
   // meets a band end-on, lines meet. Its inside — the ground, or its faint wash over it — is a tile.
   const dashed = (r: Painted) => !r.frame && !r.stops && !!((r.n as { freed?: boolean }).freed || (r.n as { cloudPlaceholder?: boolean }).cloudPlaceholder) && r.w > 6 && r.h > 6;
-  for (const r of px) if (dashed(r)) ring(r.x, r.y, r.w, r.h, 2);
+  for (const { r, d } of items) if (dashed(r)) ring(d, 2);
   const isLine = (x: number, y: number) => x < 0 || y < 0 || x >= W || y >= H || line[y * W + x] === 1;
+  const isPart = (x: number, y: number) => x >= 0 && y >= 0 && x < W && y < H && line[y * W + x] === 2;
   const out: Array<{ line: [number, number]; tile: [number, number]; what: string; kind: 'leaf' | 'frame'; r: Painted }> = [];
-  // Inward from (x, y) along (dx, dy): the last line pixel and the first tile pixel.
+  const LIMIT = Math.ceil(4 * dpr), skip = Math.ceil(2 * dpr);
+  // Inward from (x, y) along (dx, dy): the last line pixel and the first tile pixel (past a transition).
   const inward = (x: number, y: number, dx: number, dy: number): { line: [number, number]; tile: [number, number] } | null => {
     let k = 0;
-    while (k < 4 && isLine(x + dx * k, y + dy * k)) k++;
-    if (k === 0 || k === 4) return null;
-    return { line: [x + dx * (k - 1), y + dy * (k - 1)], tile: [x + dx * k, y + dy * k] };
+    while (k < LIMIT && isLine(x + dx * k, y + dy * k)) k++;
+    if (k === 0 || k === LIMIT) return null;
+    const last = k - 1;
+    while (k < LIMIT && isPart(x + dx * k, y + dy * k)) k++;
+    if (k === LIMIT || isLine(x + dx * k, y + dy * k)) return null;
+    return { line: [x + dx * last, y + dy * last], tile: [x + dx * k, y + dy * k] };
   };
-  for (const r of px) {
+  for (const { r, d } of items) {
     if (!outlined(r)) continue;
-    const what = `${r.n.path} (${r.w}×${r.h} px)`;
-    for (let y = r.y + 2; y <= r.y + r.h - 3; y++) {
-      for (const [x, dx, side] of [[r.x, 1, 'left'], [r.x + r.w - 1, -1, 'right']] as const) {
+    const what = `${r.n.path} (${d.w}×${d.h} px)`;
+    for (let y = d.y + skip; y <= d.y + d.h - skip - 1; y++) {
+      for (const [x, dx, side] of [[d.x, 1, 'left'], [d.x + d.w - 1, -1, 'right']] as const) {
         const e = inward(x, y, dx, 0);
-        if (e) out.push({ ...e, what: `${what}, ${side} side`, kind: 'leaf', r });
+        if (e) out.push({ ...e, what: `${what}, ${side} side`, kind: 'leaf', r: d });
       }
     }
-    for (let x = r.x + 2; x <= r.x + r.w - 3; x++) {
-      for (const [y, dy, side] of [[r.y, 1, 'top'], [r.y + r.h - 1, -1, 'bottom']] as const) {
+    for (let x = d.x + skip; x <= d.x + d.w - skip - 1; x++) {
+      for (const [y, dy, side] of [[d.y, 1, 'top'], [d.y + d.h - 1, -1, 'bottom']] as const) {
         const e = inward(x, y, 0, dy);
-        if (e) out.push({ ...e, what: `${what}, ${side} side`, kind: 'leaf', r });
+        if (e) out.push({ ...e, what: `${what}, ${side} side`, kind: 'leaf', r: d });
       }
     }
   }
-  for (const r of px) {
+  for (const { r, d } of items) {
     if (!r.frame) continue;
-    const lw = bandOf(r);
+    // The band's last whole pixel, and the first pixel past it (past one it covers only in part).
+    const lw = bandOf(r) * dpr, inner = Math.floor(lw + 1e-9), outer = Math.ceil(lw - 1e-9);
     const what = `folder ${r.n.path} (depth ${r.n.depth})`;
     const at = (lx: number, ly: number, tx: number, ty: number, side: string) => {
-      if (isLine(tx, ty)) return; // a nested line meets the band here
-      out.push({ line: [lx, ly], tile: [tx, ty], what: `${what}, ${side} band`, kind: 'frame', r });
+      if (isLine(tx, ty) || isPart(tx, ty)) return; // a nested line meets the band here
+      out.push({ line: [lx, ly], tile: [tx, ty], what: `${what}, ${side} band`, kind: 'frame', r: d });
     };
-    for (let y = r.y + lw + 2; y <= r.y + r.h - lw - 3; y++) {
-      at(r.x + lw - 1, y, r.x + lw, y, 'left');
-      at(r.x + r.w - lw, y, r.x + r.w - lw - 1, y, 'right');
+    for (let y = d.y + outer + skip; y <= d.y + d.h - outer - skip - 1; y++) {
+      at(d.x + inner - 1, y, d.x + outer, y, 'left');
+      at(d.x + d.w - inner, y, d.x + d.w - outer - 1, y, 'right');
     }
-    for (let x = r.x + lw + 2; x <= r.x + r.w - lw - 3; x++) {
-      at(x, r.y + lw - 1, x, r.y + lw, 'top');
-      at(x, r.y + r.h - lw, x, r.y + r.h - lw - 1, 'bottom');
+    for (let x = d.x + outer + skip; x <= d.x + d.w - outer - skip - 1; x++) {
+      at(x, d.y + inner - 1, x, d.y + outer, 'top');
+      at(x, d.y + d.h - inner, x, d.y + d.h - outer - 1, 'bottom');
     }
   }
   return out;
 }
 
 /** The weakest line-against-tile contrast in each `kind`, and every place under the bar. */
-function measureEdges(raster: ReturnType<typeof rasterCtx>, px: Painted[]) {
-  const edges = edgesOf(px, raster.W, raster.H);
+function measureEdges(raster: ReturnType<typeof rasterCtx>, px: Painted[], dpr = 1) {
+  const edges = edgesOf(px, raster.W, raster.H, dpr);
   const under: string[] = [];
   const worst = { leaf: Infinity, frame: Infinity };
   for (const e of edges) {
@@ -1808,6 +1830,49 @@ test('map density: a realistic dense map is colour with contrasting lines, not a
   // owner asked to see.
   const over = Object.entries(share).filter(([, v]) => v >= 0.02).map(([theme, v]) => `${theme} ${(v * 100).toFixed(1)}%`);
   assert.deepEqual(over, [], `near-black (luminance < ${NEAR_BLACK}) at or over 2%: ${over.join(', ')} (dark ${(share.dark * 100).toFixed(1)}%, light ${(share.light * 100).toFixed(1)}%)`);
+});
+
+/* ── On the device's own pixels: Retina (2) and 150 % (1.5) ── */
+
+test('tmSnap lays a coordinate on the nearest whole device pixel — at device pixel ratios 1, 1.25, 1.5 and 2 (review F1.7)', () => {
+  const snap = load<(v: number, dpr: number) => number>(['tmSnap'], {}, 'tmSnap');
+  for (const dpr of [1, 1.25, 1.5, 2]) {
+    for (const v of [0, 0.2, 0.5, 1.3, 7.77, 100.4, 333.333, 640.9]) {
+      const snapped = snap(v, dpr), device = snapped * dpr;
+      assert.ok(Math.abs(device - Math.round(device)) < 1e-9, `dpr ${dpr}: ${v} css px is laid at ${snapped}, ${device} device px — a whole device pixel`);
+      assert.ok(Math.abs(snapped - v) <= 0.5 / dpr + 1e-9, `dpr ${dpr}: ${v} css px is laid at ${snapped}, the nearest device pixel (within ${0.5 / dpr} css px)`);
+    }
+  }
+});
+
+test('owner\'s outlines on a Retina screen and at 150 %: every rectangle lies on whole device pixels where its percentages put it, every line reaches 3:1 on the device\'s pixels, and the dense map is no black mesh — at device pixel ratios 2 and 1.5, in both themes (review F1.7)', () => {
+  const b = colourBlocks(EVERY_COLOUR, 16, 16);
+  const nodes = realisticNodes();
+  for (const dpr of [2, 1.5]) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      for (const [what, tiles, W, H, colour] of [['the colour blocks', b.tiles, b.W, b.H, b.colour], ['the dense map', nodes, REAL_W, REAL_H, undefined]] as const) {
+        const { raster, px } = rasterPaint(tiles as Tile[], palette, W, H, colour as ((n: Tile) => RGB) | undefined, undefined, false, dpr);
+        assert.equal(raster.W, Math.round(W * dpr), `${theme}, dpr ${dpr}, ${what}: control — the raster is the device's pixels`);
+        // Where each rectangle lies: on whole device pixels, within half a device pixel of where its percentages put it.
+        const off: string[] = [];
+        for (const r of px) {
+          const edges = [[r.x, r.n.x / 100 * W], [r.y, r.n.y / 100 * H], [r.x + r.w, (r.n.x + r.n.w) / 100 * W], [r.y + r.h, (r.n.y + r.n.h) / 100 * H]];
+          for (const [at, want] of edges) {
+            const device = at * dpr;
+            if (Math.abs(device - Math.round(device)) > 1e-6 || Math.abs(device - want * dpr) > 0.5 + 1e-6) off.push(`${r.n.path}: an edge at ${device.toFixed(3)} device px, its layout ${(want * dpr).toFixed(3)}`);
+          }
+        }
+        assert.deepEqual(off.slice(0, 6), [], `${theme}, dpr ${dpr}, ${what}: every rectangle's edges on whole device pixels, where the layout puts them (${off.length} off)`);
+        const m = measureEdges(raster, px, dpr);
+        assert.ok(m.edges.length > (what === 'the dense map' ? 20000 : EVERY_COLOUR.length * 9 * 8) * dpr, `${theme}, dpr ${dpr}, ${what}: control — ${m.edges.length} places measured`);
+        assert.deepEqual(m.under, [], `${theme}, dpr ${dpr}, ${what}: lines under ${EDGE_BAR}:1 against the tile beside them, on the device's pixels`);
+        if (what === 'the dense map') {
+          const share = raster.nearBlack(NEAR_BLACK);
+          assert.ok(share < 0.02, `${theme}, dpr ${dpr}: near-black ${(share * 100).toFixed(2)}% of the dense map's device pixels`);
+        }
+      }
+    }
+  }
 });
 
 /* ── The SVG export paints what the canvas painted ── */
