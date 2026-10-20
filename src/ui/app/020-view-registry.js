@@ -183,8 +183,9 @@ const VIEWS = [
       // A tree with no scan behind it (index-painted, or a rescan the user
       // stopped) is not a reason to leave the markup's "Scanning for
       // duplicates…" standing over an empty card. Both panes, because the
-      // segmented control switches between them without remounting.
-      if (!state.scanId) { dupNeedsScan(); ndNeedsScan(); return; }
+      // segmented control switches between them without remounting. The
+      // running scan's id on hand is no scan behind the tree (treeScanId).
+      if (!treeScanId()) { dupNeedsScan(); ndNeedsScan(); return; }
       if (isCloudScan()) {
         // Duplicate detection reads file contents, and a cloud scan never
         // downloads any — so this is genuinely unavailable rather than empty,

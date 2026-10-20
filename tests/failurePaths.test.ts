@@ -530,7 +530,8 @@ test('a tree with no scan behind it does not leave the Duplicates panes claiming
     ['function dupNeedsScan(', 'dupSummary', 'dupBody'],
     ['function ndNeedsScan(', 'ndSummary', 'ndBody'],
   ] as const) {
-    const src = slice(fn, '\n}\n') + '\n}\n';
+    // With the app's own treeScanComing: no scan coming here (a Stop left the tree), so "Press Scan".
+    const src = slice('function treeScanComing(', '\n}\n') + '\n}\n' + slice(fn, '\n}\n') + '\n}\n';
     const painted: Record<string, { textContent: string; innerHTML: string }> = {};
     const env = {
       $: (id: string) => (painted[id] = painted[id] || { textContent: '', innerHTML: '' }),

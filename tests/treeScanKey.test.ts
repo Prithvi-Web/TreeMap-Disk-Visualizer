@@ -334,3 +334,86 @@ test('Apps, Libraries and Security keep no answer that lands once another tree i
     assert.equal(view.kept(state), null, `${view.id}: nor kept as what the view holds`);
   }
 });
+
+/* ───────────────────────────── Duplicates ───────────────────────────── */
+
+const DUP_COMING = /it starts once the scan finishes/;
+
+/** The duplicate finders' page: both loaders, the view's mount, and the toolbar's rule. */
+function dupPage(state: Record<string, unknown>, answer: (url: string) => unknown) {
+  const $ = stubDom();
+  const out = page<{ mount: () => void; exact: () => Promise<void>; near: () => Promise<void>; toolbar: () => void; open: (k: string, i: number) => Promise<void> }>(
+    ['function dupNeedsScan(', 'function ndNeedsScan(', 'async function loadDuplicates(', 'async function loadNearDupes(',
+      'function updateNdToolbar(', 'function ndAutoSelectBlocked(', 'async function openDupeViewer('], {
+      state, $, escapeHtml: esc, icon: () => '', REDUCED: true, formatCount: String, formatBytes: (n: number) => `${n} B`,
+      setTimeout: (fn: () => void) => { void Promise.resolve().then(fn); return 1; }, clearTimeout: noop,
+      fxOrbHide: noop, fxOrbShow: noop, fxHuntBeamSync: noop, updateDupToolbar: noop, renderDupNote: noop, dupProgressText: () => '',
+      seedNodes: noop, renderDuplicates: noop, renderNearDupes: noop, isCloudScan: () => false, nodeFor: () => null,
+      dupeViewer: { kind: null, at: 0, keeper: 0, data: null, seq: 0, totalCopies: 0 }, dupeViewerKeys: noop, renderDupeViewer: noop,
+      document: { addEventListener: noop },
+    }, `{ mount: () => (${pageView('duplicates')}).mount(), exact: loadDuplicates, near: loadNearDupes, toolbar: updateNdToolbar, open: openDupeViewer }`, answer);
+  return { ...out, $ };
+}
+
+const freshDup = () => ({ loadedFor: null, status: 'idle', groups: [], selection: new Set(), pollTimer: 0 });
+const freshNear = () => ({ loadedFor: null, status: 'idle', clusters: [], selection: new Set(), pollTimer: 0 });
+
+test('Duplicates: both finders ask the scan the tree on screen came from — through the poll of a search still hashing too — never the running scan, and over the saved index\'s tree ask nothing and say they start once the scan finishes, then that a scan of the folder is needed', async () => {
+  const state: Record<string, unknown> = { root: TREE, dupMode: 'exact', dup: freshDup(), near: freshNear(), ...HELD };
+  const { fns, asks, $ } = dupPage(state, () => ({ status: 'complete', groups: [], clusters: [], available: true }));
+  await throughThePhases('Duplicates', state, asks, async () => { await fns.exact(); await fns.near(); }, () => { state.dup = freshDup(); state.near = freshNear(); });
+
+  // A search started before the rescan's request answered keeps asking the tree's scan as it polls:
+  // the request answering (followScanProgress) puts the running scan's id on hand mid-search.
+  for (const finder of ['exact', 'near'] as const) {
+    let polls = 0;
+    const raceState: Record<string, unknown> = { root: TREE, dupMode: 'exact', dup: freshDup(), near: freshNear(),
+      scanning: true, scanId: 'scan-old', settledScanId: 'scan-old', indexScanDue: false };
+    const racing = dupPage(raceState, () => {
+      polls++;
+      if (polls === 1) raceState.scanId = 'scan-new'; // the rescan's request answers while the first poll is out
+      return polls < 3 ? { status: 'running', hashed: 1, toHash: 4 } : { status: 'complete', groups: [], clusters: [], available: true };
+    });
+    await racing.fns[finder]();
+    await turns(20);
+    assert.equal(racing.asks.length, 3, `${finder}: control: the search polled until it settled`);
+    assert.deepEqual(racing.asks.map((a) => a.scanId), ['scan-old', 'scan-old', 'scan-old'],
+      `${finder}: every poll asks the scan the tree on screen came from, never the one whose request answered meanwhile`);
+  }
+
+  // The saved index's tree: nothing asked, both panes say what they wait for.
+  const before = asks.length;
+  Object.assign(state, INDEX_RUNNING);
+  fns.mount();
+  await turns();
+  assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked — not of the running scan');
+  assert.match($('dupBody').innerHTML, DUP_COMING, 'the duplicate finder says it starts once the scan finishes');
+  assert.match($('ndBody').innerHTML, DUP_COMING, 'and so does the similar-image finder');
+  assert.equal($('dupSummary').textContent, 'Waiting for the scan to finish.');
+  Object.assign(state, INDEX_STOPPED);
+  fns.mount();
+  await turns();
+  assert.equal(asks.length, before);
+  assert.match($('dupBody').innerHTML, /needs a finished scan of this folder\. Press Scan to run one\./, 'once nothing will land, a scan is what it needs');
+  assert.equal($('dupSummary').textContent, 'Needs a completed scan.');
+});
+
+test('Duplicates: the side-by-side viewer asks the scan the tree on screen came from; over the saved index\'s tree it asks nothing, and the similar-image toolbar offers nothing an earlier scan left — Auto-select is blocked and nothing is offered to the Trash', async () => {
+  const state: Record<string, unknown> = {
+    root: TREE, dupMode: 'near', ...HELD,
+    dup: { ...freshDup(), groups: [{ files: [{ path: '/r/a' }, { path: '/r/b' }] }] },
+    near: { ...freshNear(), status: 'complete', available: true, clusters: [{ files: [{ path: '/r/x' }, { path: '/r/y' }] }], selection: new Set(['/r/y']) },
+  };
+  const { fns, asks, $ } = dupPage(state, () => ({ files: [], recommendedKeep: null }));
+  await fns.open('exact', 0);
+  assert.deepEqual(asks.map((a) => a.scanId), ['scan-old'], 'the viewer asks the scan the copies on screen came from');
+  fns.toolbar();
+  assert.equal($('ndAutoBtn').disabled, false, 'control: over the older scan\'s tree, its own groups can be auto-selected');
+  assert.match($('ndTrashBtn').innerHTML, /Move 1 to Trash/, 'control: and what is selected in them offered to the Trash');
+  Object.assign(state, INDEX_RUNNING);
+  fns.toolbar();
+  assert.equal($('ndAutoBtn').disabled, true, 'over the saved index\'s tree Auto-select is blocked: the groups are an earlier scan\'s');
+  assert.equal($('ndTrashBtn').disabled, true, 'and nothing they hold is offered to the Trash');
+  await fns.open('exact', 0);
+  assert.equal(asks.length, 1, 'nor does the viewer ask anything — not of the running scan');
+});

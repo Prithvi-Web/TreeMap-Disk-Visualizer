@@ -16,7 +16,10 @@ function dupeViewerList() {
 
 async function openDupeViewer(kind, idx) {
   const list = kind === 'near' ? state.near.clusters : state.dup.groups;
-  if (!list || !list[idx] || !state.scanId) return;
+  // The copies are the tree on screen's: asked of its scan (treeScanId), never
+  // one still walking; the saved index's tree has none to ask (BQJ-1b).
+  const scanId = treeScanId();
+  if (!list || !list[idx] || !scanId) return;
   const wasOpen = $('dupeViewerModal').classList.contains('open');
   dupeViewer.kind = kind;
   dupeViewer.at = idx;
@@ -34,7 +37,7 @@ async function openDupeViewer(kind, idx) {
   const dlg = $('dupeViewerModal').querySelector('.modal');
   if (dlg) { dlg.setAttribute('tabindex', '-1'); dlg.focus(); }
   try {
-    const data = await api(`/api/duplicates/detail?scanId=${encodeURIComponent(state.scanId)}&paths=${paths.map(encodeURIComponent).join(',')}`);
+    const data = await api(`/api/duplicates/detail?scanId=${encodeURIComponent(scanId)}&paths=${paths.map(encodeURIComponent).join(',')}`);
     if (seq !== dupeViewer.seq) return; // superseded by another open or a close
     dupeViewer.data = data;
     dupeViewer.keeper = data.recommendedKeep ? data.recommendedKeep.index : 0;
@@ -326,9 +329,12 @@ function renderNearDupes() {
 })();
 
 function updateNdToolbar() {
-  // With no completed scan the pane shows no image, so nothing selected is
-  // offered to the Trash, whatever an earlier scan left behind (review F2.5).
-  const count = state.scanId ? state.near.selection.size : 0;
+  // With no completed scan behind the tree on screen (treeScanId) the pane
+  // shows no image, so nothing selected is offered to the Trash, whatever an
+  // earlier scan left behind (review F2.5) — the running scan's id on hand
+  // is no completed scan (BQJ-1b).
+  const scanId = treeScanId();
+  const count = scanId ? state.near.selection.size : 0;
   let total = 0;
   for (const p of state.near.selection) total += nodeFor(p)?.size ?? 0;
   $('ndTrashBtn').disabled = !count;
@@ -336,7 +342,7 @@ function updateNdToolbar() {
   // Auto-select acts only on groups; with none it is disabled and says why
   // (fourth browser pass, E13: it stayed enabled, and silent, when no image
   // had been compared at all).
-  const why = ndAutoSelectBlocked(state.near, state.scanId);
+  const why = ndAutoSelectBlocked(state.near, scanId);
   $('ndAutoBtn').disabled = why !== null;
   $('ndAutoBtn').title = why ?? 'In every group, select all copies except the newest one';
 }
@@ -360,7 +366,7 @@ function ndAutoSelectBlocked(n, scanId) {
 }
 
 $('ndAutoBtn').addEventListener('click', () => {
-  if (ndAutoSelectBlocked(state.near, state.scanId) !== null) return; // the toolbar's own reason, never a stale group
+  if (ndAutoSelectBlocked(state.near, treeScanId()) !== null) return; // the toolbar's own reason, never a stale group
   state.near.selection.clear();
   state.near.clusters.forEach(c => c.files.slice(1).forEach(f => state.near.selection.add(f.path)));
   $('ndBody').querySelectorAll('.nd-ck').forEach(ck => {
@@ -371,7 +377,7 @@ $('ndAutoBtn').addEventListener('click', () => {
   toast(`Selected ${state.near.selection.size} extra ${state.near.selection.size === 1 ? 'copy' : 'copies'} — the newest image in each group is kept`);
 });
 $('ndTrashBtn').addEventListener('click', () => {
-  if (!state.scanId) return; // the toolbar's own rule: no completed scan, nothing of this folder's selected (review F2.5)
+  if (!treeScanId()) return; // the toolbar's own rule: no completed scan, nothing of this folder's selected (review F2.5)
   for (const c of state.near.clusters) {
     if (c.files.every(f => state.near.selection.has(f.path))) {
       toast(`Every image in a group is selected — keep at least one`, 'error');

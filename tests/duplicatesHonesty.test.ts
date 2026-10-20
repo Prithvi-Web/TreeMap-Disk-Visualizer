@@ -325,7 +325,8 @@ test('near-duplicates: the reason is shown as text, never as markup', () => {
 function ndToolbar(near: Record<string, unknown>, scanId: string | null = 's1'): { disabled: boolean; title: string } {
   const els: Record<string, { disabled: boolean; title: string; innerHTML: string }> = {};
   const $ = (id: string) => (els[id] ??= { disabled: false, title: '', innerHTML: '' });
-  const helper = INDEX.includes('function ndAutoSelectBlocked(') ? source('ndAutoSelectBlocked') : '';
+  // With the app's one rule for the scan behind the tree on screen (treeScanId, treeScanComing).
+  const helper = [INDEX.includes('function ndAutoSelectBlocked(') ? source('ndAutoSelectBlocked') : '', source('treeScanId'), source('treeScanComing')].join('\n');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function('$', 'state', 'nodeFor', 'icon', 'formatBytes', `${helper}\n${source('updateNdToolbar')}\nupdateNdToolbar();`)(
     $, { scanId, near: { selection: new Set(), clusters: [], ...near } }, () => null, () => '', (n: number) => `${n} B`,
@@ -373,7 +374,8 @@ function ndAutoClick(state: { scanId: string | null; near: Record<string, unknow
   const toasts: string[] = [];
   let handler: () => void = () => assert.fail('no handler was bound');
   const el = { addEventListener: (_: string, fn: () => void) => { handler = fn; }, querySelectorAll: () => [], disabled: false, title: '', innerHTML: '' };
-  const helper = INDEX.includes('function ndAutoSelectBlocked(') ? source('ndAutoSelectBlocked') : '';
+  // With the app's one rule for the scan behind the tree on screen (treeScanId, treeScanComing).
+  const helper = [INDEX.includes('function ndAutoSelectBlocked(') ? source('ndAutoSelectBlocked') : '', source('treeScanId'), source('treeScanComing')].join('\n');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function('$', 'state', 'nodeFor', 'icon', 'formatBytes', 'toast', `${helper}\n${source('updateNdToolbar')}\n${INDEX.slice(at, end)}`)(
     () => el, state, () => null, () => '', (n: number) => `${n} B`, (m: string) => { toasts.push(m); },
@@ -426,7 +428,8 @@ function ndNoScan(state: { scanId: string | null; near: Record<string, unknown> 
   const bindable = (id: string) => (id === 'ndTrashBtn'
     ? { addEventListener: (_: string, fn: () => void) => { handler = fn; } }
     : assert.fail(`the Trash handler is bound to #${id}`));
-  const helper = INDEX.includes('function ndAutoSelectBlocked(') ? source('ndAutoSelectBlocked') : '';
+  // With the app's one rule for the scan behind the tree on screen (treeScanId, treeScanComing).
+  const helper = [INDEX.includes('function ndAutoSelectBlocked(') ? source('ndAutoSelectBlocked') : '', source('treeScanId'), source('treeScanComing')].join('\n');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function('$', '$bind', 'state', 'nodeFor', 'icon', 'formatBytes', 'toast', 'confirmTrash', 'run',
     `${helper}\n${source('updateNdToolbar')}\n${source('ndNeedsScan')}\n{ const $ = $bind; ${INDEX.slice(at, end)} }\n`
@@ -510,7 +513,8 @@ function cloudScanLands(state: DupViewState, land: (s: DupViewState) => void) {
   const trashed: string[][] = [];
   const toasts: string[] = [];
   const loaded: string[] = [];
-  const helper = INDEX.includes('function ndAutoSelectBlocked(') ? source('ndAutoSelectBlocked') : '';
+  // With the app's one rule for the scan behind the tree on screen (treeScanId, treeScanComing).
+  const helper = [INDEX.includes('function ndAutoSelectBlocked(') ? source('ndAutoSelectBlocked') : '', source('treeScanId'), source('treeScanComing')].join('\n');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const page = new Function('$', 'state', 'nodeFor', 'icon', 'formatBytes', 'escapeHtml', 'toast', 'confirmTrash', 'renderDupNote',
     'loadNearDupes', 'loadDuplicates', 'cartHas', 'dupFunnelDrop', 'FxCharts',

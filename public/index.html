@@ -8062,8 +8062,9 @@ const VIEWS = [
       // A tree with no scan behind it (index-painted, or a rescan the user
       // stopped) is not a reason to leave the markup's "Scanning for
       // duplicates…" standing over an empty card. Both panes, because the
-      // segmented control switches between them without remounting.
-      if (!state.scanId) { dupNeedsScan(); ndNeedsScan(); return; }
+      // segmented control switches between them without remounting. The
+      // running scan's id on hand is no scan behind the tree (treeScanId).
+      if (!treeScanId()) { dupNeedsScan(); ndNeedsScan(); return; }
       if (isCloudScan()) {
         // Duplicate detection reads file contents, and a cloud scan never
         // downloads any — so this is genuinely unavailable rather than empty,
@@ -35689,9 +35690,14 @@ function dupProgressText(data) {
  * — a sentence that would never come true (§3.5). Both panes say what is
  * actually missing instead, because both are one tab click apart.
  */
+/* Both finders need a finished scan of the tree on screen (treeScanId). Over
+   the saved index's tree, which none stands behind, they say so — and while
+   a scan of it is coming (treeScanComing), that they start once it finishes,
+   not "Press Scan" over a scan already running (BQJ-1b). */
 function dupNeedsScan() {
-  $('dupSummary').textContent = 'Needs a completed scan.';
-  $('dupBody').innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('alert', 15)} Finding duplicates compares file contents, so it needs a finished scan of this folder. Press Scan to run one.</div></div>`;
+  const coming = treeScanComing();
+  $('dupSummary').textContent = coming ? 'Waiting for the scan to finish.' : 'Needs a completed scan.';
+  $('dupBody').innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('alert', 15)} Finding duplicates compares file contents, so it needs a finished scan of this folder${coming ? ' — it starts once the scan finishes.' : '. Press Scan to run one.'}</div></div>`;
   updateDupToolbar();
 }
 
@@ -35700,15 +35706,20 @@ function ndNeedsScan() {
   // folder's: the pane lets go of them rather than keep a Trash button armed
   // over a card that shows none (review F2.5). state.near outlives a scan.
   state.near.selection.clear();
-  $('ndSummary').textContent = 'Needs a completed scan.';
-  $('ndBody').innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('alert', 15)} Finding similar images reads the pictures themselves, so it needs a finished scan of this folder. Press Scan to run one.</div></div>`;
+  const coming = treeScanComing();
+  $('ndSummary').textContent = coming ? 'Waiting for the scan to finish.' : 'Needs a completed scan.';
+  $('ndBody').innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('alert', 15)} Finding similar images reads the pictures themselves, so it needs a finished scan of this folder${coming ? ' — it starts once the scan finishes.' : '. Press Scan to run one.'}</div></div>`;
   updateNdToolbar();
 }
 
 async function loadDuplicates(force = false) {
   if (!state.root) return;                          // the welcome screen is up
-  if (!state.scanId) { dupNeedsScan(); return; }
-  const key = state.scanId + ':' + $('dupMinSize').value;
+  // The scan the tree on screen came from (treeScanId), for the whole search:
+  // its polls kept reading the scan on hand, and a rescan's request answering
+  // mid-search sent the next one to the scan still walking (409).
+  const scanId = treeScanId();
+  if (!scanId) { dupNeedsScan(); return; }
+  const key = scanId + ':' + $('dupMinSize').value;
   if (!force && state.dup.loadedFor === key && state.dup.status === 'complete') { renderDuplicates(); return; }
   state.dup.loadedFor = key;
   state.dup.status = 'loading';
@@ -35731,7 +35742,7 @@ async function loadDuplicates(force = false) {
     try {
       // `pending: 'return'` because this loop exists to PAINT the 202 body:
       // the wrapper's own poll can wait, but it cannot draw a progress bar.
-      const data = await api(`/api/duplicates?scanId=${state.scanId}&minSize=${$('dupMinSize').value}`,
+      const data = await api(`/api/duplicates?scanId=${scanId}&minSize=${$('dupMinSize').value}`,
         undefined, { pending: 'return' });
       if (data.status === 'running') {
         const t = $('dupProgText'), f = $('dupProgFill');
@@ -36083,8 +36094,9 @@ $('dupModeSeg').addEventListener('click', (e) => {
 
 async function loadNearDupes(force = false) {
   if (!state.root) return;                          // the welcome screen is up
-  if (!state.scanId) { ndNeedsScan(); return; }
-  const key = state.scanId + ':' + $('ndThreshold').value;
+  const scanId = treeScanId(); // as loadDuplicates: the tree's scan, for every poll
+  if (!scanId) { ndNeedsScan(); return; }
+  const key = scanId + ':' + $('ndThreshold').value;
   if (!force && state.near.loadedFor === key && state.near.status === 'complete') { renderNearDupes(); return; }
   state.near.loadedFor = key;
   state.near.status = 'loading';
@@ -36100,7 +36112,7 @@ async function loadNearDupes(force = false) {
     if (state.near.loadedFor !== key) return; // a newer request superseded this one
     try {
       // Same reason as the exact finder: the 202 body IS this loop's progress.
-      const data = await api(`/api/near-duplicates?scanId=${state.scanId}&threshold=${$('ndThreshold').value}`,
+      const data = await api(`/api/near-duplicates?scanId=${scanId}&threshold=${$('ndThreshold').value}`,
         undefined, { pending: 'return' });
       if (data.status === 'running') {
         const t = $('ndProgText'), f = $('ndProgFill');
@@ -36285,7 +36297,10 @@ function dupeViewerList() {
 
 async function openDupeViewer(kind, idx) {
   const list = kind === 'near' ? state.near.clusters : state.dup.groups;
-  if (!list || !list[idx] || !state.scanId) return;
+  // The copies are the tree on screen's: asked of its scan (treeScanId), never
+  // one still walking; the saved index's tree has none to ask (BQJ-1b).
+  const scanId = treeScanId();
+  if (!list || !list[idx] || !scanId) return;
   const wasOpen = $('dupeViewerModal').classList.contains('open');
   dupeViewer.kind = kind;
   dupeViewer.at = idx;
@@ -36303,7 +36318,7 @@ async function openDupeViewer(kind, idx) {
   const dlg = $('dupeViewerModal').querySelector('.modal');
   if (dlg) { dlg.setAttribute('tabindex', '-1'); dlg.focus(); }
   try {
-    const data = await api(`/api/duplicates/detail?scanId=${encodeURIComponent(state.scanId)}&paths=${paths.map(encodeURIComponent).join(',')}`);
+    const data = await api(`/api/duplicates/detail?scanId=${encodeURIComponent(scanId)}&paths=${paths.map(encodeURIComponent).join(',')}`);
     if (seq !== dupeViewer.seq) return; // superseded by another open or a close
     dupeViewer.data = data;
     dupeViewer.keeper = data.recommendedKeep ? data.recommendedKeep.index : 0;
@@ -36595,9 +36610,12 @@ function renderNearDupes() {
 })();
 
 function updateNdToolbar() {
-  // With no completed scan the pane shows no image, so nothing selected is
-  // offered to the Trash, whatever an earlier scan left behind (review F2.5).
-  const count = state.scanId ? state.near.selection.size : 0;
+  // With no completed scan behind the tree on screen (treeScanId) the pane
+  // shows no image, so nothing selected is offered to the Trash, whatever an
+  // earlier scan left behind (review F2.5) — the running scan's id on hand
+  // is no completed scan (BQJ-1b).
+  const scanId = treeScanId();
+  const count = scanId ? state.near.selection.size : 0;
   let total = 0;
   for (const p of state.near.selection) total += nodeFor(p)?.size ?? 0;
   $('ndTrashBtn').disabled = !count;
@@ -36605,7 +36623,7 @@ function updateNdToolbar() {
   // Auto-select acts only on groups; with none it is disabled and says why
   // (fourth browser pass, E13: it stayed enabled, and silent, when no image
   // had been compared at all).
-  const why = ndAutoSelectBlocked(state.near, state.scanId);
+  const why = ndAutoSelectBlocked(state.near, scanId);
   $('ndAutoBtn').disabled = why !== null;
   $('ndAutoBtn').title = why ?? 'In every group, select all copies except the newest one';
 }
@@ -36629,7 +36647,7 @@ function ndAutoSelectBlocked(n, scanId) {
 }
 
 $('ndAutoBtn').addEventListener('click', () => {
-  if (ndAutoSelectBlocked(state.near, state.scanId) !== null) return; // the toolbar's own reason, never a stale group
+  if (ndAutoSelectBlocked(state.near, treeScanId()) !== null) return; // the toolbar's own reason, never a stale group
   state.near.selection.clear();
   state.near.clusters.forEach(c => c.files.slice(1).forEach(f => state.near.selection.add(f.path)));
   $('ndBody').querySelectorAll('.nd-ck').forEach(ck => {
@@ -36640,7 +36658,7 @@ $('ndAutoBtn').addEventListener('click', () => {
   toast(`Selected ${state.near.selection.size} extra ${state.near.selection.size === 1 ? 'copy' : 'copies'} — the newest image in each group is kept`);
 });
 $('ndTrashBtn').addEventListener('click', () => {
-  if (!state.scanId) return; // the toolbar's own rule: no completed scan, nothing of this folder's selected (review F2.5)
+  if (!treeScanId()) return; // the toolbar's own rule: no completed scan, nothing of this folder's selected (review F2.5)
   for (const c of state.near.clusters) {
     if (c.files.every(f => state.near.selection.has(f.path))) {
       toast(`Every image in a group is selected — keep at least one`, 'error');

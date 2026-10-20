@@ -23,9 +23,14 @@ function dupProgressText(data) {
  * — a sentence that would never come true (§3.5). Both panes say what is
  * actually missing instead, because both are one tab click apart.
  */
+/* Both finders need a finished scan of the tree on screen (treeScanId). Over
+   the saved index's tree, which none stands behind, they say so — and while
+   a scan of it is coming (treeScanComing), that they start once it finishes,
+   not "Press Scan" over a scan already running (BQJ-1b). */
 function dupNeedsScan() {
-  $('dupSummary').textContent = 'Needs a completed scan.';
-  $('dupBody').innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('alert', 15)} Finding duplicates compares file contents, so it needs a finished scan of this folder. Press Scan to run one.</div></div>`;
+  const coming = treeScanComing();
+  $('dupSummary').textContent = coming ? 'Waiting for the scan to finish.' : 'Needs a completed scan.';
+  $('dupBody').innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('alert', 15)} Finding duplicates compares file contents, so it needs a finished scan of this folder${coming ? ' — it starts once the scan finishes.' : '. Press Scan to run one.'}</div></div>`;
   updateDupToolbar();
 }
 
@@ -34,15 +39,20 @@ function ndNeedsScan() {
   // folder's: the pane lets go of them rather than keep a Trash button armed
   // over a card that shows none (review F2.5). state.near outlives a scan.
   state.near.selection.clear();
-  $('ndSummary').textContent = 'Needs a completed scan.';
-  $('ndBody').innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('alert', 15)} Finding similar images reads the pictures themselves, so it needs a finished scan of this folder. Press Scan to run one.</div></div>`;
+  const coming = treeScanComing();
+  $('ndSummary').textContent = coming ? 'Waiting for the scan to finish.' : 'Needs a completed scan.';
+  $('ndBody').innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('alert', 15)} Finding similar images reads the pictures themselves, so it needs a finished scan of this folder${coming ? ' — it starts once the scan finishes.' : '. Press Scan to run one.'}</div></div>`;
   updateNdToolbar();
 }
 
 async function loadDuplicates(force = false) {
   if (!state.root) return;                          // the welcome screen is up
-  if (!state.scanId) { dupNeedsScan(); return; }
-  const key = state.scanId + ':' + $('dupMinSize').value;
+  // The scan the tree on screen came from (treeScanId), for the whole search:
+  // its polls kept reading the scan on hand, and a rescan's request answering
+  // mid-search sent the next one to the scan still walking (409).
+  const scanId = treeScanId();
+  if (!scanId) { dupNeedsScan(); return; }
+  const key = scanId + ':' + $('dupMinSize').value;
   if (!force && state.dup.loadedFor === key && state.dup.status === 'complete') { renderDuplicates(); return; }
   state.dup.loadedFor = key;
   state.dup.status = 'loading';
@@ -65,7 +75,7 @@ async function loadDuplicates(force = false) {
     try {
       // `pending: 'return'` because this loop exists to PAINT the 202 body:
       // the wrapper's own poll can wait, but it cannot draw a progress bar.
-      const data = await api(`/api/duplicates?scanId=${state.scanId}&minSize=${$('dupMinSize').value}`,
+      const data = await api(`/api/duplicates?scanId=${scanId}&minSize=${$('dupMinSize').value}`,
         undefined, { pending: 'return' });
       if (data.status === 'running') {
         const t = $('dupProgText'), f = $('dupProgFill');
@@ -417,8 +427,9 @@ $('dupModeSeg').addEventListener('click', (e) => {
 
 async function loadNearDupes(force = false) {
   if (!state.root) return;                          // the welcome screen is up
-  if (!state.scanId) { ndNeedsScan(); return; }
-  const key = state.scanId + ':' + $('ndThreshold').value;
+  const scanId = treeScanId(); // as loadDuplicates: the tree's scan, for every poll
+  if (!scanId) { ndNeedsScan(); return; }
+  const key = scanId + ':' + $('ndThreshold').value;
   if (!force && state.near.loadedFor === key && state.near.status === 'complete') { renderNearDupes(); return; }
   state.near.loadedFor = key;
   state.near.status = 'loading';
@@ -434,7 +445,7 @@ async function loadNearDupes(force = false) {
     if (state.near.loadedFor !== key) return; // a newer request superseded this one
     try {
       // Same reason as the exact finder: the 202 body IS this loop's progress.
-      const data = await api(`/api/near-duplicates?scanId=${state.scanId}&threshold=${$('ndThreshold').value}`,
+      const data = await api(`/api/near-duplicates?scanId=${scanId}&threshold=${$('ndThreshold').value}`,
         undefined, { pending: 'return' });
       if (data.status === 'running') {
         const t = $('ndProgText'), f = $('ndProgFill');
