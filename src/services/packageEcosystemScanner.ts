@@ -248,11 +248,15 @@ export function scanPackageEcosystems(
 
       // 3. A project artifact. The owner manifest is the rule's explicit
       //    ownerManifest, or its requiresSibling when that is the same thing.
+      //    A rule that names what the folder holds (requiresChild) is its
+      //    project's only when it holds one: a folder of settings named env
+      //    beside requirements.txt is no virtualenv (BQL-b1 review F1.4).
       const candidates = projectRules.filter((r) => r.names.includes(lower));
       if (candidates.length) {
         const owned = candidates.find((r) => {
           const owner = r.ownerManifest ?? r.requiresSibling;
-          return owner ? siblingPresent(siblings, owner) : true;
+          return (owner ? siblingPresent(siblings, owner) : true)
+            && (!r.requiresChild || siblingPresent(childNames(store, child), r.requiresChild));
         });
         if (owned) {
           const projectName = path.basename(nodePath) || nodePath;

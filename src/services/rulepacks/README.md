@@ -31,7 +31,7 @@ typo fails loudly instead of silently doing nothing.
 
 | Kind | Matches | Extra fields |
 | --- | --- | --- |
-| `project-directory` | a folder by name, optionally only when a manifest sits beside it | `names`, `requiresSibling?`, `restoreCommand` |
+| `project-directory` | a folder by name, optionally only when a manifest sits beside it and when it holds a file it always holds | `names`, `requiresSibling?`, `requiresChild?`, `restoreCommand` |
 | `directory` | a folder by name, with nothing to confirm it | `names` |
 | `file` | a file by name | `names` |
 | `location` | absolute known paths | `paths` |
@@ -43,6 +43,15 @@ Names and sibling patterns are matched case-insensitively, and said in the
 usually spelled (`Cargo.toml`, `Podfile`, `.DS_Store`). A served group's "why"
 names the folders it actually matched, not every name the rule knows. A
 sibling pattern ending in `.*` matches any extension (`vite.config.*`).
+
+`requiresChild` names what the folder itself must hold, any one of them, matched
+the same way. Give it to a rule whose folder name is also a person's word: a
+folder of settings named `env` sits beside requirements.txt as readily as a
+virtualenv does, so the virtualenv rule also needs the `pyvenv.cfg` that
+Python's venv, and virtualenv since version 20, write in every environment they
+make, and the coverage rule a report a test tool writes (`lcov.info`,
+`clover.xml`, …). The "why" says both — "A folder named env holding pyvenv.cfg,
+sitting next to requirements.txt."
 
 ### Ecosystem tagging (§C6)
 

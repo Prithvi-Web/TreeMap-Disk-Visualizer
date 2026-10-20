@@ -127,6 +127,9 @@ const REJECTED: Array<[string, unknown, RegExp]> = [
   ['an unknown platform', pack({}, { os: ['plan9'] }), /expected darwin, win32, linux/],
   ['advice with nothing to advise', pack({}, { action: 'advice' }), /no adviceCommand to offer instead/],
   ['a project rule with no restore command', pack({}, { kind: 'project-directory', names: ['x'] }), /restoreCommand must be a non-empty string/],
+  ['a project rule whose required children are none', pack({}, { kind: 'project-directory', names: ['x'], restoreCommand: 'x', requiresChild: [] }), /rules\[0\]\.requiresChild must be a non-empty array/],
+  ['a project rule whose required child is not a name', pack({}, { kind: 'project-directory', names: ['x'], restoreCommand: 'x', requiresChild: [' '] }), /rules\[0\]\.requiresChild\[0\] must be a non-empty string/],
+  ['a required child on a rule that matches by name alone', pack({}, { requiresChild: ['x.cfg'] }), /unknown key "requiresChild" for kind "directory"/],
   ['a location rule with no paths', pack({}, { kind: 'location', names: undefined, paths: [] }), /paths must be a non-empty array/],
   ['a stale rule with a zero age', pack({}, { kind: 'stale-files', names: undefined, withinPath: '{home}/D', olderThanDays: 0, minSizeBytes: 1 }), /olderThanDays must be a number >= 1/],
 ];
@@ -226,6 +229,28 @@ test('adding a rule to a pack JSON, with no code change, produces a new suggesti
   assert.equal(group.confidence, 'medium');
   assert.equal(group.totalSize, 4096);
   assert.deepEqual(group.items.map((i) => i.path), [path.join(ROOT, 'blorptool-cache')]);
+});
+
+test('a project rule that names a child matches only a folder holding one of them, matched in any case and said as the pack writes it (BQL-b1 review F1.4)', () => {
+  const dir = tempPacks();
+  const common = JSON.parse(fs.readFileSync(path.join(dir, 'common.json'), 'utf8'));
+  common.rules.unshift({
+    id: 'blorp-out', kind: 'project-directory', title: 'Blorp output', description: 'Written by blorp — blorp writes it again',
+    category: 'regenerable', confidence: 'high', names: ['out'], requiresSibling: ['blorp.toml'], requiresChild: ['Blorp.Stamp', 'blorp-index'],
+    restoreCommand: 'blorp build',
+  });
+  fs.writeFileSync(path.join(dir, 'common.json'), JSON.stringify(common, null, 2));
+  const catalog = loadRuleCatalogFrom(dir, process.platform);
+  const rule = catalog.projectDirectory.find((r) => r.id === 'blorp-out')!;
+  assert.deepEqual([rule.requiresChild, rule.childLabels], [['blorp.stamp', 'blorp-index'], ['Blorp.Stamp', 'blorp-index']],
+    'matched lowercased, said as written');
+  const ROOT = path.resolve('/holding');
+  const outOf = (project: string, kids: Spec[]): FileNode => treeOf(ROOT, [[project, ['blorp.toml', ['out', kids]]]]);
+  const claimed = (t: FileNode) => collectCleanupSuggestions(t, [], catalog).find((g) => g.id === 'blorp-out')?.items.map((i) => i.path) ?? [];
+  assert.deepEqual(claimed(outOf('a', ['BLORP.STAMP', 'x.bin'])), [path.join(ROOT, 'a', 'out')], 'a child named in another case is the child');
+  assert.deepEqual(claimed(outOf('b', [['blorp-index', ['i']]])), [path.join(ROOT, 'b', 'out')], 'any one of the children will do, a folder too');
+  assert.deepEqual(claimed(outOf('c', ['notes.txt'])), [], 'a folder holding none of them is not matched');
+  assert.equal(matchReasonFor(rule), 'A folder named out holding Blorp.Stamp or blorp-index, sitting next to blorp.toml.');
 });
 
 /* ───────────────────── "Why is this suggested" ───────────────────── */
@@ -428,10 +453,14 @@ test('matchReasonFor with matched names says those names; without, the pack\'s o
   const web = catalog.projectDirectory.find((r) => r.id === 'regen-web-build' && !r.requiresSibling)!;
   assert.equal(matchReasonFor(web, { names: ['.nuxt'] }), 'A folder named .nuxt.');
   const venv = catalog.projectDirectory.find((r) => r.id === 'regen-python-venv')!;
-  assert.equal(matchReasonFor(venv), 'A folder named .venv, venv or env sitting next to requirements.txt, pyproject.toml, Pipfile, setup.py, setup.cfg or .python-version.');
-  assert.equal(matchReasonFor(venv, { names: ['venv'] }), 'A folder named venv sitting next to requirements.txt, pyproject.toml, Pipfile, setup.py, setup.cfg or .python-version.');
+  assert.equal(matchReasonFor(venv), 'A folder named .venv, venv or env holding pyvenv.cfg, sitting next to requirements.txt, pyproject.toml, Pipfile, setup.py, setup.cfg or .python-version.');
+  assert.equal(matchReasonFor(venv, { names: ['venv'] }), 'A folder named venv holding pyvenv.cfg, sitting next to requirements.txt, pyproject.toml, Pipfile, setup.py, setup.cfg or .python-version.');
   const pods = catalog.projectDirectory.find((r) => r.id === 'regen-cocoapods')!;
   assert.equal(matchReasonFor(pods), 'A folder named Pods sitting next to Podfile.', 'the folder name too, as the pack writes it');
+  // A rule that needs a child and no sibling says the one (BQL-b1 review F1.4); the child as the pack writes it.
+  const holding = { ...pods, requiresSibling: undefined, siblingLabels: undefined, requiresChild: ['manifest.lock'], childLabels: ['Manifest.lock'] };
+  assert.equal(matchReasonFor(holding), 'A folder named Pods holding Manifest.lock.', 'a rule that needs only a child names it, as the pack writes it');
+
   const junk = catalog.file.find((r) => r.id === 'os-junk')!;
   assert.equal(matchReasonFor(junk), 'A file named .DS_Store, Thumbs.db or desktop.ini.', 'a file rule\'s names as the pack writes them');
   assert.equal(matchReasonFor(junk, { names: ['.DS_Store'] }), 'A file named .DS_Store.');

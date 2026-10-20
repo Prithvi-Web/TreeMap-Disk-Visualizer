@@ -16,6 +16,12 @@ import { loadRuleCatalog, matchReasonFor, ProjectDirRule, Rule, RuleCatalog } fr
  * edit to `src/utils/osPaths.ts` cannot quietly change the oracle along with the
  * code it judges. Never "fix" this file to match the new code — a difference is
  * the finding.
+ *
+ * One addition since (BQL-b1 review F1.4): a project rule may name children the
+ * folder must hold (`requiresChild`), a field of the packs the old walk never
+ * had to read. It is read here as the walk reads it, beside the sibling check,
+ * so the shipped packs — whose virtualenv and coverage rules carry it — still
+ * have an oracle; it changes no answer for a rule without the field.
  */
 
 /** `samePath` from src/utils/osPaths.ts at bc809a2. */
@@ -103,7 +109,8 @@ export function oracleCleanupSuggestions(
 
         // 1. Project dirs (usually sibling-gated) — most specific, checked first.
         const project = catalog.projectDirectory.find(
-          (r) => r.names.includes(lower) && (!r.requiresSibling || siblingPresent(siblings, r.requiresSibling)),
+          (r) => r.names.includes(lower) && (!r.requiresSibling || siblingPresent(siblings, r.requiresSibling))
+            && (!r.requiresChild || siblingPresent(new Set(store.childIds(child).map((c) => store.name(c).toLowerCase())), r.requiresChild)),
         );
         if (project && store.size(child) > 0) {
           if (containsNote) { visit(child, childPath); continue; }

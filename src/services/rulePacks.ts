@@ -60,6 +60,17 @@ export interface ProjectDirRule extends RuleBase {
   requiresSibling?: string[];
   /** The siblings as the pack writes them, for prose ("Cargo.toml", not "cargo.toml"). */
   siblingLabels?: string[];
+  /**
+   * Lowercased basenames, matched as `requiresSibling` is, of which the folder
+   * itself must hold one. For a rule whose folder name is also a person's word
+   * — `env`, `coverage` — a manifest beside it is not enough: a folder of
+   * settings named env sits beside requirements.txt as readily as a
+   * virtualenv does (BQL-b1 review F1.4). Read by Smart Suggestions and by the
+   * orphan scanner's "has project" check alike.
+   */
+  requiresChild?: string[];
+  /** The children as the pack writes them, for prose. */
+  childLabels?: string[];
   restoreCommand: string;
   /**
    * §C6: the manifest that OWNS this directory. Missing ⇒ the parent project is
@@ -156,7 +167,7 @@ const PLATFORMS = ['darwin', 'win32', 'linux'];
 /** Every key a rule may carry, per kind. Anything else is a typo, and rejected. */
 const COMMON_KEYS = ['id', 'kind', 'title', 'description', 'category', 'confidence', 'action', 'os', 'adviceCommand', 'ecosystem'];
 const KIND_KEYS: Record<RuleKind, string[]> = {
-  'project-directory': ['names', 'requiresSibling', 'restoreCommand', 'ownerManifest', 'evidence'],
+  'project-directory': ['names', 'requiresSibling', 'requiresChild', 'restoreCommand', 'ownerManifest', 'evidence'],
   directory: ['names'],
   file: ['names'],
   location: ['paths'],
@@ -285,6 +296,11 @@ export function validateRulePack(packName: string, raw: unknown): { rules: Rule[
             ? undefined
             : requireStringArray(packName, `${at}.requiresSibling`, entry.requiresSibling);
         const requiresSibling = siblingLabels?.map((s) => s.toLowerCase());
+        const childLabels =
+          entry.requiresChild === undefined
+            ? undefined
+            : requireStringArray(packName, `${at}.requiresChild`, entry.requiresChild);
+        const requiresChild = childLabels?.map((s) => s.toLowerCase());
         const ownerManifestLabels =
           entry.ownerManifest === undefined
             ? undefined
@@ -299,7 +315,7 @@ export function validateRulePack(packName: string, raw: unknown): { rules: Rule[
         if (base.ecosystem && !evidence) {
           fail(packName, `${at} is tagged with an ecosystem but has no evidence[] to identify it once its owner manifest is gone`);
         }
-        rule = { ...base, kind, names, labels, restoreCommand, requiresSibling, siblingLabels, ownerManifest, ownerManifestLabels, evidence };
+        rule = { ...base, kind, names, labels, restoreCommand, requiresSibling, siblingLabels, requiresChild, childLabels, ownerManifest, ownerManifestLabels, evidence };
         break;
       }
       case 'directory':
@@ -551,10 +567,13 @@ export function matchReasonFor(rule: Rule, matched?: { names?: readonly string[]
     matched?.names?.length ? matched.names : (r.labels ?? r.names);
 
   switch (rule.kind) {
-    case 'project-directory':
+    case 'project-directory': {
+      // "holding pyvenv.cfg, sitting next to requirements.txt": what the folder holds, then what is beside it.
+      const holding = rule.requiresChild ? ` holding ${list(rule.childLabels ?? rule.requiresChild)}` : '';
       return rule.requiresSibling
-        ? `A folder named ${list(named(rule))} sitting next to ${list(rule.siblingLabels ?? rule.requiresSibling)}.`
-        : `A folder named ${list(named(rule))}.`;
+        ? `A folder named ${list(named(rule))}${holding}${holding ? ',' : ''} sitting next to ${list(rule.siblingLabels ?? rule.requiresSibling)}.`
+        : `A folder named ${list(named(rule))}${holding}.`;
+    }
     case 'directory':
       return `A folder named ${list(named(rule))}, with no project manifest beside it to say what rebuilds it.`;
     case 'file':

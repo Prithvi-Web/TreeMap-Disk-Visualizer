@@ -81,18 +81,60 @@ test('node_modules is flagged regenerable with npm install, no manifest required
   assert.deepEqual(paths(g), [R('node_modules')]);
 });
 
+/** A virtualenv's top: the pyvenv.cfg Python's venv writes in every one it makes (BQL-b1 review F1.4), and a file of payload. */
+function venvAt(name: string, bytes = 10_000): FileNode {
+  return dir(name, [file('pyvenv.cfg', 200), file(`payload-${uid++}.bin`, bytes)]);
+}
+
 test('a virtualenv is flagged only next to a Python manifest', () => {
   for (const manifest of ['requirements.txt', 'pyproject.toml', 'Pipfile', 'setup.py', 'setup.cfg', '.python-version']) {
-    const g = groupById(run(tree([pkg('.venv'), file(manifest)])), 'regen-python-venv');
+    const g = groupById(run(tree([venvAt('.venv'), file(manifest)])), 'regen-python-venv');
     assert.ok(g, `.venv beside ${manifest} must be suggested`);
     assert.equal(g.regenerateCmd, 'python3 -m venv <folder>, then reinstall the packages it held', 'what makes a virtualenv again (H08)');
   }
   for (const name of ['.venv', 'venv', 'env']) {
-    assert.ok(groupById(run(tree([pkg(name), file('pyproject.toml')])), 'regen-python-venv'), `${name} is a venv name`);
+    assert.ok(groupById(run(tree([venvAt(name), file('pyproject.toml')])), 'regen-python-venv'), `${name} is a venv name`);
   }
   // No manifest: no rule offers it (the test below) — Package leftovers
   // reports it, saying no project file is beside it.
-  assert.equal(groupById(run(tree([pkg('env')])), 'regen-python-venv'), undefined);
+  assert.equal(groupById(run(tree([venvAt('env')])), 'regen-python-venv'), undefined);
+});
+
+test('a folder is offered as a virtualenv only when it holds pyvenv.cfg, and as coverage reports only when it holds a report a test tool writes: a person\'s own folder of that name beside a project file is neither (BQL-b1 review F1.4)', () => {
+  // review-scratch/lens-safety/probe1.ts: /root/svc/env holding prod.env and
+  // local.env, beside requirements.txt, was offered whole as "Python
+  // virtualenv — Python can make it again", at high confidence, with "To put
+  // it back: python3 -m venv env". A folder named coverage holding a site's
+  // own pages, beside package.json (Eleventy) or a Gemfile (Jekyll), was
+  // offered as test coverage reports "the next test run writes again".
+  const settings = dir('env', [file('prod.env', 300), file('local.env', 200)]);
+  assert.deepEqual(offered(run(tree([dir('svc', [settings, file('requirements.txt', 40)])]))), [],
+    'a folder of settings named env beside requirements.txt is offered by no rule');
+  for (const [manifest, pages] of [['package.json', ['index.md', 'home.md']], ['Gemfile', ['index.md']], ['pubspec.yaml', ['notes.txt']]] as const) {
+    const site = dir('coverage', pages.map((p) => file(p, 900)));
+    assert.deepEqual(offered(run(tree([dir('site', [site, file(manifest, 40)])]))), [],
+      `a folder named coverage holding ${pages.join(' and ')} beside ${manifest} is offered by no rule`);
+  }
+  // What each tool writes there by default, or with its usual reporter:
+  // lcov (Jest, c8, nyc, `flutter test --coverage`), Istanbul's json, json-summary,
+  // clover, cobertura and html reports (Jest, Vitest, c8, nyc), SimpleCov's results.
+  const REPORTS: Array<[string, string]> = [
+    ['package.json', 'lcov.info'], ['package.json', 'coverage-final.json'], ['package.json', 'coverage-summary.json'],
+    ['package.json', 'clover.xml'], ['package.json', 'cobertura-coverage.xml'], ['package.json', 'prettify.js'],
+    ['Gemfile', '.resultset.json'], ['pubspec.yaml', 'lcov.info'],
+  ];
+  for (const [manifest, report] of REPORTS) {
+    const reports = dir('coverage', [file('index.html', 900), file(report, 4000)]);
+    assert.deepEqual(paths(groupById(run(tree([dir('web', [reports, file(manifest, 40)])])), 'test-coverage')), [R('web', 'coverage')],
+      `control: coverage holding ${report} beside ${manifest} is offered`);
+  }
+  // Each sentence says what the folder holds as well as what sits beside it.
+  assert.equal(groupById(run(tree([venvAt('.venv'), file('requirements.txt')])), 'regen-python-venv')?.why,
+    'A folder named .venv, venv or env holding pyvenv.cfg, sitting next to requirements.txt, pyproject.toml, Pipfile, setup.py, setup.cfg or .python-version.',
+    'the virtualenv\'s why names what it holds (every name the rule knows: the walk\'s sentence, narrowed where groups are served)');
+  assert.equal(groupById(run(tree([dir('coverage', [file('lcov.info', 4000)]), file('package.json')])), 'test-coverage')?.why,
+    'A folder named coverage holding lcov.info, coverage-final.json, coverage-summary.json, clover.xml, cobertura-coverage.xml, prettify.js or .resultset.json, sitting next to package.json, Gemfile or pubspec.yaml.',
+    'the coverage folder\'s why names what it holds');
 });
 
 /** Every item any group offers, by path. */
@@ -262,20 +304,23 @@ test('a coverage folder is offered only beside a project file whose test tools w
   // folders may be called coverage: coverage.py's repository holds its
   // package `coverage/` beside pyproject.toml, a Go package is a folder beside
   // go.mod, and a Cargo workspace lists member crates beside Cargo.toml.
+  // Each holds a report, so only the folder beside it decides (BQL-b1 review F1.4: what it holds decides too, above).
+  const reports = (): FileNode => dir('coverage', [file('lcov.info', 10_000)]);
   for (const beside of [[], ['pyproject.toml'], ['setup.cfg'], ['setup.py'], ['go.mod'], ['Cargo.toml']]) {
-    const groups = run(tree([pkg('coverage'), ...beside.map((f) => file(f))]));
+    const groups = run(tree([reports(), ...beside.map((f) => file(f))]));
     assert.deepEqual(offered(groups), [], `coverage beside ${beside.join(', ') || 'nothing'} is offered by no rule`);
   }
   // Jest, Vitest, c8 and nyc (package.json), SimpleCov (Gemfile) and
   // `flutter test --coverage` (pubspec.yaml) write `coverage/` by default.
   for (const manifest of ['package.json', 'Gemfile', 'pubspec.yaml']) {
-    const g = groupById(run(tree([pkg('coverage'), file(manifest)])), 'test-coverage');
+    const g = groupById(run(tree([reports(), file(manifest)])), 'test-coverage');
     assert.ok(g, `coverage beside ${manifest} is offered`);
     assert.equal(g.category, 'regenerable', 'coverage reports: a regenerable group, as every rule with a way back is');
     assert.deepEqual(paths(g), [R('coverage')], 'the coverage folder itself is offered');
   }
-  assert.equal(groupById(run(tree([pkg('coverage'), file('Gemfile')])), 'test-coverage')?.why,
-    'A folder named coverage sitting next to package.json, Gemfile or pubspec.yaml.', 'its why says what matched');
+  assert.equal(groupById(run(tree([reports(), file('Gemfile')])), 'test-coverage')?.why,
+    'A folder named coverage holding lcov.info, coverage-final.json, coverage-summary.json, clover.xml, cobertura-coverage.xml, prettify.js or .resultset.json, sitting next to package.json, Gemfile or pubspec.yaml.',
+    'its why says what matched');
 });
 
 test('a .gradle folder is offered only beside a Gradle build file: the one in a home folder is Gradle\'s own settings and downloads, and only its caches folder is a cache (BQL item 7b)', () => {

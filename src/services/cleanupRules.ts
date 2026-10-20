@@ -25,7 +25,8 @@ import { MAX_SLICE_ATTEMPTS, SlicedWalk, SliceOptions, walkInSlices } from './sl
  *
  *  1. `project-directory` — dependency and build dirs, usually gated on a
  *     manifest beside them (so `target` is a Rust target only next to a
- *     Cargo.toml), each carrying the command that restores it.
+ *     Cargo.toml) and sometimes on what they hold (a virtualenv holds
+ *     pyvenv.cfg), each carrying the command that restores it.
  *  2. `directory` — basenames with nothing to confirm them (build leftovers,
  *     tool caches).
  *  3. `location` — absolute OS-specific paths (browser caches, Xcode, …).
@@ -69,7 +70,7 @@ export const CLEANUP_MAX_ATTEMPTS = MAX_SLICE_ATTEMPTS;
  */
 const INSTALLED_PACKAGES = new Set(['site-packages', 'dist-packages']);
 
-/** True if any sibling basename matches a pattern (`foo.*` ⇒ any `foo.<ext>`). */
+/** True if any basename in `siblings` matches a pattern (`foo.*` ⇒ any `foo.<ext>`): a folder's siblings, or its children. */
 function siblingPresent(siblings: Set<string>, patterns: string[]): boolean {
   for (const pat of patterns) {
     if (pat.endsWith('.*')) {
@@ -185,6 +186,15 @@ class SuggestionWalk implements SlicedWalk {
     return frame.siblings;
   }
 
+  /**
+   * A folder's own child basenames, lowercased — read only for a rule that
+   * names what the folder must hold (`requiresChild`), once its name and its
+   * siblings have matched, so a folder no such rule names costs no read.
+   */
+  private namesIn(node: number): Set<string> {
+    return new Set(this.store.childIds(node).map((c) => this.store.name(c).toLowerCase()));
+  }
+
   private examine(frame: Frame, child: number): void {
     const store = this.store;
     const catalog = this.catalog;
@@ -207,7 +217,8 @@ class SuggestionWalk implements SlicedWalk {
 
       // 1. Project dirs (usually sibling-gated) — most specific, checked first.
       const project = catalog.projectDirectory.find(
-        (r) => r.names.includes(lower) && (!r.requiresSibling || siblingPresent(this.siblingsOf(frame), r.requiresSibling)),
+        (r) => r.names.includes(lower) && (!r.requiresSibling || siblingPresent(this.siblingsOf(frame), r.requiresSibling))
+          && (!r.requiresChild || siblingPresent(this.namesIn(child), r.requiresChild)),
       );
       if (project && store.size(child) > 0) {
         if (containsNote) { this.enter(child, childPath); return; }

@@ -47,6 +47,9 @@
         "setup.cfg",
         ".python-version"
       ],
+      "requiresChild": [
+        "pyvenv.cfg"
+      ],
       "evidence": [
         "pyvenv.cfg"
       ],
@@ -224,6 +227,15 @@
         "package.json",
         "Gemfile",
         "pubspec.yaml"
+      ],
+      "requiresChild": [
+        "lcov.info",
+        "coverage-final.json",
+        "coverage-summary.json",
+        "clover.xml",
+        "cobertura-coverage.xml",
+        "prettify.js",
+        ".resultset.json"
       ],
       "restoreCommand": "the next test run with coverage writes it again"
     },

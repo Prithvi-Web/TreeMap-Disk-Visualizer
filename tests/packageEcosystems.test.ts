@@ -143,6 +143,18 @@ test('an orphaned virtualenv is flagged and an active one is not', () => {
   assert.equal(find(entries, path.join(ROOT, 'live-py', '.venv'))!.kind, 'active');
 });
 
+test('a folder named env beside requirements.txt that holds no pyvenv.cfg is no virtualenv: it is listed for no ecosystem (BQL-b1 review F1.4)', () => {
+  // A folder of settings — prod.env, local.env — was listed as the project's
+  // Python environment, "Its project is still here", with the virtualenv's
+  // command beside it.
+  const entries = run(tree([
+    dir('svc', [file('requirements.txt'), dir('env', [file('prod.env', 300), file('local.env', 200)])]),
+    dir('app', [file('requirements.txt'), dir('env', [file('pyvenv.cfg'), file('lib', 3000)])]),
+  ]));
+  assert.equal(find(entries, path.join(ROOT, 'svc', 'env')), undefined, 'the folder of settings is listed for no ecosystem');
+  assert.equal(find(entries, path.join(ROOT, 'app', 'env'))?.kind, 'active', 'control: a virtualenv named env, beside requirements.txt, is its project\'s');
+});
+
 /* ─────────────── Not guessing when it cannot know ─────────────── */
 
 test('an unidentifiable "target" is not claimed for any ecosystem', () => {
