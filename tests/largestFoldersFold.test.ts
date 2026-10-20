@@ -249,10 +249,36 @@ test('H55: the fold note may wrap — it is never held to one line and cut', () 
 test('H55: a row\'s accessible name says what it folded in — keyboard, touch and screen-reader users get it, not only a hover tooltip', () => {
   const { html } = renderCard(apiFolders(cardLimit()));
   const label = (path: string) => new RegExp(`data-jump="${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*aria-label="([^"]*)"`).exec(html)?.[1];
+  assert.match(label('/Applications/IntelliJ IDEA.app') ?? '',
+    /open it in the treemap\. It also covers Contents and plugins inside it, which each hold nearly all of its size\.$/);
+  assert.match(label('/Applications/Xcode.app') ?? '', /open it in the treemap\. It also covers Contents inside it, which holds nearly all of its size\.$/);
+  assert.doesNotMatch(label('/Applications/Blender.app') ?? '', /also covers/, 'a row that folded nothing says nothing of it');
+});
+
+/* ── Seventh browser pass J55: a row's accessible name carries what the row shows ── */
+
+test('J55: a row\'s accessible name says its size, its file count and its share of the largest — the aria-label replaces the row\'s contents, so a screen reader reads nothing else', () => {
+  const { html } = renderCard(apiFolders(cardLimit()));
+  const label = (path: string) => new RegExp(`data-jump="${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*aria-label="([^"]*)"`).exec(html)?.[1];
   assert.equal(label('/Applications/IntelliJ IDEA.app'),
-    'Open IntelliJ IDEA.app in the treemap. It also covers Contents and plugins inside it, which each hold nearly all of its size.');
-  assert.equal(label('/Applications/Xcode.app'), 'Open Xcode.app in the treemap. It also covers Contents inside it, which holds nearly all of its size.');
-  assert.equal(label('/Applications/Blender.app'), 'Open Blender.app in the treemap', 'a row that folded nothing is named as before');
+    'IntelliJ IDEA.app, 4.5 GB, 2 files, 100% of the largest folder listed — open it in the treemap. It also covers Contents and plugins inside it, which each hold nearly all of its size.');
+  assert.equal(label('/Applications/Xcode.app'),
+    'Xcode.app, 3.1 GB, 2 files, 69% of the largest folder listed — open it in the treemap. It also covers Contents inside it, which holds nearly all of its size.');
+  assert.equal(label('/Applications/Blender.app'), 'Blender.app, 1.0 GB, 2 files, 22% of the largest folder listed — open it in the treemap');
+  // Every row, whatever it holds: its name says each figure the row shows, as the row shows it.
+  const rows = html.split('<div class="bigfile"').slice(1);
+  assert.equal(rows.length, 10, 'control: ten rows');
+  for (const row of rows) {
+    const name = /aria-label="([^"]*)"/.exec(row)?.[1] ?? '';
+    const shown = (re: RegExp): string => re.exec(row)?.[1] ?? '(none)';
+    for (const [what, text] of [
+      ['size', shown(/<span class="size-badge num"[^>]*>([^<]+)<\/span>/)],
+      ['file count', shown(/<span class="cnt muted num"[^>]*>([^<]+)<\/span>/)],
+      ['share', `${shown(/<span class="fx-li-pct num"[^>]*>(\d+)%<\/span>/)}% of the largest folder listed`],
+    ]) assert.ok(name.includes(`, ${text}`), `${name}: says its ${what} (${text})`);
+  }
+  const one = renderCard([{ name: 'solo', path: '/A/solo', size: 2_000_000_000, fileCount: 1 }]).html;
+  assert.match(one, /aria-label="solo, 2\.0 GB, 1 file, 100% of the largest folder listed — open it in the treemap"/, 'one file, said in the singular');
 });
 
 test('H55: the "%" column says what it is a share of — the largest folder listed — in the card\'s heading and on each figure', () => {
