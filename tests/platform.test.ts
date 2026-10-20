@@ -502,6 +502,49 @@ test('lsofSpellings: every path lsof reads back as a text is among its spellings
   assert.equal(lsof.LSOF_CARETS_TRIED, 4);
 });
 
+test('lsofSpellings: a name that ends in 0x1c — alone, or with the start of an escape after it — is among its own spellings, where nothing follows to finish the escape; and "^@" is never a NUL, which no name holds (BQL-a review F1.2)', () => {
+  // lsof prints 0x1c as "^\\", and a run ending in that open backslash was accepted only where more text
+  // followed it: at the end of the text, "/work/rep\\x1c" was never among the spellings of "/work/rep^\\", so a
+  // file still in place there was claimed deleted.
+  const chars = ['^', 'A', '1', 'x', 'b', '\\', '\x01', '\x1c', '\x08'];
+  let names = [''];
+  const all: string[] = [];
+  for (let len = 1; len <= 3; len++) {
+    names = names.flatMap((n) => chars.map((c) => n + c));
+    all.push(...names);
+  }
+  for (const name of all) {
+    const file = `/d/${name}`; // the name at the very end of lsof's text
+    const back = lsof.lsofReadBack(file);
+    const spellings = lsof.lsofSpellings(back);
+    assert.ok(spellings, `${JSON.stringify(back)} has spellings`);
+    assert.ok(spellings.includes(file), `${JSON.stringify(file)}, read back as ${JSON.stringify(back)}, is among ${JSON.stringify(spellings)}`);
+    for (const s of spellings) assert.equal(lsof.lsofReadBack(s), back, `${JSON.stringify(s)} reads back as ${JSON.stringify(back)}`);
+  }
+  const sorted = (a: string[] | null) => (a ? [...a].sort() : a);
+  assert.deepEqual(sorted(lsof.lsofSpellings('/work/rep^\\')), ['/work/rep\x1c', '/work/rep^\\'], 'the 0x1c the text ends in, or a caret and a backslash');
+  assert.deepEqual(sorted(lsof.lsofSpellings('/work/rep^\\x4')),
+    ['/work/rep\x1c\\x784', '/work/rep\x1cx4', '/work/rep\x1cx5Cx4', '/work/rep\x1cx5cx4', '/work/rep^\\x4'],
+    'and with "x4", an escape nothing finishes, after it — 0x1c\'s backslash running into the rest, or not');
+  assert.deepEqual(sorted(lsof.lsofSpellings('/work/notes^@v2.txt')), ['/work/notes\x1cx40v2.txt', '/work/notes^@v2.txt'],
+    '"^@" is a caret and an @, or 0x1c running into "x40" — never a NUL, which no name holds');
+});
+
+test('a held file whose name ends in 0x1c, still in place, is in use — never claimed deleted; and a deleted one whose name holds "^@" is listed, never left undecided over a NUL spelling no file can have (BQL-a review F1.2)', async () => {
+  const held = (p: string) => parseLsofRecords(['p77', 'crep', 'f9', 's7340032', 'i77', `n${p}`].join('\n'));
+  const inPlace = await lsof.resolveZombieScan(held('/work/rep^\\'), async (p) => {
+    if (p === '/work/rep\x1c') return 77;
+    throw ENOENT(p);
+  });
+  assert.deepEqual([inPlace.handles, inPlace.undecided], [[], 0], 'its inode at its own name: in use, in place');
+  const gone = await lsof.resolveZombieScan(held('/work/notes^@v2.txt'), async (p) => {
+    // fs.stat refuses a path holding a NUL before it asks the system: not "no such file".
+    if (p.includes('\0')) throw Object.assign(new TypeError('The argument \'path\' must be a string without null bytes'), { code: 'ERR_INVALID_ARG_VALUE' });
+    throw ENOENT(p);
+  });
+  assert.deepEqual([gone.handles.map((h) => h.path), gone.undecided], [['/work/notes^@v2.txt'], 0], 'nothing at either of its spellings: deleted, and listed');
+});
+
 test('a held file whose name holds a caret is decided by every spelling lsof\'s text could be: none holding its inode and none unknown, it is deleted and listed; one holding its inode, in use; one that cannot be looked at, undecided (BQL item 12)', async () => {
   // It was never listed: lsof writes a control byte as ^X and a caret as itself, so a deleted build^1.log
   // (7.3 MB) read as "may be a file with a control byte in its name, still in place" and was skipped.

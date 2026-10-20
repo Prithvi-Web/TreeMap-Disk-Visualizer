@@ -245,8 +245,10 @@ export function lsofSpellings(readBack: string): string[] | null {
   if (carets > LSOF_CARETS_TRIED) return null;
   const alphabet = new Set<string>([...readBack, '^', '\x1c', '\\', 'x', 'b', 'f', 'n', 'r', 't', '\b', '\t', '\n', '\f', '\r', ...'0123456789abcdefABCDEF']);
   for (let i = readBack.indexOf('^'); i !== -1; i = readBack.indexOf('^', i + 1)) {
+    // Not "^@": NUL is in no file name, and a spelling holding one is refused by every stat before it asks
+    // the system — never "no such file" — so a deleted notes^@v2.txt was left undecided (BQL-a review F1.2).
     const c = readBack.charCodeAt(i + 1);
-    if (c >= 0x40 && c <= 0x5f) alphabet.add(String.fromCharCode(c - 0x40));
+    if (c > 0x40 && c <= 0x5f) alphabet.add(String.fromCharCode(c - 0x40));
   }
   const letters = [...alphabet];
   let searched = 0;
@@ -263,6 +265,11 @@ export function lsofSpellings(readBack: string): string[] | null {
       const open = openEscapeTail(printed);
       if (!text.startsWith(back.slice(0, back.length - open))) return;
       if (run.length > 0 && open === 0) { runs.push([run, back.length]); return; }
+      // An escape left open at the very end of the text: nothing follows to finish it, so lsof's text ends
+      // with it as the characters it is — "/work/rep\x1c" is printed "/work/rep^\" and read back as that. No
+      // longer run reads back as this text: one more character either finishes the escape, which changes
+      // what the text reads, or follows it, past the text's end (BQL-a review F1.2).
+      if (run.length > 0 && back === text) { runs.push([run, back.length]); return; }
       if (run.length > 2 * text.length + 4) return;
       for (const ch of letters) grow(run + ch);
     };
