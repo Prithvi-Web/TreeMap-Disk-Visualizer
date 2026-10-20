@@ -1376,10 +1376,14 @@ const lineCalls = (px: Painted[]) => new Set(px.flatMap((r) => [
  * alone. A line stops at a tag's edge, as a frame's border stops at its legend: under the pill it would be
  * darkened by half with the tile beside it, about 2:1 between them, and on the size ramp's red, its blue or a
  * mid grey no colour at all reaches 3:1 there. `lines` counts the places where a line would run under a tag
- * whole (edgesOf), so a map whose tags cover none cannot pass for one whose tags hide its lines.
+ * whole (edgesOf) — a leaf's outline (`leaf`) apart from a folder's band (`frame`) — so a map whose tags cover
+ * none cannot pass for one whose tags hide its lines; and `bandPx` counts the device pixels a band the painter
+ * laid (r.bands) covers whole under a tag's whole pixel, so a map whose tags cover only leaf outlines cannot pass
+ * for one that shows the bands stop there too (review F1.3).
  */
 function underTags(raster: ReturnType<typeof rasterCtx>, bare: ReturnType<typeof rasterCtx>, px: Painted[], dpr = 1) {
-  const [tr, tg, tb, ta] = rgba(raster.tagPaint());
+  // The tags' paint — none when no tag was laid, and then no pixel is a tag's (`whole` stays 0).
+  const [tr, tg, tb, ta] = raster.tagPaint() ? rgba(raster.tagPaint()) : [0, 0, 0, 0];
   const shown: string[] = [];
   let whole = 0;
   for (let y = 0; y < raster.H; y++) {
@@ -1391,8 +1395,15 @@ function underTags(raster: ReturnType<typeof rasterCtx>, bare: ReturnType<typeof
       if (got.some((v, i) => Math.abs(v - want[i]) > 0.5) && shown.length < 8) shown.push(`${x},${y}: ${got.map(Math.round)} where the tag over the tiles alone is ${want.map(Math.round)}`);
     }
   }
-  const lines = edgesOf(px, raster.W, raster.H, dpr).filter((e) => raster.taggedWhole(...e.line)).length;
-  return { whole, lines, shown };
+  const under = edgesOf(px, raster.W, raster.H, dpr).filter((e) => raster.taggedWhole(...e.line));
+  const lines = { leaf: under.filter((e) => e.kind === 'leaf').length, frame: under.filter((e) => e.kind === 'frame').length };
+  let bandPx = 0;
+  for (const b of px.flatMap((r) => r.bands || [])) {
+    for (let y = Math.ceil(b.y * dpr - 1e-6); y < Math.floor((b.y + b.h) * dpr + 1e-6); y++) {
+      for (let x = Math.ceil(b.x * dpr - 1e-6); x < Math.floor((b.x + b.w) * dpr + 1e-6); x++) if (raster.taggedWhole(x, y)) bandPx++;
+    }
+  }
+  return { whole, lines, bandPx, shown };
 }
 
 /** A leaf the owner's rule outlines: 8 px or more on each side. */
@@ -2159,7 +2170,8 @@ test('map density: a realistic dense map is colour with contrasting lines, not a
     assert.deepEqual(m.under, [], `${theme}: lines under ${EDGE_BAR}:1 against the tile beside them`);
     // And under a tag no line is drawn at all (review F3.1): each pixel it covers whole is the tiles, darkened by the tag alone.
     const t = underTags(raster, rasterPaint(nodes, palette, REAL_W, REAL_H, undefined, undefined, false, 1, lineCalls(px)).raster, px);
-    assert.ok(t.whole > 1000 && t.lines > 100, `${theme}: control — the tags cover ${t.whole} pixels whole, where lines would run in ${t.lines} places`);
+    // Its tags lie over leaf outlines only: no folder's band runs under one here (the next test lays one there).
+    assert.ok(t.whole > 1000 && t.lines.leaf > 100, `${theme}: control — the tags cover ${t.whole} pixels whole, where leaf outlines would run in ${t.lines.leaf} places (bands in ${t.lines.frame}, over ${t.bandPx} band pixels)`);
     assert.deepEqual(t.shown, [], `${theme}: under a name tag, pixels that are not the tiles under the tag alone — a leaf's outline or a folder's band shows there, or the tag is not laid`);
   }
   // QA read 8.5% (corpus) and 8.9% (/System/Library) near-black in the real dark map, and 2.3–5.5% in light,
@@ -2170,6 +2182,34 @@ test('map density: a realistic dense map is colour with contrasting lines, not a
   // luminance < 0.08 the share is 26.1% (it was 18.5% dark, 3.2% light) — the outlines the owner asked to see.
   const over = Object.entries(share).filter(([, v]) => v >= 0.02).map(([theme, v]) => `${theme} ${(v * 100).toFixed(1)}%`);
   assert.deepEqual(over, [], `near-black (luminance < ${NEAR_BLACK}) at or over 2%: ${over.join(', ')} (dark ${(share.dark * 100).toFixed(1)}%, light ${(share.light * 100).toFixed(1)}%)`);
+});
+
+/**
+ * A top-level folder, Applications, big enough for a name tag, holding in its top-left corner a folder N narrower than the
+ * tag with nothing drawn in it (J51), above a file L across its foot, beside a file big.bin (review F1.3): N's right band
+ * runs under the tag, and no leaf's outline does — beside N, under the tag, is Applications' own fill.
+ */
+function bandUnderTag(): Tile[] {
+  return [
+    { name: 'Applications', path: '/t/Applications', size: 6e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 400 / 6, h: 100 },
+    { name: 'big.bin', path: '/t/big.bin', size: 3e10, type: 'file', depth: 1, expanded: false, x: 400 / 6, y: 0, w: 100 - 400 / 6, h: 100 },
+    { name: 'N', path: '/t/Applications/N', size: 4e9, type: 'dir', depth: 2, expanded: true, x: 0, y: 0, w: 10, h: 50 },
+    { name: 'L', path: '/t/Applications/L', size: 3e10, type: 'file', depth: 2, expanded: false, x: 0, y: 50, w: 400 / 6, h: 50 },
+  ];
+}
+
+test('owner\'s outlines: under a name tag no folder\'s band is drawn either — a folder narrower than its top-level folder\'s tag runs its band under the tag, and every pixel the tag covers whole is the tiles under the tag alone, at device pixel ratios 1, 1.5 and 2, in both themes (review F1.3)', () => {
+  const W = 600, H = 300;
+  for (const dpr of [1, 1.5, 2]) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      const where = `${theme}, dpr ${dpr}`;
+      const { raster, px } = rasterPaint(bandUnderTag(), palette, W, H, undefined, undefined, false, dpr);
+      const t = underTags(raster, rasterPaint(bandUnderTag(), palette, W, H, undefined, undefined, false, dpr, lineCalls(px)).raster, px, dpr);
+      assert.ok(t.whole > 0 && t.bandPx > 0 && t.lines.frame > 0 && t.lines.leaf === 0,
+        `${where}: control — Applications' tag covers ${t.whole} device pixels whole, ${t.bandPx} of them under a band the painter laid; bands would meet a tile there in ${t.lines.frame} places, leaf outlines in ${t.lines.leaf}`);
+      assert.deepEqual(t.shown, [], `${where}: under the name tag, device pixels that are not the tiles under the tag alone — N's band shows there`);
+    }
+  }
 });
 
 /* ── On the device's own pixels: Retina (2) and 150 % (1.5) ── */
@@ -2211,7 +2251,7 @@ test('owner\'s outlines on a Retina screen and at 150 %: every rectangle lies on
           assert.ok(share < 0.02, `${theme}, dpr ${dpr}: near-black ${(share * 100).toFixed(2)}% of the dense map's device pixels`);
           // No line under a name tag, on the device's pixels (review F3.1).
           const t = underTags(raster, rasterPaint(nodes, palette, W, H, undefined, undefined, false, dpr, lineCalls(px)).raster, px, dpr);
-          assert.ok(t.whole > 1000 * dpr * dpr && t.lines > 100 * dpr, `${theme}, dpr ${dpr}: control — the tags cover ${t.whole} device pixels whole, where lines would run in ${t.lines} places`);
+          assert.ok(t.whole > 1000 * dpr * dpr && t.lines.leaf > 100 * dpr, `${theme}, dpr ${dpr}: control — the tags cover ${t.whole} device pixels whole, where leaf outlines would run in ${t.lines.leaf} places (bands in ${t.lines.frame}, over ${t.bandPx} band pixels)`);
           assert.deepEqual(t.shown, [], `${theme}, dpr ${dpr}: under a name tag, device pixels that are not the tiles under the tag alone — a leaf's outline or a folder's band shows there, or the tag is not laid`);
         }
       }
