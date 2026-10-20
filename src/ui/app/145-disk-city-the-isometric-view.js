@@ -390,9 +390,13 @@ function buildCity() {
   // city. The view's mount rebuilds before loadCity has asked, so a build
   // that took whatever the map held drew the last scan's buildings under the
   // new folder's name until the fetch landed, and for good if it failed
-  // (C03 review F2.2).
+  // (C03 review F2.2). This scan: the one the tree on screen came from — not
+  // a scan running behind it (review F1.5) — and a scan at all: a map the
+  // page laid out of the saved index's tree is no scan's, and the city,
+  // which asks a scan for its facts, never stands on one.
   const held = state.treemap.nodesFor;
-  const from = held && held.nodes === state.treemap.nodes && held.scanId === state.scanId
+  const scanId = state.scanning ? state.settledScanId : state.scanId;
+  const from = held && !!held.scanId && held.nodes === state.treemap.nodes && held.scanId === scanId
     && held.path === state.treemap.rootPath ? held : null;
   // The record the city stands on: its line and size say what these nodes
   // hold and nothing the map has since, and a city built from none says it
@@ -1552,11 +1556,15 @@ function renderCityTable() {
 
 let cityLoadSeq = 0;
 async function loadCity(rootPath) {
-  if (!state.scanId || !state.root) return;
+  // The scan the tree on screen came from: while a scan runs its id is on
+  // hand once its request answers, but the tree on screen is still an older
+  // scan's (settledScanId) or the saved index's (none), and a scan still
+  // walking answers a map with 202 (review F1.5). None: no city.
+  const scanAtRequest = state.scanning ? state.settledScanId : state.scanId;
+  if (!scanAtRequest || !state.root) return;
   const want = rootPath || state.treemap.rootPath || state.root.path;
   const seq = ++cityLoadSeq;
   const c = state.city;
-  const scanAtRequest = state.scanId;
   const held = state.treemap.nodesFor;
   const fresh = !!held && held.nodes === state.treemap.nodes && held.scanId === scanAtRequest && held.path === want
     && state.treemap.nodes.length > 0;
@@ -1583,11 +1591,11 @@ async function loadCity(rootPath) {
       // came back with no nodes, and the city stood blank where the Treemap
       // drew every file (review F2.6).
       let floor = TM_MIN_SIZE;
-      let data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(want)}`);
+      let data = await api(`/api/scan/${scanAtRequest}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(want)}`);
       if (seq !== cityLoadSeq) return; // superseded while fetching
       if (!data.nodes.length && data.root.size > 0) {
         floor = 1;
-        data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(want)}`);
+        data = await api(`/api/scan/${scanAtRequest}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(want)}`);
         if (seq !== cityLoadSeq) return;
       }
       state.treemap.rootPath = data.root.path;

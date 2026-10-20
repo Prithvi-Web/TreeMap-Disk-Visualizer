@@ -177,6 +177,15 @@ const OWN = new Set(LIFTED.map((d) => /function (\w+)\(/.exec(d)![1]));
  * Stop (J05, J06).
  */
 const LIFTED_INDEX = ['async function openFromIndex(', 'async function finishScan(', 'function quietRescanFailed('];
+/**
+ * The map itself, lifted whole for the pages that ask for it (`realTreemap`):
+ * the treemap view's loader and the layout it does of a tree with no scan
+ * behind it — what decides which scan, if any, a map is asked of while a
+ * scan runs (review F1.5).
+ */
+const LIFTED_MAP = ['async function loadTreemap(', 'async function tmHeldTreemap(', 'function tmLayoutTree(', 'function tmSquarify(', 'function tmWorstRatio('];
+/** A map the page's own loadTreemap drew (drawView): the folder it names, its size, and how many rectangles. */
+type Drawn = { rootPath: string; rootName: string; rootSize: number; nodes: number };
 
 /**
  * A view object out of the page's VIEWS list, by its id, brace-matched: the
@@ -208,7 +217,7 @@ async function turns(n = 30): Promise<void> {
 /** A draw the treemap view asked for (loadTreemap): the folder asked, and the tree and scan on screen as it asked. */
 type Draw = { path: string; root: string | null; scanId: unknown };
 
-function page(o: { route: Route; system?: unknown; search?: string; root?: unknown; settledScanId?: string | null; index?: boolean }) {
+function page(o: { route: Route; system?: unknown; search?: string; root?: unknown; settledScanId?: string | null; index?: boolean; realTreemap?: boolean }) {
   const dom = new Dom();
   const $ = (id: string) => dom.get(id);
   const requests: string[] = [];
@@ -253,6 +262,10 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
   const indexBuilds: string[] = [];
   /** Every scan id finishScan announced to the views (TOPIC.scan), in order: null is the index paint. */
   const emitted: unknown[] = [];
+  /** Every map the page's own loadTreemap drew (`realTreemap` pages). */
+  const drawn: Drawn[] = [];
+  /** The scan id on hand each time the treemap view re-asked its query of a scan (tmRejudgeQuery). */
+  const rejudged: unknown[] = [];
   const noop = () => {};
   const VIEW_BY_ID = new Map<string, unknown>([
     ['dashboard', { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', needsScan: true, mount: noop }],
@@ -299,16 +312,33 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
       loadBudgets: noop, refreshTimebar: noop, enableLive: noop, setTimeout: () => 0,
       // The treemap view's own mount and onScanChange are the page's; what they call is recorded here.
       loadTreemap: (p: string) => { const r = state.root as { path: string } | null; draws.push({ path: p, root: r ? r.path : null, scanId: state.scanId }); },
-      fxTmPillBeamsSync: noop, loadSavedViews: noop, refreshDock: noop, tmRejudgeQuery: noop, exitHistoryState: noop,
+      fxTmPillBeamsSync: noop, loadSavedViews: noop, refreshDock: noop, tmRejudgeQuery: () => { rejudged.push(state.scanId); }, exitHistoryState: noop,
     } : {}),
   };
-  const own = new Set([...OWN, ...(o.index ? LIFTED_INDEX.map((d) => /function (\w+)\(/.exec(d)![1]) : [])]);
+  if (o.realTreemap) {
+    // The page's own loadTreemap draws, over a server that lays a map out only for a scan it completed.
+    delete given.loadTreemap;
+    Object.assign(given, {
+      exitCartPreview: noop, tmLoadSeq: 0, altCircleFor: () => null, isSun: () => false, isCells: () => false, renderCrumbs: noop,
+      maybeInjectTrash: noop, altBeginZoom: noop, tmSetEmpty: noop, requestAnimationFrame: noop,
+      TM_MIN_SIZE: liftPage<number>(['TM_MIN_SIZE'], 'TM_MIN_SIZE'), TM_SERVER_NODE_CAP: liftPage<number>(['TM_SERVER_NODE_CAP'], 'TM_SERVER_NODE_CAP'),
+      // The tree held is whole here: nothing was withheld for the index to answer for (indexFirstMap runs ensureSubtree).
+      ensureSubtree: async (p: string) => { const r = state.root as { path: string } | null; return r && r.path === p ? r : null; },
+      drawView: () => {
+        const t = state.treemap as { rootPath: string; rootName: string; rootSize: number; nodes: unknown[] };
+        drawn.push({ rootPath: t.rootPath, rootName: t.rootName, rootSize: t.rootSize, nodes: t.nodes.length });
+      },
+    });
+    state.treemap = { rootPath: null, rootName: '', rootSize: 0, nodes: [], nodesFor: null, mode: 'treemap', maxDepth: 4, history: { scrubbing: false } };
+  }
+  const own = new Set([...OWN, ...(o.index ? LIFTED_INDEX.map((d) => /function (\w+)\(/.exec(d)![1]) : []),
+    ...(o.realTreemap ? LIFTED_MAP.map((d) => /function (\w+)\(/.exec(d)![1]) : [])]);
   const scope = new Proxy(given, {
     has: (t, k) => typeof k === 'string' && k in t && !own.has(k),
     get: (t, k) => (k === Symbol.unscopables ? undefined : t[k as string]),
     set: (t, k, v) => { t[k as string] = v; return true; },
   });
-  const src = [...LIFTED, ...(o.index ? LIFTED_INDEX : [])].map(pageFn).join('\n');
+  const src = [...LIFTED, ...(o.index ? LIFTED_INDEX : []), ...(o.realTreemap ? LIFTED_MAP : [])].map(pageFn).join('\n');
   // The real treemap view, its unmount aside (it tears down canvas machinery this page has none of).
   const views = o.index ? `VIEW_BY_ID.set('treemap', { ...(${pageView('treemap')}), unmount() {} });` : '';
   const fns = new Function('scope', `with (scope) { ${src}\n${views}\n return { switchView, restoreLastSession, startScan, stopScan, failScan, renderStartChoices, startCloudScan, loadSystem }; }`)(scope) as {
@@ -324,7 +354,7 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     return b!;
   };
   const openStreams = () => streams.filter((s) => s.readyState !== 2);
-  return { ...fns, dom, $, state, requests, posts, toasts, finished, quietFailed, tourCalls, streams, openStreams, intervals, choices, choice, given, draws, emitted, indexBuilds };
+  return { ...fns, dom, $, state, requests, posts, toasts, finished, quietFailed, tourCalls, streams, openStreams, intervals, choices, choice, given, draws, emitted, indexBuilds, drawn, rejudged };
 }
 
 /** A server: the history and the folders a test names, a scan request answered with the next id, and its cancel. */
@@ -1443,6 +1473,85 @@ test('J06: the older tree an index paint stood over is let go once that folder\'
     await pressStop(h);
     assert.equal(h.state.root, onScreen, `${label}: a later Stop keeps the tree that was on screen`);
   }
+});
+
+/* ── The map while the scan runs, with no Stop (review F1.5) ──
+   The scan's request answers within moments and its id is then on hand
+   (followScanProgress) while the tree on screen is still the one before it:
+   the saved index's, or an older scan's. A scan still walking answers a map
+   with 202 — "Still working on that" — so a map asked of it drew nothing:
+   the J05 blank canvas, and J06's older drawing under the new name, for the
+   whole of the scan. These run the page's own loadTreemap and its layout. */
+
+/** A server that lays a map out only for a scan it completed (`complete`, by id); one still walking answers 202, as scanRoutes does. */
+function mapServer(base: Route, complete: Record<string, { name: string; path: string; size: number }>): Route {
+  return (m, url, b) => {
+    const asked = /^\/api\/scan\/([\w-]+)\/treemap\?/.exec(url);
+    if (m === 'GET' && asked) {
+      const done = complete[asked[1]];
+      return done
+        ? { body: { scanId: asked[1], root: done, nodes: [{ name: 'a.emlx', path: `${done.path}/a.emlx`, size: done.size, type: 'file', depth: 1, expanded: false, x: 0, y: 0, w: 100, h: 100 }] } }
+        : { status: 202, body: { status: 'running', scanned: 5 } };
+    }
+    return base(m, url, b);
+  };
+}
+/** Every map asked of scan `id`. */
+const mapAsks = (h: ReturnType<typeof page>, id: string) => h.requests.filter((r) => r.startsWith(`GET /api/scan/${id}/treemap?`));
+const mapFailures = (h: ReturnType<typeof page>) => h.toasts.filter(([m]) => /^Treemap failed/.test(m));
+
+test('review F1.5: while the scan of a folder with a saved index runs — its request answered, its id on hand — the Treemap draws the saved index\'s tree it names, and asks the running scan for nothing', async () => {
+  const h = page({ index: true, realTreemap: true,
+    route: mapServer(server({ roots: [MAIL_HISTORY], indexed: [MAIL], indexTrees: { [MAIL]: indexTreeOf(MAIL, 37_700_000) } }), {}) });
+  await boot(h);
+  await startFrom(h, /^Scan Mail again/);
+  assert.equal(pathOf(h.state.root), MAIL, 'control: painted from the saved index');
+  assert.equal(h.state.scanId, 'scan-1', 'control: its scan answered and is followed');
+  assert.equal(h.state.scanning, true, 'control: and is still walking');
+  h.switchView('treemap'); // the Treemap tab, clicked while the scan runs
+  await turns();
+  assert.deepEqual(mapAsks(h, 'scan-1'), [], 'the running scan is asked for no map: it answers 202 until it lands');
+  assert.deepEqual(mapFailures(h), [], 'and nothing says the map failed');
+  assert.deepEqual(h.drawn.at(-1), { rootPath: MAIL, rootName: 'Mail', rootSize: 37_700_000, nodes: 1 },
+    'the saved index\'s tree is drawn, by its own name — never a blank canvas until the scan lands');
+  assert.deepEqual(h.rejudged, [], 'and no query is asked of the running scan either');
+});
+
+test('review F1.5: while a rescan of a folder with a saved index runs over an older scan\'s tree, the Treemap draws the tree it names — never the older drawing under the new folder\'s name — and asks the running scan for nothing', async () => {
+  const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
+  const h = page({ index: true, realTreemap: true, root: mail, settledScanId: 'scan-mail',
+    route: mapServer(server({ roots: [], indexed: [CORPUS], indexTrees: { [CORPUS]: indexTreeOf(CORPUS, 9_500_000_000) } }), { 'scan-mail': mail }) });
+  h.switchView('treemap');
+  await turns();
+  assert.deepEqual(h.drawn.at(-1), { rootPath: MAIL, rootName: 'Mail', rootSize: 37_700_000, nodes: 1 }, 'control: the older scan\'s map is drawn');
+  h.switchView('dashboard'); // where Scan is
+  await h.startScan(CORPUS);
+  await turns();
+  assert.equal(pathOf(h.state.root), CORPUS, 'control: corpus is on screen, from its saved index');
+  assert.equal(h.state.scanId, 'scan-1', 'control: its scan answered and is followed');
+  assert.equal(h.state.scanning, true, 'control: and is still walking');
+  h.switchView('treemap');
+  await turns();
+  assert.deepEqual(h.drawn.at(-1), { rootPath: CORPUS, rootName: 'corpus', rootSize: 9_500_000_000, nodes: 1 },
+    'the map draws the tree it names, corpus — not Mail\'s drawing under corpus\'s name');
+  assert.deepEqual(mapAsks(h, 'scan-1'), [], 'the running scan is asked for no map');
+  assert.deepEqual(mapFailures(h), [], 'and nothing says the map failed');
+});
+
+test('review F1.5: while a rescan runs over an older scan\'s tree, that tree\'s map is asked of the older scan it came from — never of the running scan', async () => {
+  const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
+  const h = page({ index: true, realTreemap: true, root: mail, settledScanId: 'scan-mail', route: mapServer(server({ roots: [] }), { 'scan-mail': mail }) });
+  h.switchView('dashboard');
+  await h.startScan(MAIL); // no saved index: the older tree stays on screen while the scan runs
+  await turns();
+  assert.equal(h.state.root, mail, 'control: the older tree is on screen');
+  assert.equal(h.state.scanId, 'scan-1', 'control: the rescan answered and is followed');
+  h.switchView('treemap');
+  await turns();
+  assert.deepEqual(mapAsks(h, 'scan-1'), [], 'the running scan is asked for no map');
+  assert.equal(mapAsks(h, 'scan-mail').length, 1, 'the scan the tree on screen came from is');
+  assert.deepEqual(h.drawn.at(-1), { rootPath: MAIL, rootName: 'Mail', rootSize: 37_700_000, nodes: 1 }, 'and the map of the tree on screen is drawn');
+  assert.deepEqual(mapFailures(h), [], 'with nothing said to have failed');
 });
 
 /* ══════════════ (E) — the rest of the seventh browser pass (J01, J02, J03, J07) ══════════════ */

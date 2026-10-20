@@ -97,7 +97,12 @@ async function ensureSubtree(path) {
   if (!path) return null;
   const have = state.pathIndex.get(path);
   if (have && !have.pruned) return have;
-  const scanId = state.scanId;
+  // The scan the tree on screen came from. While a scan runs, its id is on
+  // hand once its request answers, but the tree on screen is still the one
+  // before it — an older scan's (settledScanId) or the saved index's (none) —
+  // and a scan still walking answers a subtree with 202 (review F1.5).
+  const treeScan = () => (state.scanning ? state.settledScanId : state.scanId);
+  const scanId = treeScan();
   if (!scanId) {
     // No scan yet — we are looking at the instant paint from the index, which
     // is deliberately a small preview. The index can still answer for this
@@ -105,7 +110,7 @@ async function ensureSubtree(path) {
     // one thing ensureSubtree exists to prevent.
     try {
       const data = await apiPaced(`/api/index/tree?path=${encodeURIComponent(path)}&maxNodes=${SUBTREE_NODES}`);
-      if (state.scanId) return state.pathIndex.get(path) || have || null; // a scan landed; its tree wins
+      if (treeScan()) return state.pathIndex.get(path) || have || null; // a scan landed; its tree wins
       return data.root ? graftSubtree(data.root) : (have || null);
     } catch {
       return have || null;
@@ -115,9 +120,9 @@ async function ensureSubtree(path) {
     // Paced: quick navigation can outrun the server's 10/s allowance, and a
     // 429 here would leave the folder looking empty rather than unloaded.
     const data = await apiPaced(`/api/scan/${scanId}/subtree?path=${encodeURIComponent(path)}`);
-    // A rescan during the fetch replaces the whole tree; grafting this answer
-    // would splice nodes from the old scan into the new one.
-    if (scanId !== state.scanId) return state.pathIndex.get(path) || null;
+    // A rescan landing during the fetch replaces the whole tree; grafting this
+    // answer would splice nodes from the old scan into the new one.
+    if (scanId !== treeScan()) return state.pathIndex.get(path) || null;
     return data.root ? graftSubtree(data.root) : (state.pathIndex.get(path) || null);
   } catch {
     return state.pathIndex.get(path) || null; // may still be `pruned` — callers must respect that

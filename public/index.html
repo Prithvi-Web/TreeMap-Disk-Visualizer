@@ -7609,7 +7609,12 @@ async function ensureSubtree(path) {
   if (!path) return null;
   const have = state.pathIndex.get(path);
   if (have && !have.pruned) return have;
-  const scanId = state.scanId;
+  // The scan the tree on screen came from. While a scan runs, its id is on
+  // hand once its request answers, but the tree on screen is still the one
+  // before it — an older scan's (settledScanId) or the saved index's (none) —
+  // and a scan still walking answers a subtree with 202 (review F1.5).
+  const treeScan = () => (state.scanning ? state.settledScanId : state.scanId);
+  const scanId = treeScan();
   if (!scanId) {
     // No scan yet — we are looking at the instant paint from the index, which
     // is deliberately a small preview. The index can still answer for this
@@ -7617,7 +7622,7 @@ async function ensureSubtree(path) {
     // one thing ensureSubtree exists to prevent.
     try {
       const data = await apiPaced(`/api/index/tree?path=${encodeURIComponent(path)}&maxNodes=${SUBTREE_NODES}`);
-      if (state.scanId) return state.pathIndex.get(path) || have || null; // a scan landed; its tree wins
+      if (treeScan()) return state.pathIndex.get(path) || have || null; // a scan landed; its tree wins
       return data.root ? graftSubtree(data.root) : (have || null);
     } catch {
       return have || null;
@@ -7627,9 +7632,9 @@ async function ensureSubtree(path) {
     // Paced: quick navigation can outrun the server's 10/s allowance, and a
     // 429 here would leave the folder looking empty rather than unloaded.
     const data = await apiPaced(`/api/scan/${scanId}/subtree?path=${encodeURIComponent(path)}`);
-    // A rescan during the fetch replaces the whole tree; grafting this answer
-    // would splice nodes from the old scan into the new one.
-    if (scanId !== state.scanId) return state.pathIndex.get(path) || null;
+    // A rescan landing during the fetch replaces the whole tree; grafting this
+    // answer would splice nodes from the old scan into the new one.
+    if (scanId !== treeScan()) return state.pathIndex.get(path) || null;
     return data.root ? graftSubtree(data.root) : (state.pathIndex.get(path) || null);
   } catch {
     return state.pathIndex.get(path) || null; // may still be `pruned` — callers must respect that
@@ -7850,11 +7855,13 @@ const VIEWS = [
       if (!state.root) return;
       if (!state.treemap.rootPath) state.treemap.rootPath = state.root.path;
       // A tree with no scan behind it — the saved index's, painted before its
-      // scan answers, or left on screen by a Stop — is drawn all the same,
+      // scan lands, or left on screen by a Stop — is drawn all the same,
       // laid out from that tree (loadTreemap). Returning here left a blank
       // canvas under the tree's name (seventh browser pass, J05). What asks
-      // the scan itself waits for one.
-      if (!state.scanId) { loadTreemap(state.treemap.rootPath); return; }
+      // the scan itself waits for one: not the scan running behind the
+      // tree, whose id is on hand once its request answers, and which
+      // answers nothing until it lands (review F1.5).
+      if (!(state.scanning ? state.settledScanId : state.scanId)) { loadTreemap(state.treemap.rootPath); return; }
       loadSavedViews(); // Phase 2 §2.4 — the chip strip, fetched lazily on entry
       refreshDock(); // §8.3 — connected drives, fetched lazily on entry like the chips
       loadTreemap(state.treemap.rootPath);
@@ -12220,7 +12227,14 @@ async function loadTreemap(rootPath, animate = false) {
   // replaces both, so it is dropped silently rather than left to go stale.
   exitCartPreview(true);
   const seq = ++tmLoadSeq;
-  const scanAtRequest = state.scanId; // the scan whatever lands here was asked of (C03)
+  // The scan whatever lands here was asked of (C03): the one the tree on
+  // screen came from. While a scan runs its id is on hand as soon as its
+  // request answers, but the tree on screen is still the one before it — an
+  // older scan's (settledScanId), or the saved index's (none) — and a scan
+  // still walking answers a map with 202: asked of it, the map stayed blank,
+  // or kept the older drawing under the new folder's name, for the whole
+  // scan (review F1.5).
+  const scanAtRequest = state.scanning ? state.settledScanId : state.scanId;
   state.treemap.kbSel = null;
   // Captured before the tree is replaced: which node will still be on screen
   // afterwards, and where it is right now. Drilling in, that is the folder
@@ -12271,7 +12285,7 @@ async function loadTreemap(rootPath, animate = false) {
       const held = scanAtRequest ? null : await tmHeldTreemap(rootPath);
       if (seq !== tmLoadSeq) return; // superseded while a withheld folder was fetched
       if (!scanAtRequest && !held) return;
-      let data = held ? held(TM_MIN_SIZE) : await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(rootPath)}`);
+      let data = held ? held(TM_MIN_SIZE) : await api(`/api/scan/${scanAtRequest}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(rootPath)}`);
       if (seq !== tmLoadSeq) return; // a newer view/root load has superseded this fetch
       // The 4 KB floor keeps a big folder's map legible; in a folder of
       // dotfiles, scripts or one small file it hides everything, and a blank
@@ -12279,7 +12293,7 @@ async function loadTreemap(rootPath, animate = false) {
       // to draw, ask again without the floor.
       if (!data.nodes.length && data.root.size > 0) {
         floor = 1;
-        data = held ? held(1) : await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(rootPath)}`);
+        data = held ? held(1) : await api(`/api/scan/${scanAtRequest}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(rootPath)}`);
         if (seq !== tmLoadSeq) return;
       }
       if (state.treemap.history.scrubbing) return; // same rule as above: a scrub in flight owns the map
@@ -27940,9 +27954,13 @@ function buildCity() {
   // city. The view's mount rebuilds before loadCity has asked, so a build
   // that took whatever the map held drew the last scan's buildings under the
   // new folder's name until the fetch landed, and for good if it failed
-  // (C03 review F2.2).
+  // (C03 review F2.2). This scan: the one the tree on screen came from — not
+  // a scan running behind it (review F1.5) — and a scan at all: a map the
+  // page laid out of the saved index's tree is no scan's, and the city,
+  // which asks a scan for its facts, never stands on one.
   const held = state.treemap.nodesFor;
-  const from = held && held.nodes === state.treemap.nodes && held.scanId === state.scanId
+  const scanId = state.scanning ? state.settledScanId : state.scanId;
+  const from = held && !!held.scanId && held.nodes === state.treemap.nodes && held.scanId === scanId
     && held.path === state.treemap.rootPath ? held : null;
   // The record the city stands on: its line and size say what these nodes
   // hold and nothing the map has since, and a city built from none says it
@@ -29102,11 +29120,15 @@ function renderCityTable() {
 
 let cityLoadSeq = 0;
 async function loadCity(rootPath) {
-  if (!state.scanId || !state.root) return;
+  // The scan the tree on screen came from: while a scan runs its id is on
+  // hand once its request answers, but the tree on screen is still an older
+  // scan's (settledScanId) or the saved index's (none), and a scan still
+  // walking answers a map with 202 (review F1.5). None: no city.
+  const scanAtRequest = state.scanning ? state.settledScanId : state.scanId;
+  if (!scanAtRequest || !state.root) return;
   const want = rootPath || state.treemap.rootPath || state.root.path;
   const seq = ++cityLoadSeq;
   const c = state.city;
-  const scanAtRequest = state.scanId;
   const held = state.treemap.nodesFor;
   const fresh = !!held && held.nodes === state.treemap.nodes && held.scanId === scanAtRequest && held.path === want
     && state.treemap.nodes.length > 0;
@@ -29133,11 +29155,11 @@ async function loadCity(rootPath) {
       // came back with no nodes, and the city stood blank where the Treemap
       // drew every file (review F2.6).
       let floor = TM_MIN_SIZE;
-      let data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(want)}`);
+      let data = await api(`/api/scan/${scanAtRequest}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(want)}`);
       if (seq !== cityLoadSeq) return; // superseded while fetching
       if (!data.nodes.length && data.root.size > 0) {
         floor = 1;
-        data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(want)}`);
+        data = await api(`/api/scan/${scanAtRequest}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(want)}`);
         if (seq !== cityLoadSeq) return;
       }
       state.treemap.rootPath = data.root.path;

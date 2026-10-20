@@ -151,11 +151,15 @@ function pathIndexOf(root: FileNode): Map<string, FileNode> {
  * The page's loadTreemap with `root` on screen and `scanId` behind it (null:
  * the saved index's tree), its map drawn through a recorded drawView.
  * `fetched` is what the index answers for a folder its preview withheld.
+ * `run`: a scan walking now (`scanning`), `scanId` then being its id, and
+ * `settledScanId` the scan the tree on screen came from (null: the saved
+ * index's); `emptyAtFloor`, a server whose map at the 4 KB floor is empty.
  */
-function mapPage(root: FileNode, scanId: string | null, fetched: Record<string, FileNode> = {}) {
+function mapPage(root: FileNode, scanId: string | null, fetched: Record<string, FileNode> = {},
+  run: { scanning?: boolean; settledScanId?: string | null; emptyAtFloor?: boolean } = {}) {
   const pathIndex = pathIndexOf(root);
   const state = {
-    scanId, root, pathIndex,
+    scanId, root, pathIndex, scanning: !!run.scanning, settledScanId: run.settledScanId === undefined ? scanId : run.settledScanId,
     treemap: { mode: 'treemap', maxDepth: 4, rootPath: root.path, rootName: '', rootSize: 0, nodes: [] as unknown[], nodesFor: null as unknown,
       minSize: 0, hover: null, kbSel: null, history: { scrubbing: false, active: false } },
   };
@@ -183,7 +187,10 @@ function mapPage(root: FileNode, scanId: string | null, fetched: Record<string, 
     api: async (url: string) => {
       asked.push(url);
       if (!scanId) throw new Error(`asked the server for a map of a scan that is not there: ${url}`);
-      return { root: { path: root.path, name: root.name, size: root.size }, nodes: [{ path: `${root.path}/x`, size: 1 }] };
+      // A scan still walking answers 202, which api() throws as "Still working on that" (scanRoutes).
+      if (run.scanning && url.startsWith(`/api/scan/${scanId}/`)) throw new Error(`asked the running scan ${scanId} for a map, which it answers with 202: ${url}`);
+      const empty = !!run.emptyAtFloor && url.includes('&minSize=4000&');
+      return { root: { path: root.path, name: root.name, size: root.size }, nodes: empty ? [] : [{ path: `${root.path}/x`, size: 1 }] };
     },
     renderCrumbs: (_host: unknown, p: string) => { crumbs.push(p); },
     exitHistoryState() {},
@@ -247,6 +254,78 @@ test('the map of a saved index\'s tree drops the floor for a folder of small fil
   assert.equal(drill.state.treemap.rootPath, '/r/big', 'and the map is of it');
   assert.deepEqual(wire(drill.drawn.at(-1)!.nodes), wire(buildTreemap(big, { maxDepth: 4, minSize: 4000, maxNodes: 20_000 })), 'with its files drawn');
   assert.deepEqual(drill.asked, [], 'and the server was asked for no map');
+});
+
+/* ══════════════ while a scan runs (review F1.5) ══════════════
+   A scan's request answers within moments, and its id is on hand from then
+   (followScanProgress) while the tree on screen is still the one before it —
+   the saved index's, or an older scan's. A scan still walking answers a map
+   or a subtree with 202, so what is asked about the tree on screen is asked
+   of the scan that tree came from, or of the index. */
+
+test('while a scan runs, a map is asked of the scan the tree on screen came from — never of the scan still walking, which answers 202 — and the saved index\'s tree, with no scan behind it, is laid out here (review F1.5)', async () => {
+  const tree = corpus(3);
+  // The saved index's tree on screen; its scan answered and is followed, so its id is on hand.
+  const index = mapPage(tree, 'scan-run', {}, { scanning: true, settledScanId: null });
+  await index.loadTreemap(tree.path);
+  assert.deepEqual(index.asked, [], 'the running scan is asked for no map');
+  assert.equal(index.drawn.length, 1, 'the map is drawn — never a blank canvas until the scan lands');
+  assert.deepEqual(wire(index.drawn[0].nodes), wire(buildTreemap(tree, { maxDepth: 4, minSize: 4000, maxNodes: 20_000 })),
+    'laid out here, from the saved index\'s tree');
+  assert.equal((index.state.treemap.nodesFor as { scanId: unknown }).scanId, null, 'recorded as no scan\'s: the footer says it is the saved index');
+
+  // An older scan's tree on screen while a rescan runs: that scan lays its map out — at the floor, and, empty there, without it.
+  const older = mapPage(tree, 'scan-run', {}, { scanning: true, settledScanId: 'scan-old', emptyAtFloor: true });
+  await older.loadTreemap(tree.path);
+  assert.deepEqual(older.asked.map((u) => u.replace(/&root=.*/, '')),
+    ['/api/scan/scan-old/treemap?maxDepth=4&minSize=4000', '/api/scan/scan-old/treemap?maxDepth=4&minSize=1'],
+    'both asks go to the scan the tree on screen came from');
+  assert.equal((older.state.treemap.nodesFor as { scanId: unknown }).scanId, 'scan-old', 'and the map is recorded as that scan\'s');
+  assert.equal(older.drawn.length, 1, 'control: drawn');
+});
+
+/** The page's ensureSubtree over `root`, with the scan state `s`; `answer` is what each ask (apiPaced) is answered. */
+function subtreePage(root: FileNode, s: { scanId: string | null; settledScanId: string | null; scanning: boolean }, answer: (url: string) => unknown) {
+  const state = { ...s, root, pathIndex: pathIndexOf(root), nodeCache: new Map<string, unknown>() };
+  const asked: string[] = [];
+  const ensureSubtree = load<(p: string) => Promise<FileNode | null>>(['SUBTREE_NODES', 'graftSubtree', 'ensureSubtree'], {
+    state, apiPaced: async (url: string) => { asked.push(url); return answer(url); },
+  }, 'ensureSubtree');
+  return { ensureSubtree, state, asked };
+}
+
+test('a folder the tree on screen withheld is asked of the scan that tree came from — of the saved index when the tree is the index\'s — never of a scan still walking, and is grafted whatever that scan does meanwhile (review F1.5)', async () => {
+  const big = folder('/r/big', [leaf('/r/big', 'a.mov', 9_000_000)]);
+  const withheld = (): FileNode => ({ name: 'big', path: '/r/big', size: big.size, type: 'dir', pruned: true, modifiedAt: 1, isHidden: false });
+  const tree = (): FileNode => ({ ...folder('/r', []), children: [withheld()], size: big.size });
+  const kids = (n: FileNode | null) => (n && n.children ? n.children.map((c) => c.path) : null);
+
+  // The saved index's tree on screen, its scan answered and followed.
+  const index = subtreePage(tree(), { scanId: 'scan-run', settledScanId: null, scanning: true }, () => ({ root: big }));
+  const got = await index.ensureSubtree('/r/big');
+  assert.deepEqual(index.asked, ['/api/index/tree?path=%2Fr%2Fbig&maxNodes=20000'], 'the index is asked, never the running scan');
+  assert.deepEqual(kids(got), ['/r/big/a.mov'], 'and its answer is grafted: the folder is drawn with its files');
+
+  // An older scan's tree on screen while a rescan runs.
+  const older = subtreePage(tree(), { scanId: 'scan-run', settledScanId: 'scan-old', scanning: true }, () => ({ root: big }));
+  assert.deepEqual(kids(await older.ensureSubtree('/r/big')), ['/r/big/a.mov'], 'grafted');
+  assert.deepEqual(older.asked, ['/api/scan/scan-old/subtree?path=%2Fr%2Fbig'], 'asked of the scan the tree on screen came from');
+
+  // The rescan's request answers while that subtree is out: its id is on hand, and the tree on screen is still the older one.
+  let land: (v: unknown) => void = () => {};
+  const racing = subtreePage(tree(), { scanId: 'scan-old', settledScanId: 'scan-old', scanning: true }, () => new Promise((r) => { land = r; }));
+  const pending = racing.ensureSubtree('/r/big');
+  racing.state.scanId = 'scan-run'; // followScanProgress
+  land({ root: big });
+  assert.deepEqual(kids(await pending), ['/r/big/a.mov'], 'the older tree is still on screen: its folder is grafted');
+
+  // Control: a scan that LANDS while the index answers wins — its tree replaced the index's.
+  let landIndex: (v: unknown) => void = () => {};
+  const landed = subtreePage(tree(), { scanId: null, settledScanId: null, scanning: true }, () => new Promise((r) => { landIndex = r; }));
+  const out = landed.ensureSubtree('/r/big');
+  Object.assign(landed.state, { scanning: false, scanId: 'scan-new', settledScanId: 'scan-new' }); // finishScan
+  landIndex({ root: big });
+  assert.equal(kids(await out), null, 'control: the index\'s answer is not grafted over a scan that landed meanwhile');
 });
 
 /* ══════════════ the footer says it is the saved index ══════════════ */

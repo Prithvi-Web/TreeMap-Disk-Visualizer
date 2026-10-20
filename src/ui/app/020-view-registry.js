@@ -65,11 +65,13 @@ const VIEWS = [
       if (!state.root) return;
       if (!state.treemap.rootPath) state.treemap.rootPath = state.root.path;
       // A tree with no scan behind it — the saved index's, painted before its
-      // scan answers, or left on screen by a Stop — is drawn all the same,
+      // scan lands, or left on screen by a Stop — is drawn all the same,
       // laid out from that tree (loadTreemap). Returning here left a blank
       // canvas under the tree's name (seventh browser pass, J05). What asks
-      // the scan itself waits for one.
-      if (!state.scanId) { loadTreemap(state.treemap.rootPath); return; }
+      // the scan itself waits for one: not the scan running behind the
+      // tree, whose id is on hand once its request answers, and which
+      // answers nothing until it lands (review F1.5).
+      if (!(state.scanning ? state.settledScanId : state.scanId)) { loadTreemap(state.treemap.rootPath); return; }
       loadSavedViews(); // Phase 2 §2.4 — the chip strip, fetched lazily on entry
       refreshDock(); // §8.3 — connected drives, fetched lazily on entry like the chips
       loadTreemap(state.treemap.rootPath);

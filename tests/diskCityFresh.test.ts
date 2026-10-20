@@ -93,6 +93,8 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; r
   // lands or fails them while `hold` is set.
   const server = {
     sizes: {} as Record<string, number>, down: null as string | null, hold: false,
+    // A folder whose files all fall under the 4 KB floor: its map at the floor is empty (review F1.5's retry).
+    emptyAtFloor: false,
     held: [] as Array<{ root: string; land: () => void; fail: (reason: string) => void }>,
   };
   // Every trail the page drew, as [the element's id, the folder it names].
@@ -140,7 +142,8 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; r
       path: `${root}/f${i}`, name: `${scanId}:${root}`, size: 5000 * i, type: 'file', x: 40 * (i - 1), y: 0, w: i === 3 ? 19.5 : 40, h: 100,
     }));
     nodes.push({ path: `${root}/f4`, name: `${scanId}:${root}`, size: 10, type: 'file', x: 99.5, y: 0, w: 0.5, h: 0.5 });
-    const layout = { root: { path: root, name: root.split('/').pop(), size: server.sizes[root] ?? 30000 }, nodes };
+    const atFloor = server.emptyAtFloor && /[?&]minSize=4000(&|$)/.test(url);
+    const layout = { root: { path: root, name: root.split('/').pop(), size: server.sizes[root] ?? 30000 }, nodes: atFloor ? [] : nodes };
     if (server.hold) {
       return new Promise((land, fail) => server.held.push({ root, land: () => land(layout), fail: (reason) => fail(new Error(reason)) }));
     }
@@ -894,4 +897,41 @@ test('C03: the size and the floor beside the city are those of the nodes it was 
   h.state.treemap.minSize = 1;
   h.chrome!();
   assert.deepEqual(chromeOf(h), shared, 'the city drawn is still /corpus, and its line and size say so');
+});
+
+test('review F1.5: while a rescan runs over an older scan\'s tree, Disk City stands on that tree\'s own scan — the nodes the Treemap fetched of it, with no map asked of the scan still walking', async () => {
+  const h = cityHarness();
+  h.state.scanId = 's1';
+  h.state.root = { path: '/corpus', size: 1 };
+  await h.loadTreemap('/corpus');
+  // A rescan starts and its request answers: its id is on hand (followScanProgress) while the tree on screen is still s1's.
+  Object.assign(h.state, { scanning: true, settledScanId: 's1', scanId: 's-run' });
+  h.asked.length = 0;
+  h.state.view = 'city';
+  h.views.city.mount();
+  await settle();
+  assert.deepEqual(h.asked, [], 'the running scan is asked for no map — a scan still walking answers 202');
+  assert.deepEqual(cityNames(h), ['s1:/corpus'], 'the city is built from the tree on screen, by the scan it came from');
+  // A click on a building — a folder of files all under the floor — is asked of that scan too, at the floor and without it.
+  h.server.emptyAtFloor = true;
+  await h.loadCity('/corpus/Mail');
+  assert.deepEqual((h.asked as string[]).map((u) => u.replace(/&root=.*/, '')), ['/api/scan/s1/treemap?maxDepth=4&minSize=4000', '/api/scan/s1/treemap?maxDepth=4&minSize=1'],
+    'a drill is asked of the scan the tree on screen came from, never the running scan');
+  assert.deepEqual(cityNames(h), ['s1:/corpus/Mail'], 'and drawn');
+});
+
+test('review F1.5: a saved index\'s tree on screen, its map laid out by the page — no scan\'s — gets no city: Disk City builds nothing of it, and asks no scan for one, whether or not its scan has answered', async () => {
+  for (const answered of [false, true]) {
+    const label = answered ? 'its scan answered and followed' : 'before its scan answers';
+    const h = cityHarness();
+    // As loadTreemap leaves a map it laid out of the saved index's tree (tmHeldTreemap): recorded as no scan's.
+    const nodes: Node[] = [1, 2, 3].map((i) => ({ path: `/idx/f${i}`, name: 'index:/idx', size: 5000 * i, type: 'file', x: 30 * (i - 1), y: 0, w: 30, h: 100 }));
+    Object.assign(h.state, { root: { path: '/idx', size: 30_000 }, scanning: true, settledScanId: null, scanId: answered ? 's-run' : null });
+    Object.assign(h.state.treemap, { rootPath: '/idx', nodes, nodesFor: { scanId: null, path: '/idx', nodes, size: 30_000, minSize: 4000 } });
+    h.state.view = 'city';
+    h.views.city.mount();
+    await settle();
+    assert.deepEqual(h.asked, [], `${label}: no scan is asked for a map — none is behind the tree, and a running one answers 202`);
+    assert.deepEqual(cityNames(h), [], `${label}: and no city is built of the saved index's layout, which Disk City never reuses`);
+  }
 });

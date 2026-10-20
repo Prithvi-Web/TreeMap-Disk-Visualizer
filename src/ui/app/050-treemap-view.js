@@ -87,7 +87,14 @@ async function loadTreemap(rootPath, animate = false) {
   // replaces both, so it is dropped silently rather than left to go stale.
   exitCartPreview(true);
   const seq = ++tmLoadSeq;
-  const scanAtRequest = state.scanId; // the scan whatever lands here was asked of (C03)
+  // The scan whatever lands here was asked of (C03): the one the tree on
+  // screen came from. While a scan runs its id is on hand as soon as its
+  // request answers, but the tree on screen is still the one before it — an
+  // older scan's (settledScanId), or the saved index's (none) — and a scan
+  // still walking answers a map with 202: asked of it, the map stayed blank,
+  // or kept the older drawing under the new folder's name, for the whole
+  // scan (review F1.5).
+  const scanAtRequest = state.scanning ? state.settledScanId : state.scanId;
   state.treemap.kbSel = null;
   // Captured before the tree is replaced: which node will still be on screen
   // afterwards, and where it is right now. Drilling in, that is the folder
@@ -138,7 +145,7 @@ async function loadTreemap(rootPath, animate = false) {
       const held = scanAtRequest ? null : await tmHeldTreemap(rootPath);
       if (seq !== tmLoadSeq) return; // superseded while a withheld folder was fetched
       if (!scanAtRequest && !held) return;
-      let data = held ? held(TM_MIN_SIZE) : await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(rootPath)}`);
+      let data = held ? held(TM_MIN_SIZE) : await api(`/api/scan/${scanAtRequest}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(rootPath)}`);
       if (seq !== tmLoadSeq) return; // a newer view/root load has superseded this fetch
       // The 4 KB floor keeps a big folder's map legible; in a folder of
       // dotfiles, scripts or one small file it hides everything, and a blank
@@ -146,7 +153,7 @@ async function loadTreemap(rootPath, animate = false) {
       // to draw, ask again without the floor.
       if (!data.nodes.length && data.root.size > 0) {
         floor = 1;
-        data = held ? held(1) : await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(rootPath)}`);
+        data = held ? held(1) : await api(`/api/scan/${scanAtRequest}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(rootPath)}`);
         if (seq !== tmLoadSeq) return;
       }
       if (state.treemap.history.scrubbing) return; // same rule as above: a scrub in flight owns the map
