@@ -126,8 +126,8 @@ export interface CartCommitResult {
   capsuleUnavailable?: string;
   /**
    * Discarding the copies of what the Trash refused did not finish. Everything
-   * in `trashed` was trashed, and undo with `runId` puts it back until the Time
-   * Capsule removes its copies.
+   * in `trashed` was trashed, and undo with `runId` puts it back until the Undo
+   * Vault removes its copies.
    */
   cleanupError?: string;
 }

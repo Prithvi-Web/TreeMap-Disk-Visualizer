@@ -17,8 +17,8 @@ import type { OpenHandleInfo } from '../platform/types';
  * pathway rather than beside it, so every current and future deletion inherits
  * it. That is exactly how it is wired: `moveToTrash` calls this, so the Clean
  * Up view, the cart, the Grid, the MCP tool, Offload's trash-the-originals
- * step, and the automation features still to be built (B1 Autopilot, B3 Time
- * Capsule) are all covered without any of them knowing this file exists. There
+ * step, and the automation features still to be built (B1 Autopilot, B3 Undo
+ * Vault) are all covered without any of them knowing this file exists. There
  * is no second delete path to keep in sync — §10 bans one.
  *
  * ── The honest-answer rule ──

@@ -1104,8 +1104,8 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
       { runId: run.id, policyId: policy.id, unattended: true },
     );
   } catch (err) {
-    // A refusal from the delete itself (the spill folder's backstop, a Time
-    // Capsule index that cannot be read, a copy that could not be written) is
+    // A refusal from the delete itself (the spill folder's backstop, an Undo
+    // Vault index that cannot be read, a copy that could not be written) is
     // this run's outcome and is recorded like any other failed run. Thrown past
     // record(), it left the policy due, so the next 60-second tick ran it again —
     // a full scan of its folder — and every tick after (T17a's security review).

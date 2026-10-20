@@ -19,9 +19,11 @@ import { INDEX } from './fixtures/liftFrontend';
  * found and restored), and the view id `capsule` behind its bookmarkable hash.
  * A careless sweep that renamed those goes RED here too.
  *
- * Comments in server code are not a surface a person reads, so the sweep of
- * src/ reads string literals only — but the built page is read whole, comments
- * included, since anyone can view its source.
+ * The server's strings are read through the TypeScript parser, so a sentence
+ * split across a + is found even with a comment between its pieces; every
+ * file under src/ is also read whole, comments included, so the code names the
+ * feature one way too; and the built page is read whole, since anyone can view
+ * its source.
  */
 
 const ROOT = path.join(__dirname, '..');
@@ -78,15 +80,20 @@ function literalsOf(source: string, fileName: string): string {
   return out.join(' ');
 }
 
-/** Every .ts file under `dir` (relative to the repo), recursively. */
-function tsFilesUnder(dir: string): string[] {
+/** Every file under `dir` (relative to the repo) whose name `keep` accepts, recursively. */
+function filesUnder(dir: string, keep: (name: string) => boolean = () => true): string[] {
   const out: string[] = [];
   for (const name of readdirSync(path.join(ROOT, dir))) {
     const rel = path.join(dir, name);
-    if (statSync(path.join(ROOT, rel)).isDirectory()) out.push(...tsFilesUnder(rel));
-    else if (name.endsWith('.ts')) out.push(rel);
+    if (statSync(path.join(ROOT, rel)).isDirectory()) out.push(...filesUnder(rel, keep));
+    else if (keep(name)) out.push(rel);
   }
   return out.sort();
+}
+
+/** Every .ts file under `dir` (relative to the repo), recursively. */
+function tsFilesUnder(dir: string): string[] {
+  return filesUnder(dir, (name) => name.endsWith('.ts'));
 }
 
 /** `rel`'s string literals, each place they say the old name prefixed with the file. */
@@ -151,6 +158,17 @@ test('no sentence the server can say names "Time Capsule": every string in every
     assert.ok(files.includes(path.join('src', rel)), `src/${rel} is read`);
   }
   assert.deepEqual(files.flatMap(oldNameInLiterals), []);
+});
+
+test('no comment in TreeMap\'s own source names "Time Capsule" either: every file under src/, read whole', () => {
+  // The rename covers the comments that name the feature too, so a reader of
+  // the code meets one name. Read whole, a comment that wrapped the name across
+  // a line ("the Time\n * Capsule removes its copies") is found as well.
+  const files = filesUnder('src');
+  for (const rel of ['services/cartCommit.ts', 'ui/app/175-cleanup-cart.js', 'ui/styles/075-modals.css', 'ui/manifest.json']) {
+    assert.ok(files.includes(path.join('src', rel)), `src/${rel} is read`);
+  }
+  assert.deepEqual(files.flatMap((rel) => oldNameIn(read(rel)).map((hit) => `${rel}: ${hit}`)), []);
 });
 
 /* ══════════════ The new name where a person looks for it ══════════════ */
