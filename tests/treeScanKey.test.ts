@@ -66,6 +66,38 @@ function pageFunctions(): Array<{ name: string; body: string; at: number }> {
   return out;
 }
 
+/** Whether a page offset sits in a comment: inside a block comment, or after `//` on its line. */
+function inComment(at: number): boolean {
+  if (INDEX.lastIndexOf('/*', at) > INDEX.lastIndexOf('*/', at)) return true;
+  return /(?:^|\s)\/\/ /.test(INDEX.slice(INDEX.lastIndexOf('\n', at) + 1, at));
+}
+
+/**
+ * The top-level statements outside every function declaration that read
+ * state.scanId in code — an event handler's arrow, a subscriber — each named
+ * by its first line, with its whole source. The audit saw only function
+ * declarations, and a click handler asking the running scan was invisible to
+ * it (review F1.8).
+ */
+function pageStatementsReading(fns: Array<{ name: string; body: string; at: number }>): Array<{ name: string; body: string }> {
+  const found = new Map<string, string>();
+  for (const m of INDEX.matchAll(/state\.scanId\b/g)) {
+    const at = m.index!;
+    if (fns.some((f) => f.at <= at && at < f.at + f.body.length) || inComment(at)) continue;
+    // Up to the statement's first line: the nearest line above that starts at column 0 with code.
+    let start = INDEX.lastIndexOf('\n', at) + 1;
+    while (!/[A-Za-z$_(]/.test(INDEX[start])) start = INDEX.lastIndexOf('\n', start - 2) + 1;
+    let depth = 0; let end = -1;
+    for (let i = INDEX.indexOf('{', start); i < INDEX.length && end === -1; i++) {
+      if (INDEX[i] === '{') depth++;
+      else if (INDEX[i] === '}' && --depth === 0) end = i + 1;
+    }
+    assert.ok(at < end, `the read at ${at} is inside the statement found for it`);
+    found.set(INDEX.slice(start, INDEX.indexOf('\n', start)).trim(), INDEX.slice(start, end));
+  }
+  return [...found].map(([name, body]) => ({ name, body }));
+}
+
 /** The top-level function a page offset sits in, or '(top level)'. */
 function enclosing(fns: Array<{ name: string; body: string; at: number }>, at: number): string {
   const f = fns.find((x) => x.at <= at && at < x.at + x.body.length);
@@ -1006,12 +1038,19 @@ const SCAN_ON_HAND: Record<string, string> = {
   renderBrowserProfiles: 'Clean Up (220), left for after BQL-b1',
   loadSmartSuggestions: 'Clean Up (220), left for after BQL-b1',
   findBySavedView: 'Clean Up (220), left for after BQL-b1',
+  "$('cleanFindBtn').addEventListener('click', async () => {": 'Clean Up (220): its Find button, left for after BQL-b1',
+  // Top-level statements (review F1.8), named by their first line.
+  "$('tourResetBtn').addEventListener('click', () => {": 'the tour\'s restart: the scan on hand decides only whether the map is put on screen; what it asks is the settings write',
 };
 
-test('no page function that asks the server reads the scan on hand, but those whose reason is stated — every other ask about the tree on screen goes through treeScanId', () => {
-  const asking = pageFunctions()
-    .filter((f) => /state\.scanId\b/.test(f.body) && /\b(?:api|apiPaced|fetch)\(|new EventSource\(/.test(f.body))
-    .map((f) => f.name);
+test('no page function or top-level handler that asks the server reads the scan on hand, but those whose reason is stated — every other ask about the tree on screen goes through treeScanId', () => {
+  const asks = (body: string) => /\b(?:api|apiPaced|fetch)\(|new EventSource\(/.test(body);
+  const fns = pageFunctions();
+  const asking = [
+    ...fns.filter((f) => /state\.scanId\b/.test(f.body) && asks(f.body)).map((f) => f.name),
+    // Event handlers and subscribers are no function declarations: seen too (review F1.8).
+    ...pageStatementsReading(fns).filter((st) => asks(st.body)).map((st) => st.name),
+  ];
   const unlisted = asking.filter((n) => !(n in SCAN_ON_HAND));
   assert.deepEqual(unlisted, [], `these ask the server and read state.scanId, the running scan's id once its request answers: ${unlisted.join(', ')}`);
   const gone = Object.keys(SCAN_ON_HAND).filter((n) => !asking.includes(n));
