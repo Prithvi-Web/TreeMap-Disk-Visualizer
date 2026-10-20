@@ -261,17 +261,34 @@ function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; 
   const render = INDEX.slice(INDEX.indexOf('function tourRender'), INDEX.indexOf('/** A quick win'));
   // The page's own step to the next win, so Add and Skip move the card on as they do there (review F2.7).
   const advance = pageFn('function tourAdvanceWin(');
+  // Where the card stands is layoutQa's (J04); each paint asks for it, counted here.
+  const placed = { n: 0 };
   const fn = new Function('$', 'tour', 'state', 'icon', 'escapeHtml', 'formatBytes', 'startScan', 'openBrowse', 'tourLoadWins', 'tourFinish', 'cartAddMany',
-    'tourWinLine', 'document', `'use strict'; ${render} ${advance} ${pageFn('function startLanding(')} return { tourRender, tourCartChanged: typeof tourCartChanged === 'function' ? tourCartChanged : () => {} };`)(
+    'tourWinLine', 'document', 'tourPlaceSoon', `'use strict'; ${render} ${advance} ${pageFn('function startLanding(')} return { tourRender, tourCartChanged: typeof tourCartChanged === 'function' ? tourCartChanged : () => {} };`)(
     $, tour, { system: { homeDir: opts.home === undefined ? '/Users/x' : opts.home }, cart, root: null }, () => '', (s: string) => s,
     (n: number) => `${n} B`, (folder: unknown) => { scans.push([folder, $('pathInput').value]); }, (start: unknown) => { browsed.push(start); }, () => {}, () => {}, cartAddMany, winLine, { activeElement: opts.active ?? null },
+    () => { placed.n++; },
   ) as { tourRender: (takeFocus?: boolean) => void; tourCartChanged: () => void };
   fn.tourRender(opts.takeFocus);
   const textOf = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   /** The card as it is painted now, after any click, and how many times it has been painted. */
   const now = () => ({ html: host.innerHTML, text: textOf(host.innerHTML), paints });
-  return { html: host.innerHTML, text: textOf(host.innerHTML), found, $, tour, cart, browsed, scans, now, cartChanged: fn.tourCartChanged, render: fn.tourRender };
+  return { html: host.innerHTML, text: textOf(host.innerHTML), found, $, tour, cart, browsed, scans, now, cartChanged: fn.tourCartChanged, render: fn.tourRender, placed };
 }
+
+test('each paint of the card asks for it to be stood clear of the controls under it, and so does each change of view (J04)', () => {
+  for (const step of ['welcome', 'scanning', 'map']) {
+    const card = tourCard(step);
+    assert.equal(card.placed.n, 1, `${step}: its paint asks for a placement once`);
+    card.render(false);
+    assert.equal(card.placed.n, 2, `${step}: and again when painted again (its height may have changed)`);
+  }
+  const follow = INDEX.slice(INDEX.indexOf('function tourFollowView'), INDEX.indexOf('/** A quick win'));
+  let placed = 0;
+  new Function('$', 'tour', 'tourRender', 'document', 'tourPlaceSoon', `'use strict'; ${follow} tourFollowView();`)(
+    () => tel(), { active: true, step: 'map' }, () => {}, { activeElement: {} }, () => { placed++; });
+  assert.equal(placed, 1, 'a change of view, at any step, asks for one: another view\'s controls are under the card now');
+});
 
 test('the welcome card offers nothing the start screen already offers, and no second primary beside its "Choose a folder…" (G03; the owner, 17 Oct 2026)', () => {
   const card = tourCard('welcome', { heroUp: true });

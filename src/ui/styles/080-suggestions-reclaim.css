@@ -168,9 +168,12 @@
    the card itself, and the toast stack's reservation for it (--tr-tour in
    095-timeslider-floating.css), which once kept the card's resting 378 px
    while the card stood left of the open cart, so a toast could land on its
-   buttons (review F1.12). One place, so the two cannot part again. */
-body { --tour-r: 18px; --tour-w: min(360px, calc(100vw - 32px)); }
-.tour-card { pointer-events: auto; position: absolute; right: var(--tour-r); bottom: 86px;
+   buttons (review F1.12). One place, so the two cannot part again. --tour-b
+   is its offset from the window's bottom, 86 px at rest; the page moves it
+   where the card would cover a control on screen (tourPlace, seventh browser
+   pass J04: at 1024 × 700 it lay over the Dashboard's Browse… and Scan). */
+body { --tour-r: 18px; --tour-w: min(360px, calc(100vw - 32px)); --tour-b: 86px; }
+.tour-card { pointer-events: auto; position: absolute; right: var(--tour-r); bottom: var(--tour-b);
   width: var(--tour-w); padding: 15px 16px;
   border: 1px solid var(--hairline-2); border-radius: var(--r-md); box-shadow: var(--shadow-3); }
 /* While the cart is open the card stands left of it (sixth browser pass H51):

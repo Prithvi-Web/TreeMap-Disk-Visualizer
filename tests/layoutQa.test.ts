@@ -646,6 +646,90 @@ test('while the cart is open the welcome tour\'s card covers none of it — at e
   assert.equal(declsAt('body', 1440).get('--tour-r'), '18px', 'control: the resting card, 18 px from the right');
 });
 
+/* ══════════════ J04 — the coach card covers no control (seventh browser pass) ══════════════ */
+
+/** A box on screen, in CSS px from the window's top-left; `tag` its element's (a canvas is a surface, not a control). */
+type Box = { left: number; top: number; right: number; bottom: number; tag?: string };
+
+/**
+ * The page's tourPlace over a W × H window, the card `cardH` px tall in its
+ * column (where the stylesheet stands it: --tour-r from the right, --tour-w
+ * wide), and `controls` on screen. Returns the offset from the window's
+ * bottom it stood the card at (--tour-b; 86 px at rest) and the card's box.
+ */
+function placeTour(W: number, H: number, cardH: number, controls: Box[]) {
+  const body = declsAt('body', W);
+  const right = W - sheetPx(body.get('--tour-r'), '--tour-r');
+  const width = Math.min(360, W - 32); // --tour-w: min(360px, calc(100vw - 32px)), asserted below
+  const props: Record<string, string> = {};
+  const restPx = sheetPx(body.get('--tour-b'), '--tour-b');
+  const bottom = () => (props['--tour-b'] ? sheetPx(props['--tour-b'], 'the --tour-b set') : restPx);
+  const box = () => ({ left: right - width, right, width, height: cardH, top: H - bottom() - cardH, bottom: H - bottom() });
+  const els = controls.map((c) => ({ tagName: c.tag ?? 'BUTTON', getClientRects: () => [c], getBoundingClientRect: () => c }));
+  let asked = '';
+  const fns = runPageDecls<{ tourPlace(): void }>(['TOUR_REST_BOTTOM', 'TOUR_GAP', 'TOUR_EDGE', 'TOUR_CONTROLS', 'tourPlace'], {
+    tour: { active: true },
+    $: (id: string) => (id === 'tourCard' ? { getBoundingClientRect: box } : id === 'tourOverlay' ? { hidden: false } : null),
+    document: {
+      body: { style: { setProperty: (k: string, v: string) => { props[k] = v; }, removeProperty: (k: string) => { delete props[k]; } } },
+      querySelectorAll: (sel: string) => { asked = sel; return els; },
+    },
+    window: { innerHeight: H },
+  }, '{ tourPlace }');
+  fns.tourPlace();
+  return { bottom: bottom(), card: box(), set: '--tour-b' in props, asked };
+}
+const overlaps = (a: Box, b: Box) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+
+test('the welcome tour\'s card stands where it covers no control on screen — at 1024 × 700 it no longer lies over the Dashboard\'s Browse… and Scan; with nothing under it, it rests (seventh browser pass J04)', () => {
+  // The stylesheet's half: the card stands --tour-b up from the window's bottom, 86 px at rest, set on <body>.
+  assert.equal(declsAt('.tour-card', 1440).get('bottom'), 'var(--tour-b)', 'the card stands where <body> says');
+  assert.equal(declsAt('body', 1440).get('--tour-b'), '86px', 'resting 86 px up');
+  assert.equal(declsAt('body', 1440).get('--tour-w'), 'min(360px, calc(100vw - 32px))', 'control: the width this test lays the card out with');
+  // QA (C-L1024-dashboard): Step 2 of 4, 195 px tall, covered the top 13 px of Browse… and Scan.
+  const dash1024: Box[] = [
+    { left: 942, top: 40, right: 970, bottom: 62 }, // the "Nothing changed" banner's close
+    { left: 290, top: 276, right: 966, bottom: 300 }, // the System card's Trash row (role=button)
+    { left: 333, top: 480, right: 420, bottom: 492, tag: 'SUMMARY' }, // "Engine details", left of the card's column
+    { left: 292, top: 603, right: 782, bottom: 631, tag: 'INPUT' }, // the path box
+    { left: 792, top: 605, right: 872, bottom: 631 }, // Browse…
+    { left: 884, top: 605, right: 966, bottom: 631 }, // Scan
+  ];
+  const at = placeTour(1024, 700, 195, dash1024);
+  assert.match(at.asked, /\.view\.active button/, 'control: it asks for the controls of the view that is up');
+  assert.match(at.asked, /#emptyState button/, 'and of the start screen');
+  for (const c of dash1024) assert.ok(!overlaps(at.card, c), `1024 × 700: the card (y ${at.card.top}–${at.card.bottom}) covers no control (${JSON.stringify(c)})`);
+  assert.ok(at.card.top >= 8 && at.card.bottom <= 700 - 8, `and stays in the window (y ${at.card.top}–${at.card.bottom})`);
+  assert.ok(at.set, 'control: it was moved from its rest, where it covered Browse… and Scan');
+  assert.equal(at.bottom, 700 - 605 + 12, 'as little as it can: 12 px above Browse… and Scan (clear of the path box too), the place nearest its rest that is clear');
+  // The start screen at 1024 × 700 with the welcome card (140 px): its choices wrap to a third row.
+  const start: Box[] = [
+    { left: 339, top: 352, right: 519, bottom: 396 }, { left: 790, top: 352, right: 918, bottom: 396 },
+    { left: 482, top: 407, right: 618, bottom: 451 }, { left: 628, top: 407, right: 774, bottom: 451 },
+    { left: 533, top: 466, right: 723, bottom: 509 }, // Choose a folder…
+  ];
+  const welcome = placeTour(1024, 700, 140, start);
+  for (const c of start) assert.ok(!overlaps(welcome.card, c), `the start screen: the card covers no choice (${JSON.stringify(c)})`);
+  // 1440 × 900: nothing under the card where it rests — it stays there.
+  // (The card's column there is x 1062–1422, y 619–814 at rest; Browse… and Scan stand left of it.)
+  const wide = placeTour(1440, 900, 195, [{ left: 290, top: 276, right: 1400, bottom: 300 }, { left: 940, top: 640, right: 1040, bottom: 666 }]);
+  assert.equal(wide.bottom, 86, 'nothing under it: it rests');
+  assert.equal(wide.set, false, 'with nothing set on <body>');
+  // A canvas is the view's surface, not a control: over the map — or a small chart under it — the card rests.
+  assert.equal(placeTour(1024, 700, 195, [{ left: 268, top: 100, right: 1004, bottom: 680, tag: 'CANVAS' }]).bottom, 86, 'over the map it rests');
+  assert.equal(placeTour(1024, 700, 195, [{ left: 700, top: 450, right: 1000, bottom: 600, tag: 'CANVAS' }]).bottom, 86, 'over a chart it rests');
+  // And it is placed again whenever what is under it can move: a resize, and a scroll of any part of the page.
+  assert.match(INDEX, /window\.addEventListener\('resize', tourPlaceSoon\);/, 'placed again on a resize');
+  assert.match(INDEX, /document\.addEventListener\('scroll', tourPlaceSoon, \{ capture: true, passive: true \}\);/, 'and on a scroll anywhere');
+  // Never lower than its rest: the window's bottom-right corner is the cart pill's and the toasts'.
+  // A control at y 430–450 is cleared from above (the card at y 223–418), not by dropping the card under it to 43 px up.
+  const low = placeTour(1024, 700, 195, [{ left: 700, top: 430, right: 900, bottom: 450 }]);
+  assert.equal(low.bottom, 282, `cleared from above, never dropped below its rest (stood ${low.bottom} px up)`);
+  // A column full of controls from top to bottom: nowhere is clear, and it rests, in the window.
+  const full = Array.from({ length: 30 }, (_, i) => ({ left: 600, top: i * 24, right: 1000, bottom: i * 24 + 20 }));
+  assert.equal(placeTour(1024, 700, 195, full).bottom, 86, 'nowhere clear: it rests, never off screen');
+});
+
 /* ══════════════ B26 — the map refits when a row around it changes height ══════════════ */
 
 /** The treemap's measured height, with a row of `above` px pushing it down, and whether it redrew. */

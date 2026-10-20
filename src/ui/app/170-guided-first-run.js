@@ -211,6 +211,9 @@ function tourRender(takeFocus = true) {
   const cta = tour.step === 'welcome' ? startLanding() : null;
   const primary = (cta && cta.getClientRects().length > 0 ? cta : null) || tourCardControl();
   if (primary && takeFocus && !typing) primary.focus();
+  // Its height changed with its step: stand it clear of the controls again (J04). Guarded:
+  // a page reader may lift this function without the placement.
+  if (typeof tourPlaceSoon === 'function') tourPlaceSoon();
 }
 
 /** The card's own control that takes focus, or null while the card is down:
@@ -228,6 +231,7 @@ function tourCardControl() {
     folder" is off screen, so it is repainted when that changes — taking focus
     only when it held it, so focus on the button it replaces is not dropped. */
 function tourFollowView() {
+  if (typeof tourPlaceSoon === 'function') tourPlaceSoon(); // another view's controls are under it now (J04)
   if (!tour.active || tour.step !== 'welcome') return;
   const heroBtn = $('emptyBrowseBtn');
   const heroUp = !!heroBtn && heroBtn.getClientRects().length > 0;
@@ -311,6 +315,47 @@ function refusedFolderWords() {
     other: 'TreeMap was not allowed to look inside this folder',
   });
 }
+
+/* ── Where the card stands (seventh browser pass, J04) ──
+   The card floats over the view at one place — 18 px from the right, 86 px up
+   — and a view's controls are wherever the view puts them: at 1024 × 700 its
+   top lay over the Dashboard's Browse… and Scan. After each paint of the card,
+   a resize, a scroll or a change of view, it stands at the place nearest its
+   rest that covers no control on screen beside it — just above or just below
+   the controls in its way — as --tour-b, its offset from the window's bottom,
+   which the stylesheet reads. Never lower than its rest: the window's
+   bottom-right corner is the cart pill's and the toasts'. Where nothing is in
+   the way, or nowhere is clear (a column full of controls), it rests. A
+   canvas is the view's surface, not a control: over the map the card rests. */
+const TOUR_REST_BOTTOM = 86; // --tour-b at rest (080-suggestions-reclaim.css)
+const TOUR_GAP = 12; // between the card and the control it stands clear of
+const TOUR_EDGE = 8; // the least room kept between it and the window's top
+const TOUR_CONTROLS = '.view.active button, .view.active input, .view.active select, .view.active textarea, .view.active summary, .view.active [tabindex="0"], #emptyState button';
+
+function tourPlace() {
+  if (!tour.active || $('tourOverlay').hidden) return;
+  const card = $('tourCard').getBoundingClientRect();
+  const H = window.innerHeight;
+  const h = card.height;
+  const inWay = [...document.querySelectorAll(TOUR_CONTROLS)]
+    .filter((el) => el.tagName !== 'CANVAS' && el.getClientRects().length > 0)
+    .map((el) => el.getBoundingClientRect())
+    .filter((r) => r.right > card.left && r.left < card.right && r.bottom > r.top);
+  const clear = (b) => b >= TOUR_REST_BOTTOM && H - b - h >= TOUR_EDGE && !inWay.some((r) => r.top < H - b && r.bottom > H - b - h);
+  const places = [TOUR_REST_BOTTOM, ...inWay.flatMap((r) => [H - r.top + TOUR_GAP, H - r.bottom - TOUR_GAP - h])].map(Math.round);
+  const best = places.filter(clear).sort((a, b) => Math.abs(a - TOUR_REST_BOTTOM) - Math.abs(b - TOUR_REST_BOTTOM))[0];
+  if (best === undefined || best === TOUR_REST_BOTTOM) document.body.style.removeProperty('--tour-b');
+  else document.body.style.setProperty('--tour-b', best + 'px');
+}
+
+/** tourPlace at the next frame, once however often it is asked for in one. */
+let tourPlaceRaf = 0;
+function tourPlaceSoon() {
+  if (!tour.active || tourPlaceRaf) return;
+  tourPlaceRaf = requestAnimationFrame(() => { tourPlaceRaf = 0; tourPlace(); });
+}
+window.addEventListener('resize', tourPlaceSoon);
+document.addEventListener('scroll', tourPlaceSoon, { capture: true, passive: true });
 
 async function tourLoadWins() {
   if (!state.scanId) return;
