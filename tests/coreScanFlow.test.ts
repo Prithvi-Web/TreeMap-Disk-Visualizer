@@ -165,7 +165,7 @@ const LIFTED = [
   'function endScanChrome(', 'function failScan(', 'function noteLastFolder(', 'function noteStopUnconfirmed(',
   'function browseWholeDrives(', 'function topologyAnswer(',
   'function startChoiceList(', 'function startFolderName(', 'function startRefusalWords(', 'function startLastLine(', 'function renderStartChoices(', 'function scanStartChoice(', 'async function startNameDrives(',
-  'async function startJudge(', 'function startNoteAllowed(',
+  'async function startJudge(', 'function startNoteAllowed(', 'function startRejudgeRefused(',
   'function requestedPath(', 'async function restoreLastSession(', 'function showRestoredPath(', 'async function reopenScan(',
   'async function startCloudScan(', 'async function loadSystem(',
 ];
@@ -342,10 +342,10 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
   const src = [...LIFTED, ...(o.index ? LIFTED_INDEX : []), ...(o.realTreemap ? LIFTED_MAP : [])].map(pageFn).join('\n');
   // The real treemap view, its unmount aside (it tears down canvas machinery this page has none of).
   const views = o.index ? `VIEW_BY_ID.set('treemap', { ...(${pageView('treemap')}), unmount() {} });` : '';
-  const fns = new Function('scope', `with (scope) { ${src}\n${views}\n return { switchView, restoreLastSession, startScan, stopScan, failScan, renderStartChoices, startCloudScan, loadSystem }; }`)(scope) as {
+  const fns = new Function('scope', `with (scope) { ${src}\n${views}\n return { switchView, restoreLastSession, startScan, stopScan, failScan, renderStartChoices, startCloudScan, loadSystem, startRejudgeRefused }; }`)(scope) as {
     switchView: (v: string) => void; restoreLastSession: () => Promise<void>; startScan: (p: string, o?: unknown) => Promise<void>;
     stopScan: () => Promise<void>; failScan: (m: string, e?: unknown) => void; renderStartChoices: () => void;
-    startCloudScan: (id: string, name: string) => Promise<void>; loadSystem: () => Promise<unknown>;
+    startCloudScan: (id: string, name: string) => Promise<void>; loadSystem: () => Promise<unknown>; startRejudgeRefused: () => void;
   };
   /** The start screen's choices as a person sees them: each button's words, in order. */
   const choices = () => $('startChoices').children.map((b) => b.textContent);
@@ -2099,6 +2099,103 @@ test('J07: the start screen says the agent policy\'s refusals in its own plain w
     assert.equal(h.$('startLast').textContent, `The scan of /Users/x/Documents failed: ${words}.`, `${code}: the failure said in plain words`);
     assert.doesNotMatch(h.$('startLast').textContent, api, `${code}: no API words`);
   }
+});
+
+test('J07 (review F1.4): one refusal code, three of the server\'s sentences — a folder outside the allowed roots, one that lies outside them where it really is, a link to a folder outside them — each said in the page\'s own words, and never "outside" of a path that is spelled inside an allowed folder', async () => {
+  const allowed = 'the folders your agent policy allows TreeMap to scan (allowedRoots in agent-policy.json)';
+  const LINK = '/Users/x/Downloads/proj'; // inside Downloads, the one allowed folder, and a link to /Volumes/Ext/proj
+  const DEEP = '/Users/x/Downloads/via/sub'; // inside Downloads as spelled; a folder on its way is a link elsewhere
+  const sentences: Record<string, string> = {
+    [LINK]: `"${LINK}" is a link to a folder outside the allowed roots — edit agent-policy.json (allowedRoots) to widen them`, // diskScanner.ts assertWalkAllowed
+    [DEEP]: `"${DEEP}" lies outside the allowed roots where it really is — edit agent-policy.json (allowedRoots) to widen them`, // likewise, not a link root
+  };
+  for (const [p, words] of [
+    [LINK, `it is a link to a folder outside ${allowed}`],
+    [DEEP, `where it really is on the disk, it lies outside ${allowed}`],
+  ] as const) {
+    // The history's folder, judged by GET /api/policy?scanRoot=.
+    const back = page({ route: server({ roots: [{ rootPath: p, count: 1, latestAt: 1_700_000_000_000, latestSize: 1000 }],
+      refuse: (q) => sentences[q] ?? onlyDownloads(q) }) });
+    await boot(back);
+    assert.equal(back.$('startLast').textContent, `Your last scan was of ${p}, which TreeMap may not scan now: ${words}.`, `${p}: the verdict, in its own words`);
+    // The same refusal as POST /api/scan's answer to a scan of it.
+    const h = page({ route: server({ roots: [], scanAnswer: () => ({ status: 403, body: { error: sentences[p], code: 'POLICY_ROOT_NOT_ALLOWED' } }) }) });
+    await boot(h);
+    void h.startScan(p); // as Choose a folder… scans it
+    await turns();
+    assert.equal(h.$('startLast').textContent, `The scan of ${p} failed: ${words}.`, `${p}: the refused scan, in the same words`);
+    assert.doesNotMatch(h.$('startLast').textContent, /: it is outside/, `${p}: never "it is outside" of a path spelled inside an allowed folder`);
+  }
+});
+
+test('J07 (review F1.7): the rules\' refusals are asked about again when TreeMap\'s window is back in front — the person repaired agent-policy.json elsewhere, as the start screen told them to — and the start screen says what the rules answer now', async () => {
+  let repaired = false;
+  const FILE = '/data/agent-policy.json';
+  const h = page({ route: server({ roots: [], policyAnswer: (asked) => ({ body: repaired
+    ? { policy: { allowedRoots: [], protectedPaths: [], maxBytesPerOperation: null }, file: FILE, scanRoots: asked.map((p) => ({ path: p, allowed: true })) }
+    : { policy: null, unreadable: true, reason: 'bad json', file: FILE,
+      scanRoots: asked.map((p) => ({ path: p, allowed: false, code: 'POLICY_UNREADABLE', error: 'The agent policy file could not be read.' })) } }) }) });
+  await boot(h);
+  assert.deepEqual(h.choices(), [], 'control: no folder is offered');
+  assert.match(h.$('startLast').textContent, /until its agent policy file is repaired/, 'control: and the start screen says why');
+  const asked = policyAsks(h).length;
+  repaired = true; // in another window
+  for (const v of ['grid', 'dashboard']) h.switchView(v);
+  await turns();
+  assert.equal(policyAsks(h).length, asked, 'control: a repaint alone asks nothing again');
+  h.startRejudgeRefused(); // TreeMap's window is back in front
+  await turns();
+  assert.equal(policyAsks(h).length, asked + 1, 'every folder refused is asked about again, in one request');
+  assert.deepEqual(h.choices(), ['Desktop', 'Documents', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'], 'the folders the rules allow now are offered');
+  assert.equal(h.$('startLast').hidden, true, 'and nothing says any longer that no folder can be scanned');
+  h.startRejudgeRefused();
+  await turns();
+  assert.equal(policyAsks(h).length, asked + 1, 'with nothing refused, coming back to the window asks nothing');
+
+  // A folder the rules still refuse stays refused, and a folder they allowed is not asked again.
+  const still = page({ route: server({ roots: [], refuse: onlyDownloads }) });
+  await boot(still);
+  assert.deepEqual(still.choices(), ['Downloads'], 'control: the policy holds');
+  const before = policyAsks(still).length;
+  still.startRejudgeRefused();
+  await turns();
+  assert.equal(policyAsks(still).length, before + 1, 'control: asked again');
+  assert.ok(!policyAsks(still).at(-1)!.includes(encodeURIComponent('/Users/x/Downloads')), 'a folder the rules allowed is not asked again');
+  assert.deepEqual(still.choices(), ['Downloads'], 'and the folders they still refuse stay refused');
+
+  // Asked again and not answered: a refusal stands — "could not ask" is not "allowed".
+  let down = false;
+  const quiet = page({ route: server({ roots: [], policyAnswer: (asked) => (down ? { status: 500, body: { error: 'Internal server error', code: 'INTERNAL' } }
+    : { body: { policy: null, unreadable: true, reason: 'bad json', file: FILE,
+      scanRoots: asked.map((p) => ({ path: p, allowed: false, code: 'POLICY_UNREADABLE', error: 'The agent policy file could not be read.' })) } }) }) });
+  await boot(quiet);
+  down = true;
+  quiet.startRejudgeRefused();
+  await turns();
+  assert.deepEqual(quiet.choices(), [], 'a re-ask the server could not answer offers nothing it refused');
+  assert.match(quiet.$('startLast').textContent, /until its agent policy file is repaired/, 'and the start screen still says why');
+});
+
+test('J07 (review F1.7): the page asks the rules again when its window gets focus or becomes visible — the listeners it registers, dispatched', () => {
+  const first = "window.addEventListener('focus', startRejudgeRefused);";
+  const at = INDEX.indexOf(first);
+  assert.notEqual(at, -1, 'the page registers the focus listener');
+  const vis = INDEX.indexOf("document.addEventListener('visibilitychange',", at);
+  assert.ok(vis > at && vis - at < 200, 'and the visibility listener beside it');
+  const end = INDEX.indexOf('\n', vis);
+  const listeners: Record<string, Array<() => void>> = {};
+  const add = (n: string, fn: () => void) => { (listeners[n] ??= []).push(fn); };
+  const doc = { visibilityState: 'hidden', addEventListener: add };
+  let asked = 0;
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function('window', 'document', 'startRejudgeRefused', INDEX.slice(at, end))({ addEventListener: add }, doc, () => { asked++; });
+  for (const fn of listeners.focus ?? []) fn();
+  assert.equal(asked, 1, 'the window getting focus asks again');
+  for (const fn of listeners.visibilitychange ?? []) fn();
+  assert.equal(asked, 1, 'the page going hidden does not');
+  doc.visibilityState = 'visible';
+  for (const fn of listeners.visibilitychange ?? []) fn();
+  assert.equal(asked, 2, 'the page becoming visible again does');
 });
 
 test('a scan that fails leaves no dead scan id behind, as a Stop leaves none: a failed rescan over an older tree puts back the older tree\'s scan, a failed first scan leaves none (review F2.3)', async () => {

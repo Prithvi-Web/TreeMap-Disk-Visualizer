@@ -40748,9 +40748,22 @@ function startChoiceList(sys, last, drives, refused = [], history = null) {
  * /api/policy reports its location", "refused this operation" said to a
  * person who has done nothing (seventh browser pass J07). A refusal of any
  * other kind is the server's own sentence, which is about the folder.
+ *
+ * POLICY_ROOT_NOT_ALLOWED carries one of three sentences, and they are not
+ * the same claim (review F1.4): a folder outside the allowed roots as named
+ * (policy.ts), one that lies outside them where it really is — a folder on
+ * its way leads elsewhere — and a link to a folder outside them (both
+ * diskScanner.ts assertWalkAllowed). Said all as "outside", a link spelled
+ * inside an allowed folder read as false, and hid why.
  */
 function startRefusalWords(v) {
-  if (v.code === 'POLICY_ROOT_NOT_ALLOWED') return 'it is outside the folders your agent policy allows TreeMap to scan (allowedRoots in agent-policy.json)';
+  if (v.code === 'POLICY_ROOT_NOT_ALLOWED') {
+    const allowed = 'the folders your agent policy allows TreeMap to scan (allowedRoots in agent-policy.json)';
+    const said = String(v.error || '');
+    if (said.includes(' is a link to a folder outside the allowed roots')) return `it is a link to a folder outside ${allowed}`;
+    if (said.includes(' lies outside the allowed roots where it really is')) return `where it really is on the disk, it lies outside ${allowed}`;
+    return `it is outside ${allowed}`;
+  }
   if (v.code === 'POLICY_UNREADABLE') return 'TreeMap’s agent policy file could not be read, and until it is repaired no folder on this computer can be scanned';
   return v.error || '';
 }
@@ -40844,11 +40857,14 @@ function renderStartChoices() {
  * Each folder is asked about once a page load. A folder the answer does not
  * judge — the request failed, or left it out — is offered as the server
  * found it, as before: a scan of it then answers with the rules' refusal,
- * which the start screen names (failScan). Never asked again, so a server
- * that cannot answer is not asked in a loop.
+ * which the start screen names (failScan). Never asked again on a repaint,
+ * so a server that cannot answer is not asked in a loop: only `again`, when
+ * TreeMap's window is back in front, asks again about the folders the rules
+ * refused (startRejudgeRefused) — and a refusal the new answer does not
+ * judge stands.
  */
-async function startJudge(paths) {
-  const ask = [...new Set(paths)].filter((p) => !startVerdicts.has(p) && !startAsking.has(p));
+async function startJudge(paths, again = false) {
+  const ask = [...new Set(paths)].filter((p) => (again || !startVerdicts.has(p)) && !startAsking.has(p));
   if (!ask.length) return;
   startAsking = new Set([...startAsking, ...ask]);
   let judged = new Map();
@@ -40863,10 +40879,29 @@ async function startJudge(paths) {
   startAsking = new Set([...startAsking].filter((p) => !ask.includes(p)));
   startVerdicts = new Map([...startVerdicts, ...ask.map((p) => {
     const v = judged.get(p);
+    if (!v && again && startVerdicts.has(p)) return [p, startVerdicts.get(p)];
     return [p, !v || v.allowed === true ? { allowed: true, error: '' } : { allowed: false, error: String(v.error || ''), code: String(v.code || ''), file }];
   })]);
   withFocusKept(() => { renderStartChoices(); });
 }
+
+/**
+ * The rules may change while TreeMap waits: the start screen's own sentence
+ * sends the person to repair agent-policy.json, or to widen its allowedRoots,
+ * which they do in another window. When TreeMap's window is back in front,
+ * every folder the rules refused is asked about again — never one they
+ * allowed: a scan's own answer still judges that — and the start screen is
+ * painted with what they answer now (review F1.7). The verdicts of the page's
+ * load stood until a reload, and the start screen went on saying no folder
+ * could be scanned, offering only "Choose a folder…", after the file was
+ * repaired.
+ */
+function startRejudgeRefused() {
+  const refused = [...startVerdicts].filter(([, v]) => !v.allowed).map(([p]) => p);
+  if (refused.length) void startJudge(refused, true);
+}
+window.addEventListener('focus', startRejudgeRefused);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') startRejudgeRefused(); });
 
 /**
  * The server has just accepted a scan of `path` (POST /api/scan answered with
