@@ -1444,6 +1444,61 @@ test('J06: Stop while a folder with a saved index is painted over an older scan 
   }
 });
 
+test('J06 (review F1.8): the Stop that puts the older tree back puts back all of it — its counters, last scan and three lists, the folder the map and the Grid were in, its index of paths — and only while the index\'s tree it stood under is still the one on screen', async () => {
+  const inbox = `${MAIL}/Inbox`;
+  const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [{ name: 'Inbox', path: inbox, size: 37_700_000, type: 'dir', children: [] }] };
+  // The older scan's own, each distinct and non-empty, so a field left as the index paint wrote it shows.
+  const old = {
+    stats: { scanned: 4, fileCount: 3, dirCount: 1, engine: 'native' },
+    lastScan: { when: Date.UTC(2026, 9, 20, 9, 0), durationMs: 374, reopened: false },
+    largest: [{ path: `${inbox}/a.emlx`, name: 'a.emlx', size: 30_000_000 }],
+    types: [{ ext: 'emlx', size: 37_700_000, count: 3 }],
+    bigFolders: [{ path: inbox, size: 37_700_000 }],
+  };
+  const h = page({ index: true, root: mail, settledScanId: 'scan-mail',
+    route: server({ roots: [], indexed: [CORPUS], indexTrees: { [CORPUS]: indexTreeOf(CORPUS, 9_500_000_000) } }) });
+  const indexed: unknown[] = [];
+  h.given.indexTree = (root: unknown) => { indexed.push(root); };
+  Object.assign(h.state, { scanStats: old.stats, lastScan: old.lastScan, largest: old.largest, types: old.types, bigFolders: old.bigFolders });
+  const treemap = h.state.treemap as { rootPath: string | null };
+  const grid = h.state.grid as { path: string | null };
+  treemap.rootPath = inbox; // the map drilled into Inbox
+  grid.path = inbox; // and the Grid
+  h.switchView('dashboard');
+  await h.startScan(CORPUS);
+  await turns();
+  assert.equal(pathOf(h.state.root), CORPUS, 'control: painted from the saved index');
+  assert.notEqual(h.state.scanStats, old.stats, 'control: the index paint wrote its own counters');
+  assert.notEqual(h.state.lastScan, old.lastScan, 'control: and last scan');
+  for (const k of ['largest', 'types', 'bigFolders'] as const) assert.notEqual(h.state[k], old[k], `control: and ${k}`);
+  assert.equal(treemap.rootPath, CORPUS, 'control: and pointed the map at corpus');
+  assert.equal(grid.path, CORPUS, 'control: and the Grid');
+  indexed.length = 0;
+  await pressStop(h);
+  assert.equal(h.state.root, mail, 'control: the older tree is back');
+  assert.equal(h.state.scanStats, old.stats, 'its counters are back (the Dashboard\'s Files and Folders)');
+  assert.equal(h.state.lastScan, old.lastScan, 'its last scan');
+  assert.equal(h.state.largest, old.largest, 'its largest files');
+  assert.equal(h.state.types, old.types, 'its file types');
+  assert.equal(h.state.bigFolders, old.bigFolders, 'its largest folders');
+  assert.equal(treemap.rootPath, inbox, 'the map is back in the folder it was drilled into');
+  assert.equal(grid.path, inbox, 'and so is the Grid');
+  assert.deepEqual(indexed, [mail], 'and the index of paths is the older tree\'s again, not the saved index\'s');
+
+  // Held, but another tree is on screen since: nothing is put back over it.
+  const desk = { name: 'Desktop', path: '/Users/x/Desktop', size: 1000, type: 'dir', children: [] };
+  const guard = page({ index: true, root: desk, settledScanId: 'scan-desk', route: server({ roots: [] }) });
+  guard.state.heldBehindIndex = { root: mail, scanId: 'scan-mail', stats: old.stats, lastScan: old.lastScan, largest: old.largest, types: old.types,
+    bigFolders: old.bigFolders, treemapPath: inbox, gridPath: inbox, over: indexTreeOf(CORPUS, 9_500_000_000) };
+  guard.switchView('dashboard');
+  await guard.startScan('/Users/x/Desktop');
+  await turns();
+  await pressStop(guard);
+  assert.equal(guard.state.root, desk, 'a tree the held one did not stand under stays on screen');
+  assert.equal(guard.state.scanId, 'scan-desk', 'with its own scan');
+  assert.equal(guard.state.heldBehindIndex, null, 'and the held tree is let go');
+});
+
 test('J06: the older tree an index paint stood over is let go once that folder\'s scan lands, or its quiet rescan fails, or the scan fails once followed — it can be a quarter-million nodes — and a Stop after any of them puts nothing back', async () => {
   // Review F1.1: a scan that failed once followed — the stream's error or
   // shutdown frame, the watchdog's 404/500, a server that stopped answering:
