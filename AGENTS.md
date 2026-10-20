@@ -133,10 +133,12 @@ OpenAPI 3 spec).
      are reported in `degraded[]`, never as zero days, and a birthtime the
      filesystem does not record is "unknown", never day zero.
    - `GET /api/cleanup/suggestions` — known-reclaimable space: regenerable
-     build dirs (with the command that rebuilds each), tool/browser caches,
-     OS junk. Exact byte totals. Sourced from versioned rule packs
-     (`src/services/rulepacks/*.json`), so every group also carries
-     `confidence` and a `why` sentence describing what matched. **A group with
+     build dirs (with `regenerateCmd`, how each comes back; a `<folder>` in it
+     stands for each item's own folder name, to fill in, shell-quoted, before
+     running it), tool/browser caches, OS junk. Exact byte totals. Sourced
+     from versioned rule packs (`src/services/rulepacks/*.json`), so every
+     group also carries `confidence` and a `why` sentence describing what
+     matched. **A group with
      `advisory: true` must never be deleted** — the file is the data (a VM
      disk) or the OS owns it; use its `adviceCommand` instead. An Autopilot
      suggestion policy may not name one (`400 POLICY_MATCH_ADVISORY`), and a

@@ -435,6 +435,34 @@ test('only the chosen suggestion groups are selected, and each carries its reaso
   assert.match(picked[0].reason, /regen-node-modules/, 'the rule’s own words travel with the candidate');
 });
 
+test('a candidate from a group whose restore command names its folder carries the command for its own folder, the name quoted where a shell needs it (BQL item 7)', async () => {
+  // The run record and the Undo Vault entry carried "python3 -m venv <folder>, …" — pasted into zsh,
+  // `<` is a redirect: "no such file or directory: folder".
+  const venv = { ...group('regen-python-venv', [{ path: '/p/proj/.venv', size: 300 }, { path: '/p/my scripts/my env', size: 200 }]),
+    regenerateCmd: 'python3 -m venv <folder>, then reinstall the packages it held' };
+  const picked = selectCandidates([venv], [], { kind: 'suggestion', groupIds: ['regen-python-venv'] });
+  assert.deepEqual(picked.map((c) => [c.name, c.regenerateCmd]), [
+    ['.venv', 'python3 -m venv .venv, then reinstall the packages it held'],
+    ['my env', "python3 -m venv 'my env', then reinstall the packages it held"],
+  ], 'each candidate names its own folder, a name with a space quoted');
+  const npm = { ...group('regen-node-modules', [{ path: '/p/node_modules', size: 1 }]), regenerateCmd: 'npm install' };
+  assert.equal(selectCandidates([npm], [], { kind: 'suggestion', groupIds: ['regen-node-modules'] })[0].regenerateCmd, 'npm install',
+    'a command with no placeholder travels as the rule wrote it');
+  // Through a real preview, which is what a run record is built from.
+  const dir = fs.realpathSync(await mkTmp());
+  try {
+    await writeFile(path.join(dir, 'proj', 'requirements.txt'), 100);
+    await writeFile(path.join(dir, 'proj', '.venv', 'pyvenv.cfg'), 4096);
+    const [policy] = await savePolicies([{ id: 'venv-7', name: 'Virtualenvs', path: dir, match: { kind: 'suggestion', groupIds: ['regen-python-venv'] }, dryRunFirst: false, enabled: true }]);
+    const { items } = await simulatePolicy(policy);
+    assert.deepEqual(items.map((i) => [path.relative(dir, i.path), i.regenerateCmd]),
+      [[path.join('proj', '.venv'), 'python3 -m venv .venv, then reinstall the packages it held']], 'the previewed item carries its own command');
+  } finally {
+    await savePolicies([]);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('a custom match explains itself in words a person can check', () => {
   const picked = selectCandidates([], [{ path: '/p/big.dmg', name: 'big.dmg', size: 5 * MB }],
     { kind: 'custom', minBytes: MB, maxAgeMs: 90 * 86_400_000, exts: ['dmg'] });

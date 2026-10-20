@@ -1716,3 +1716,83 @@ test('both lists and the browser profiles share the one helper, and the Custom R
   l.sync(l.all, []);
   assert.deepEqual([l.all.checked, l.all.indeterminate], [false, false], 'an empty list ticks nothing');
 });
+
+/* ══════════════════ A restore command names the folder it makes (BQL item 7) ══════════════════ */
+
+/*
+ * The virtualenv rule's restore command is a template — "python3 -m venv
+ * <folder>, then reinstall the packages it held" — because one rule matches
+ * .venv, venv and env. The card drew it as it is, in a code pill; pasted into
+ * zsh it is "no such file or directory: folder", `<` being a redirect. The
+ * card now gives one command for each folder name its group holds.
+ */
+
+/** Named top-level declarations of the built page — a function whole, a `const` to its first `;` — run together with `deps` as their globals. */
+function pageDecls<T>(names: string[], deps: Record<string, unknown>, returns: string): T {
+  const src = names.map((n) => {
+    if (new RegExp(`function ${n}\\s*\\(`).test(INDEX)) return declOf(n);
+    const at = INDEX.indexOf(`const ${n} = `);
+    assert.notEqual(at, -1, `${n} is in the built page`);
+    return INDEX.slice(at, INDEX.indexOf(';', at) + 1);
+  }).join('\n');
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function(...keys, `${src}\nreturn ${returns};`)(...keys.map((k) => deps[k])) as T;
+}
+
+/** The markup the page's renderSmartGroups writes for `groups`, its remedy helpers and escapeHtml the page's own. */
+function smartCards(groups: unknown[]): string {
+  const host = { innerHTML: '', querySelectorAll: () => [] as unknown[] };
+  // The fill helpers, lifted where the page has them (renderSmartGroups names them when it uses them).
+  const fill = ['shellWord', 'fillFolder'].filter((n) => new RegExp(`function ${n}\\s*\\(`).test(INDEX));
+  const render = pageDecls<(catalog: unknown) => void>(
+    ['escapeHtml', 'confidenceWording', 'catalogNote', 'smartItemsOf', 'REMEDY_PROSE_WORDS', 'remedyIsCommand', 'remedyHtml', ...fill, 'renderSmartGroups'],
+    {
+      $: (id: string) => { assert.equal(id, 'smartResults'); return host; },
+      smartGroups: groups, smartSort: 'size', icon: () => '', sizeInk: () => '#888', formatBytes: (n: number) => `${n} B`,
+      formatDate: () => 'Oct 2, 2026', chipFor: () => '', reclaimBadge: () => '', scoreFor: () => null, cartButtonHtml: () => '',
+      refreshCartButtons() {}, updateCleanSummary() {}, byReclaimDesc: () => () => 0, ensureScores: async () => {}, toast() {}, RECLAIM_BATCH: 2000,
+    },
+    'renderSmartGroups',
+  );
+  render(null);
+  return host.innerHTML;
+}
+
+const VENV_TEMPLATE = 'python3 -m venv <folder>, then reinstall the packages it held';
+/** A Python virtualenv group as the server serves it (rulepacks/common.json): the template, and its items by folder name. */
+function venvGroup(names: string[]) {
+  return {
+    id: 'regen-python-venv', title: 'Python virtualenv', category: 'regenerable', confidence: 'high',
+    description: 'Virtual environment — Python can make it again, but the packages in it must be reinstalled',
+    regenerateCmd: VENV_TEMPLATE, why: 'A folder named .venv or env sitting next to requirements.txt.', totalSize: names.length,
+    items: names.map((name, i) => ({ name, path: `/r/p${i}/${name}`, size: 1, type: 'dir', modifiedAt: 1 })),
+  };
+}
+/** The pills on a card's "To put it back" line, and the commands in its "Why?" panel, as the page wrote them. */
+function restoreLines(html: string): { pills: string[]; line: string; why: string } {
+  const line = /<div class="smart-remedy"><span class="rc-lbl">To put it back:<\/span> ([\s\S]*?)<\/div>/.exec(html)?.[1];
+  const why = /<div class="smart-why-line"><b>To put it back:<\/b> ([\s\S]*?)<\/div>/.exec(html)?.[1];
+  assert.ok(line !== undefined && why !== undefined, `the card has a "To put it back" line and a "Why?" line: ${html}`);
+  return { pills: [...line!.matchAll(/<code class="regen-cmd">([^<]*)<\/code>/g)].map((m) => m[1]), line: line!, why: why! };
+}
+
+test('a virtualenv group\'s card names each folder it holds in its own command — never a literal <folder> a shell reads as a redirect (BQL item 7)', () => {
+  const html = smartCards([venvGroup(['.venv', 'env', '.venv'])]);
+  assert.ok(!html.includes('&lt;folder&gt;') && !html.includes('<folder>'), 'no placeholder is drawn anywhere on the card');
+  const { pills, line, why } = restoreLines(html);
+  assert.deepEqual(pills, ['python3 -m venv .venv', 'python3 -m venv env'], 'one command pill per distinct folder name, in the order the items are listed');
+  assert.match(line, /<\/code>, then reinstall the packages it held$/, 'the step no command can promise follows them, as text');
+  assert.equal(why, '<code>python3 -m venv .venv</code> · <code>python3 -m venv env</code>, then reinstall the packages it held',
+    'the "Why?" panel names the same commands');
+  assert.deepEqual(restoreLines(smartCards([venvGroup(['.venv', '.venv'])])).pills, ['python3 -m venv .venv'], 'one folder name: one pill');
+});
+
+test('a folder name a shell would split or expand is quoted in its command pill, and the pill is escaped for HTML (BQL item 7)', () => {
+  const { pills } = restoreLines(smartCards([venvGroup(['my env', '<b>x</b>'])]));
+  assert.deepEqual(pills, ['python3 -m venv &#39;my env&#39;', 'python3 -m venv &#39;&lt;b&gt;x&lt;/b&gt;&#39;'],
+    'a name with a space, and one holding markup, are single-quoted — and drawn as text, never as markup');
+  // A command with no placeholder is drawn as the rule wrote it.
+  const npm = { ...venvGroup(['node_modules']), id: 'regen-node-modules', title: 'node_modules', regenerateCmd: 'npm install' };
+  assert.deepEqual(restoreLines(smartCards([npm])).pills, ['npm install'], 'control: npm install, unchanged');
+});

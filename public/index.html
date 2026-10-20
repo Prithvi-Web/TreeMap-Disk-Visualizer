@@ -38449,6 +38449,31 @@ function remedyHtml(text, pill = true) {
 }
 
 /**
+ * A restore command's `<folder>`, filled in (BQL item 7). One virtualenv rule
+ * matches .venv, venv and env, so the pack writes "python3 -m venv <folder>,
+ * then …" and the server serves it so; pasted into a shell, `<folder>` is a
+ * redirect from a file named "folder". The card names each folder its group
+ * holds instead: one command per distinct name, as " · " alternatives, each
+ * name a word sh and zsh read back as that name (one that begins with "-" is
+ * spelled ./-…, so it is not read as an option). Copies of shellWord and
+ * fillFolder in src/services/rulePacks.ts, which tests/rulePacks.test.ts holds
+ * these to.
+ */
+function shellWord(name) {
+  const word = name.startsWith('-') ? `./${name}` : name;
+  return /^[A-Za-z0-9_./+@%:,-]+$/.test(word) ? word : `'${word.split("'").join("'\\''")}'`;
+}
+function fillFolder(command, names) {
+  if (!command.includes('<folder>')) return command;
+  const words = [...new Set(names)].map(shellWord);
+  if (words.length === 0) return command;
+  return command.split(/(,\s+then\s+)/).map((part, i) =>
+    i % 2 === 0 && part.includes('<folder>')
+      ? words.map((word) => part.split('<folder>').join(word)).join(' · ')
+      : part).join('');
+}
+
+/**
  * Paint the Smart Suggestions groups.
  *
  * Extracted from `loadSmartSuggestions` so the Reclaim ordering can repaint
@@ -38485,9 +38510,11 @@ function renderSmartGroups(catalog) {
       // row, an advisory group's advice — the one thing a person can do with
       // it — ran 800 px past the sheet, and the descriptions beside it were
       // squeezed to nothing (QA fourth pass E03).
+      // The command that puts the group back, naming each folder it holds.
+      const restore = g.regenerateCmd ? fillFolder(g.regenerateCmd, g.items.map((it) => it.name)) : '';
       const remedies = [
         adv && g.adviceCommand ? ['To reclaim', g.adviceCommand] : null,
-        g.regenerateCmd ? ['To put it back', g.regenerateCmd] : null,
+        restore ? ['To put it back', restore] : null,
       ].filter(Boolean);
       return `
     <div class="smart-group cat-${g.category}${adv ? ' advisory' : ''}" data-cat="${g.category}">
@@ -38506,7 +38533,7 @@ function renderSmartGroups(catalog) {
         <div class="smart-why-line"><b>What matched:</b> ${escapeHtml(g.why || 'This rule did not record what it matches.')}</div>
         <div class="smart-why-line"><b>Confidence:</b> ${escapeHtml(confidenceWording(g.confidence, adv))}</div>
         <div class="smart-why-line"><b>${adv ? 'What this is' : 'Why it is safe'}:</b> ${escapeHtml(g.description)}</div>
-        ${g.regenerateCmd ? `<div class="smart-why-line"><b>To put it back:</b> ${remedyHtml(g.regenerateCmd, false)}</div>` : ''}
+        ${restore ? `<div class="smart-why-line"><b>To put it back:</b> ${remedyHtml(restore, false)}</div>` : ''}
         ${adv ? `<div class="smart-why-line"><b>Do not move this to the Trash.</b>${g.adviceCommand ? ` Reclaim it instead: ${remedyHtml(g.adviceCommand, false)}` : ''}</div>` : ''}
       </div>
       <div class="clean-list">` + smartItemsOf(g).map(({ it, i }) => `

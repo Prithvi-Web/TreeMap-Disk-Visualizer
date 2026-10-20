@@ -2328,7 +2328,8 @@ function shippedSmartGroups(): Array<Record<string, unknown>> {
         id: r.id, title: r.title, description: r.description, category: r.category, confidence: r.confidence,
         regenerateCmd: r.restoreCommand, why: 'Matched by name.', advisory: r.action === 'advice' ? true : undefined, adviceCommand: r.adviceCommand,
         totalSize: 12_345_678_901,
-        items: [{ name: 'Render Files', path: '/Users/me/Movies/Vacation.fcpbundle/Day 1/Render Files', size: 12_345_678_901, type: 'dir', modifiedAt: 1 }],
+        // A folder the rule names, where it names folders (a virtualenv group holds .venv folders).
+        items: [{ name: Array.isArray(r.names) ? String(r.names[0]) : 'Render Files', path: '/Users/me/Movies/Vacation.fcpbundle/Day 1/Render Files', size: 12_345_678_901, type: 'dir', modifiedAt: 1 }],
       });
     }
   }
@@ -2343,7 +2344,7 @@ function shippedSmartGroups(): Array<Record<string, unknown>> {
  */
 const REMEDY_CODE: Record<string, string[]> = {
   'npm install': ['npm install'],
-  'python3 -m venv <folder>, then reinstall the packages it held': ['python3 -m venv <folder>'],
+  'python3 -m venv <folder>, then reinstall the packages it held': ['python3 -m venv .venv'], // drawn for the group's own .venv (BQL item 7)
   'automatic on next run': [],
   'the next test run with coverage writes it again': [],
   'cargo build': ['cargo build'],
@@ -2372,7 +2373,7 @@ function smartGroupsHtml(groups: Array<Record<string, unknown>>): string {
   const esc = (v: unknown) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   const names = ['confidenceWording', 'catalogNote', 'smartItemsOf', 'renderSmartGroups'];
   // The remedy helpers the page may have, lifted with it when it does.
-  for (const helper of ['REMEDY_PROSE_WORDS', 'remedyIsCommand', 'remedyHtml']) {
+  for (const helper of ['REMEDY_PROSE_WORDS', 'remedyIsCommand', 'remedyHtml', 'shellWord', 'fillFolder']) {
     if (INDEX.includes(`function ${helper}(`) || INDEX.includes(`const ${helper} = `)) names.unshift(helper);
   }
   const render = runPageDecls<(catalog: unknown) => void>(names, {
@@ -2422,15 +2423,17 @@ test('a Smart Suggestion\'s description and its remedy are drawn inside the Clea
       // way to reclaim it — its only remedy (AGENTS.md) — and a restore
       // command is how a removed group comes back.
       const what = remedy === g.regenerateCmd ? 'To put it back:' : 'To reclaim:';
-      const line = selectAll(group, '.smart-remedy').find((el) => textOf(el, content).endsWith(plain(remedy)));
-      assert.ok(line, `${label}: "${remedy}" is drawn whole on a remedy line`);
-      assert.equal(textOf(line!, content), `${what} ${plain(remedy)}`, `${label}: the line says what "${remedy}" is for, and nothing else`);
+      // A restore command's <folder> is drawn as the group's own folder (BQL item 7); its one item's name is plain.
+      const shown = remedy === g.regenerateCmd ? remedy.split('<folder>').join(String((g.items as Array<{ name: string }>)[0].name)) : remedy;
+      const line = selectAll(group, '.smart-remedy').find((el) => textOf(el, content).endsWith(plain(shown)));
+      assert.ok(line, `${label}: "${shown}" is drawn whole on a remedy line`);
+      assert.equal(textOf(line!, content), `${what} ${plain(shown)}`, `${label}: the line says what "${shown}" is for, and nothing else`);
       assert.deepEqual(selectAll(line!, '.rc-lbl').map((el) => textOf(el, content)), [what], `${label}: "${what}" is the line's label`);
       assert.ok(!inRow(line!), `${label}: its remedy is not an item of the header row`);
       const codes = selectAll(line!, 'code').map((c) => textOf(c, content));
       assert.deepEqual(codes, REMEDY_CODE[remedy], `${label}: in "${remedy}", the commands — and nothing else — are code`);
       // The "Why?" panel says it the same way: the commands, and nothing else, in code.
-      const whyText = remedy === g.regenerateCmd ? `To put it back: ${plain(remedy)}` : `Do not move this to the Trash. Reclaim it instead: ${plain(remedy)}`;
+      const whyText = remedy === g.regenerateCmd ? `To put it back: ${plain(shown)}` : `Do not move this to the Trash. Reclaim it instead: ${plain(shown)}`;
       const whyLine = selectAll(group, '.smart-why .smart-why-line').find((el) => textOf(el, content) === whyText);
       assert.ok(whyLine, `${label}: the "Why?" panel reads "${whyText}"`);
       assert.deepEqual(selectAll(whyLine!, 'code').map((c) => textOf(c, content)), REMEDY_CODE[remedy],

@@ -7,15 +7,19 @@ import path from 'node:path';
 
 isolatedDataDir('treemap-rulePacks-data-');
 
+import { execFileSync } from 'node:child_process';
 import {
   PACK_NAMES,
   RULEPACK_SCHEMA_VERSION,
   RulePackError,
+  fillFolder,
   loadRuleCatalogFrom,
   matchReasonFor,
   packForPlatform,
+  shellWord,
   validateRulePack,
 } from '../src/services/rulePacks';
+import { lift } from './fixtures/liftFrontend';
 import { collectCleanupSuggestions } from '../src/services/cleanupRules';
 import { FileNode } from '../src/models/types';
 
@@ -488,4 +492,63 @@ test('the virtualenv rule says what really makes a virtualenv again — true for
   assert.doesNotMatch(venv.restoreCommand, /requirements\.txt/, 'it names no file a project may not have');
   assert.doesNotMatch(venv.description, /manifest/, 'nor does its description promise a manifest a .python-version alone does not give');
   assert.match(venv.description, /packages[^.]*reinstalled/, 'and it says the packages are not made again with it');
+});
+
+/* ───────────── A restore command's <folder>, filled in (BQL item 7) ───────────── */
+
+const VENV_CMD = 'python3 -m venv <folder>, then reinstall the packages it held';
+
+/**
+ * Names a shell would read otherwise if they were pasted bare: spaces, quotes,
+ * every character sh or zsh expands or splits on, `=` (zsh's =command), `~`,
+ * a tab and a name that is not ASCII.
+ */
+const AWKWARD_NAMES = ['my env', "it's", 'a"b', 'a$b', 'a`id`', 'a\\b', '*', 'a?', '~x', '=ls', 'a;b', 'a&b', 'a|b', '<x>', '(x)', '{a,b}', '[x]', '#x', '!x', 'tab\there', 'vénv', ''];
+
+test('a restore command\'s <folder> is filled with each distinct folder name — one command each, in the order met — and is otherwise left as the pack wrote it (BQL item 7)', () => {
+  // "python3 -m venv <folder>" pasted into zsh is "no such file or directory: folder": `<` is a redirect.
+  assert.equal(fillFolder(VENV_CMD, ['.venv']), 'python3 -m venv .venv, then reinstall the packages it held', 'one name: one command, the step after it kept');
+  assert.equal(fillFolder(VENV_CMD, ['.venv', 'env', '.venv']), 'python3 -m venv .venv · python3 -m venv env, then reinstall the packages it held',
+    'several: one command per distinct name, as alternatives');
+  assert.equal(fillFolder(VENV_CMD, ['my env']), "python3 -m venv 'my env', then reinstall the packages it held", 'a name with a space is quoted');
+  assert.equal(fillFolder(VENV_CMD, ['-x']), 'python3 -m venv ./-x, then reinstall the packages it held', 'a name that begins with "-" is never read as an option');
+  assert.equal(fillFolder(VENV_CMD, []), VENV_CMD, 'with no name to put in it, the template is left as it is');
+  assert.equal(fillFolder('npm install', ['.venv']), 'npm install', 'a command with no placeholder is left as it is');
+});
+
+test('a filled-in folder name is one word a POSIX shell and zsh read back exactly as the name, whatever it holds (BQL item 7)', { skip: process.platform === 'win32' ? 'no POSIX shell to ask' : false }, () => {
+  assert.equal(shellWord('.venv'), '.venv', 'control: a plain name is as it is');
+  assert.equal(shellWord('my env'), "'my env'", 'a name with a space is single-quoted');
+  const shells = ['/bin/sh', '/bin/zsh'].filter((s) => fs.existsSync(s));
+  assert.ok(shells.includes('/bin/sh'), 'control: there is a /bin/sh to ask');
+  /** What `shell` prints for the words of `printf '%s|' <word>`; a shell that refuses the line says so instead. */
+  const said = (shell: string, word: string): string => {
+    try {
+      return execFileSync(shell, ['-c', `printf '%s|' ${word}`], { encoding: 'utf8', env: { ...process.env } });
+    } catch (err) {
+      return `the shell refused it: ${(err as Error).message}`;
+    }
+  };
+  for (const shell of shells) {
+    for (const name of AWKWARD_NAMES) {
+      const word = shellWord(name);
+      assert.equal(said(shell, word), `${name}|`, `${shell} reads ${JSON.stringify(word)} back as the one name ${JSON.stringify(name)}`);
+    }
+    // A leading "-" is spelled as a path, so the program reads a folder, not an option.
+    assert.equal(said(shell, shellWord('-x')), './-x|', `${shell}: -x as ./-x`);
+  }
+});
+
+test('the page fills a restore command exactly as the server does: its copy of fillFolder and shellWord is held to this one (BQL item 7)', () => {
+  const page = lift<{ fillFolder: typeof fillFolder; shellWord: typeof shellWord }>(['shellWord', 'fillFolder'], '{ fillFolder, shellWord }');
+  for (const name of [...AWKWARD_NAMES, '.venv', 'venv', 'ENV', '-x', '--', 'a b c']) {
+    assert.equal(page.shellWord(name), shellWord(name), `shellWord(${JSON.stringify(name)})`);
+  }
+  const commands = [VENV_CMD, 'npm install', 'make <folder>', 'a <folder> b, then c <folder>, then d', 'x <folder>,  then  y'];
+  const nameSets = [[], ['.venv'], ['.venv', 'env', '.venv'], ['my env', 'env'], ["it's"], ['-x']];
+  for (const command of commands) {
+    for (const names of nameSets) {
+      assert.equal(page.fillFolder(command, names), fillFolder(command, names), `fillFolder(${JSON.stringify(command)}, ${JSON.stringify(names)})`);
+    }
+  }
 });

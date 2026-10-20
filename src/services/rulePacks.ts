@@ -488,6 +488,53 @@ export function loadRuleCatalogFrom(dir: string, platform: NodeJS.Platform): Rul
   return buildCatalog(dir, platform);
 }
 
+/* ─────────────────────── a restore command's <folder> ─────────────────────── */
+
+/**
+ * Where a restore command names the folder it makes, the pack writes this in
+ * its place: one virtualenv rule matches .venv, venv and env, and the command
+ * is "python3 -m venv <folder>, then …" for whichever it was. The API and MCP
+ * serve the command as the pack writes it (openapi `regenerateCmd`); what a
+ * person reads — the Clean Up card, an Autopilot candidate's run record — has
+ * it filled in by `fillFolder`, because `<folder>` pasted into a shell is a
+ * redirect from a file named "folder" (BQL item 7).
+ */
+export const FOLDER_PLACEHOLDER = '<folder>';
+
+/** Every character a POSIX shell or zsh reads as itself in an unquoted word. */
+const PLAIN_SHELL_WORD = /^[A-Za-z0-9_./+@%:,-]+$/;
+
+/**
+ * `name` as one word that sh and zsh read back as exactly that name: as it is
+ * when every character is plain, else in single quotes (a `'` inside written
+ * `'\''`). A name that begins with "-" is spelled `./-…`, so the program reads
+ * a folder, not an option. The page keeps a copy (220-clean-up-modal.js);
+ * tests/rulePacks.test.ts holds the two to one answer.
+ */
+export function shellWord(name: string): string {
+  const word = name.startsWith('-') ? `./${name}` : name;
+  return PLAIN_SHELL_WORD.test(word) ? word : `'${word.split("'").join("'\\''")}'`;
+}
+
+/**
+ * `command` with each step holding `<folder>` written once per distinct name,
+ * in the order met, as alternatives joined by " · ": "python3 -m venv .venv ·
+ * python3 -m venv env, then reinstall the packages it held". Each name is a
+ * `shellWord`. A command with no placeholder, or no name to put in it, comes
+ * back as it is. Steps are split on ", then ", as the page's remedy markup
+ * reads them. The page keeps a copy (220-clean-up-modal.js); tests/rulePacks.test.ts
+ * holds the two to one answer.
+ */
+export function fillFolder(command: string, names: readonly string[]): string {
+  if (!command.includes(FOLDER_PLACEHOLDER)) return command;
+  const words = [...new Set(names)].map(shellWord);
+  if (words.length === 0) return command;
+  return command.split(/(,\s+then\s+)/).map((part, i) =>
+    i % 2 === 0 && part.includes(FOLDER_PLACEHOLDER)
+      ? words.map((word) => part.split(FOLDER_PLACEHOLDER).join(word)).join(' · ')
+      : part).join('');
+}
+
 /**
  * The plain-English "why is this suggested" sentence, derived from what the
  * rule actually matches so it can never drift from the matching itself.

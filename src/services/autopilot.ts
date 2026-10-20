@@ -9,7 +9,7 @@ import {
 import { appDataDir, readJsonFile, writeJsonFile } from './storage';
 import { SPILL_DIR } from './spillSweep';
 import { cleanupSuggestionsFor } from './cleanupMemo';
-import { loadRuleCatalog, ruleCatalogStatus } from './rulePacks';
+import { fillFolder, loadRuleCatalog, ruleCatalogStatus } from './rulePacks';
 import { matchCustomRules } from './scanQueries';
 import { parse } from './query/parse';
 import { isEmptyQuery } from './query/evaluate';
@@ -478,7 +478,8 @@ export function selectCandidates(
           // The rule's own words, so the run record and the Undo Vault entry
           // can both say why this was chosen without inventing wording.
           reason: `matched “${group.title}” — ${group.description}`,
-          ...(group.regenerateCmd ? { regenerateCmd: group.regenerateCmd } : {}),
+          // Its own folder in place of the rule's `<folder>` (BQL item 7): pasted as it was, `<` is a redirect.
+          ...(group.regenerateCmd ? { regenerateCmd: fillFolder(group.regenerateCmd, [item.name]) } : {}),
         });
       }
     }
