@@ -488,3 +488,50 @@ test('Missing GB: the statement is asked of the scan the tree on screen came fro
   assert.equal(asks.length, before);
   assert.match($('missingBody').innerHTML, OPENED, 'then that the tree is the saved index');
 });
+
+/* ───────────────────────────── the highlight box's query, opening a container ───────────────────────────── */
+
+test('the highlight box\'s query runs on the scan the tree on screen came from — never the running scan — is asked again only of a scan that has not answered it, and over the saved index\'s tree says what it waits for instead of "Scan a folder first"', async () => {
+  const $ = stubDom();
+  const messages: string[] = [];
+  const reasked: string[] = [];
+  const state: Record<string, unknown> = { root: TREE, ...HELD, treemap: { rootPath: '/r', query: 'size>1gb', queryMode: 'bare', queryScanId: null, matches: 0 } };
+  const { fns, asks } = page<{ run: (q: string) => Promise<void>; rejudge: () => void }>(['async function tmRunGrammarQuery(', 'function tmRejudgeQuery('], {
+    state, $, tmQuerySeq: 0, tmQueryAbort: null, tmLastHits: null, AbortController,
+    tmSetQueryMessage: (m: string) => { messages.push(m); }, tmStageable: () => ({ paths: [] }), seedNodes: noop, tmSyncStageButton: noop,
+    renderSearchOverlay: noop, presentView: noop, formatCount: String, tmUndrawnMessage: () => '', tmClearHits: noop,
+    tmApplyQuery: (q: string) => { reasked.push(q); },
+  }, '{ run: tmRunGrammarQuery, rejudge: tmRejudgeQuery }', () => ({ hits: [], total: 0 }));
+  await throughThePhases('The highlight query', state, asks, () => fns.run('size>1gb'), noop);
+  // A query the older scan answered during the rescan is that tree's: not asked again of the running scan.
+  Object.assign(state, HELD);
+  await fns.run('size>1gb');
+  assert.equal((state.treemap as { queryScanId: unknown }).queryScanId, 'scan-old', 'control: answered by the scan the tree came from');
+  fns.rejudge();
+  assert.deepEqual(reasked, [], 'the tree on screen already has its answer: nothing is asked of the running scan');
+  Object.assign(state, LANDED);
+  fns.rejudge();
+  assert.deepEqual(reasked, ['size>1gb'], 'once the rescan lands, its tree is asked');
+  // The saved index's tree.
+  const before = asks.length;
+  Object.assign(state, INDEX_RUNNING);
+  await fns.run('size>1gb');
+  assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked — not of the running scan');
+  assert.equal(messages.at(-1), 'The search runs on a finished scan — search again once the scan finishes.', 'it says what the search waits for');
+  Object.assign(state, INDEX_STOPPED);
+  await fns.run('size>1gb');
+  assert.equal(asks.length, before);
+  assert.equal(messages.at(-1), 'Opened from the saved index — scan this folder to search it.', 'once nothing will land, what would make it searchable');
+  state.root = null;
+  await fns.run('size>1gb');
+  assert.equal(messages.at(-1), 'Scan a folder first — there is nothing to search yet.', 'with no tree at all, as before');
+});
+
+test('opening an archive or disk image on the map asks the scan the tree on screen came from — never the running scan, which answers 409', async () => {
+  const $ = stubDom();
+  const state: Record<string, unknown> = { root: TREE, ...HELD, pathIndex: new Map() };
+  const { fns, asks } = page<{ open: (n: unknown) => Promise<void> }>(['async function expandContainerNode('], {
+    state, $, loadTreemap: noop, toast: noop, formatCount: String, updateTmStatus: noop,
+  }, '{ open: expandContainerNode }', () => ({ children: [], entryCount: 0, truncated: false }));
+  await throughThePhases('Opening a container', state, asks, () => fns.open({ path: '/r/a.zip', name: 'a.zip' }), noop);
+});

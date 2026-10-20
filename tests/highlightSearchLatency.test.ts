@@ -112,7 +112,7 @@ function highlight(answersAnyway = false) {
   };
   const consts = ['TM_GRAMMAR_FIELDS', 'TM_GRAMMAR_RE', 'TM_FIELDLIKE_RE'].filter((n) => INDEX.includes(`const ${n} =`));
   const helpers = ['tmIsGrammarQuery', 'tmEditDistance', 'tmUnknownFieldHint'].filter((n) => new RegExp(`function ${n}\\s*\\(`).test(INDEX));
-  const names = [...helpers, 'tmCancelQueries', 'tmClearHits', 'tmRunGrammarQuery', 'tmApplyQuery'];
+  const names = [...helpers, 'treeScanId', 'treeScanComing', 'tmCancelQueries', 'tmClearHits', 'tmRunGrammarQuery', 'tmApplyQuery'];
   const keys = Object.keys(deps);
   const src = `'use strict'; let tmQueryDeb = 0; let tmQuerySeq = 0; let tmQueryAbort = null; let tmLastHits = { q: '', paths: [], total: 0, truncated: false, stage: null };\n` +
     `${consts.map(constOf).join('\n')}\n${names.map(declOf).join('\n')}\n` +

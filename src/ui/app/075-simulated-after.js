@@ -712,7 +712,9 @@ async function expandContainerNode(n) {
     const resp = await api('/api/container/expand', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scanId: state.scanId, path: n.path }),
+      // Of the scan the tree on screen came from (treeScanId): a scan still
+      // walking answers 409 SCAN_RUNNING (BQJ-1b).
+      body: JSON.stringify({ scanId: treeScanId(), path: n.path }),
     });
     if (node) {
       node.children = resp.children;

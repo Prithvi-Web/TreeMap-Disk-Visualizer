@@ -288,10 +288,18 @@ function tmUndrawnMessage(found, drawn, paths, viewRoot) {
 
 /** Run a grammar query on the server and highlight what comes back. */
 async function tmRunGrammarQuery(q) {
-  if (!state.scanId) {
+  // Run on the scan the tree on screen came from (treeScanId): a scan still
+  // walking answers 409 SCAN_RUNNING, and its error stood under the box over
+  // a tree it could have searched (BQJ-1b).
+  const scanAtRequest = treeScanId();
+  if (!scanAtRequest) {
     // Say so rather than doing nothing. A silent no-op here reads as a broken
-    // search box; the user has no way to know a scan is what is missing.
-    tmSetQueryMessage('Scan a folder first — there is nothing to search yet.', false);
+    // search box; the user has no way to know a scan is what is missing. Over
+    // the saved index's tree, which no scan stands behind, a folder IS on
+    // screen: what the search waits for, or what would make it searchable.
+    tmSetQueryMessage(!state.root ? 'Scan a folder first — there is nothing to search yet.'
+      : treeScanComing() ? 'The search runs on a finished scan — search again once the scan finishes.'
+        : 'Opened from the saved index — scan this folder to search it.', false);
     return;
   }
   const seq = ++tmQuerySeq;
@@ -299,7 +307,6 @@ async function tmRunGrammarQuery(q) {
   if (tmQueryAbort) tmQueryAbort.abort();
   const ctl = new AbortController();
   tmQueryAbort = ctl;
-  const scanAtRequest = state.scanId;
   // An error under the box was said of the text before this one: it may name
   // a field no longer typed, and a query that looks facts up can take seconds
   // to answer. Taken down as this text is asked; said again if it fails too
@@ -482,11 +489,12 @@ subscribe(TOPIC.scan, tmQueryScanChanged);
 /**
  * A grammar query another scan answered is asked again of the scan on screen
  * (C11): the Treemap's mount calls this after a rescan of the same folder, so
- * its highlights are this tree's. One this scan already answered is left be.
+ * its highlights are this tree's. One this tree's scan (treeScanId) already
+ * answered is left be — never asked again of a scan still walking.
  */
 function tmRejudgeQuery() {
   const q = state.treemap.query;
-  if (!q.trim() || state.treemap.queryMode !== 'grammar' || state.treemap.queryScanId === state.scanId) return;
+  if (!q.trim() || state.treemap.queryMode !== 'grammar' || state.treemap.queryScanId === treeScanId()) return;
   tmApplyQuery(q);
 }
 
