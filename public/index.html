@@ -8025,9 +8025,14 @@ const VIEWS = [
       renderGrid();
     },
   },
+  // Apps, Libraries and Security read a report of the scan the tree on screen
+  // came from (treeScanId). Each loader asks it, or — over the saved index's
+  // tree, which no scan stands behind — says why there is nothing yet: keyed
+  // on the scan on hand, a rescan's view asked the scan still walking (409),
+  // and after a Stop kept another folder's report on screen (BQJ-1b).
   {
     id: 'apps', label: 'Apps', icon: 'box', needsScan: true,
-    mount() { if (state.scanId && state.root) loadApps(); },
+    mount() { if (state.root) loadApps(); },
     unmount() {
       // The scatter handle is a live client (tooltip, listeners, observer);
       // it dies with the view and mount()'s render path rebuilds it.
@@ -8036,12 +8041,12 @@ const VIEWS = [
   },
   {
     id: 'games', label: 'Libraries', icon: 'play', needsScan: true,
-    mount() { if (state.scanId && state.root) { loadGames(); loadMedia(); } },
+    mount() { if (state.root) { loadGames(); loadMedia(); } },
     onScanChange() { state.games.loadedFor = null; state.media.loadedFor = null; },
   },
   {
     id: 'security', label: 'Security', icon: 'shield', needsScan: true,
-    mount() { if (state.scanId && state.root) loadSecurity(); },
+    mount() { if (state.root) loadSecurity(); },
     onScanChange() { state.security.loadedFor = null; },
   },
   {
@@ -34773,21 +34778,36 @@ $('selTrashBtn').addEventListener('click', () => confirmTrash([...state.grid.sel
 const APP_CAT_LABEL = { app: 'App', cache: 'Caches', data: 'Data', logs: 'Logs' };
 
 async function loadApps(force = false) {
-  if (!state.scanId || !state.root) return;
-  if (!force && state.apps.loadedFor === state.scanId) { renderApps(); return; }
+  if (!state.root) return;
   const host = $('appsBody');
+  // Asked of the scan the tree on screen came from (treeScanId), never a scan
+  // still walking, which answers 409. The saved index's tree has none: what
+  // the view would show is worked out from a scan, and said so (BQJ-1b).
+  const scanId = treeScanId();
+  if (!scanId) {
+    appsScatterDrop();
+    state.apps.loadedFor = null;
+    $('appsInfo').textContent = '';
+    host.innerHTML = `<div class="muted">${escapeHtml(treeScanComing()
+      ? 'What each application owns is worked out from a finished scan — this fills in once the scan finishes.'
+      : 'Opened from the saved index — scan this folder to see what each application owns.')}</div>`;
+    return;
+  }
+  if (!force && state.apps.loadedFor === scanId) { renderApps(); return; }
   appsScatterDrop(); // the standing dots belong to the previous scan's apps
   host.innerHTML = skeletonRows(8, 42);
   $('appsInfo').textContent = '';
   try {
-    const data = await api('/api/apps?scanId=' + state.scanId);
+    const data = await api('/api/apps?scanId=' + scanId);
+    if (treeScanId() !== scanId) return; // another tree is on screen now; its own load paints
     state.apps.list = data.apps || [];
     state.apps.otherBytes = data.otherBytes;
     state.apps.totalBytes = data.totalBytes;
     state.apps.appsFolderScanned = data.appsFolderScanned;
-    state.apps.loadedFor = state.scanId;
+    state.apps.loadedFor = scanId;
     renderApps();
   } catch (e) {
+    if (treeScanId() !== scanId) return;
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   }
 }
@@ -35046,16 +35066,31 @@ function renderDriveHealth() {
 const SEVERITY_LABEL = { high: 'Serious', medium: 'Worth fixing', low: 'Minor' };
 
 async function loadSecurity(force = false) {
-  if (!state.scanId || !state.root) return;
-  if (!force && state.security.loadedFor === state.scanId) { renderSecurity(); return; }
+  if (!state.root) return;
   const host = $('securityBody');
+  // Asked of the scan the tree on screen came from (treeScanId), as Apps is;
+  // the saved index's tree has none, and says so (BQJ-1b).
+  const scanId = treeScanId();
+  if (!scanId) {
+    state.security.report = null;
+    state.security.loadedFor = null;
+    $('securityInfo').textContent = '';
+    host.innerHTML = `<div class="muted">${escapeHtml(treeScanComing()
+      ? 'Keys, credentials and wallets are looked for in a finished scan — this fills in once the scan finishes.'
+      : 'Opened from the saved index — scan this folder to look for keys, credentials and wallets in it.')}</div>`;
+    return;
+  }
+  if (!force && state.security.loadedFor === scanId) { renderSecurity(); return; }
   host.innerHTML = skeletonRows(5, 40);
   $('securityInfo').textContent = '';
   try {
-    state.security.report = await api('/api/security/findings?scanId=' + state.scanId);
-    state.security.loadedFor = state.scanId;
+    const report = await api('/api/security/findings?scanId=' + scanId);
+    if (treeScanId() !== scanId) return; // another tree is on screen now; its own load paints
+    state.security.report = report;
+    state.security.loadedFor = scanId;
     renderSecurity();
   } catch (e) {
+    if (treeScanId() !== scanId) return;
     state.security.report = null;
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   }
@@ -35101,7 +35136,7 @@ function renderSecurity() {
   FxNum.rollHtml($('securityInfo'),
     headline +
     ` <span class="sec-note">Matched on name and location only; no file was opened and nothing leaves this computer.</span>` +
-    (unshown ? ` <span class="num">(the ${formatCount(findings.length)} most serious shown — ${formatCount(unshown)} more below)</span>` : ''), state.scanId);
+    (unshown ? ` <span class="num">(the ${formatCount(findings.length)} most serious shown — ${formatCount(unshown)} more below)</span>` : ''), state.security.loadedFor);
 
   host.innerHTML = '<div class="sec-list">' + findings.map((f, i) => `
     <div class="sec-item sev-${escapeHtml(f.severity)}">
@@ -35146,11 +35181,11 @@ async function loadMoreSecurity() {
   securityMoreFor = report;
   const button = $('securityBody').querySelector('[data-sec-more]');
   if (button) { button.disabled = true; button.setAttribute('aria-busy', 'true'); }
-  const scanId = state.scanId;
+  const scanId = treeScanId(); // the scan the findings on screen came from (loadSecurity), never one still walking
   const from = report.findings.length;
   try {
     const page = await api(`/api/security/findings?scanId=${scanId}&offset=${from}`);
-    if (state.scanId !== scanId || state.security.report !== report) return;
+    if (treeScanId() !== scanId || state.security.report !== report) return;
     state.security.report = { ...report, findings: [...report.findings, ...page.findings], counts: page.counts, total: page.total, appOwnedCount: page.appOwnedCount, truncated: page.truncated };
     renderSecurity();
     $('securityBody').querySelector(`[data-sec-reveal="${from}"]`)?.focus();
@@ -35240,16 +35275,31 @@ const MEDIA_PART = {
 };
 
 async function loadMedia(force = false) {
-  if (!state.scanId || !state.root) return;
-  if (!force && state.media.loadedFor === state.scanId) { renderMedia(); return; }
+  if (!state.root) return;
   const host = $('mediaBody');
+  // Asked of the scan the tree on screen came from (treeScanId), never a scan
+  // still walking (409); the saved index's tree has none, and says so (BQJ-1b).
+  const scanId = treeScanId();
+  if (!scanId) {
+    state.media.report = null;
+    state.media.loadedFor = null;
+    $('mediaInfo').textContent = '';
+    host.innerHTML = `<div class="muted">${escapeHtml(treeScanComing()
+      ? 'Photo and video libraries are read from a finished scan — this fills in once the scan finishes.'
+      : 'Opened from the saved index — scan this folder to see its photo and video libraries.')}</div>`;
+    return;
+  }
+  if (!force && state.media.loadedFor === scanId) { renderMedia(); return; }
   host.innerHTML = skeletonRows(4, 42);
   $('mediaInfo').textContent = '';
   try {
-    state.media.report = await api('/api/media?scanId=' + state.scanId);
-    state.media.loadedFor = state.scanId;
+    const report = await api('/api/media?scanId=' + scanId);
+    if (treeScanId() !== scanId) return; // another tree is on screen now; its own load paints
+    state.media.report = report;
+    state.media.loadedFor = scanId;
     renderMedia();
   } catch (e) {
+    if (treeScanId() !== scanId) return;
     state.media.report = null;
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   }
@@ -35269,7 +35319,7 @@ function renderMedia() {
   // Keyed by scan, like the games line: same scan rolls, new scan snaps.
   FxNum.rollHtml($('mediaInfo'),
     `<b>${formatCount(libs.length)}</b> ${libs.length === 1 ? 'library' : 'libraries'} — <b>${formatBytes(report.totalBytes || 0)}</b>` +
-    (report.derivativesBytes ? `, of which <b>${formatBytes(report.derivativesBytes)}</b> is regenerable derivatives` : ''), state.scanId);
+    (report.derivativesBytes ? `, of which <b>${formatBytes(report.derivativesBytes)}</b> is regenerable derivatives` : ''), state.media.loadedFor);
   host.innerHTML = libs.map((lib) => {
     const head = `
       <div class="game-libhead">
@@ -35318,16 +35368,30 @@ function renderMedia() {
 }
 
 async function loadGames(force = false) {
-  if (!state.scanId || !state.root) return;
-  if (!force && state.games.loadedFor === state.scanId) { renderGames(); return; }
+  if (!state.root) return;
   const host = $('gamesBody');
+  // As loadMedia: the tree's scan (treeScanId), or why there is none (BQJ-1b).
+  const scanId = treeScanId();
+  if (!scanId) {
+    state.games.report = null;
+    state.games.loadedFor = null;
+    $('gamesInfo').textContent = '';
+    host.innerHTML = `<div class="muted">${escapeHtml(treeScanComing()
+      ? 'Game libraries are read from a finished scan — this fills in once the scan finishes.'
+      : 'Opened from the saved index — scan this folder to see its game libraries.')}</div>`;
+    return;
+  }
+  if (!force && state.games.loadedFor === scanId) { renderGames(); return; }
   host.innerHTML = skeletonRows(6, 42);
   $('gamesInfo').textContent = '';
   try {
-    state.games.report = await api('/api/games?scanId=' + state.scanId);
-    state.games.loadedFor = state.scanId;
+    const report = await api('/api/games?scanId=' + scanId);
+    if (treeScanId() !== scanId) return; // another tree is on screen now; its own load paints
+    state.games.report = report;
+    state.games.loadedFor = scanId;
     renderGames();
   } catch (e) {
+    if (treeScanId() !== scanId) return;
     state.games.report = null;
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   }
@@ -35351,7 +35415,7 @@ function renderGames() {
     (report.shaderCacheBytes
       ? `, of which <b>${formatBytes(report.shaderCacheBytes)}</b> is shader cache
          <button class="pill" id="clearShadersBtn">${icon('sparkles', 13)} Clear shader caches safely</button>`
-      : ''), state.scanId);
+      : ''), state.games.loadedFor);
 
   host.innerHTML = report.libraries.map(lib => `
     <div class="game-lib">
@@ -35468,7 +35532,7 @@ function renderApps() {
   FxNum.rollHtml($('appsInfo'), state.root
     ? `Based on your scan of <b>${escapeHtml(state.root.path)}</b>` +
       (apps.length ? ` — <span class="num">${apps.length}</span> apps own <span class="num">${formatBytes(attributed)}</span> of ${formatBytes(state.apps.totalBytes)}.${hint}` : '.')
-    : '', state.scanId);
+    : '', state.apps.loadedFor);
   if (!apps.length) {
     appsScatterDrop();
     host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon('search', 15)} No application folders inside this scan — scan your home folder or the whole disk to see per-app storage.</div>`;
@@ -35553,7 +35617,9 @@ function appsScatterDrop() {
 }
 async function loadAppsScatter() {
   const apps = state.apps.list;
-  const scanId = state.scanId;
+  // Asked of the scan the tree on screen came from (treeScanId), whose apps
+  // these are (loadApps) — never a scan still walking (BQJ-1b).
+  const scanId = treeScanId();
   const seq = ++appsScatterSeq;
   if (!scanId || apps.length < 5) { appsScatterDrop(); return; }
   let values = null;
@@ -35568,7 +35634,7 @@ async function loadAppsScatter() {
     const provider = res.providers && res.providers.subtreeCount;
     values = (provider && provider.available && provider.values) || null;
   } catch { values = null; }
-  if (seq !== appsScatterSeq || state.scanId !== scanId) return; // superseded
+  if (seq !== appsScatterSeq || treeScanId() !== scanId) return; // superseded
   if (!values) { appsScatterDrop(); return; }
   const points = [];
   for (const a of apps) {

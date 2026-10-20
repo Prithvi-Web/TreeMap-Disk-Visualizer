@@ -103,3 +103,234 @@ test('treeScanId names the scan behind the tree on screen through a rescan, a la
   Object.assign(state, { scanning: false, indexScanDue: true });
   assert.equal(treeScanComing(), true, 'the index paint, its scan due but not yet requested, has one coming too');
 });
+
+/* ───────────────────────────── a stub DOM and the page ───────────────────────────── */
+
+/** An element as these views write it: what they set is read back. */
+class El {
+  innerHTML = '';
+  textContent = '';
+  hidden = false;
+  disabled = false;
+  title = '';
+  value = '';
+  childElementCount = 0;
+  dataset: Record<string, string> = {};
+  style: Record<string, string> = {};
+  attrs: Record<string, string> = {};
+  cls = new Set<string>();
+  classList = {
+    add: (...c: string[]) => { for (const x of c) this.cls.add(x); },
+    remove: (...c: string[]) => { for (const x of c) this.cls.delete(x); },
+    toggle: (c: string, on?: boolean) => { const n = on === undefined ? !this.cls.has(c) : on; if (n) this.cls.add(c); else this.cls.delete(c); return n; },
+    contains: (c: string) => this.cls.has(c),
+  };
+  querySelector(): El | null { return null; }
+  querySelectorAll(): El[] { return []; }
+  addEventListener(): void {}
+  setAttribute(k: string, v: string): void { this.attrs[k] = v; }
+  removeAttribute(k: string): void { delete this.attrs[k]; }
+  focus(): void {}
+  closest(): null { return null; }
+}
+
+function stubDom(): (id: string) => El {
+  const els = new Map<string, El>();
+  return (id: string) => {
+    let e = els.get(id);
+    if (!e) { e = new El(); els.set(id, e); }
+    return e;
+  };
+}
+
+/** One request a page function made: the URL, and the scan it names (in the URL or the body). */
+type Ask = { url: string; scanId: string | null };
+
+function scanOf(url: string, body: string | undefined): string | null {
+  const q = /[?&]scanId=([^&]*)/.exec(url);
+  if (q) return decodeURIComponent(q[1]);
+  const p = /^\/api\/scan\/([^/?]+)\//.exec(url);
+  if (p) return decodeURIComponent(p[1]);
+  if (body) {
+    const b = JSON.parse(body) as { scanId?: string | null };
+    if ('scanId' in b) return b.scanId ?? null;
+  }
+  return null;
+}
+
+/** A view object out of the page's VIEWS list or a registerView call, by its id, brace-matched. */
+function pageView(id: string): string {
+  let at = INDEX.indexOf(`id: '${id}', label:`);
+  if (at === -1) at = INDEX.indexOf(`registerView({\n  id: '${id}',`);
+  assert.notEqual(at, -1, `the ${id} view is in the page`);
+  const start = INDEX.lastIndexOf('{', at + (INDEX.startsWith('registerView', at) ? 13 : 0));
+  let depth = 0;
+  for (let i = start; i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1);
+  }
+  return assert.fail(`the ${id} view never closes`);
+}
+
+/**
+ * The page's functions `decls` (and the rule's), in one scope over `given`,
+ * with every request recorded in `asks` and answered by `answer`. A name the
+ * code reaches that neither the page's lifted functions nor `given` hold is a
+ * ReferenceError, so nothing is stubbed by accident.
+ */
+function page<T>(decls: string[], given: Record<string, unknown>, returns: string, answer: (url: string) => unknown = () => ({})):
+  { fns: T; asks: Ask[] } {
+  const asks: Ask[] = [];
+  const api = async (url: string, init?: { body?: string }) => {
+    asks.push({ url, scanId: scanOf(url, init?.body) });
+    return answer(url);
+  };
+  const all = [...RULE, ...decls];
+  const own = new Set(all.map((d) => /function (\w+)\(/.exec(d)![1]));
+  const scope = new Proxy({ api, apiPaced: api, ...given }, {
+    has: (t, k) => typeof k === 'string' && k in t && !own.has(k),
+    get: (t, k) => (k === Symbol.unscopables ? undefined : (t as Record<string, unknown>)[k as string]),
+    set: (t, k, v) => { (t as Record<string, unknown>)[k as string] = v; return true; },
+  });
+  const fns = new Function('scope', `with (scope) { ${all.map(pageFn).join('\n')}\n return ${returns}; }`)(scope) as T;
+  return { fns, asks };
+}
+
+/** Let `n` turns of the event loop pass: a count, never a time. */
+async function turns(n = 10): Promise<void> {
+  for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve));
+}
+
+const COMING = /fills in once the scan finishes/;
+const OPENED = /^<div class="muted">Opened from the saved index — scan this folder to /;
+const noop = () => {};
+const esc = (s: string) => s;
+const TREE = { path: '/r', name: 'r', size: 1000 };
+
+/**
+ * A view's scan-backed report through the phases: during a rescan over the
+ * older scan's tree it is asked of that scan; once the rescan lands, of the
+ * new one; after a Stop, of the older one again — each from a fresh mount,
+ * nothing cached. `load` mounts the view; `fresh` forgets what it holds.
+ */
+async function throughThePhases(label: string, state: Record<string, unknown>, asks: Ask[], load: () => Promise<unknown>, fresh: () => void) {
+  for (const [name, phase, want] of [['during a rescan over the older scan\'s tree', HELD, 'scan-old'],
+    ['once the rescan lands', LANDED, 'scan-new'], ['after a Stop', STOPPED, 'scan-old']] as const) {
+    Object.assign(state, phase);
+    fresh();
+    const before = asks.length;
+    await load();
+    await turns();
+    const made = asks.slice(before);
+    assert.ok(made.length > 0, `${label}, ${name}: the report is asked for`);
+    assert.deepEqual(made.map((a) => a.scanId), made.map(() => want), `${label}, ${name}: asked of ${want} (${made.map((a) => a.url).join(', ')})`);
+  }
+}
+
+/* ───────────────────────────── Apps, Libraries, Security ───────────────────────────── */
+
+test('Apps: what each application owns is asked of the scan the tree on screen came from — never the running scan — and over the saved index\'s tree nothing is asked: it says it fills in once the scan finishes, then that the tree is the saved index', async () => {
+  const $ = stubDom();
+  const state: Record<string, unknown> = { root: TREE, apps: { loadedFor: null, list: [] }, ...HELD };
+  const { fns, asks } = page<{ mount: () => void; loadApps: () => Promise<void>; scatter: () => Promise<void> }>(['async function loadApps(', 'async function loadAppsScatter('], {
+    state, $, skeletonRows: () => '<i>loading</i>', appsScatterDrop: noop, renderApps: noop, escapeHtml: esc, appsScatterSeq: 0,
+  }, `{ mount: () => (${pageView('apps')}).mount(), loadApps, scatter: loadAppsScatter }`,
+  (url) => (url === '/api/facts' ? { providers: { subtreeCount: { available: false } } } : { apps: [], otherBytes: 0, totalBytes: 0 }));
+  await throughThePhases('Apps', state, asks, async () => fns.mount(), () => { (state.apps as { loadedFor: unknown }).loadedFor = null; });
+  // The chart's file counts, of the apps on screen: asked of the scan they came from.
+  Object.assign(state, HELD);
+  (state.apps as { list: unknown[] }).list = Array.from({ length: 5 }, (_, i) => ({ locations: [{ path: `/r/app${i}` }] }));
+  const asked = asks.length;
+  await fns.scatter();
+  assert.deepEqual(asks.slice(asked).map((a) => a.scanId), ['scan-old'], 'the chart\'s file counts are asked of the scan the apps came from');
+  // The saved index's tree: no scan behind it.
+  const before = asks.length;
+  Object.assign(state, INDEX_RUNNING);
+  fns.mount();
+  await turns();
+  assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked — not of the running scan');
+  assert.match($('appsBody').innerHTML, COMING, 'it says it fills in once the scan finishes');
+  Object.assign(state, INDEX_STOPPED);
+  fns.mount();
+  await turns();
+  assert.equal(asks.length, before, 'nor once that scan is stopped');
+  assert.match($('appsBody').innerHTML, OPENED, 'it says the tree is the saved index, and what would fill it');
+});
+
+test('Libraries: the game and media libraries are asked of the scan the tree on screen came from — never the running scan — and over the saved index\'s tree nothing is asked, said as loading, then as the saved index', async () => {
+  const $ = stubDom();
+  const state: Record<string, unknown> = { root: TREE, games: { loadedFor: null }, media: { loadedFor: null }, ...HELD };
+  const { fns, asks } = page<{ mount: () => void }>(['async function loadGames(', 'async function loadMedia('], {
+    state, $, skeletonRows: () => '<i>loading</i>', renderGames: noop, renderMedia: noop, escapeHtml: esc,
+  }, `{ mount: () => (${pageView('games')}).mount() }`, () => ({ libraries: [] }));
+  const fresh = () => { (state.games as { loadedFor: unknown }).loadedFor = null; (state.media as { loadedFor: unknown }).loadedFor = null; };
+  await throughThePhases('Libraries', state, asks, async () => fns.mount(), fresh);
+  const before = asks.length;
+  Object.assign(state, INDEX_RUNNING);
+  fns.mount();
+  await turns();
+  assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked');
+  assert.match($('gamesBody').innerHTML, COMING, 'the game libraries say they fill in once the scan finishes');
+  assert.match($('mediaBody').innerHTML, COMING, 'and so do the media libraries');
+  Object.assign(state, INDEX_STOPPED);
+  fns.mount();
+  await turns();
+  assert.equal(asks.length, before);
+  assert.match($('gamesBody').innerHTML, OPENED, 'once nothing will land, the tree is said to be the saved index');
+  assert.match($('mediaBody').innerHTML, OPENED);
+});
+
+test('Security: the findings, and the next page of them, are asked of the scan the tree on screen came from — never the running scan — and over the saved index\'s tree nothing is asked, said as loading, then as the saved index', async () => {
+  const $ = stubDom();
+  const state: Record<string, unknown> = { root: TREE, security: { loadedFor: null, report: null }, ...HELD };
+  const { fns, asks } = page<{ mount: () => void; more: () => Promise<void> }>(['async function loadSecurity(', 'async function loadMoreSecurity('], {
+    state, $, skeletonRows: () => '<i>loading</i>', renderSecurity: noop, escapeHtml: esc, toast: noop, securityMoreFor: null,
+  }, `{ mount: () => (${pageView('security')}).mount(), more: loadMoreSecurity }`,
+  () => ({ findings: [{ path: '/r/a' }], counts: {}, total: 2, truncated: false }));
+  await throughThePhases('Security', state, asks, async () => fns.mount(), () => { (state.security as { loadedFor: unknown }).loadedFor = null; });
+  // The next page, while a rescan runs over the older scan's tree whose findings are shown.
+  Object.assign(state, HELD);
+  const report = { findings: [{ path: '/r/a' }], counts: {}, total: 2, truncated: true };
+  (state.security as { report: unknown }).report = report;
+  const before = asks.length;
+  await fns.more();
+  assert.deepEqual(asks.slice(before).map((a) => a.scanId), ['scan-old'], 'the next page of findings is asked of the scan they came from');
+  assert.notEqual((state.security as { report: unknown }).report, report, 'and kept, the tree on screen being that scan\'s still');
+  const quiet = asks.length;
+  Object.assign(state, INDEX_RUNNING);
+  fns.mount();
+  await turns();
+  assert.equal(asks.length, quiet, 'over the saved index\'s tree nothing is asked');
+  assert.match($('securityBody').innerHTML, COMING, 'it says it fills in once the scan finishes');
+  Object.assign(state, INDEX_STOPPED);
+  fns.mount();
+  await turns();
+  assert.equal(asks.length, quiet);
+  assert.match($('securityBody').innerHTML, OPENED, 'then that the tree is the saved index');
+});
+
+test('Apps, Libraries and Security keep no answer that lands once another tree is on screen — asked of the older scan during a rescan, an answer landing after the rescan landed is not painted over the new tree', async () => {
+  for (const view of [
+    { id: 'apps', decls: ['async function loadApps('], state: { apps: { loadedFor: null, list: [] } }, kept: (s: Record<string, any>) => s.apps.loadedFor },
+    { id: 'games', decls: ['async function loadGames(', 'async function loadMedia('], state: { games: { loadedFor: null }, media: { loadedFor: null } },
+      kept: (s: Record<string, any>) => s.games.loadedFor ?? s.media.loadedFor },
+    { id: 'security', decls: ['async function loadSecurity('], state: { security: { loadedFor: null, report: null } }, kept: (s: Record<string, any>) => s.security.loadedFor },
+  ]) {
+    const $ = stubDom();
+    const state: Record<string, unknown> = { root: TREE, ...view.state, ...HELD };
+    const held: Array<(v: unknown) => void> = [];
+    let painted = 0;
+    const { fns } = page<{ mount: () => void }>(view.decls, {
+      state, $, skeletonRows: () => '<i>loading</i>', appsScatterDrop: noop, escapeHtml: esc,
+      renderApps: () => { painted++; }, renderGames: () => { painted++; }, renderMedia: () => { painted++; }, renderSecurity: () => { painted++; },
+    }, `{ mount: () => (${pageView(view.id)}).mount() }`, () => new Promise((resolve) => { held.push(resolve); }));
+    fns.mount();
+    await turns();
+    assert.ok(held.length > 0, `${view.id}: control: asked`);
+    Object.assign(state, LANDED); // finishScan: the new tree is on screen before the answer
+    for (const answer of held) answer({ apps: [], libraries: [], findings: [] });
+    await turns();
+    assert.equal(painted, 0, `${view.id}: the older scan's answer is not painted over the new tree`);
+    assert.equal(view.kept(state), null, `${view.id}: nor kept as what the view holds`);
+  }
+});

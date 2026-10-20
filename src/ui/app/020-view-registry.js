@@ -146,9 +146,14 @@ const VIEWS = [
       renderGrid();
     },
   },
+  // Apps, Libraries and Security read a report of the scan the tree on screen
+  // came from (treeScanId). Each loader asks it, or — over the saved index's
+  // tree, which no scan stands behind — says why there is nothing yet: keyed
+  // on the scan on hand, a rescan's view asked the scan still walking (409),
+  // and after a Stop kept another folder's report on screen (BQJ-1b).
   {
     id: 'apps', label: 'Apps', icon: 'box', needsScan: true,
-    mount() { if (state.scanId && state.root) loadApps(); },
+    mount() { if (state.root) loadApps(); },
     unmount() {
       // The scatter handle is a live client (tooltip, listeners, observer);
       // it dies with the view and mount()'s render path rebuilds it.
@@ -157,12 +162,12 @@ const VIEWS = [
   },
   {
     id: 'games', label: 'Libraries', icon: 'play', needsScan: true,
-    mount() { if (state.scanId && state.root) { loadGames(); loadMedia(); } },
+    mount() { if (state.root) { loadGames(); loadMedia(); } },
     onScanChange() { state.games.loadedFor = null; state.media.loadedFor = null; },
   },
   {
     id: 'security', label: 'Security', icon: 'shield', needsScan: true,
-    mount() { if (state.scanId && state.root) loadSecurity(); },
+    mount() { if (state.root) loadSecurity(); },
     onScanChange() { state.security.loadedFor = null; },
   },
   {

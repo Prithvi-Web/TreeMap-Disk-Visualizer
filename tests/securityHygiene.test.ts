@@ -812,7 +812,10 @@ function findingsPage(all: Array<Record<string, unknown>>, url: string, scanId =
  */
 function securityPanel(api: (url: string) => Promise<unknown>) {
   const index = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
-  const fn = index.slice(index.indexOf('function renderSecurity'), index.indexOf('function confirmRelocateSecret'));
+  // With the app's one rule for the scan behind the tree on screen (treeScanId), which loadMoreSecurity asks of.
+  const ruleAt = index.indexOf('function treeScanId(');
+  const fn = index.slice(ruleAt, index.indexOf('\n}', ruleAt) + 2) + '\n'
+    + index.slice(index.indexOf('function renderSecurity'), index.indexOf('function confirmRelocateSecret'));
   const finding = (i: number) => ({ severity: 'low', name: `Deck-${i}.key`, label: 'Key', path: `/h/Deck-${i}.key`, reason: 'r', why: 'w', size: 1 });
   const all = Array.from({ length: 801 }, (_, i) => finding(i));
   const clicks: Record<string, () => unknown> = {};

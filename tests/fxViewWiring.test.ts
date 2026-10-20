@@ -456,8 +456,8 @@ test('the receipt segments ramp their own token and dim the others on hover', ()
 /* ══════════════════ info lines that roll ══════════════════ */
 
 test('security, offloaded and fleet paint through keyed rolls', () => {
-  assert.match(INDEX, /FxNum\.rollHtml\(\$\('securityInfo'\)[\s\S]{0,700}?state\.scanId\)/,
-    'security is keyed by the scan it describes');
+  assert.match(INDEX, /FxNum\.rollHtml\(\$\('securityInfo'\)[\s\S]{0,700}?state\.security\.loadedFor\)/,
+    'security is keyed by the scan it describes — the one its findings were asked of (loadSecurity)');
   assert.match(INDEX, /FxNum\.rollHtml\(\$\('offloadInfo'\)[\s\S]{0,700}?'offload-index'\)/,
     'the offload index is one entity — a constant key');
   assert.match(slice('function renderFleet(', 'async function setFleet('), /FxNum\.rollHtml\(host,/,

@@ -210,8 +210,9 @@ test('innerHTML summaries roll ONLY under a same-entity key — a new scan must 
     'duplicates summary is keyed by scan+threshold — a fresh hunt must not roll from the last one’s figures');
   assertKeyedBy(INDEX, "$('ndSummary')", 'state.near.loadedFor',
     'near-duplicates summary is keyed the same way');
-  for (const id of ['appsInfo', 'gamesInfo', 'mediaInfo']) {
-    assertKeyedBy(INDEX, `$('${id}')`, 'state.scanId', `${id} is keyed by the scan it describes`);
+  // Keyed by the scan their report was asked of (loadedFor) — the tree on screen's, not the scan on hand.
+  for (const [id, key] of [['appsInfo', 'state.apps.loadedFor'], ['gamesInfo', 'state.games.loadedFor'], ['mediaInfo', 'state.media.loadedFor']]) {
+    assertKeyedBy(INDEX, `$('${id}')`, key, `${id} is keyed by the scan it describes`);
   }
   assertKeyedBy(slice('function renderZombies(', 'function wireZombieActions'), 'body', "'zh'",
     'the held-up-space card is one entity across its life, so a constant key is the honest one');
