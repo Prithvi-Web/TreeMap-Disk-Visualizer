@@ -1213,8 +1213,12 @@ function rasterPaint(tiles: Tile[], palette: Record<string, string>, W: number, 
 
 /** A leaf the owner's rule outlines: 8 px or more on each side. */
 const OUTLINED_PX = 8;
-/** The band a folder is framed by, as the owner's rule has it: 2 px at the top level, 1 px inside it (never over a third of the folder). */
-const bandOf = (r: { w: number; h: number; n: Tile }) => Math.max(1, Math.min(r.n.depth <= 1 ? 2 : 1, Math.floor(Math.min(r.w, r.h) / 3)));
+/**
+ * The band a folder is framed by, as the owner's rule has it: heavier than a leaf's 1 px outline at
+ * every depth — 3 px at the top level, 2 px inside it (review F1.3) — and never over a third of the
+ * folder's thinner side, nor under 1 px.
+ */
+const bandOf = (r: { w: number; h: number; n: Tile }) => Math.max(1, Math.min(r.n.depth <= 1 ? 3 : 2, Math.floor(Math.min(r.w, r.h) / 3)));
 /** A painted rectangle on whole pixels (the painter lays them there; a painter that did not is measured where its rectangles round to). */
 const whole = (r: Painted): Painted => ({ ...r, x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.x + r.w) - Math.round(r.x), h: Math.round(r.y + r.h) - Math.round(r.y) });
 
@@ -1362,7 +1366,7 @@ test('owner\'s outlines: in the History diff a line is measured as the screen sh
   }
 });
 
-test('owner\'s outlines: a folder\'s band is heavier and higher-contrast than a leaf\'s outline beside the same colour — 2 px at the top level, and on the size ramp always the stronger line', () => {
+test('owner\'s outlines: a folder\'s band is heavier and higher-contrast than a leaf\'s outline beside the same colour — 3 px at the top level, 2 px inside it, and on the size ramp always the stronger line', () => {
   for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
     const b = colourBlocks(EVERY_COLOUR, 16, 16);
     const { raster, px } = rasterPaint(b.tiles, palette, b.W, b.H, b.colour);
@@ -1376,8 +1380,73 @@ test('owner\'s outlines: a folder\'s band is heavier and higher-contrast than a 
       if (i < RAMP_COLOURS.length) assert.ok(frame > leaf + 0.5, `${theme}, ${c.name}: on the size ramp the band (${fmt(frame)}:1) is clearly the stronger line than the leaf's outline (${fmt(leaf)}:1)`);
     }
     const top = px.find((r) => r.n.depth === 1)!, nested = px.find((r) => r.n.depth === 2)!;
-    assert.equal(top.bands!.find((x) => x.y === top.y)!.h, 2, `${theme}: a top-level folder's band is 2 px`);
-    assert.equal(nested.bands!.find((x) => x.y === nested.y)!.h, 1, `${theme}: a nested folder's band is 1 px, as a leaf's outline is`);
+    assert.equal(top.bands!.find((x) => x.y === top.y)!.h, 3, `${theme}: a top-level folder's band is 3 px`);
+    assert.equal(nested.bands!.find((x) => x.y === nested.y)!.h, 2, `${theme}: a nested folder's band is 2 px, twice a leaf's outline`);
+  }
+});
+
+/** How many pixels, from (x, y) stepping (dx, dy), are within 1.02:1 of the first — a band's width as the raster shows it. */
+function runOf(raster: ReturnType<typeof rasterCtx>, x: number, y: number, dx: number, dy: number): number {
+  const first = raster.at(x, y);
+  let k = 1;
+  while (k < 12 && contrast(raster.at(x + dx * k, y + dy * k), first) < 1.02) k++;
+  return k;
+}
+
+test('owner\'s outlines: a folder\'s band is visibly heavier than a leaf\'s outline at every depth Depth 4 draws — on the pixels, 3 px at the top level and 2 px at depths 2 and 3, against a 1 px leaf outline (review F1.3)', () => {
+  // /t holds /t/n, which holds /t/n/m and a file; /t/n/m holds four files. Every folder has room for its whole band.
+  const dir = (path: string, depth: number, x: number, y: number, w: number, h: number): Tile => ({ name: path, path, size: 4e9 / depth, type: 'dir', depth, expanded: true, x, y, w, h });
+  const file = (path: string, depth: number, x: number, y: number, w: number, h: number, size: number): Tile => ({ name: path, path, size, type: 'file', depth, expanded: false, x, y, w, h });
+  const tiles = [
+    dir('/t', 1, 0, 0, 100, 100), dir('/t/n', 2, 10, 10, 80, 80), dir('/t/n/m', 3, 10, 10, 50, 80),
+    file('/t/n/f', 3, 60, 10, 30, 80, 3e8),
+    file('/t/n/m/a', 4, 10, 10, 25, 40, 2e8), file('/t/n/m/b', 4, 35, 10, 25, 40, 9e7), file('/t/n/m/c', 4, 10, 50, 25, 40, 4e7), file('/t/n/m/d', 4, 35, 50, 25, 40, 1e7),
+  ];
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const { raster, px } = rasterPaint(tiles, palette, 400, 400);
+    const at = (path: string) => whole(px.find((r) => r.n.path === path)!);
+    // Each band measured where it lies beside its own fill or a file, away from any other line: its top edge, a third of the way along.
+    const t = at('/t'), n = at('/t/n'), m = at('/t/n/m'), leaf = at('/t/n/m/b');
+    const bands = { top: runOf(raster, t.x + 6, t.y, 0, 1), 'depth 2': runOf(raster, n.x + n.w - 20, n.y, 0, 1), 'depth 3': runOf(raster, m.x + 20, m.y, 0, 1) };
+    // A leaf's outline where it lies inside its folder, touching no folder edge: b's left side, beside a.
+    const outline = runOf(raster, leaf.x, leaf.y + Math.floor(leaf.h / 2), 1, 0);
+    assert.equal(outline, 1, `${theme}: control — a leaf's outline is 1 px on the pixels`);
+    assert.deepEqual(bands, { top: 3, 'depth 2': 2, 'depth 3': 2 }, `${theme}: the bands' widths on the pixels`);
+    for (const [where, w] of Object.entries(bands)) assert.ok(w > outline, `${theme}: the ${where} band (${w} px) is heavier than a leaf's outline (${outline} px)`);
+  }
+});
+
+test('owner\'s outlines: a band never takes more than a third of its folder\'s thinner side, nor less than 1 px — a thin folder keeps its own colour inside its band (review F1.12)', () => {
+  // Folders 2 to 10 px thick, at the top level and nested, each holding nothing over the floor: filled with its own colour (J51).
+  const tiles: Tile[] = [];
+  const thick = [2, 3, 4, 5, 6, 7, 8, 9, 10];
+  // Side by side, 2 px apart, on a 100 px map: the top-level ones along the top, the nested ones inside /host, clear of its band.
+  const xs = thick.map((_t, i) => thick.slice(0, i).reduce((a, t) => a + t + 2, 0));
+  for (const [i, t] of thick.entries()) {
+    tiles.push({ name: `top${t}`, path: `/top${t}`, size: 5e9, type: 'dir', depth: 1, expanded: true, x: xs[i], y: 0, w: t, h: 40 } as Tile);
+  }
+  tiles.push({ name: 'host', path: '/host', size: 5e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 50, w: 100, h: 50 } as Tile);
+  for (const [i, t] of thick.entries()) {
+    tiles.push({ name: `n${t}`, path: `/host/n${t}`, size: 5e9, type: 'dir', depth: 2, expanded: true, x: 5 + xs[i], y: 55, w: t, h: 40 } as Tile);
+  }
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const { raster, px } = rasterPaint(tiles, palette, 100, 100);
+    for (const t of thick) {
+      for (const path of [`/top${t}`, `/host/n${t}`]) {
+        const r = whole(px.find((p) => p.n.path === path)!);
+        // Its left band: the side bands run between the top and bottom ones, and the left is laid first.
+        const left = r.bands!.find((b) => b.x === r.x && b.y > r.y && b.y + b.h < r.y + r.h && b.w >= 1)!;
+        assert.ok(left, `${theme}, ${path} (${t} px wide): a band at least 1 px wide runs down its left side`);
+        const want = Math.max(1, Math.min(r.n.depth <= 1 ? 3 : 2, Math.floor(t / 3)));
+        assert.equal(left.w, want, `${theme}, ${path} (${t} px wide): its band is ${want} px`);
+        assert.ok(left.w <= Math.max(1, Math.floor(t / 3)) && left.w >= 1, `${theme}, ${path}: no more than a third of ${t} px, and at least 1 px`);
+        // Inside both side bands, the folder's own fill: its colour, not a band's.
+        const y = r.y + Math.floor(r.h / 2);
+        for (let x = r.x + left.w; x < r.x + r.w - left.w; x++) {
+          assert.ok(contrast(raster.at(x, y), lerp(r.bg![0], r.bg![1], (y + 0.5 - r.y) / r.h)) < 1.05, `${theme}, ${path}: pixel ${x - r.x} across is the folder's own fill`);
+        }
+      }
+    }
   }
 });
 
@@ -1625,10 +1694,11 @@ test('map density: a realistic dense map is colour with contrasting lines, not a
     assert.deepEqual(m.under, [], `${theme}: lines under ${EDGE_BAR}:1 against the tile beside them`);
   }
   // QA read 8.5% (corpus) and 8.9% (/System/Library) near-black in the real dark map, and 2.3–5.5% in light,
-  // painted BQG-5's way; this layout, painted that way (REL-79), measures 10.6% dark and 4.9% light — the
-  // empty folders' slabs and the 0.35 outlines over a gap of the ground — and 0.1% in both now. The lines
-  // are dark shades of each tile's own colour, not black: at luminance < 0.08 the share is 16.5% (it was
-  // 14.6% dark, 8.7% light) — the outlines the owner asked to see.
+  // painted BQG-5's way; this layout, painted that way (REL-79) on this raster, measures 13.3% dark and 1.7%
+  // light — the empty folders' slabs and the 0.35 outlines over a gap of the ground — and 0.1% in both now.
+  // The lines are dark shades of each tile's own colour, not black: at luminance < 0.08 the share is 26.2%
+  // (it was 18.4% dark, 2.9% light; 16.5% with 1 px nested bands, before review F1.3) — the outlines the
+  // owner asked to see.
   const over = Object.entries(share).filter(([, v]) => v >= 0.02).map(([theme, v]) => `${theme} ${(v * 100).toFixed(1)}%`);
   assert.deepEqual(over, [], `near-black (luminance < ${NEAR_BLACK}) at or over 2%: ${over.join(', ')} (dark ${(share.dark * 100).toFixed(1)}%, light ${(share.light * 100).toFixed(1)}%)`);
 });

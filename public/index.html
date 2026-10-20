@@ -13026,10 +13026,12 @@ function tmSetEmpty(text) {
  *     the bar needs. A top highlight is drawn only under a dark outline, where
  *     it can only add to it;
  *   - a folder is framed inside its own box by a band TM_FRAME_W_TOP px wide
- *     at the top level and TM_FRAME_W px inside it, toned the same way against
- *     whatever lies inside it along each stretch of its edge, to TM_FRAME_MIN:
- *     never weaker than a leaf's outline beside the same colour, and on the
- *     size ramp always the stronger line (tmFrameBands);
+ *     at the top level and TM_FRAME_W px inside it — heavier than a leaf's 1 px
+ *     outline at every depth (review F1.3), never over a third of the
+ *     folder's thinner side — toned the same way against whatever lies inside
+ *     it along each stretch of its edge, to TM_FRAME_MIN: never weaker than a
+ *     leaf's outline beside the same colour, and on the size ramp always the
+ *     stronger line (tmFrameBands);
  *   - a folder's area that no rectangle covers (its files under the map's
  *     size floor, or past the server's cap) is filled with the folder's own
  *     colour and cushion (seventh browser pass J51), where it showed the
@@ -13043,8 +13045,8 @@ function tmSetEmpty(text) {
 const TM_DENSE_PX = 8;
 const TM_EDGE_MIN = 3.3;    // a leaf's outline against its own tile
 const TM_FRAME_MIN = 4.5;   // a folder's band against what lies inside it
-const TM_FRAME_W_TOP = 2;   // px: a top-level folder's band
-const TM_FRAME_W = 1;       // px: a nested folder's band
+const TM_FRAME_W_TOP = 3;   // px: a top-level folder's band
+const TM_FRAME_W = 2;       // px: a nested folder's band — twice a leaf's outline (review F1.3)
 const TM_LIT = 0.18;        // the white of a leaf's top highlight
 /** `v` css px on the nearest whole device pixel. */
 function tmSnap(v, dpr) {
@@ -13141,7 +13143,8 @@ function tmEdgeContent(r, side, kids) {
 }
 /**
  * The folder `r`'s frame as the filled bands that draw it, { x, y, w, h, rgb }:
- * TM_FRAME_W_TOP px at the top level, TM_FRAME_W inside it, inside its own box,
+ * TM_FRAME_W_TOP px at the top level, TM_FRAME_W inside it (at most a third of
+ * its thinner side, at least 1 px), inside its own box,
  * each stretch toned against what lies inside it there (tmTone, TM_FRAME_MIN).
  * The top and bottom bands run the whole width; the sides run between them.
  */
