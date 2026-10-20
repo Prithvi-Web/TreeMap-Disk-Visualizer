@@ -17,6 +17,8 @@ import { buildMcpServer, setToolWaitClockForTests } from '../src/mcp/server';
 import { peekScan } from '../src/services/diskScanner';
 import { CommandStopped, setTrashStepForTests } from '../src/services/cleaner';
 import { formatBytes } from '../src/utils/formatBytes';
+import { platform } from '../src/platform';
+import { invalidateCapabilities } from '../src/platform/capabilities';
 import { waitFor } from './fixtures/waitFor';
 import { destinationsOnAnotherDrive, withRealDrives } from './fixtures/offloadDrive';
 destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
@@ -307,6 +309,52 @@ test('trash_paths dryRun reports the manifest and provably touches nothing', asy
   assert.equal(s.wouldTrash[0].bytes, BIG);
   assert.equal(s.totalKnownBytes, BIG);
   assert.ok(fs.existsSync(bigPath), 'dry run must not move the file');
+});
+
+/*
+ * The BQL-a review, F3.1: the open-file check answers `checked: true, complete: false` with a reason when it
+ * could not see every program (on Linux a program of this account that made itself not dumpable, as
+ * ssh-agent does; on Windows past Restart Manager's cap). The HTTP dry runs hand on the whole report; the MCP
+ * dry run kept only `checked`, so an agent told the person nothing held these files.
+ */
+test('trash_paths dryRun never reads as an all-clear over a check that could not see every program: complete false and why ride beside inUse, and the tool says so (BQL-a review F3.1)', async () => {
+  const provider = platform() as unknown as {
+    getOpenHandlesBatch: (paths: string[]) => Promise<unknown>;
+    probeOpenHandleGuard: () => Promise<unknown>;
+  };
+  const batch = provider.getOpenHandlesBatch.bind(provider);
+  const probe = provider.probeOpenHandleGuard.bind(provider);
+  const why = 'TreeMap could not read which files 1 program has open (a test), so a file it holds open may be in use without being listed.';
+  const answer = (a: unknown) => { provider.getOpenHandlesBatch = () => (a instanceof Error ? Promise.reject(a) : Promise.resolve(a)); };
+  const openHandles = async () => {
+    const r = await call('trash_paths', { paths: [bigPath], dryRun: true });
+    assert.ok(!r.isError, JSON.stringify(r.content));
+    return r.structuredContent!.openHandles as Record<string, unknown>;
+  };
+  provider.probeOpenHandleGuard = () => Promise.resolve({ available: true, mechanism: 'test' });
+  invalidateCapabilities();
+  try {
+    answer({ handles: [], complete: false, reason: why });
+    const partial = await openHandles();
+    assert.deepEqual([partial.inUse, partial.checked, partial.complete], [false, true, false], 'checked, not complete — never a bare "not in use"');
+    assert.ok(String(partial.note).includes(why), `and why: ${JSON.stringify(partial)}`);
+    answer({ handles: [{ path: bigPath, pid: process.pid + 1, processName: 'Preview' }], complete: false, reason: why });
+    const held = await openHandles();
+    assert.deepEqual([held.inUse, held.complete], [true, false], 'a holder found by a check that was not complete says it was not complete');
+    assert.ok(String(held.note).includes('Preview') && String(held.note).includes(why), `naming the holder and why: ${JSON.stringify(held)}`);
+    answer({ handles: [], complete: true });
+    assert.deepEqual(await openHandles(), { inUse: false, checked: true, complete: true }, 'a whole check that found nothing is the all-clear');
+    answer(new Error('the probe did not answer (a test)'));
+    const unchecked = await openHandles();
+    assert.deepEqual([unchecked.inUse, unchecked.checked, unchecked.complete], [false, false, false], 'control: a check that could not run');
+    assert.match(String(unchecked.note), /the probe did not answer/);
+  } finally {
+    provider.getOpenHandlesBatch = batch;
+    provider.probeOpenHandleGuard = probe;
+    invalidateCapabilities();
+  }
+  const tool = (await client.listTools()).tools.find((t) => t.name === 'trash_paths');
+  assert.match(tool?.description ?? '', /inUse: false with complete: false is not an all-clear/, 'the tool tells an agent how to read it');
 });
 
 test('trash_paths refuses paths outside every scanned root', async () => {

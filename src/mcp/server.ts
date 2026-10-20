@@ -18,7 +18,7 @@ import { getForecast } from '../services/forecast';
 import { buildStatement } from '../services/missingGigabytes';
 import { prepareOffload, startOffload, getOffloadJob } from '../services/offload';
 import { moveToTrash } from '../services/cleaner';
-import { checkOpenHandles, describeConflicts } from '../services/openHandleGuard';
+import { checkOpenHandles, describeConflicts, type OpenHandleReport } from '../services/openHandleGuard';
 import { storeOf } from '../services/scanStore';
 import { insideAnyScanRoot, assertNotSpillPath, assertNotAppDataPath, assertNotSafetyRecord } from '../middleware/pathGuard';
 import { isVirtualPath } from '../services/containerScanner';
@@ -176,6 +176,22 @@ function trashNote(moved: number, failed: readonly { stopped?: boolean }[]): str
     ...(notMoved > 0 ? [`${notMoved} ${was(notMoved)} not moved`] : []),
   ];
   return failed.length === 0 ? `${clauses[0]}.` : `${clauses.join('; ')}. \`failed\` says which, and why.`;
+}
+
+/**
+ * The trash_paths dry run's word on open files (B2). `complete` rides beside `inUse` always, and the check's
+ * reason with it whenever the check did not see every program — it could not run (`checked: false`), or it ran
+ * and could not read some: on Linux a program of this account that made itself not dumpable, as ssh-agent does;
+ * on Windows past Restart Manager's cap. Only `inUse: false` beside `complete: true` is the all-clear (the BQL-a
+ * review, F3.1: the dry run kept `checked` alone, so an agent told a person nothing held files nobody had seen).
+ */
+function dryRunOpenHandles(report: OpenHandleReport): Record<string, unknown> {
+  const unseen = report.complete ? undefined : report.reason;
+  if (report.conflicts.length > 0) {
+    const named = describeConflicts(report.conflicts);
+    return { inUse: true, conflicts: report.conflicts, complete: report.complete, note: unseen ? `${named} ${unseen}` : named };
+  }
+  return { inUse: false, checked: report.checked, complete: report.complete, ...(unseen === undefined ? {} : { note: unseen }) };
 }
 
 /**
@@ -841,7 +857,9 @@ export function buildMcpServer(): McpServer {
         'Move files/folders to the system Trash / Recycle Bin (recoverable until the Trash is emptied — never a hard delete). DESTRUCTIVE ' +
         'unless dryRun: true, which reports what would be trashed and the bytes that would be reclaimed without ' +
         'touching anything — dry-run first, and only act once the user has confirmed. Every path must lie inside ' +
-        'a folder this server has scanned (run scan_path first); cloud and in-archive paths are refused.',
+        'a folder this server has scanned (run scan_path first); cloud and in-archive paths are refused. The dry ' +
+        'run\'s openHandles says whether a program holds any of these files open: inUse: false with complete: false ' +
+        'is not an all-clear — the check could not see every program, and its note says why; tell the user.',
       inputSchema: {
         paths: z.array(z.string().min(1)).min(1).max(MAX_PATHS).describe('Files/folders to trash (inside a scanned root)'),
         dryRun: z.boolean().default(false).describe('true = report the manifest, act on nothing'),
@@ -886,9 +904,7 @@ export function buildMcpServer(): McpServer {
             wouldTrash: sized.map(withInstalledProgram),
             totalKnownBytes: knownTotal,
             totalKnownFormatted: formatBytes(knownTotal),
-            openHandles: openHandles.conflicts.length
-              ? { inUse: true, conflicts: openHandles.conflicts, note: describeConflicts(openHandles.conflicts) }
-              : { inUse: false, checked: openHandles.checked, ...(openHandles.checked ? {} : { note: openHandles.reason }) },
+            openHandles: dryRunOpenHandles(openHandles),
             note: 'Dry run — nothing was moved to the Trash.',
           });
         }
