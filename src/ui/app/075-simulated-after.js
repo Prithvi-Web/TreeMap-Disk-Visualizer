@@ -746,7 +746,8 @@ const TM_SCORE_CAP = 6000;
  */
 let tmScoreChain = null;
 function tmScoreKey() {
-  return `${state.scanId}\n${state.treemap.rootPath}\n${state.treemap.mode}\n${state.treemap.colorMode}`;
+  // The tree's scan, as the scores are asked of it (reclaimTreeScan, review F3.2).
+  return `${reclaimTreeScan()}\n${state.treemap.rootPath}\n${state.treemap.mode}\n${state.treemap.colorMode}`;
 }
 
 function fetchScoresForTreemap() {

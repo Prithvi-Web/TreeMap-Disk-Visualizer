@@ -1765,7 +1765,7 @@ function refineWorld(colorMode: string, slices: number[]) {
   };
   const fns = runPageDecls<{ drawView(): void }>(
     ['altRefineSeq', 'tmScoreChain', 'isSun', 'isCells', 'drawView', 'drawnCells', 'buildCells',
-      'altRefiningNote', 'altRefineCancel', 'altRefineSchedule', 'tmScoreKey', 'fetchScoresForTreemap'], {
+      'altRefiningNote', 'altRefineCancel', 'altRefineSchedule', 'reclaimTreeScan', 'tmScoreKey', 'fetchScoresForTreemap'], {
       state, AbortController,
       sunburstRoot: () => ({ path: '/r' }),
       layoutVoronoi: solve, layoutCirclePack: solve,

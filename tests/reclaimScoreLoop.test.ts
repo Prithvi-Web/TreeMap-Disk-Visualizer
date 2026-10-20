@@ -65,7 +65,7 @@ function declSource(name: string): string {
  * a ReferenceError in the test that reaches it.
  */
 const SHIPPED = [
-  'reclaim', 'RECLAIM_PATH_REFUSALS', 'reclaimFailureScope', 'reclaimAskablePath', 'reclaimAskableNode',
+  'reclaim', 'RECLAIM_PATH_REFUSALS', 'reclaimTreeScan', 'reclaimFailureScope', 'reclaimAskablePath', 'reclaimAskableNode',
   'ensureScores', 'reclaimScoreBatch', 'fetchScoresForTreemap', 'reclaimCoverageNote',
   'tmScoreChain', 'tmScoreKey',
 ];
@@ -466,4 +466,28 @@ test('review F2.2: a failed score request asked while a rescan runs is remembere
   h.fetchScoresForTreemap(); // the next repaint of the same tree
   await turns(60);
   assert.equal(h.asked.length, 1, `not asked again: the tree on screen, A's, is the one the failure was for (${JSON.stringify(h.askedScans)})`);
+});
+
+/* ── Review F3.2: the score chain is keyed on the tree's scan, as the scores are asked of it ──
+   F2.2 moved the asks to the scan the tree on screen came from, but the
+   chain — which map a chain of batches is for — was still keyed on the scan
+   on hand. A rescan's request answering while a batch was out moved that key:
+   the batch's scores were filed, its repaint and legend were dropped as the
+   chain's, and every later ask found them known and repainted nothing — grey
+   cells in the Reclaim colour mode until something else redrew the map. */
+
+test('review F3.2: a rescan\'s request answering while a score batch of the older scan\'s tree is out does not drop its repaint — the chain is the tree\'s, whose scan has not changed', async () => {
+  const h = harness((paths) => ({ values: scoreOf(paths) }));
+  // Scan A's map drawn, its scores asked.
+  Object.assign(h.state, { scanId: 'A', settledScanId: 'A', scanning: false });
+  h.cells = files(3, '/r/');
+  h.fetchScoresForTreemap();
+  // The person presses Scan (beginScanChrome), and the rescan's request answers (followScanProgress) while the batch is out.
+  Object.assign(h.state, { scanning: true });
+  h.state.scanId = 'B';
+  await turns(60);
+  assert.deepEqual(h.askedScans, ['A'], 'control: asked of the scan the tree on screen came from');
+  assert.equal(h.reclaim.scores.size, 3, 'control: and filed');
+  assert.equal(h.calls.drawView, 1, 'the map repaints in their colours');
+  assert.equal(h.calls.renderTmLegend, 1, 'and the legend says they are scored');
 });

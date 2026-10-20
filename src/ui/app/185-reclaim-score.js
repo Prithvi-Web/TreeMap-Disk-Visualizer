@@ -53,13 +53,27 @@ function reclaimReset() {
 }
 
 /**
+ * The scan the tree on screen came from: what a score is asked of
+ * (ensureScores), what a failed one is remembered for (reclaimFailureScope)
+ * and what the map's score chain is for (tmScoreKey) — one rule, so the three
+ * cannot drift. While a scan runs its id is on hand once its request answers,
+ * but the tree on screen is still the older scan's (settledScanId) or the
+ * saved index's (none: nothing is asked), and a scan still walking answers
+ * every path "unavailable" (review F2.2). Keyed on the scan on hand, the
+ * chain took a rescan's request answering for another map, and a batch still
+ * out was filed with no repaint and no legend (review F3.2).
+ */
+function reclaimTreeScan() {
+  return state.scanning ? state.settledScanId : state.scanId;
+}
+
+/**
  * What a failed request is remembered for: the scan the tree on screen came
- * from (as ensureScores asks it — not a scan running behind it), this view,
- * this folder on screen.
+ * from (reclaimTreeScan — not a scan running behind it), this view, this
+ * folder on screen.
  */
 function reclaimFailureScope() {
-  const treeScan = state.scanning ? state.settledScanId : state.scanId;
-  return `${treeScan}\n${state.view}\n${(state.treemap && state.treemap.rootPath) || ''}`;
+  return `${reclaimTreeScan()}\n${state.view}\n${(state.treemap && state.treemap.rootPath) || ''}`;
 }
 
 /**
@@ -137,13 +151,11 @@ function scoreKnown(path) { return reclaim.scores.has(path); }
  * by a request that will never answer for it.
  */
 async function ensureScores(paths, onLanded, onFailed, { signal = null, isCurrent = null } = {}) {
-  // Asked of the scan the tree on screen came from. While a rescan runs, its
-  // id is on hand once its request answers, but the tree on screen is still
-  // the older scan's (settledScanId) or the saved index's (none: nothing is
-  // asked), and a scan still walking answers every path "unavailable" — filed
-  // as asked and none, a Stop then left the map grey and the tooltip saying
-  // no signal could be read, until the next scan (review F2.2).
-  const treeScan = () => (state.scanning ? state.settledScanId : state.scanId);
+  // Asked of the scan the tree on screen came from (reclaimTreeScan): asked
+  // of a scan still walking, every path was filed as asked and none, and a
+  // Stop then left the map grey and the tooltip saying no signal could be
+  // read, until the next scan (review F2.2).
+  const treeScan = reclaimTreeScan;
   if (!treeScan() || (signal && signal.aborted)) return;
   const scope = reclaimFailureScope();
   if (reclaim.failedFor !== scope) {
@@ -196,7 +208,7 @@ async function ensureScores(paths, onLanded, onFailed, { signal = null, isCurren
  * whether anything landed and whether anything failed.
  */
 async function reclaimScoreBatch(batch, scanAtRequest, scope, outcome, signal = null) {
-  const treeScan = () => (state.scanning ? state.settledScanId : state.scanId); // as ensureScores asks (review F2.2)
+  const treeScan = reclaimTreeScan; // as ensureScores asks (review F2.2)
   let res;
   try {
     res = await api('/api/facts', {
