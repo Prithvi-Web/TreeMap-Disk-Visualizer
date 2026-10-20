@@ -7406,6 +7406,11 @@ const state = {
   // differs from scanId for exactly as long as a rescan is in flight, which is
   // the window in which Stop needs to know what to put back.
   settledScanId: null,
+  // The tree an index paint replaced while that folder's scan runs, when a
+  // scan of its own was behind it — its tree, scan, counters and lists — for
+  // a Stop to put back (putBackHeldTree, seventh browser pass J06); null
+  // otherwise. `over` is the index's tree that replaced it.
+  heldBehindIndex: null,
   scanning: false,
   es: null,
   // Settles the running scan's stream and watchdog together. followScanProgress
@@ -7835,8 +7840,14 @@ const VIEWS = [
       // purpose — with nothing scanned every state is false and this is the
       // cheap all-off no-op.
       fxTmPillBeamsSync(true);
-      if (!state.scanId || !state.root) return;
+      if (!state.root) return;
       if (!state.treemap.rootPath) state.treemap.rootPath = state.root.path;
+      // A tree with no scan behind it — the saved index's, painted before its
+      // scan answers, or left on screen by a Stop — is drawn all the same,
+      // laid out from that tree (loadTreemap). Returning here left a blank
+      // canvas under the tree's name (seventh browser pass, J05). What asks
+      // the scan itself waits for one.
+      if (!state.scanId) { loadTreemap(state.treemap.rootPath); return; }
       loadSavedViews(); // Phase 2 §2.4 — the chip strip, fetched lazily on entry
       refreshDock(); // §8.3 — connected drives, fetched lazily on entry like the chips
       loadTreemap(state.treemap.rootPath);
@@ -9513,6 +9524,9 @@ async function stopScan() {
   // strand a real tree with no scan behind it. Null when there is no such
   // scan — a first run, or a tree the index painted — and then the views take
   // their existing "no scan yet" branch, which openFromIndex relies on too.
+  // An index paint that stood over older results gives them back first, with
+  // their scan (seventh browser pass, J06).
+  putBackHeldTree();
   state.scanId = state.settledScanId || null;
   // With no tree on screen the start screen comes back naming the folder that
   // was being scanned, "Scan … again" first among its choices (the owner,
@@ -9525,9 +9539,12 @@ async function stopScan() {
   // when it does (abandonIfStopped).
   state.lastStop = { gen, noted };
 
+  // A tree left on screen with no scan behind it is the saved index's, and
+  // is said to be (J05): it stays drawn and usable, and may be out of date.
+  const indexLeft = state.root && !state.settledScanId ? `Scan stopped — showing the saved index of ${state.root.path}.` : '';
   const status = $('scanStatus');
   status.classList.remove('error'); // stopping is a choice, not a failure
-  status.innerHTML = icon('stop', 14) + '<span>Scan stopped by user</span>';
+  status.innerHTML = icon('stop', 14) + '<span>' + (indexLeft ? escapeHtml(indexLeft) : 'Scan stopped by user') + '</span>';
   restoreDashboardPanels();
   // And put the start screen back if that is where we are — over the
   // Dashboard's Stop, which held focus if it was pressed from the keyboard
@@ -9540,7 +9557,7 @@ async function stopScan() {
   focusStartScreen();
   // And said aloud: the start screen's own line, or the status line's, in a
   // live region nothing hides (review F1.14).
-  $('stopAnnounce').textContent = noted ? startLastLine(noted) : 'Scan stopped.';
+  $('stopAnnounce').textContent = noted ? startLastLine(noted) : indexLeft || 'Scan stopped.';
 
   // Stopped before POST /api/scan answered — startScanRequest abandons that scan — or before it was
   // sent, while startScan asked the index — and startScan starts none (final review F1.7).
@@ -9929,6 +9946,16 @@ async function openFromIndex(path, info, stopped = () => false) {
   }
   if (stopped() || !data || !data.root) return false;
 
+  // The tree on screen, when a scan of its own is behind it — the older
+  // results — is kept until this folder's scan lands, for a Stop to put back
+  // with its scan (putBackHeldTree): a Stopped rescan keeps the older tree,
+  // as it does for a folder with no saved index (seventh browser pass, J06).
+  state.heldBehindIndex = state.root && state.settledScanId
+    ? { root: state.root, scanId: state.settledScanId, stats: state.scanStats, lastScan: state.lastScan,
+        largest: state.largest, types: state.types, bigFolders: state.bigFolders,
+        treemapPath: state.treemap.rootPath, gridPath: state.grid.path, over: data.root }
+    : null;
+
   // A scanId is what every destructive and drill-in endpoint keys off. The
   // index cannot grant one — those endpoints deliberately require a scan this
   // server actually performed — so a real scan still runs in the background to
@@ -10171,6 +10198,7 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
  */
 function quietRescanFailed(e) {
   state.scanning = false;
+  state.heldBehindIndex = null; // the index's tree stays, said to be the saved index; nothing to put back
   endScanChrome();
   restoreDashboardPanels();
   const why = (e && e.message) || 'the folder could not be read';
@@ -10181,6 +10209,46 @@ function quietRescanFailed(e) {
   $('indexBadge').classList.add('stale');
   toast('Couldn’t refresh this folder: ' + why, 'error');
   drainScanQueue(); // a folder waiting behind this one still deserves its turn
+}
+
+/**
+ * A Stop while an index paint stands over older results (seventh browser
+ * pass, J06): put the older tree back on screen with its scan — its counters,
+ * lists, the folder the map and the Grid were in — as a Stopped rescan of a
+ * folder with no saved index keeps them (the A6 rule). Without it the Stop
+ * left the index's tree with no scan behind it, the older scan abandoned, and
+ * the map drawing the older folder under the new folder's name.
+ *
+ * Only while the index's tree is still the one on screen (`over`). Returns
+ * whether it put anything back; the caller says the scan was stopped and
+ * remounts the view. Nothing is walked: the older scan is the server's still.
+ */
+function putBackHeldTree() {
+  const held = state.heldBehindIndex;
+  state.heldBehindIndex = null;
+  if (!held || state.root !== held.over) return false;
+  state.root = held.root;
+  state.scanId = held.scanId;
+  state.settledScanId = held.scanId;
+  state.scanStats = held.stats;
+  state.lastScan = held.lastScan;
+  state.largest = held.largest;
+  state.types = held.types;
+  state.bigFolders = held.bigFolders;
+  indexTree(held.root);
+  state.grid.selection.clear();
+  updateSelectionBar();
+  // Every view hears that the older scan is the one on screen again, and
+  // repoints at its tree (onScanChange) — then goes back to where it was in it.
+  emit(TOPIC.scan, held.scanId);
+  state.treemap.rootPath = held.treemapPath || held.root.path;
+  state.grid.path = held.gridPath || held.root.path;
+  FxNum.rollText($('statLastScan'), formatClock(held.lastScan ? held.lastScan.when : Date.now()));
+  void loadWhatsNew();
+  // Its index badge, which the index paint took down: asked again, as when it landed.
+  void indexStatusFor(held.root.path).then((info) => { if (state.root === held.root) renderIndexBadge(info); });
+  if (state.live.wanted) enableLive(); // Live survives a Stop, as it survives a rescan
+  return true;
 }
 
 /** Follow a running scan (disk or cloud) over SSE, with the stall watchdog. */
@@ -10571,6 +10639,9 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
   // index-first paint, which has a tree and deliberately no scan yet. Stop
   // reads it to put the previous results back when a rescan is abandoned.
   state.settledScanId = state.scanId;
+  // A scan landed: the older results an index paint stood over are no one's
+  // to put back now (putBackHeldTree). The index paint itself keeps them.
+  if (state.scanId) state.heldBehindIndex = null;
   indexTree(root);
   state.lastScan = { when: reopenedAt || Date.now(), durationMs, reopened: !!reopenedAt };
   state.treemap.rootPath = root.path;
@@ -11986,9 +12057,69 @@ const tmSearchCtx = tmSearchBuffer.getContext('2d');
  */
 const TM_MIN_SIZE = 4000;
 
+/**
+ * The rectangle map of `root`, a tree the page holds, laid out here: a port
+ * of buildTreemap() in src/utils/treemap.ts (the FileNode version), over the
+ * same squarify (tmSquarify). Same nodes, same fields, same breadth-first
+ * cap, so a map laid out here is the map the server lays out of the same
+ * tree; tests/indexFirstMap.test.ts runs the two side by side and demands
+ * identical nodes.
+ *
+ * Only for a tree with no scan behind it — the saved index's, painted before
+ * its scan answers, or left on screen by a Stop (seventh browser pass, J05).
+ * The server lays a map out only for a scan it ran, so that tree had no map
+ * at all: a blank canvas until the scan completed, and for ever after a Stop.
+ */
+function tmLayoutTree(root, maxDepth, minSize, maxNodes) {
+  const out = [];
+  const queue = [{ node: root, rect: { x: 0, y: 0, w: 100, h: 100 }, depth: 0 }];
+  for (let head = 0; head < queue.length && out.length < maxNodes; head++) {
+    const { node, rect, depth } = queue[head];
+    // Expanded containers are file nodes carrying virtual children.
+    if ((node.type !== 'dir' && !node.container) || !node.children || node.children.length === 0) continue;
+    if (node.size <= 0 || rect.w <= 0 || rect.h <= 0) continue;
+    const children = node.children.filter((c) => c.size >= minSize && c.size > 0).sort((a, b) => b.size - a.size);
+    if (children.length === 0) continue;
+    // Each child's share of the PARENT's size, so what the floor leaves out stays empty space.
+    const rectArea = rect.w * rect.h;
+    const rects = tmSquarify(children.map((c) => (c.size / node.size) * rectArea), rect);
+    for (let k = 0; k < children.length && out.length < maxNodes; k++) {
+      const child = children[k];
+      const r = rects[k];
+      if (r.w <= 0 || r.h <= 0) continue;
+      const canExpand = (child.type === 'dir' || !!child.container) && depth + 1 < maxDepth &&
+        !!child.children && child.children.length > 0 && r.w > 0.2 && r.h > 0.2;
+      out.push({
+        name: child.name, path: child.path, size: child.size, type: child.type, extension: child.extension,
+        modifiedAt: child.modifiedAt, depth: depth + 1, expanded: canExpand, x: r.x, y: r.y, w: r.w, h: r.h,
+        cloudPlaceholder: child.cloudPlaceholder, gitRepo: child.gitRepo, container: child.container,
+        virtual: child.virtual, logicalSize: child.logicalSize,
+      });
+      if (canExpand) queue.push({ node: child, rect: r, depth: depth + 1 });
+    }
+  }
+  return out;
+}
+
+/**
+ * The map of `rootPath` in the tree on screen when no scan is behind it, as
+ * `(minSize) => { root, nodes }` — the shape GET /api/scan/:id/treemap
+ * answers — or null when the folder is in no tree the page holds. A folder
+ * the index's preview withheld (`pruned`) is fetched from the index first
+ * (ensureSubtree), as the sunburst's is.
+ */
+async function tmHeldTreemap(rootPath) {
+  const node = (await ensureSubtree(rootPath)) || state.root;
+  if (!node) return null;
+  const root = { name: node.name, path: node.path, size: node.size, modifiedAt: node.modifiedAt };
+  return (minSize) => ({ root, nodes: tmLayoutTree(node, state.treemap.maxDepth, minSize, TM_SERVER_NODE_CAP) });
+}
+
 let tmLoadSeq = 0;
 async function loadTreemap(rootPath, animate = false) {
-  if (!state.scanId) return;
+  // A tree with no scan behind it — the saved index's — is drawn too, laid
+  // out here (tmHeldTreemap, J05); with no tree at all there is nothing to draw.
+  if (!state.scanId && !state.root) return;
   // §4.3 — a preview is a picture of one folder with one cart. Any load
   // replaces both, so it is dropped silently rather than left to go stale.
   exitCartPreview(true);
@@ -12040,7 +12171,11 @@ async function loadTreemap(rootPath, animate = false) {
       if (state.treemap.mode === 'circles' && wasAt) altBeginZoom(shared, wasAt);
     } else {
       let floor = TM_MIN_SIZE; // the floor the map on screen will have been asked with
-      let data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(rootPath)}`);
+      // No scan behind the tree on screen: its map is laid out here, from it (J05).
+      const held = scanAtRequest ? null : await tmHeldTreemap(rootPath);
+      if (seq !== tmLoadSeq) return; // superseded while a withheld folder was fetched
+      if (!scanAtRequest && !held) return;
+      let data = held ? held(TM_MIN_SIZE) : await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(rootPath)}`);
       if (seq !== tmLoadSeq) return; // a newer view/root load has superseded this fetch
       // The 4 KB floor keeps a big folder's map legible; in a folder of
       // dotfiles, scripts or one small file it hides everything, and a blank
@@ -12048,7 +12183,7 @@ async function loadTreemap(rootPath, animate = false) {
       // to draw, ask again without the floor.
       if (!data.nodes.length && data.root.size > 0) {
         floor = 1;
-        data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(rootPath)}`);
+        data = held ? held(1) : await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(rootPath)}`);
         if (seq !== tmLoadSeq) return;
       }
       if (state.treemap.history.scrubbing) return; // same rule as above: a scrub in flight owns the map
@@ -12060,6 +12195,8 @@ async function loadTreemap(rootPath, animate = false) {
       // reuses them only while this very array is the one on the map (C03 —
       // loadCity says why). The folder's size and the floor ride with them:
       // they are what the city's line and size say of a city built from them.
+      // A null scan is a map laid out here from the saved index's tree (J05),
+      // which the footer says (updateTmStatus).
       state.treemap.nodesFor = { scanId: scanAtRequest, path: data.root.path, nodes: data.nodes, size: data.root.size, minSize: floor };
       state.treemap.minSize = floor; // what tmNodeCapNote may say this map leaves out
       state.treemap.hover = null;
@@ -13211,9 +13348,14 @@ function updateTmStatus() {
   let drawn = 0;
   for (const r of state.treemap.pxRects) if (!r.n.isTrash) drawn++;
   const floor = state.treemap.minSize > 1 ? ` of ${formatBytes(state.treemap.minSize)} or more` : '';
+  // A map laid out from the saved index's tree, with no scan behind it (J05):
+  // said where the map is, since it may not be what the disk holds now.
+  const held = state.treemap.nodesFor;
+  const fromIndex = !!held && held.scanId === null && held.nodes === state.treemap.nodes;
   $('tmStatus').textContent =
     `${formatCount(drawn)} item${drawn === 1 ? '' : 's'}${floor} drawn`
-    + ` · ${formatBytes(state.treemap.rootSize)} in this folder`;
+    + ` · ${formatBytes(state.treemap.rootSize)} in this folder`
+    + (fromIndex ? ' · from the saved index' : '');
 }
 /* ───────────────────── Shared Canvas 2D toolkit (§3.4) ─────────────────────
    The primitives every canvas panel needs, in one place: DPR-correct sizing,

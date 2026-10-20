@@ -585,6 +585,11 @@ const state = {
   // differs from scanId for exactly as long as a rescan is in flight, which is
   // the window in which Stop needs to know what to put back.
   settledScanId: null,
+  // The tree an index paint replaced while that folder's scan runs, when a
+  // scan of its own was behind it — its tree, scan, counters and lists — for
+  // a Stop to put back (putBackHeldTree, seventh browser pass J06); null
+  // otherwise. `over` is the index's tree that replaced it.
+  heldBehindIndex: null,
   scanning: false,
   es: null,
   // Settles the running scan's stream and watchdog together. followScanProgress

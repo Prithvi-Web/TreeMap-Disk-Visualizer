@@ -163,6 +163,16 @@ async function openFromIndex(path, info, stopped = () => false) {
   }
   if (stopped() || !data || !data.root) return false;
 
+  // The tree on screen, when a scan of its own is behind it — the older
+  // results — is kept until this folder's scan lands, for a Stop to put back
+  // with its scan (putBackHeldTree): a Stopped rescan keeps the older tree,
+  // as it does for a folder with no saved index (seventh browser pass, J06).
+  state.heldBehindIndex = state.root && state.settledScanId
+    ? { root: state.root, scanId: state.settledScanId, stats: state.scanStats, lastScan: state.lastScan,
+        largest: state.largest, types: state.types, bigFolders: state.bigFolders,
+        treemapPath: state.treemap.rootPath, gridPath: state.grid.path, over: data.root }
+    : null;
+
   // A scanId is what every destructive and drill-in endpoint keys off. The
   // index cannot grant one — those endpoints deliberately require a scan this
   // server actually performed — so a real scan still runs in the background to
@@ -405,6 +415,7 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
  */
 function quietRescanFailed(e) {
   state.scanning = false;
+  state.heldBehindIndex = null; // the index's tree stays, said to be the saved index; nothing to put back
   endScanChrome();
   restoreDashboardPanels();
   const why = (e && e.message) || 'the folder could not be read';
@@ -415,6 +426,46 @@ function quietRescanFailed(e) {
   $('indexBadge').classList.add('stale');
   toast('Couldn’t refresh this folder: ' + why, 'error');
   drainScanQueue(); // a folder waiting behind this one still deserves its turn
+}
+
+/**
+ * A Stop while an index paint stands over older results (seventh browser
+ * pass, J06): put the older tree back on screen with its scan — its counters,
+ * lists, the folder the map and the Grid were in — as a Stopped rescan of a
+ * folder with no saved index keeps them (the A6 rule). Without it the Stop
+ * left the index's tree with no scan behind it, the older scan abandoned, and
+ * the map drawing the older folder under the new folder's name.
+ *
+ * Only while the index's tree is still the one on screen (`over`). Returns
+ * whether it put anything back; the caller says the scan was stopped and
+ * remounts the view. Nothing is walked: the older scan is the server's still.
+ */
+function putBackHeldTree() {
+  const held = state.heldBehindIndex;
+  state.heldBehindIndex = null;
+  if (!held || state.root !== held.over) return false;
+  state.root = held.root;
+  state.scanId = held.scanId;
+  state.settledScanId = held.scanId;
+  state.scanStats = held.stats;
+  state.lastScan = held.lastScan;
+  state.largest = held.largest;
+  state.types = held.types;
+  state.bigFolders = held.bigFolders;
+  indexTree(held.root);
+  state.grid.selection.clear();
+  updateSelectionBar();
+  // Every view hears that the older scan is the one on screen again, and
+  // repoints at its tree (onScanChange) — then goes back to where it was in it.
+  emit(TOPIC.scan, held.scanId);
+  state.treemap.rootPath = held.treemapPath || held.root.path;
+  state.grid.path = held.gridPath || held.root.path;
+  FxNum.rollText($('statLastScan'), formatClock(held.lastScan ? held.lastScan.when : Date.now()));
+  void loadWhatsNew();
+  // Its index badge, which the index paint took down: asked again, as when it landed.
+  void indexStatusFor(held.root.path).then((info) => { if (state.root === held.root) renderIndexBadge(info); });
+  if (state.live.wanted) enableLive(); // Live survives a Stop, as it survives a rescan
+  return true;
 }
 
 /** Follow a running scan (disk or cloud) over SSE, with the stall watchdog. */
@@ -805,6 +856,9 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
   // index-first paint, which has a tree and deliberately no scan yet. Stop
   // reads it to put the previous results back when a rescan is abandoned.
   state.settledScanId = state.scanId;
+  // A scan landed: the older results an index paint stood over are no one's
+  // to put back now (putBackHeldTree). The index paint itself keeps them.
+  if (state.scanId) state.heldBehindIndex = null;
   indexTree(root);
   state.lastScan = { when: reopenedAt || Date.now(), durationMs, reopened: !!reopenedAt };
   state.treemap.rootPath = root.path;

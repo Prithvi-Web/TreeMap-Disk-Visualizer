@@ -62,8 +62,14 @@ const VIEWS = [
       // purpose — with nothing scanned every state is false and this is the
       // cheap all-off no-op.
       fxTmPillBeamsSync(true);
-      if (!state.scanId || !state.root) return;
+      if (!state.root) return;
       if (!state.treemap.rootPath) state.treemap.rootPath = state.root.path;
+      // A tree with no scan behind it — the saved index's, painted before its
+      // scan answers, or left on screen by a Stop — is drawn all the same,
+      // laid out from that tree (loadTreemap). Returning here left a blank
+      // canvas under the tree's name (seventh browser pass, J05). What asks
+      // the scan itself waits for one.
+      if (!state.scanId) { loadTreemap(state.treemap.rootPath); return; }
       loadSavedViews(); // Phase 2 §2.4 — the chip strip, fetched lazily on entry
       refreshDock(); // §8.3 — connected drives, fetched lazily on entry like the chips
       loadTreemap(state.treemap.rootPath);

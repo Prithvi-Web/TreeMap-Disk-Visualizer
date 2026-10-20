@@ -156,7 +156,7 @@ const LIFTED = [
   'function viewBlockedReason(', 'function renderEmptyState(', 'function switchView(',
   'function startLanding(', 'function focusLanding(', 'function withFocusKept(', 'function focusStartScreen(',
   'function closeEventSource(', 'function setScanButtonMode(', 'function cancelScanById(', 'function abandonIfStopped(',
-  'async function stopScan(', 'function stopNotConfirmed(', 'function beginScanChrome(', 'async function indexStatusFor(',
+  'async function stopScan(', 'function stopNotConfirmed(', 'function putBackHeldTree(', 'function beginScanChrome(', 'async function indexStatusFor(',
   'async function startScan(', 'async function startScanRequest(', 'function followScanProgress(',
   'function endScanChrome(', 'function failScan(', 'function noteLastFolder(', 'function noteStopUnconfirmed(',
   'function browseWholeDrives(', 'function topologyAnswer(',
@@ -166,6 +166,29 @@ const LIFTED = [
   'async function startCloudScan(', 'async function loadSystem(',
 ];
 const OWN = new Set(LIFTED.map((d) => /function (\w+)\(/.exec(d)![1]));
+/**
+ * The index-first path, lifted whole for the pages that ask for it (`index`):
+ * the instant paint from the saved index and the paint of a finished scan —
+ * which together decide which tree, and which scan, are on screen after a
+ * Stop (J05, J06).
+ */
+const LIFTED_INDEX = ['async function openFromIndex(', 'async function finishScan(', 'function quietRescanFailed('];
+
+/**
+ * A view object out of the page's VIEWS list, by its id, brace-matched: the
+ * treemap view's own `mount` decides whether the map is drawn at all.
+ */
+function pageView(id: string): string {
+  const at = INDEX.indexOf(`id: '${id}', label:`);
+  assert.notEqual(at, -1, `the ${id} view is in the page`);
+  const start = INDEX.lastIndexOf('{', at);
+  let depth = 0;
+  for (let i = start; i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1);
+  }
+  return assert.fail(`the ${id} view never closes`);
+}
 
 const formatBytes = liftPage<(n: number) => string>(['UNITS', 'UI_LOCALE', 'formatBytes'], 'formatBytes');
 /** The page's own constants the lifted functions read. */
@@ -178,7 +201,10 @@ async function turns(n = 30): Promise<void> {
   for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve));
 }
 
-function page(o: { route: Route; system?: unknown; search?: string; root?: unknown; settledScanId?: string | null }) {
+/** A draw the treemap view asked for (loadTreemap): the folder asked, and the tree and scan on screen as it asked. */
+type Draw = { path: string; root: string | null; scanId: unknown };
+
+function page(o: { route: Route; system?: unknown; search?: string; root?: unknown; settledScanId?: string | null; index?: boolean }) {
   const dom = new Dom();
   const $ = (id: string) => dom.get(id);
   const requests: string[] = [];
@@ -213,7 +239,14 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     view: 'dashboard', system: 'system' in o ? o.system : MAC, capabilities: null, scanId: o.settledScanId ?? null, settledScanId: o.settledScanId ?? null,
     scanning: false, es: null, abortScan: null, scanGen: 0, root: o.root ?? null, scanStats: null, whatsNew: { seq: 0 },
     lastFolder: null, scanningPath: null, scannedBefore: false, largest: [], bigFolders: [], types: [],
+    // What finishScan and the treemap view read and write besides the tree.
+    grid: { path: null, selection: new Set() }, treemap: { rootPath: null }, apps: { loadedFor: null }, live: { wanted: false, on: false },
+    dup: {}, lastScan: null,
   };
+  /** Every draw the treemap view asked for, in order (index pages). */
+  const draws: Draw[] = [];
+  /** Every scan id finishScan announced to the views (TOPIC.scan), in order: null is the index paint. */
+  const emitted: unknown[] = [];
   const noop = () => {};
   const VIEW_BY_ID = new Map<string, unknown>([
     ['dashboard', { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', needsScan: true, mount: noop }],
@@ -224,7 +257,7 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     get activeElement() { return dom.activeElement; },
     get body() { return dom.body; },
     querySelector: (sel: string) => (sel === '.tabbar button[aria-selected="true"]' ? $('tab-dashboard') : null),
-    querySelectorAll: (sel: string) => (sel === '.view' ? [$('view-dashboard'), $('view-grid'), $('view-trends')] : []),
+    querySelectorAll: (sel: string) => (sel === '.view' ? [$('view-dashboard'), $('view-grid'), $('view-trends'), $('view-treemap')] : []),
   };
   const given: Record<string, unknown> = {
     state, $, document, fetch: fetchStub, EventSource: FakeEventSource, location: { search: o.search ?? '' },
@@ -249,14 +282,28 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     renderKeyNames: noop, paintDiskFacts: noop, loadTrash: noop, loadSnapshots: noop, loadCloudStatus: noop,
     tourScanStarted: () => tourCalls.push('started'), tourScanFailed: () => tourCalls.push('failed'),
     tourFollowView: noop, tourBootSettled: () => tourCalls.push('boot settled'),
+    // The index-first path (`index`): what openFromIndex and finishScan call besides the lifted functions.
+    ...(o.index ? {
+      indexTree: noop, updateSelectionBar: noop, DUP_PAGE: 50, formatClock: String, countUp: noop, FxNum: { rollText: noop },
+      renderDiskNotes: noop, fxScanDonePulse: noop, loadWhatsNew: noop, loadDriveHealth: noop, showListsPending: noop,
+      emit: (_topic: unknown, id: unknown) => { emitted.push(id); }, TOPIC: { scan: 'scan' },
+      loadDashboardLists: async () => true, loadCostEstimate: noop, buildIndexInBackground: noop, renderGrowthProjection: noop,
+      loadBudgets: noop, refreshTimebar: noop, enableLive: noop, setTimeout: () => 0,
+      // The treemap view's own mount and onScanChange are the page's; what they call is recorded here.
+      loadTreemap: (p: string) => { const r = state.root as { path: string } | null; draws.push({ path: p, root: r ? r.path : null, scanId: state.scanId }); },
+      fxTmPillBeamsSync: noop, loadSavedViews: noop, refreshDock: noop, tmRejudgeQuery: noop, exitHistoryState: noop,
+    } : {}),
   };
+  const own = new Set([...OWN, ...(o.index ? LIFTED_INDEX.map((d) => /function (\w+)\(/.exec(d)![1]) : [])]);
   const scope = new Proxy(given, {
-    has: (t, k) => typeof k === 'string' && k in t && !OWN.has(k),
+    has: (t, k) => typeof k === 'string' && k in t && !own.has(k),
     get: (t, k) => (k === Symbol.unscopables ? undefined : t[k as string]),
     set: (t, k, v) => { t[k as string] = v; return true; },
   });
-  const src = LIFTED.map(pageFn).join('\n');
-  const fns = new Function('scope', `with (scope) { ${src}\n return { switchView, restoreLastSession, startScan, stopScan, failScan, renderStartChoices, startCloudScan, loadSystem }; }`)(scope) as {
+  const src = [...LIFTED, ...(o.index ? LIFTED_INDEX : [])].map(pageFn).join('\n');
+  // The real treemap view, its unmount aside (it tears down canvas machinery this page has none of).
+  const views = o.index ? `VIEW_BY_ID.set('treemap', { ...(${pageView('treemap')}), unmount() {} });` : '';
+  const fns = new Function('scope', `with (scope) { ${src}\n${views}\n return { switchView, restoreLastSession, startScan, stopScan, failScan, renderStartChoices, startCloudScan, loadSystem }; }`)(scope) as {
     switchView: (v: string) => void; restoreLastSession: () => Promise<void>; startScan: (p: string, o?: unknown) => Promise<void>;
     stopScan: () => Promise<void>; failScan: (m: string, e?: unknown) => void; renderStartChoices: () => void;
     startCloudScan: (id: string, name: string) => Promise<void>; loadSystem: () => Promise<unknown>;
@@ -269,7 +316,7 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     return b!;
   };
   const openStreams = () => streams.filter((s) => s.readyState !== 2);
-  return { ...fns, dom, $, state, requests, posts, toasts, finished, quietFailed, tourCalls, streams, openStreams, intervals, choices, choice, given };
+  return { ...fns, dom, $, state, requests, posts, toasts, finished, quietFailed, tourCalls, streams, openStreams, intervals, choices, choice, given, draws, emitted };
 }
 
 /** A server: the history and the folders a test names, a scan request answered with the next id, and its cancel. */
@@ -280,9 +327,16 @@ function server(opts: {
   refuse?: (p: string) => string | null;
   /** GET /api/policy?scanRoot= answered otherwise: held, or failing. */
   policyAnswer?: (asked: string[]) => Answer;
+  /** The saved index's tree of each folder in `indexed` that has one (GET /api/index/tree), as the server sends it. */
+  indexTrees?: Record<string, unknown>;
 } = {}): Route {
   let n = 0;
   return (method, url, body) => {
+    if (method === 'GET' && url.startsWith('/api/index/tree?path=')) {
+      const p = decodeURIComponent(url.slice('/api/index/tree?path='.length).split('&')[0]);
+      const tree = opts.indexTrees && opts.indexTrees[p];
+      return tree ? { body: { path: p, rootPath: p, fileCount: 1, dirCount: 1, totalSize: 1, root: tree } } : { status: 404, body: { error: 'Not indexed', code: 'NOT_INDEXED' } };
+    }
     if (method === 'GET' && url.startsWith('/api/policy?')) {
       const asked = url.slice('/api/policy?'.length).split('&').map((kv) => decodeURIComponent(kv.slice('scanRoot='.length)));
       if (opts.policyAnswer) return opts.policyAnswer(asked);
@@ -1210,6 +1264,168 @@ test('stopping a rescan while an older tree is on screen keeps today\'s behaviou
   assert.equal(h.$('emptyState').style.display, 'none', 'the tree on screen stays');
   assert.equal(h.state.scanId, 'scan-old', 'with its own scan behind it');
   assert.equal(h.state.lastFolder, null, 'and the start screen is not told about the stopped rescan');
+});
+
+/* ══════════════ (D) — a folder with a saved index (seventh browser pass, J05, J06) ══════════════
+   TreeMap indexes any folder under a million items on its own, so most
+   folders a person scans again have a saved index, and their "Scan … again"
+   paints the index's tree at once while the scan runs behind it. These run
+   the page's own openFromIndex, finishScan and the treemap view's mount. */
+
+const MAIL = '/Users/x/Mail';
+const CORPUS = '/Users/x/corpus';
+const MAIL_HISTORY = { rootPath: MAIL, count: 3, latestAt: Date.UTC(2026, 9, 18, 21, 30), latestSize: 37_700_000 };
+/** The saved index's tree of `p`, as GET /api/index/tree sends one: a folder holding one file. */
+const indexTreeOf = (p: string, size: number) => ({
+  name: p.slice(p.lastIndexOf('/') + 1), path: p, size, type: 'dir',
+  children: [{ name: 'a.emlx', path: `${p}/a.emlx`, size, type: 'file', extension: 'emlx' }],
+});
+const pathOf = (root: unknown) => (root as { path: string } | null)?.path ?? null;
+
+test('J05: "Scan … again" of a folder with a saved index draws the map from the index before its scan answers — never a blank canvas waiting for the scan', async () => {
+  // Seventh browser pass, J05: the index-first paint never drew the map. The
+  // map is laid out by the server for a scan, the paint has no scan yet, and
+  // the treemap view's mount returned with nothing drawn: a 300×150 blank
+  // canvas until the scan completed (374 ms for Mail, 1455 ms for corpus).
+  const scans: Array<(a: { status: number; body: unknown }) => void> = [];
+  const h = page({ index: true, route: server({ roots: [MAIL_HISTORY], indexed: [MAIL], indexTrees: { [MAIL]: indexTreeOf(MAIL, 37_700_000) },
+    scanAnswer: () => new Promise((r) => { scans.push(r); }) }) });
+  await boot(h);
+  await startFrom(h, /^Scan Mail again/);
+  assert.equal(pathOf(h.state.root), MAIL, 'control: painted from the saved index');
+  assert.equal(h.state.scanId, null, 'control: with no scan behind it yet');
+  assert.equal(scans.length, 1, 'control: its scan has been asked for and has not answered');
+  h.switchView('treemap'); // where the tour takes a person as the tree lands
+  assert.deepEqual(h.draws.at(-1), { path: MAIL, root: MAIL, scanId: null }, 'the treemap view draws the tree on screen, from the saved index');
+});
+
+test('J05: Stop at any moment of "Scan … again" for a folder with a saved index never leaves a blank map — before its tree is read the start screen is back with "Scan … again" focused; once drawn, the tree stays drawn and is said to be the saved index — and Scan works again', async () => {
+  // Seventh browser pass, J05 (Mail 4/4, corpus 2/2): a Stop at 0–120 ms
+  // left the Treemap view up over a blank canvas, no start screen, and the
+  // Dashboard saying "Opened from the saved index — scan this folder…".
+  for (const at of ['probe', 'tree', 'painted', 'followed'] as const) {
+    const label = { probe: 'Stop while the index is asked about', tree: 'Stop while its tree is read', painted: 'Stop once the tree is drawn, its scan not yet answered', followed: 'Stop once its scan is followed' }[at];
+    const held: Record<string, (a: { status?: number; body?: unknown }) => void> = {};
+    const hold = (k: string) => new Promise<{ status?: number; body?: unknown }>((r) => { held[k] = r; });
+    const base = server({ roots: [MAIL_HISTORY], indexed: [MAIL], indexTrees: { [MAIL]: indexTreeOf(MAIL, 37_700_000) } });
+    const h = page({ index: true, route: (m, url, b) => {
+      if (at === 'probe' && url.startsWith('/api/index/status?') && !held.probe) return hold('probe');
+      if (at === 'tree' && url.startsWith('/api/index/tree?') && !held.tree) return hold('tree');
+      if (at === 'painted' && m === 'POST' && url === '/api/scan' && !held.scan) return hold('scan');
+      return base(m, url, b);
+    } });
+    await boot(h);
+    await startFrom(h, /^Scan Mail again/);
+    await pressStop(h);
+    // Whatever was held answers after the Stop, as a slow server's would.
+    held.probe?.({ body: { path: MAIL, indexed: true, root: { path: MAIL, state: 'ready', live: true } } });
+    held.tree?.({ body: { path: MAIL, rootPath: MAIL, fileCount: 1, dirCount: 1, root: indexTreeOf(MAIL, 37_700_000) } });
+    held.scan?.({ status: 202, body: { scanId: 'scan-held', incremental: false } });
+    await turns();
+    const startScreen = at === 'probe' || at === 'tree';
+    if (startScreen) {
+      assert.equal(h.state.root, null, `${label}: control: nothing was painted`);
+      assert.equal(h.$('emptyState').style.display, 'flex', `${label}: the start screen is back`);
+      assert.equal(h.dom.activeElement, h.$('startAgainBtn'), `${label}: with "Scan Mail again" focused`);
+      assert.match(h.$('startAgainBtn').textContent, /^Scan Mail again/, `${label}: control: that is the button focused`);
+    } else {
+      assert.equal(pathOf(h.state.root), MAIL, `${label}: the saved index's tree stays on screen`);
+      assert.equal(h.state.scanId, null, `${label}: control: with no scan behind it`);
+      assert.equal(h.$('emptyState').style.display, 'none', `${label}: control: so no start screen`);
+      assert.match(h.$('scanStatus').innerHTML, /saved index of \/Users\/x\/Mail/, `${label}: the status line says plainly that the tree is the saved index (${h.$('scanStatus').innerHTML})`);
+      h.switchView('treemap');
+      assert.deepEqual(h.draws.at(-1), { path: MAIL, root: MAIL, scanId: null }, `${label}: and the map draws it — never a blank canvas`);
+      assert.ok(h.requests.includes(`POST /api/scan/${at === 'painted' ? 'scan-held' : 'scan-1'}/cancel`), `${label}: control: the scan behind it is cancelled`);
+    }
+    // Scan works again after Stop: "Scan Mail again" on the start screen, the Scan button over a tree.
+    const before = h.posts.length;
+    if (startScreen) h.$('startAgainBtn').click();
+    else { h.switchView('dashboard'); void h.startScan(MAIL); }
+    await turns();
+    assert.equal(h.posts.length, before + 1, `${label}: Scan works again — exactly one new scan`);
+    assert.equal(h.posts.at(-1)!.path, MAIL, `${label}: of the same folder`);
+    assert.equal(h.state.scanning, true, `${label}: and it runs`);
+  }
+});
+
+test('J06: Stop while a folder with a saved index is painted over an older scan puts the older tree back with its scan; the map never names one folder while drawing another', async () => {
+  // Seventh browser pass, J06: Mail scanned to completion, then corpus (which
+  // has a saved index), then Stop 40 ms after its tree appeared. state.root
+  // was corpus's index tree, scanId and settledScanId null, Mail's held scan
+  // abandoned — and the map still drew Mail under corpus's name. The A6 rule
+  // (a Stopped rescan keeps the older tree and its scan) held only for a
+  // folder with no saved index.
+  for (const [what, target] of [['another folder', CORPUS], ['the same folder', MAIL]] as const) {
+    for (const answered of [false, true]) {
+      const label = `a rescan of ${what}, Stopped ${answered ? 'once its scan is followed' : 'before its scan answers'}`;
+      const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
+      const scans: Array<(a: { status: number; body: unknown }) => void> = [];
+      const h = page({ index: true, root: mail, settledScanId: 'scan-mail',
+        route: server({ roots: [], indexed: [target], indexTrees: { [target]: indexTreeOf(target, 9_500_000_000) },
+          scanAnswer: answered ? undefined : () => new Promise((r) => { scans.push(r); }) }) });
+      h.switchView('treemap');
+      assert.deepEqual(h.draws.at(-1), { path: MAIL, root: MAIL, scanId: 'scan-mail' }, `${label}: control: the older scan is drawn`);
+      await h.startScan(target);
+      await turns();
+      assert.equal(pathOf(h.state.root), target, `${label}: control: painted from the saved index`);
+      assert.deepEqual(h.draws.at(-1), { path: target, root: target, scanId: null },
+        `${label}: the map draws the tree it names at once — never the older drawing under the new folder's name`);
+      h.switchView('dashboard'); // where Stop is
+      await pressStop(h);
+      assert.equal(h.state.root, mail, `${label}: the older tree is back on screen`);
+      assert.equal(h.state.scanId, 'scan-mail', `${label}: with its own scan behind it`);
+      assert.equal(h.state.settledScanId, 'scan-mail', `${label}: which a later Stop or failure puts back too`);
+      assert.equal(h.$('emptyState').style.display, 'none', `${label}: control: no start screen over it`);
+      h.switchView('treemap');
+      assert.deepEqual(h.draws.at(-1), { path: MAIL, root: MAIL, scanId: 'scan-mail' }, `${label}: and the map draws it, by its own name`);
+      if (answered) assert.ok(h.requests.includes('POST /api/scan/scan-1/cancel'), `${label}: control: the rescan is cancelled`);
+      else {
+        scans[0]({ status: 202, body: { scanId: 'scan-late', incremental: false } });
+        await turns();
+        assert.ok(h.requests.includes('POST /api/scan/scan-late/cancel'), `${label}: control: its late answer is cancelled`);
+        assert.equal(h.state.root, mail, `${label}: and changes nothing on screen`);
+        assert.equal(h.state.scanId, 'scan-mail', `${label}: nor the scan behind it`);
+      }
+      for (const d of h.draws) assert.equal(d.path, d.root, `${label}: every draw asked for the tree on screen, by its own folder (${JSON.stringify(d)})`);
+      // And Scan works again: the folder asked for is scanned once more.
+      const before = h.posts.length;
+      h.switchView('dashboard');
+      void h.startScan(target);
+      await turns();
+      assert.equal(h.posts.length, before + 1, `${label}: Scan works again — exactly one new scan`);
+    }
+  }
+});
+
+test('J06: the older tree an index paint stood over is let go once that folder\'s scan lands, or its quiet rescan fails — it can be a quarter-million nodes — and a Stop after either puts nothing back', async () => {
+  for (const outcome of ['lands', 'fails'] as const) {
+    const label = `the scan behind the index paint ${outcome}`;
+    const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
+    const h = page({ index: true, root: mail, settledScanId: 'scan-mail',
+      route: server({ roots: [], indexed: [CORPUS], indexTrees: { [CORPUS]: indexTreeOf(CORPUS, 9_500_000_000) },
+        scanAnswer: outcome === 'fails' ? () => ({ status: 500, body: { error: 'The drive stopped answering.', code: 'INTERNAL' } }) : undefined }) });
+    h.switchView('dashboard');
+    await h.startScan(CORPUS);
+    await turns();
+    assert.equal(pathOf(h.state.root), CORPUS, `${label}: control: painted from the saved index`);
+    if (outcome === 'lands') {
+      assert.notEqual(h.state.heldBehindIndex, null, `${label}: control: the older tree is held while the scan runs`);
+      const scanned = { name: 'corpus', path: CORPUS, size: 9_500_000_000, type: 'dir', children: [] };
+      h.streams[0].onmessage!({ data: JSON.stringify({ type: 'complete', root: scanned, stats: { fileCount: 1, dirCount: 1 } }) });
+      await turns();
+      assert.deepEqual(h.state.root, scanned, `${label}: control: the scan's tree is on screen`);
+      assert.equal(h.state.scanId, 'scan-1', `${label}: control: with its scan`);
+    } else {
+      assert.match(h.$('scanStatus').innerHTML, /Showing the saved index — the refresh failed/, `${label}: control: the saved index stays, said to be`);
+    }
+    assert.equal(h.state.heldBehindIndex, null, `${label}: the older tree is let go`);
+    // A Stop of the next scan puts nothing back: the tree on screen stays.
+    const onScreen = h.state.root;
+    void h.startScan('/Users/x/Desktop');
+    await turns();
+    await pressStop(h);
+    assert.equal(h.state.root, onScreen, `${label}: a later Stop keeps the tree that was on screen`);
+  }
 });
 
 test('a scan that fails leaves no dead scan id behind, as a Stop leaves none: a failed rescan over an older tree puts back the older tree\'s scan, a failed first scan leaves none (review F2.3)', async () => {

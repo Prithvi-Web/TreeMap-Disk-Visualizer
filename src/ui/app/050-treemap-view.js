@@ -20,9 +20,69 @@ const tmSearchCtx = tmSearchBuffer.getContext('2d');
  */
 const TM_MIN_SIZE = 4000;
 
+/**
+ * The rectangle map of `root`, a tree the page holds, laid out here: a port
+ * of buildTreemap() in src/utils/treemap.ts (the FileNode version), over the
+ * same squarify (tmSquarify). Same nodes, same fields, same breadth-first
+ * cap, so a map laid out here is the map the server lays out of the same
+ * tree; tests/indexFirstMap.test.ts runs the two side by side and demands
+ * identical nodes.
+ *
+ * Only for a tree with no scan behind it — the saved index's, painted before
+ * its scan answers, or left on screen by a Stop (seventh browser pass, J05).
+ * The server lays a map out only for a scan it ran, so that tree had no map
+ * at all: a blank canvas until the scan completed, and for ever after a Stop.
+ */
+function tmLayoutTree(root, maxDepth, minSize, maxNodes) {
+  const out = [];
+  const queue = [{ node: root, rect: { x: 0, y: 0, w: 100, h: 100 }, depth: 0 }];
+  for (let head = 0; head < queue.length && out.length < maxNodes; head++) {
+    const { node, rect, depth } = queue[head];
+    // Expanded containers are file nodes carrying virtual children.
+    if ((node.type !== 'dir' && !node.container) || !node.children || node.children.length === 0) continue;
+    if (node.size <= 0 || rect.w <= 0 || rect.h <= 0) continue;
+    const children = node.children.filter((c) => c.size >= minSize && c.size > 0).sort((a, b) => b.size - a.size);
+    if (children.length === 0) continue;
+    // Each child's share of the PARENT's size, so what the floor leaves out stays empty space.
+    const rectArea = rect.w * rect.h;
+    const rects = tmSquarify(children.map((c) => (c.size / node.size) * rectArea), rect);
+    for (let k = 0; k < children.length && out.length < maxNodes; k++) {
+      const child = children[k];
+      const r = rects[k];
+      if (r.w <= 0 || r.h <= 0) continue;
+      const canExpand = (child.type === 'dir' || !!child.container) && depth + 1 < maxDepth &&
+        !!child.children && child.children.length > 0 && r.w > 0.2 && r.h > 0.2;
+      out.push({
+        name: child.name, path: child.path, size: child.size, type: child.type, extension: child.extension,
+        modifiedAt: child.modifiedAt, depth: depth + 1, expanded: canExpand, x: r.x, y: r.y, w: r.w, h: r.h,
+        cloudPlaceholder: child.cloudPlaceholder, gitRepo: child.gitRepo, container: child.container,
+        virtual: child.virtual, logicalSize: child.logicalSize,
+      });
+      if (canExpand) queue.push({ node: child, rect: r, depth: depth + 1 });
+    }
+  }
+  return out;
+}
+
+/**
+ * The map of `rootPath` in the tree on screen when no scan is behind it, as
+ * `(minSize) => { root, nodes }` — the shape GET /api/scan/:id/treemap
+ * answers — or null when the folder is in no tree the page holds. A folder
+ * the index's preview withheld (`pruned`) is fetched from the index first
+ * (ensureSubtree), as the sunburst's is.
+ */
+async function tmHeldTreemap(rootPath) {
+  const node = (await ensureSubtree(rootPath)) || state.root;
+  if (!node) return null;
+  const root = { name: node.name, path: node.path, size: node.size, modifiedAt: node.modifiedAt };
+  return (minSize) => ({ root, nodes: tmLayoutTree(node, state.treemap.maxDepth, minSize, TM_SERVER_NODE_CAP) });
+}
+
 let tmLoadSeq = 0;
 async function loadTreemap(rootPath, animate = false) {
-  if (!state.scanId) return;
+  // A tree with no scan behind it — the saved index's — is drawn too, laid
+  // out here (tmHeldTreemap, J05); with no tree at all there is nothing to draw.
+  if (!state.scanId && !state.root) return;
   // §4.3 — a preview is a picture of one folder with one cart. Any load
   // replaces both, so it is dropped silently rather than left to go stale.
   exitCartPreview(true);
@@ -74,7 +134,11 @@ async function loadTreemap(rootPath, animate = false) {
       if (state.treemap.mode === 'circles' && wasAt) altBeginZoom(shared, wasAt);
     } else {
       let floor = TM_MIN_SIZE; // the floor the map on screen will have been asked with
-      let data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(rootPath)}`);
+      // No scan behind the tree on screen: its map is laid out here, from it (J05).
+      const held = scanAtRequest ? null : await tmHeldTreemap(rootPath);
+      if (seq !== tmLoadSeq) return; // superseded while a withheld folder was fetched
+      if (!scanAtRequest && !held) return;
+      let data = held ? held(TM_MIN_SIZE) : await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(rootPath)}`);
       if (seq !== tmLoadSeq) return; // a newer view/root load has superseded this fetch
       // The 4 KB floor keeps a big folder's map legible; in a folder of
       // dotfiles, scripts or one small file it hides everything, and a blank
@@ -82,7 +146,7 @@ async function loadTreemap(rootPath, animate = false) {
       // to draw, ask again without the floor.
       if (!data.nodes.length && data.root.size > 0) {
         floor = 1;
-        data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(rootPath)}`);
+        data = held ? held(1) : await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(rootPath)}`);
         if (seq !== tmLoadSeq) return;
       }
       if (state.treemap.history.scrubbing) return; // same rule as above: a scrub in flight owns the map
@@ -94,6 +158,8 @@ async function loadTreemap(rootPath, animate = false) {
       // reuses them only while this very array is the one on the map (C03 —
       // loadCity says why). The folder's size and the floor ride with them:
       // they are what the city's line and size say of a city built from them.
+      // A null scan is a map laid out here from the saved index's tree (J05),
+      // which the footer says (updateTmStatus).
       state.treemap.nodesFor = { scanId: scanAtRequest, path: data.root.path, nodes: data.nodes, size: data.root.size, minSize: floor };
       state.treemap.minSize = floor; // what tmNodeCapNote may say this map leaves out
       state.treemap.hover = null;
@@ -1245,9 +1311,14 @@ function updateTmStatus() {
   let drawn = 0;
   for (const r of state.treemap.pxRects) if (!r.n.isTrash) drawn++;
   const floor = state.treemap.minSize > 1 ? ` of ${formatBytes(state.treemap.minSize)} or more` : '';
+  // A map laid out from the saved index's tree, with no scan behind it (J05):
+  // said where the map is, since it may not be what the disk holds now.
+  const held = state.treemap.nodesFor;
+  const fromIndex = !!held && held.scanId === null && held.nodes === state.treemap.nodes;
   $('tmStatus').textContent =
     `${formatCount(drawn)} item${drawn === 1 ? '' : 's'}${floor} drawn`
-    + ` · ${formatBytes(state.treemap.rootSize)} in this folder`;
+    + ` · ${formatBytes(state.treemap.rootSize)} in this folder`
+    + (fromIndex ? ' · from the saved index' : '');
 }
 /* ───────────────────── Shared Canvas 2D toolkit (§3.4) ─────────────────────
    The primitives every canvas panel needs, in one place: DPR-correct sizing,

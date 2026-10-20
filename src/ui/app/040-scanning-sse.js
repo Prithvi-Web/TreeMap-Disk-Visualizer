@@ -167,6 +167,9 @@ async function stopScan() {
   // strand a real tree with no scan behind it. Null when there is no such
   // scan — a first run, or a tree the index painted — and then the views take
   // their existing "no scan yet" branch, which openFromIndex relies on too.
+  // An index paint that stood over older results gives them back first, with
+  // their scan (seventh browser pass, J06).
+  putBackHeldTree();
   state.scanId = state.settledScanId || null;
   // With no tree on screen the start screen comes back naming the folder that
   // was being scanned, "Scan … again" first among its choices (the owner,
@@ -179,9 +182,12 @@ async function stopScan() {
   // when it does (abandonIfStopped).
   state.lastStop = { gen, noted };
 
+  // A tree left on screen with no scan behind it is the saved index's, and
+  // is said to be (J05): it stays drawn and usable, and may be out of date.
+  const indexLeft = state.root && !state.settledScanId ? `Scan stopped — showing the saved index of ${state.root.path}.` : '';
   const status = $('scanStatus');
   status.classList.remove('error'); // stopping is a choice, not a failure
-  status.innerHTML = icon('stop', 14) + '<span>Scan stopped by user</span>';
+  status.innerHTML = icon('stop', 14) + '<span>' + (indexLeft ? escapeHtml(indexLeft) : 'Scan stopped by user') + '</span>';
   restoreDashboardPanels();
   // And put the start screen back if that is where we are — over the
   // Dashboard's Stop, which held focus if it was pressed from the keyboard
@@ -194,7 +200,7 @@ async function stopScan() {
   focusStartScreen();
   // And said aloud: the start screen's own line, or the status line's, in a
   // live region nothing hides (review F1.14).
-  $('stopAnnounce').textContent = noted ? startLastLine(noted) : 'Scan stopped.';
+  $('stopAnnounce').textContent = noted ? startLastLine(noted) : indexLeft || 'Scan stopped.';
 
   // Stopped before POST /api/scan answered — startScanRequest abandons that scan — or before it was
   // sent, while startScan asked the index — and startScan starts none (final review F1.7).

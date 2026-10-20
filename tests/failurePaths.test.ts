@@ -285,6 +285,9 @@ function stopHarness(cancel: () => Promise<unknown>, settledScanId: string | nul
     // A refused cancel is also toasted, and the start screen takes back its "You stopped": tests/coreScanFlow.test.ts's (review F1.3).
     toast: () => {},
     noteStopUnconfirmed: () => {},
+    // An index paint standing over older results gives them back at a Stop:
+    // tests/coreScanFlow.test.ts's (seventh browser pass, J06). None here.
+    putBackHeldTree: () => false,
     cancelScanById: cancel,
     // Stop means stop: folders dropped behind this one are waiting in the scan
     // queue, and starting the next of them would be the opposite of what the
@@ -409,6 +412,8 @@ function scanStartHarness(indexed: boolean) {
     // What the start screen says and where focus lands after a Stop, and what it learns from a scan
     // the server accepted: tests/coreScanFlow.test.ts's.
     noteLastFolder: noop, focusStartScreen: noop, startNoteAllowed: noop,
+    // An index paint standing over older results gives them back at a Stop: tests/coreScanFlow.test.ts's (J06).
+    putBackHeldTree: () => false,
     followScanProgress: (scanId: string) => { log.push(`follow ${scanId}`); },
     quietRescanFailed: () => { log.push('quiet rescan failed'); }, failScan: (m: string) => { log.push(`failed: ${m}`); },
     INSTANT_OPEN_NODES: 25000,
