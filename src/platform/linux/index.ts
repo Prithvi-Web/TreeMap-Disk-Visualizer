@@ -243,12 +243,15 @@ export class LinuxProvider extends BaseProvider {
     return { handles: await openHandlesFor(paths), complete: true };
   }
 
+  /** Where the held-space pass reads /proc: a field so a test can point the provider at a fixture tree. */
+  protected procRoot = '/proc';
+
   override async getZombieHandles(): Promise<ZombieHandleInfo[]> {
-    return zombieHandles();
+    return zombieHandles(this.procRoot);
   }
 
   override async getZombieHandleScan(): Promise<ZombieHandleScan> {
-    return zombieHandleScan();
+    return zombieHandleScan(this.procRoot);
   }
 
   /* ---------------- Sizing ---------------- */

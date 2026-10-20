@@ -8,6 +8,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-platformCrossOs-data-');
 
 import { readOpenDescriptors, openHandlesFor, zombieHandles, zombieHandleScan } from '../src/platform/linux/procFdGuard';
+import { LinuxProvider } from '../src/platform/linux/index';
 import { mapLsblk, mapZpool } from '../src/platform/linux/topology';
 import { parseSubvolumeList } from '../src/platform/linux/btrfs';
 import { addThunarAction, removeThunarAction, nautilusScript, xmlEscape } from '../src/platform/linux/shellIntegration';
@@ -267,6 +268,38 @@ test('linux: the probe counts each held file it could not decide — the descrip
     assert.deepEqual(await zombieHandles(root, statOf), scan.handles, 'zombieHandles answers the same handles');
   } finally {
     await fsp.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('linux: the provider hands on the pass\'s count — a deleted file still held whose path TreeMap may not look at is counted as not checked (BQL-a review F1.6)', {
+  skip: WIN_NO_PROC_FIXTURE || (process.getuid?.() === 0 && 'root can look into any folder'),
+}, async () => {
+  // The descriptor answers (it stats the open file itself) while the path refuses: here the path is a link
+  // into a folder TreeMap may not enter, the case a real /proc gives under a root-only folder.
+  const root = await mkTmp();
+  const data = await mkTmp();
+  const locked = path.join(data, 'locked');
+  try {
+    await fsp.mkdir(path.join(data, 'open'));
+    await fsp.writeFile(path.join(data, 'open', 'held.log (deleted)'), 'the open file');
+    await fsp.writeFile(path.join(data, 'open', 'gone.log (deleted)'), 'twelve bytes'); // and one with nothing at its path
+    await fsp.mkdir(locked);
+    await fsp.symlink(path.join(locked, 'x'), path.join(data, 'open', 'held.log'));
+    await fakeProc(root, [{ pid: 9, comm: 'daemon', fds: [
+      { name: '3', target: `${path.join(data, 'open', 'held.log')} (deleted)` },
+      { name: '4', target: `${path.join(data, 'open', 'gone.log')} (deleted)` },
+    ] }]);
+    await fsp.chmod(locked, 0o000);
+    const provider = new LinuxProvider();
+    (provider as unknown as { procRoot: string }).procRoot = root;
+    const scan = await provider.getZombieHandleScan();
+    const gone = [[9, path.join(data, 'open', 'gone.log'), 12]];
+    assert.deepEqual([scan.handles.map((h) => [h.pid, h.path, h.bytes]), scan.undecided], [gone, 1], 'the gone file claimed; the other not, and counted');
+    assert.deepEqual((await provider.getZombieHandles()).map((h) => [h.pid, h.path, h.bytes]), gone, 'the bare list reads the same /proc');
+  } finally {
+    await fsp.chmod(locked, 0o700).catch(() => undefined);
+    await fsp.rm(root, { recursive: true, force: true });
+    await fsp.rm(data, { recursive: true, force: true });
   }
 });
 

@@ -1105,6 +1105,27 @@ test('B5: a deleted-but-open file is detected, and released once closed', { skip
   }
 });
 
+test('B5: the macOS provider hands on the pass\'s count — a held file in a folder TreeMap may not look into is counted as not checked, never claimed (BQL-a review F1.6)', {
+  skip: (!IS_MAC && 'lsof is the macOS pass') || (process.getuid?.() === 0 && 'root can look into any folder'),
+}, async () => {
+  const dir = await mkTmp();
+  const locked = path.join(dir, 'locked');
+  await fsp.mkdir(locked);
+  const target = path.join(locked, 'held.bin');
+  await fsp.writeFile(target, Buffer.alloc(1000, 1));
+  const fd = fs.openSync(target, 'r'); // held by this process, in place
+  try {
+    await fsp.chmod(locked, 0o000); // what is at its path can no longer be looked at
+    const scan = await platform().getZombieHandleScan();
+    assert.ok(scan.undecided >= 1, `the held file whose place cannot be looked at is counted (undecided: ${String(scan.undecided)})`);
+    assert.deepEqual(scan.handles.filter((h) => h.path.includes(path.basename(dir))), [], 'and never claimed deleted');
+  } finally {
+    fs.closeSync(fd);
+    await fsp.chmod(locked, 0o700).catch(() => undefined);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('A5: topology on this machine names real hardware and real mount points', { skip: !IS_MAC }, async () => {
   const topo = await platform().getVolumeTopology();
   assert.ok(topo.physicalDisks.length >= 1, 'at least one physical disk is found');

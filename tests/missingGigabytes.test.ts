@@ -785,6 +785,26 @@ test('where no held-space pass can run — Windows, a Mac without lsof — the l
   assertBalances(s);
 });
 
+test('the live Missing GB source reads the platform\'s held-space pass, count and all (BQL-a review F1.6)', async () => {
+  // Every statement test hands its sources in, so reading the pass's handles alone — a plain measured 0 again
+  // over files nobody checked — left them green.
+  const plat = platform() as unknown as {
+    probeZombieHandles?: () => Promise<unknown>;
+    getZombieHandleScan?: () => Promise<unknown>;
+  };
+  plat.probeZombieHandles = async () => ({ available: true, mechanism: 'test' });
+  plat.getZombieHandleScan = async () => ({ handles: [], undecided: 3 });
+  invalidateCapabilities();
+  try {
+    const held = await liveSources().zombies();
+    assert.equal(held.undecidedCount, 3, 'the pass\'s count reaches the live source');
+  } finally {
+    delete plat.probeZombieHandles; // the provider's own methods again
+    delete plat.getZombieHandleScan;
+    invalidateCapabilities();
+  }
+});
+
 test('held space counts each held file once and names how many programs hold them (QA D17, D41)', async () => {
   // One deleted 1 GB file held by three programs is 1 GB held, not 3 GB: the line used
   // to sum per program, and because the statement balances, Unaccounted shrank to match.

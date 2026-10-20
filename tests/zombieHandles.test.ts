@@ -19,6 +19,9 @@ import * as zombieHandles from '../src/services/zombieHandles';
 import { AppError } from '../src/middleware/errorHandler';
 import { runText, CommandFailedError } from '../src/platform/exec';
 import { createApp } from '../src/server';
+import { platform } from '../src/platform';
+import { WindowsProvider } from '../src/platform/windows/index';
+import type { ZombieHandleScan } from '../src/platform/types';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 
 /**
@@ -909,6 +912,23 @@ test('the report carries how many held files the probe could not decide, each on
   assert.equal(plain.undecidedCount, 0, 'a probe that hands in a bare list decided everything it saw');
   assert.equal(groupZombies([], 2).undecidedCount, 2, 'the rollup passes the count through');
   assert.equal(groupZombies([]).undecidedCount, 0, 'and a rollup told none has none');
+});
+
+test('the live report reads the platform\'s held-space pass, count and all: zombieReport with nothing handed in carries what getZombieHandleScan said (BQL-a review F1.6)', async () => {
+  // Every other test hands the pass in, so reading the bare handle list again (which carries no count) left
+  // them all green while the card said "nothing is held" over files nobody checked.
+  const plat = platform() as unknown as { getZombieHandleScan?: () => Promise<ZombieHandleScan> };
+  plat.getZombieHandleScan = async () => ({ handles: [], undecided: 3 });
+  try {
+    const report = await zombieReport();
+    assert.equal(report.undecidedCount, 3, 'the platform pass\'s count reaches the live report');
+  } finally {
+    delete plat.getZombieHandleScan; // the provider's own method again
+  }
+});
+
+test('a provider with no count of its own hands on its handles as decided — Windows, which reports none (BQL-a review F1.6)', async () => {
+  assert.deepEqual(await new WindowsProvider().getZombieHandleScan(), { handles: [], undecided: 0 });
 });
 
 test('the held-up space card never says nothing is stuck when some open files could not be checked, and speaks only for the person\'s own programs (BQL item 11)', () => {
