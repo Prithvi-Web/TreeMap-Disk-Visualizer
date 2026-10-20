@@ -8,6 +8,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-pathSanitizerSymlink-data-');
 
 import { sanitizePath, PathRejectedError, systemFolderRefusal } from '../src/utils/pathSanitizer';
+import { externalMountParents } from '../src/services/portableMode';
 
 /**
  * The blocklist has to survive symlinks.
@@ -165,19 +166,39 @@ test('an operating-system folder is refused in words true of every route that as
 });
 
 /*
- * The BQL-a review, F1.5: "it belongs to the operating system" was said of everything the blocklist refuses,
- * and the blocklist refuses /run whole — where udisks2 (Fedora, Arch, …) mounts a person's own USB or backup
- * drive, /run/media/<user>/<label>. That drive's folder does not belong to the operating system; it is inside
- * /run, which does. The sentence names the folder of the blocklist it is in.
+ * The BQL-a review, F2.1 and F2.8: the blocklist refused /run whole, and udisks2 (Fedora, Arch, openSUSE, …)
+ * mounts a person's own USB or backup drive at /run/media/<user>/<label> — a drive GET /api/volumes lists
+ * (portableMode's externalMountParents), so the offload dock offered a drive whose every offload, scan and
+ * picker visit was then refused as inside "/run". /run/media is the drives' folder and is not refused; /run
+ * itself and the rest of it still are, and a link is judged where it leads by the same rule.
  */
-test('a drive mounted under /run/media is refused as inside "/run" — never as a folder that belongs to the operating system (BQL-a review F1.5)', {
+test('a drive mounted under /run/media is not refused — /run itself and the rest of it are (BQL-a review F2.1, F2.8)', {
   skip: process.platform === 'win32' && 'the Unix blocklist',
-}, () => {
-  const drive = '/run/media/me/Backup';
-  const refused = rejection(() => sanitizePath(drive));
-  assert.equal(refused.code, 'PATH_BLOCKED');
-  assert.equal(refused.message, `TreeMap does not scan, list or act on "${drive}": it is inside "/run", one of the system folders TreeMap stays out of.`);
-  assert.doesNotMatch(refused.message, /belongs to/, 'nothing is said of whom the drive belongs to');
+}, async () => {
+  assert.ok(externalMountParents('linux').includes('/run/media'), 'control: the app lists the drives mounted under /run/media');
+  for (const p of ['/run/media', '/run/media/me', '/run/media/me/Backup', '/run/media/me/Backup/photos/a.jpg']) {
+    assert.equal(sanitizePath(p), p, `${p} is a drive's folder, never refused`);
+    assert.equal(systemFolderRefusal(p, 'linux'), null, `${p} has no blocklist sentence`);
+  }
+  for (const p of ['/run', '/run/user/1000', '/run/mediax', '/run/udev/data']) {
+    const refused = rejection(() => sanitizePath(p));
+    assert.equal(refused.code, 'PATH_BLOCKED', `${p} is still refused`);
+  }
+  assert.equal(systemFolderRefusal('/run/mediax/a', 'linux'),
+    'TreeMap does not scan, list or act on "/run/mediax/a": it is inside "/run", one of the system folders TreeMap stays out of.',
+    'name by name: /run/mediax is not /run/media');
+  const dir = await mkTmp();
+  try {
+    const toDrive = path.join(dir, 'to-backup');
+    await fsp.symlink('/run/media/me/Backup', toDrive);
+    assert.equal(sanitizePath(toDrive), toDrive, 'a link to a drive under /run/media is not refused');
+    const toRun = path.join(dir, 'to-user-run');
+    await fsp.symlink('/run/user/1000', toRun);
+    assert.equal(rejection(() => sanitizePath(toRun)).message,
+      `TreeMap does not scan, list or act on "${toRun}": it leads into "/run", one of the system folders TreeMap stays out of.`);
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('the refusal names the folder of the blocklist as the path spells it, by Windows\' rules too — its case, a trailing dot, behind \\\\?\\ (BQL-a review F1.5)', () => {

@@ -239,6 +239,18 @@ test('SECURITY.md names every blocked system folder the sanitizer refuses', () =
   for (const e of entries) assert.ok(SECURITY.includes(`\`${e}\``), `SECURITY.md names \`${e}\``);
 });
 
+test('SECURITY.md and the README name the folder inside the blocklist that is not refused — the drives under /run/media (BQL-a review F2.1)', () => {
+  const list = read('src', 'utils', 'pathSanitizer.ts').match(/UNIX_OPEN_INSIDE_BLOCKLIST = \[([^\]]+)\]/);
+  assert.ok(list, 'the sanitizer lists the folders inside its blocklist that it does not refuse');
+  const open = [...list![1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  assert.deepEqual(open, ['/run/media'], 'control: the list was read');
+  for (const [name, doc] of [['SECURITY.md', SECURITY], ['README.md', README]] as const) {
+    for (const o of open) {
+      assert.match(doc, new RegExp(`but not \`${o}\`, where Linux mounts a person's own drives`), `${name} says \`${o}\` is not refused`);
+    }
+  }
+});
+
 test('SECURITY.md claims no more for snapshot restores and git\'s read-ahead than the code guarantees', () => {
   // FG4e, review L6: an empty folder or a dangling link appearing at the name just before a folder
   // or a link is put in place is replaced (RISKS R102), and git resolves an alternates entry by

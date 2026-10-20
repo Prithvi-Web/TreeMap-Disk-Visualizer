@@ -24,6 +24,14 @@ export class PathRejectedError extends Error {
 
 /** Virtual / volatile filesystems and OS internals we refuse to touch. */
 const UNIX_BLOCKLIST = ['/proc', '/sys', '/dev', '/run', '/private/var/db', '/System/Volumes/VM'];
+/**
+ * Folders inside an entry of UNIX_BLOCKLIST that are not refused (the BQL-a review, F2.1). udisks2 (Fedora,
+ * Arch, openSUSE, …) mounts a person's own USB or backup drive at /run/media/<user>/<label>, and GET
+ * /api/volumes lists those drives (portableMode's externalMountParents): refused as inside /run, the offload
+ * dock offered a drive nothing could be offloaded to, scanned or opened in the folder picker. Name by name:
+ * /run/mediax is still inside /run.
+ */
+const UNIX_OPEN_INSIDE_BLOCKLIST = ['/run/media'];
 const WINDOWS_BLOCKLIST = [
   'c:\\windows\\system32',
   'c:\\windows\\syswow64',
@@ -138,7 +146,14 @@ function isBlocked(resolved: string, platform: NodeJS.Platform = process.platfor
     const lower = win32Normalize(resolved.replace(WIN32_PREFIX_BEFORE_DRIVE, ''));
     return WINDOWS_BLOCKLIST.some((b) => lower === b || lower.startsWith(b + path.win32.sep));
   }
-  return UNIX_BLOCKLIST.some((b) => resolved === b || resolved.startsWith(b + '/'));
+  return unixBlocklistEntryOf(resolved) !== undefined;
+}
+
+/** The entry of UNIX_BLOCKLIST `resolved` is at or inside, unless it is at or inside one of UNIX_OPEN_INSIDE_BLOCKLIST. */
+function unixBlocklistEntryOf(resolved: string): string | undefined {
+  const atOrInside = (dir: string) => resolved === dir || resolved.startsWith(dir + '/');
+  if (UNIX_OPEN_INSIDE_BLOCKLIST.some(atOrInside)) return undefined;
+  return UNIX_BLOCKLIST.find(atOrInside);
 }
 
 /**
@@ -156,7 +171,7 @@ function blockedFolderOf(resolved: string, platform: NodeJS.Platform = process.p
     const asSpelled = bare.split(/([\\/])/).slice(0, 2 * entry.split('\\').length - 1).join('');
     return { folder: resolved.slice(0, resolved.length - bare.length) + asSpelled, isIt: asSpelled === bare };
   }
-  const entry = UNIX_BLOCKLIST.find((b) => resolved === b || resolved.startsWith(b + '/'));
+  const entry = unixBlocklistEntryOf(resolved);
   return entry === undefined ? null : { folder: entry, isIt: entry === resolved };
 }
 
@@ -167,8 +182,8 @@ const STAYS_OUT = 'one of the system folders TreeMap stays out of';
  * the blocklist does not refuse it. True of every route that sanitizes — browsing the folder picker, opening,
  * deleting and a note ask too, and the picker toasted "Scanning "/dev" is not allowed" over a folder nobody
  * had asked to scan — and of every path the blocklist refuses: it names the folder of the list the path is
- * in. "It belongs to the operating system" was not: the list refuses /run whole, where udisks2 mounts a
- * person's own USB or backup drive (/run/media/<user>/<label>). Pure; `platform` picks the rules.
+ * in. "It belongs to the operating system" was not: the list refuses /run, where many programs keep files of
+ * their own (/run/user/<uid>), not only the system. Pure; `platform` picks the rules.
  */
 export function systemFolderRefusal(resolved: string, platform: NodeJS.Platform = process.platform): string | null {
   const at = blockedFolderOf(resolved, platform);

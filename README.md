@@ -695,7 +695,7 @@ Ten tools, all calling the exact same internals as the app — same validation, 
 
 Disk tools should never lose your data. TreeMap is built defensively:
 
-- 🔒 Paths are sanitized and traversal-proofed; system dirs (`/proc`, `/sys`, `/dev`, `/run`, `C:\Windows\System32`, …) are blocked outright.
+- 🔒 Paths are sanitized and traversal-proofed; system dirs (`/proc`, `/sys`, `/dev`, `/run`, `C:\Windows\System32`, …) are blocked outright, but not `/run/media`, where Linux mounts a person's own drives.
 - 🎯 Trash/open endpoints only accept paths **inside a folder you scanned** — and never paths *inside an archive* (only the archive itself can be trashed).
 - ♻️ Deletes always go through the OS Trash — undo from Finder/Explorer until the Trash is emptied.
 - 🪟 On Windows, a path Windows would rewrite before binning it (a name ending in a dot or a space) is left alone, with a sentence saying why — never a different file in the Recycle Bin.
