@@ -733,6 +733,11 @@ function failScan(message, err = null) {
   // on screen came from takes its place, or none — stopScan's rule, and for
   // its reason (review F2.3).
   state.scanId = state.settledScanId || null;
+  // An index paint's tree stays on screen when its scan fails, as when its
+  // quiet request fails (quietRescanFailed): the older tree it stood over is
+  // no one's to put back now. Held, a later Stop of another scan swapped it,
+  // and its long-gone scan, back over the tree on screen (review F1.1).
+  state.heldBehindIndex = null;
   const status = $('scanStatus');
   status.classList.add('error');
   status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml(message) + '</span>';

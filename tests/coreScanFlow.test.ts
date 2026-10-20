@@ -1444,8 +1444,12 @@ test('J06: Stop while a folder with a saved index is painted over an older scan 
   }
 });
 
-test('J06: the older tree an index paint stood over is let go once that folder\'s scan lands, or its quiet rescan fails — it can be a quarter-million nodes — and a Stop after either puts nothing back', async () => {
-  for (const outcome of ['lands', 'fails'] as const) {
+test('J06: the older tree an index paint stood over is let go once that folder\'s scan lands, or its quiet rescan fails, or the scan fails once followed — it can be a quarter-million nodes — and a Stop after any of them puts nothing back', async () => {
+  // Review F1.1: a scan that failed once followed — the stream's error or
+  // shutdown frame, the watchdog's 404/500, a server that stopped answering:
+  // all reach failScan — kept the older tree held, and a later Stop of an
+  // unrelated scan swapped it, and its long-gone scan, back onto the screen.
+  for (const outcome of ['lands', 'fails', 'fails once followed (error frame)', 'fails once followed (shutdown frame)'] as const) {
     const label = `the scan behind the index paint ${outcome}`;
     const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
     const h = page({ index: true, root: mail, settledScanId: 'scan-mail',
@@ -1462,8 +1466,16 @@ test('J06: the older tree an index paint stood over is let go once that folder\'
       await turns();
       assert.deepEqual(h.state.root, scanned, `${label}: control: the scan's tree is on screen`);
       assert.equal(h.state.scanId, 'scan-1', `${label}: control: with its scan`);
-    } else {
+    } else if (outcome === 'fails') {
       assert.match(h.$('scanStatus').innerHTML, /Showing the saved index — the refresh failed/, `${label}: control: the saved index stays, said to be`);
+    } else {
+      assert.notEqual(h.state.heldBehindIndex, null, `${label}: control: the older tree is held while the scan runs`);
+      const frame = outcome.includes('shutdown') ? { type: 'shutdown' } : { type: 'error', message: 'The drive stopped answering.' };
+      h.streams[0].onmessage!({ data: JSON.stringify(frame) });
+      await turns();
+      assert.equal(h.state.scanning, false, `${label}: control: it failed`);
+      assert.equal(pathOf(h.state.root), CORPUS, `${label}: control: the saved index's tree stays on screen`);
+      assert.equal(h.state.scanId, null, `${label}: control: with no scan behind it`);
     }
     assert.equal(h.state.heldBehindIndex, null, `${label}: the older tree is let go`);
     // A Stop of the next scan puts nothing back: the tree on screen stays.
@@ -1472,6 +1484,7 @@ test('J06: the older tree an index paint stood over is let go once that folder\'
     await turns();
     await pressStop(h);
     assert.equal(h.state.root, onScreen, `${label}: a later Stop keeps the tree that was on screen`);
+    assert.notEqual(h.state.scanId, 'scan-mail', `${label}: and puts no older scan behind it`);
   }
 });
 
