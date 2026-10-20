@@ -2395,28 +2395,53 @@ test('the SVG export lays the map\'s ground under a staged block and a hollow on
   }
 });
 
-/** An SVG path's subpaths (M, L, H, V, A, Z, absolute), each as the points it passes through and the radii of its arcs. */
+/** One elliptical arc of an SVG path: where it starts and ends, its radii, and its large-arc and sweep flags. */
+type Arc = { from: number[]; to: number[]; rx: number; ry: number; large: number; sweep: number };
+
+/**
+ * An SVG path's subpaths (M, L, H, V, A, Z, absolute), each as the points it passes through, the radii of its arcs, and
+ * its arcs whole — each with its large-arc and sweep flags, which decide which way a corner curves (review F1.4).
+ */
 function subpaths(d: string) {
   const tokens = [...d.matchAll(/[MLHVAZ]|-?\d*\.?\d+(?:e-?\d+)?/gi)].map((m) => m[0]);
-  const out: Array<{ pts: number[][]; radii: number[] }> = [];
+  const out: Array<{ pts: number[][]; radii: number[]; arcs: Arc[] }> = [];
   let pen = [0, 0];
   for (let i = 0; i < tokens.length;) {
     const cmd = tokens[i++];
     const num = () => Number(tokens[i++]);
-    if (cmd === 'M') { pen = [num(), num()]; out.push({ pts: [pen], radii: [] }); }
+    if (cmd === 'M') { pen = [num(), num()]; out.push({ pts: [pen], radii: [], arcs: [] }); }
     else if (cmd === 'L') { pen = [num(), num()]; out[out.length - 1].pts.push(pen); }
     else if (cmd === 'H') { pen = [num(), pen[1]]; out[out.length - 1].pts.push(pen); }
     else if (cmd === 'V') { pen = [pen[0], num()]; out[out.length - 1].pts.push(pen); }
-    else if (cmd === 'A') { const rx = num(), ry = num(); i += 3; pen = [num(), num()]; out[out.length - 1].radii.push(rx, ry); out[out.length - 1].pts.push(pen); }
+    else if (cmd === 'A') {
+      const rx = num(), ry = num();
+      num(); // the x-axis rotation: nothing for a circle's arc
+      const large = num(), sweep = num(), from = pen;
+      pen = [num(), num()];
+      out[out.length - 1].radii.push(rx, ry);
+      out[out.length - 1].arcs.push({ from, to: pen, rx, ry, large, sweep });
+      out[out.length - 1].pts.push(pen);
+    }
     else if (cmd !== 'Z') assert.fail(`an unexpected path command ${cmd}`);
   }
   return out.map((s) => {
     const xs = s.pts.map((p) => p[0]), ys = s.pts.map((p) => p[1]);
-    return { box: [Math.min(...xs), Math.min(...ys), Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)], radii: s.radii };
+    return { box: [Math.min(...xs), Math.min(...ys), Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)], radii: s.radii, arcs: s.arcs };
   });
 }
 
-test('owner\'s outlines: the SVG export\'s outlines and bands stop at its name tags, as the canvas\'s do — each tag clipped out of them by its own box and radius, and the tags and their names laid after, outside the clip (review F3.1)', () => {
+/**
+ * The centre of a quarter-circle arc between two points a radius apart on each axis, as SVG draws it: of the two
+ * centres such an arc can have — (from.x, to.y) and (to.x, from.y) — the one about which it turns the way its sweep
+ * flag says. With y pointing down, sweep 1 turns from +x toward +y: about its centre, from × to is positive.
+ */
+function quarterArcCentre(a: Arc): number[] {
+  const turn = (c: number[]) => (a.from[0] - c[0]) * (a.to[1] - c[1]) - (a.from[1] - c[1]) * (a.to[0] - c[0]);
+  const [c1, c2] = [[a.from[0], a.to[1]], [a.to[0], a.from[1]]];
+  return (turn(c1) > 0) === (a.sweep === 1) ? c1 : c2;
+}
+
+test('owner\'s outlines: the SVG export\'s outlines and bands stop at its name tags, as the canvas\'s do — each tag clipped out of them by its own box and radius, its corners curving outward as the pill\'s do, and the tags and their names laid after, outside the clip (review F3.1, F1.4)', () => {
   // Two top-level folders big enough for a tag, each tiled by narrow strips whose outlines run under the tag, and a file.
   const tiles: Tile[] = [
     { name: 'Applications', path: '/r/Applications', size: 6e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 60, h: 60 },
@@ -2447,6 +2472,15 @@ test('owner\'s outlines: the SVG export\'s outlines and bands stop at its name t
     const cut = subs.slice(1).filter((s) => near(s.box, box));
     assert.equal(cut.length, 1, `the tag at ${box} is cut out of the clip by its own box`);
     assert.ok(cut[0].radii.length === 8 && cut[0].radii.every((r) => Math.abs(r - radius) < 0.011), `with the tag's own corner radius ${radius} (${cut[0].radii})`);
+    // Each corner curves outward, as the pill's own corners do (review F1.4): a quarter circle (not three quarters)
+    // whose centre lies a radius inside the tag at that corner. A corner curved inward has its centre on the box's
+    // corner itself, and leaves a notch under the pill where the lines show.
+    const [bx, by, bw, bh] = box;
+    const insetCorners = [[bx + radius, by + radius], [bx + bw - radius, by + radius], [bx + bw - radius, by + bh - radius], [bx + radius, by + bh - radius]];
+    const centres = cut[0].arcs.map(quarterArcCentre);
+    assert.deepEqual(cut[0].arcs.map((a) => a.large), [0, 0, 0, 0], `the tag at ${box}: each corner is a quarter circle (large-arc flag 0)`);
+    assert.ok(insetCorners.every((c) => centres.some((q) => near(q, c))),
+      `the tag at ${box}: each corner curves outward, about a centre a radius ${radius} inside it — centres ${centres.map((q) => q.map(fmt).join(',')).join('; ')}, want ${insetCorners.map((q) => q.map(fmt).join(',')).join('; ')}`);
   }
   // What the clip holds: every leaf outline and every band, and nothing else; the tags and their names come after it.
   const open = svg.indexOf(`<g clip-path="url(#${id})">`), close = svg.indexOf('</g>', open);
