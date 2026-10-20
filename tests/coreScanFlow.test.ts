@@ -1701,6 +1701,10 @@ test('J02: a Stop that lands after the scan has finished says so and shows the f
   assert.deepEqual(h.indexBuilds, [], 'and nothing is indexed behind it: the person asked for the work to stop');
   assert.doesNotMatch(h.$('startLast').textContent, /You stopped/, 'and nothing says the person stopped it');
   assert.equal(h.$('stopAnnounce').textContent, `The scan of ${DOCS} had already finished when you pressed Stop — its results are on screen.`, 'it is said that it had finished');
+  // Review F1.3: focus was on "Scan Documents again", which the tree took off screen. It went to the
+  // view's first control, the System card's Trash row — J01's hazard: a second Enter opened the Trash sheet.
+  assert.equal(h.$('trashFact').painted(), true, 'control: the Trash row is on screen, first among the Dashboard\'s controls');
+  assert.equal(h.dom.activeElement, h.$('scanBtn'), `focus goes to the Scan button the Stop was pressed on — never the Trash row (${h.dom.activeElement.id})`);
 
   // Control: a cancel that confirms the Stop says "You stopped…" once it answers.
   let confirm: (a: { status?: number; body?: unknown }) => void = () => {};
@@ -1785,6 +1789,27 @@ test('J02: a Stop that lands after the scan has finished says so and shows the f
   assert.equal(again.$('scanStatus').innerHTML, said, 'the running scan\'s status line is its own');
   assert.equal(again.$('stopAnnounce').textContent, '', 'and nothing announces a Stop over it');
   assert.equal(again.$('emptyState').style.display, 'none', 'nor puts the start screen back');
+});
+
+test('J02 (review F1.3): a Stop that proves to have come after the scan finished moves focus only off what the tree took away — a control still on screen keeps it', async () => {
+  // The first-run half is in the J02 test above: focus on "Scan … again" goes to the Scan button.
+  const tree = { name: 'old', path: '/Users/x/old', size: 1, type: 'dir', children: [] };
+  const finishedTree = { name: 'Desktop', path: '/Users/x/Desktop', size: 7_000_000, type: 'dir', children: [] };
+  const base = server({ roots: [] });
+  const h = page({ index: true, root: tree, settledScanId: 'scan-old', route: (m, url, b) => {
+    if (m === 'POST' && url === '/api/scan/scan-1/cancel') return { body: { scanId: 'scan-1', cancelled: false, status: 'complete' } };
+    if (url === '/api/scan/scan-1/stats') return { body: { scanId: 'scan-1', status: 'complete', fileCount: 7, dirCount: 1, durationMs: 20 } };
+    if (url === '/api/scan/scan-1/result') return { body: { scanId: 'scan-1', status: 'complete', root: finishedTree } };
+    return base(m, url, b);
+  } });
+  h.switchView('dashboard');
+  await h.startScan('/Users/x/Desktop'); // no saved index: the older tree stays while it runs
+  await turns();
+  h.$('pathInput').focus(); // the person is in the path box; Stop comes by its shortcut
+  await h.stopScan();
+  await turns();
+  assert.deepEqual(h.state.root, finishedTree, 'control: the scan had finished, and is shown');
+  assert.equal(h.dom.activeElement, h.$('pathInput'), 'focus on a control still on screen stays where it is');
 });
 
 test('J02 (review F1.2): a Stop pressed before POST /api/scan answers says only that it is stopping until the cancel sent when the request answers has answered — a scan that had finished is shown, a confirmed one is "You stopped…", and a request that fails is stopped; a Stop before any request was sent stopped it outright', async () => {

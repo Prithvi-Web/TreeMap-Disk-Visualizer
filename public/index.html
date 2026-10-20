@@ -9689,7 +9689,16 @@ async function showFinishedAfterStop(scanId, gen, noted, path) {
   if (noted && state.lastFolder === noted) state.lastFolder = null; // the tree is on screen: no start screen names it
   state.scanId = scanId;
   $('stopAnnounce').textContent = `The scan of ${path} had already finished when you pressed Stop — its results are on screen.`;
+  const had = document.activeElement;
   await finishScan(result.root, stats && stats.durationMs > 0 ? stats.durationMs : 0, stats, { afterStop: true });
+  // Focus on the start screen's "Scan … again", which the tree just took off
+  // screen, goes to the Scan button the Stop was pressed on — not where the
+  // repaint sent it, the view's first control: the System card's Trash row,
+  // whose next Enter opened the Trash sheet over the map (review F1.3, J01's
+  // hazard). Nothing is scanning, so activeViewControl's Stop rule is off.
+  const scanBtn = $('scanBtn');
+  if (had && had !== document.body && had.getClientRects().length === 0
+    && scanBtn && !scanBtn.disabled && scanBtn.getClientRects().length > 0) scanBtn.focus({ preventScroll: true });
 }
 
 /** The reason a scan gives when it was stopped: the server's SCAN_CANCELLED_MESSAGE (diskScanner.ts). */
