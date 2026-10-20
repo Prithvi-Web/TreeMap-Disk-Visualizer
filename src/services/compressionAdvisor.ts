@@ -438,7 +438,7 @@ export async function encodeOne(
     const placeBefore = await identityOf(file);
     const trashed = await moveToTrash([file]);
     if (!trashed.deleted.includes(file)) {
-      // A reported failure is judged by the disk, as the Time Capsule judges one (FG3b): the step can
+      // A reported failure is judged by the disk, as the Undo Vault judges one (FG3b): the step can
       // move the original and still report failure. Only the same original still in place, the step
       // having ended on its own, is "kept"; the encode goes. Gone, with nothing in its place: the
       // Trash took it after all, and the encode goes into its place below. Anything else — another

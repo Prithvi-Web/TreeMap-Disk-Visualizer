@@ -183,7 +183,7 @@ export const FEATURES = {
   noStore: {
     ...NO_STORE,
     label: 'a request that reads no scan’s rows',
-    classified: 'it reads settings, files on disk, the index, the Time Capsule, snapshots or a scan’s record, never its rows',
+    classified: 'it reads settings, files on disk, the index, the Undo Vault, snapshots or a scan’s record, never its rows',
   },
 } as const satisfies Record<string, FeatureRow>;
 
@@ -370,7 +370,7 @@ export const ROUTE_FEATURES: Readonly<Record<string, RouteEntry>> = {
   'GET /api/search': 'noStore',
   'GET /api/allocation': 'noStore',
   'GET /api/allocation/file': 'noStore',
-  // timeCapsuleRoutes: the Time Capsule reads no scan (§S.7)
+  // timeCapsuleRoutes: the Undo Vault reads no scan (§S.7)
   'GET /api/timecapsule': 'noStore',
   'POST /api/timecapsule/:id/restore': 'noStore',
   'DELETE /api/timecapsule/:id': 'noStore',

@@ -173,7 +173,7 @@ const STEPS: DiscardStep[] = ['load', 'drop', 'save'];
  * run history shows for as long as the record exists — long after the Trash is emptied and the
  * capsule's retention or its size cap has let the copies go.
  */
-const BOUNDED_WAY_BACK = /Everything listed as trashed was trashed, and can be put back until the Time Capsule removes its copies \(after 30 days by default, or sooner to stay under its size cap\)\.$/;
+const BOUNDED_WAY_BACK = /Everything listed as trashed was trashed, and can be put back until the Undo Vault removes its copies \(after 30 days by default, or sooner to stay under its size cap\)\.$/;
 
 for (const step of STEPS) {
   test(`a failure at the ${step} step after the trash step: the cart commit answers with what it trashed and its run id, and its undo puts exactly that back`, async () => {
@@ -629,7 +629,7 @@ test('an unconfirmed item reached through a link another item took to the Trash 
   const job = await undoCartRun(result.runId);
   assert.equal(job.entryCount, 1, `only the link is put back (${JSON.stringify(job)})`);
   assert.deepEqual((job.passedOver ?? []).map((p) => [p.path, p.reason]),
-    [[through, 'It is still in its place, so there was nothing to put back; its copy stays in the Time Capsule.']]);
+    [[through, 'It is still in its place, so there was nothing to put back; its copy stays in the Undo Vault.']]);
   await restored(job.jobId);
   assert.ok(fs.lstatSync(link).isSymbolicLink(), 'the link is back');
   assert.equal(fs.readFileSync(x, 'utf8'), contentOf(x), 'and the file it leads to was never touched');

@@ -44,7 +44,7 @@ import { AsyncMutex } from '../utils/asyncMutex';
  * This is the feature B2 and B3 were built for, and it deliberately owns none
  * of the machinery that does the dangerous part. A run resolves candidates
  * through the existing `CleanupRules`, then hands them to **one** call —
- * `protectAndTrash` — which copies each item into the Time Capsule, verifies
+ * `protectAndTrash` — which copies each item into the Undo Vault, verifies
  * it, checks the open-file guard, and only then moves the original to the
  * Trash. There is no delete in this file at all (§B1: "No new deletion pathway
  * is created").
@@ -65,7 +65,7 @@ import { AsyncMutex } from '../utils/asyncMutex';
  *    policy pointed at the wrong folder cannot empty it overnight.
  *  - **Cooldown** keeps a policy from running again immediately, and doubles as
  *    the schedule — one knob instead of two that can disagree.
- *  - **Undo** puts a whole run back from the Time Capsule, while it holds the
+ *  - **Undo** puts a whole run back from the Undo Vault, while it holds the
  *    run's copies — which is why every run stamps its own id onto the capsule
  *    entries it creates.
  *
@@ -474,7 +474,7 @@ export function selectCandidates(
           path: item.path,
           name: item.name,
           bytes: item.size,
-          // The rule's own words, so the run record and the Time Capsule entry
+          // The rule's own words, so the run record and the Undo Vault entry
           // can both say why this was chosen without inventing wording.
           reason: `matched “${group.title}” — ${group.description}`,
           ...(group.regenerateCmd ? { regenerateCmd: group.regenerateCmd } : {}),
@@ -505,7 +505,7 @@ const AGE_UNITS: ReadonlyArray<readonly [ms: number, unit: string]> = [
  * A rule's age in words, exactly: whole days as "90 days", and anything else in the whole days,
  * hours, minutes, seconds and milliseconds it adds up to — 36 hours is "1 day 12 hours", never
  * rounded to "2 days". The matcher compares milliseconds, and this sentence is every picked item's
- * recorded reason (the preview, the run record, the Time Capsule entry), so it may not state a rule
+ * recorded reason (the preview, the run record, the Undo Vault entry), so it may not state a rule
  * that is not the one that ran. The policy card (ruleAgeText in the page) states the same parts.
  */
 function describeAge(ms: number): string {
@@ -1090,7 +1090,7 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
   }
 
   // The only deletion in this file, and it is somebody else's: protectAndTrash
-  // copies each item into the Time Capsule, verifies it, runs the open-file
+  // copies each item into the Undo Vault, verifies it, runs the open-file
   // guard and only then trashes. Whatever it could not protect, it did not
   // delete — and says so.
   run.mode = 'live';
@@ -1143,7 +1143,7 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
         : 'Nothing could be safely protected, so nothing was deleted.';
   }
   // After the trash step: the items above were trashed and can be undone until
-  // the Time Capsule removes their copies, but the copies of what the Trash
+  // the Undo Vault removes their copies, but the copies of what the Trash
   // refused were not all discarded (FG1).
   if (result.cleanupError) run.blockedReason = run.blockedReason ? `${run.blockedReason} ${result.cleanupError}` : result.cleanupError;
   return record();
@@ -1274,7 +1274,7 @@ export async function getRun(id: string): Promise<AutopilotRun | undefined> {
 }
 
 /**
- * Undo a run: put everything it deleted back, from the Time Capsule.
+ * Undo a run: put everything it deleted back, from the Undo Vault.
  *
  * Returns the restore job so the caller can follow it over SSE, exactly like
  * any other restore. Fails loudly when the capsule no longer holds the run —

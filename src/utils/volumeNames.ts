@@ -2,7 +2,7 @@ import path from 'path';
 import { ABSENT, identityOf, type Identity } from './placeIdentity';
 
 /**
- * Names as the volume a restore writes to compares them (FG3c), for the Time Capsule's early check
+ * Names as the volume a restore writes to compares them (FG3c), for the Undo Vault's early check
  * that no member of a manifest lies past a link it records (`manifestRefusal`). Folding less than the
  * volume lets a tampered record reach the restore, which still makes links last, so nothing is
  * written through one — it only fails later. Folding more refuses a tree the volume holds, and

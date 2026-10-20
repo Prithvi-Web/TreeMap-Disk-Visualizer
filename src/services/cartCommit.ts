@@ -19,10 +19,10 @@ import { withInstalledProgram, type InstalledProgram } from './installedPrograms
  * The cleanup cart's commit (v4 §4.4).
  *
  * The cart has always trashed its contents directly. §4.4 routes it through
- * the **Time Capsule** instead, which changes one thing that matters: the
+ * the **Undo Vault** instead, which changes one thing that matters: the
  * whole batch becomes a single undoable run, so "Undo this run" puts every
  * file back at its original path even after the Trash has been emptied, until
- * the Time Capsule removes its copies (its retention, or its size cap).
+ * the Undo Vault removes its copies (its retention, or its size cap).
  *
  * ── What that costs, stated plainly ──
  *
@@ -60,7 +60,7 @@ const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 /**
  * Validate a caller-supplied runId, or `undefined` to start a fresh run.
  *
- * A runId is a grouping label stamped onto Time Capsule entries, and undo
+ * A runId is a grouping label stamped onto Undo Vault entries, and undo
  * restores every entry carrying one — so an arbitrary string would let a
  * client group unrelated commits together. Restricting it to the generated
  * shape keeps the label meaningful without needing a registry of live runs.
@@ -92,7 +92,7 @@ export interface CartDryRun {
   bytesWouldFree: number;
   /** Bytes that would be left behind, because they could not be protected. */
   bytesSkipped: number;
-  /** Older Time Capsule copies that would be evicted to make room. */
+  /** Older Undo Vault copies that would be evicted to make room. */
   evicts: ProtectionPlan['evicts'];
   capsule: { available: boolean; reason?: string; capBytes: number; usedBytes: number };
   /** B2's preflight: what a program is holding open right now. */
@@ -108,7 +108,7 @@ export interface CartDryRun {
 
 export interface CartCommitResult {
   dryRun: false;
-  /** Ties this batch to its Time Capsule copies; the id "Undo this run" takes. */
+  /** Ties this batch to its Undo Vault copies; the id "Undo this run" takes. */
   runId: string;
   /** In the Trash now, and put back by an undo — an item staged inside another staged item included, which went with it (FG3b). */
   trashed: string[];
@@ -191,7 +191,7 @@ export async function planCartCommit(
 /**
  * Protect, verify, then trash — as one run.
  *
- * `reason` is stamped onto every capsule entry so the Time Capsule tab can say
+ * `reason` is stamped onto every capsule entry so the Undo Vault tab can say
  * where an item came from months later, the way an Autopilot run does.
  */
 export async function commitCart(paths: string[], runId?: string): Promise<CartCommitResult> {
@@ -228,7 +228,7 @@ export async function commitCart(paths: string[], runId?: string): Promise<CartC
 }
 
 /**
- * Put a whole commit back, from the Time Capsule.
+ * Put a whole commit back, from the Undo Vault.
  *
  * Refuses loudly when the capsule no longer holds the run — evicted, or past
  * its retention window — rather than reporting a partial success that leaves

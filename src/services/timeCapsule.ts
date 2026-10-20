@@ -30,7 +30,7 @@ import { trackWrite } from '../utils/backgroundWrites';
 import { recordRestorePartial, restorePlacementHooks, sweepRestoreLeftovers, whileRestoring } from './restoreLeftovers';
 
 /**
- * Time Capsule — recovery beyond the OS Trash (B3).
+ * Undo Vault — recovery beyond the OS Trash (B3).
  *
  * The OS Trash is the app's safety net for everything a person deletes on
  * purpose. It is the wrong net for deletions a person did not watch happen:
@@ -185,7 +185,7 @@ export function capsuleRoot(): string {
 }
 
 /**
- * The Time Capsule copies real file bytes somewhere before deleting them, and a
+ * The Undo Vault copies real file bytes somewhere before deleting them, and a
  * portable session that saves nothing has nowhere of its own to put them — the
  * drive is read-only, or (FG4) its TreeMap-Data folder was refused. Keeping them
  * on the host would be both a trace and a surprise — someone's files left on a
@@ -216,7 +216,7 @@ function isEntryId(id: unknown): id is string {
 }
 
 /** Said of an index record TreeMap did not write, wherever one is refused. */
-const NOT_OURS = 'That Time Capsule record is not one TreeMap made';
+const NOT_OURS = 'That Undo Vault record is not one TreeMap made';
 
 /**
  * The folder of an entry's copy. The id comes from the index, a file on disk, and `rm -rf` is run on
@@ -248,8 +248,8 @@ export class CapsuleIndexUnreadableError extends AppError {
     super(
       500,
       'CAPSULE_INDEX_UNREADABLE',
-      `The Time Capsule index (${INDEX_FILE}, in TreeMap's app-data folder) could not be read (${detail}). ` +
-        'TreeMap will not change the capsule until it is repaired, because every entry in it is the only ' +
+      `The Undo Vault index (${INDEX_FILE}, in TreeMap's app-data folder) could not be read (${detail}). ` +
+        'TreeMap will not change the Undo Vault until it is repaired, because every entry in it is the only ' +
         'record of a file it is holding. Do NOT delete or move it — the recovery folders beside it are ' +
         'named by entries in that file, and without it they cannot be matched to anything. A copy of the ' +
         'unreadable file is kept alongside it with a .corrupt suffix.',
@@ -402,7 +402,7 @@ async function capacityOf(entries: TimeCapsuleEntry[], maxPercent: number): Prom
     freeBytes,
     maxPercent,
     ...(freeBytes === null
-      ? { note: `Free space on this volume couldn’t be read, so the capsule is limited to ${formatBytes(FALLBACK_CAP_BYTES)} to be safe.` }
+      ? { note: `Free space on this volume couldn’t be read, so the Undo Vault is limited to ${formatBytes(FALLBACK_CAP_BYTES)} to be safe.` }
       : {}),
   };
 }
@@ -594,7 +594,7 @@ function doesNotFitSentence(bytes: number, capBytes: number, pinned: PinnedBytes
   const beside = total > 0 && bytes <= capBytes
     ? `, and ${formatBytes(total)} of that is copies never dropped to make room — ${parts.join(', and ')}`
     : '';
-  return `Protecting it needs ${formatBytes(bytes)}, but the Time Capsule can only hold ${formatBytes(capBytes)}${beside}. ` +
+  return `Protecting it needs ${formatBytes(bytes)}, but the Undo Vault can only hold ${formatBytes(capBytes)}${beside}. ` +
     `It ${verb} left alone rather than deleted without a backup.`;
 }
 
@@ -1014,7 +1014,7 @@ async function capture(
     // A half-written capture protects nothing. Remove it entirely so the
     // caller cannot mistake it for cover, and so reconcile has nothing to find.
     await removeCaptureFolder(id);
-    const detail = `It could not be copied into the Time Capsule (${err instanceof Error ? err.message : String(err)}), so it was left alone.`;
+    const detail = `It could not be copied into the Undo Vault (${err instanceof Error ? err.message : String(err)}), so it was left alone.`;
     recordEvent(store, {
       at: Date.now(), kind: 'unprotected', name, originalPath: original, sizeBytes: walked.bytes, detail,
     });
@@ -1038,7 +1038,7 @@ async function capture(
         name: victim.name,
         originalPath: victim.originalPath,
         sizeBytes: victim.sizeBytes,
-        detail: `Removed from the Time Capsule to make room for ${name}. It can no longer be restored from here.`,
+        detail: `Removed from the Undo Vault to make room for ${name}. It can no longer be restored from here.`,
       });
     }
     store.entries.push(entry);
@@ -1103,7 +1103,7 @@ async function removeCaptureFolder(id: string): Promise<void> {
     captureLeftovers.delete(id);
   } catch (err) {
     captureLeftovers.add(id);
-    console.error(`[treemap] time capsule: the folder of a copy that was given up on could not be removed yet (${describeFsError(err)}); it is tried again later`);
+    console.error(`[treemap] undo vault: the folder of a copy that was given up on could not be removed yet (${describeFsError(err)}); it is tried again later`);
   }
 }
 
@@ -1618,7 +1618,7 @@ async function protectAndTrashInFlight(
       // A copy that was gone has nothing to discard but its record (FG3f #1); one a restore is reading
       // is kept (FG3h D).
       outcome.detail = problem !== null
-        ? `${refusal}. Discarding its copy did not finish, so the Time Capsule may still list it.`
+        ? `${refusal}. Discarding its copy did not finish, so the Undo Vault may still list it.`
         : code === COPY_GONE
           ? `${refusal}.`
           : typeof outcome.entryId === 'string' && held.has(outcome.entryId)
@@ -1628,8 +1628,8 @@ async function protectAndTrashInFlight(
     if (problem !== null) {
       const items = `${formatCount(notDeleted.length)} item${notDeleted.length === 1 ? '' : 's'}`;
       cleanupError =
-        `Discarding the Time Capsule copies of the ${items} the Trash refused did not finish (${problem}), so the Time Capsule may still list them. ` +
-        'Everything listed as trashed was trashed, and can be put back until the Time Capsule removes its copies ' +
+        `Discarding the Undo Vault copies of the ${items} the Trash refused did not finish (${problem}), so the Undo Vault may still list them. ` +
+        'Everything listed as trashed was trashed, and can be put back until the Undo Vault removes its copies ' +
         '(after 30 days by default, or sooner to stay under its size cap).';
     }
   }
@@ -1704,7 +1704,7 @@ const CHANGED = 'CAPSULE_CHANGED';
  * goes on to its trash step, whose look at the disk says what became of it, as before.
  */
 async function stopBeforeTrash(entryId: string | undefined, original: string): Promise<{ reason: string; code: string } | null> {
-  const gone = { code: COPY_GONE, reason: 'its Time Capsule copy is no longer there, and nothing is deleted without one' };
+  const gone = { code: COPY_GONE, reason: 'its Undo Vault copy is no longer there, and nothing is deleted without one' };
   if (typeof entryId !== 'string' || !isEntryId(entryId)) return gone;
   let manifest: EntryManifest;
   try {
@@ -1712,14 +1712,14 @@ async function stopBeforeTrash(entryId: string | undefined, original: string): P
   } catch (err) {
     if (meansAbsent(err)) return gone;
     const why = err instanceof SyntaxError ? 'its record cannot be read' : describeFsError(err);
-    return { code: COPY_GONE, reason: `its Time Capsule copy could not be looked at (${why}), and nothing is deleted without a copy that was seen` };
+    return { code: COPY_GONE, reason: `its Undo Vault copy could not be looked at (${why}), and nothing is deleted without a copy that was seen` };
   }
   if (manifestRefusal(manifest) !== null) {
-    return { code: COPY_GONE, reason: 'its Time Capsule copy\'s record is not one TreeMap wrote, and nothing is deleted without a copy that was seen' };
+    return { code: COPY_GONE, reason: 'its Undo Vault copy\'s record is not one TreeMap wrote, and nothing is deleted without a copy that was seen' };
   }
   const incomplete = await copyIncompleteness(entryId, manifest);
   if (incomplete !== null) {
-    return { code: COPY_GONE, reason: `its Time Capsule copy is incomplete (${incomplete}), and nothing is deleted without a whole copy` };
+    return { code: COPY_GONE, reason: `its Undo Vault copy is incomplete (${incomplete}), and nothing is deleted without a whole copy` };
   }
   // Not looked at again while calls are left waiting on a volume that stopped answering (FG3h A), and
   // nothing is deleted without that look.
@@ -1855,7 +1855,7 @@ async function changeSinceCopy(
 
 /** What a person is told about an item whose trash step reported a failure the disk could not confirm. */
 function unverifiedSentence(reason: string): string {
-  return `The Trash reported: ${reason}. TreeMap could not confirm whether it is still in place, so its Time Capsule copy was kept — an undo puts it back only if it is gone.`;
+  return `The Trash reported: ${reason}. TreeMap could not confirm whether it is still in place, so its Undo Vault copy was kept — an undo puts it back only if it is gone.`;
 }
 
 /** Left in a copy's folder when its original's trash step could not be confirmed either way (FG3b). */
@@ -1879,7 +1879,7 @@ async function markUnverified(outcomes: ProtectionOutcome[], before: ReadonlyMap
       before: typeof was === 'string' ? was : null,
     };
     await fsp.writeFile(path.join(entryDir(outcome.entryId), UNVERIFIED_MARK), `${JSON.stringify(mark)}\n`).catch((err: unknown) => {
-      console.error('[treemap] time capsule: a copy whose trash step could not be confirmed could not be marked:', err);
+      console.error('[treemap] undo vault: a copy whose trash step could not be confirmed could not be marked:', err);
     });
   }
 }
@@ -1940,7 +1940,7 @@ async function dropSupersededUnverified(kept: ProtectionOutcome[]): Promise<void
     }));
     for (const id of superseded) await fsp.rm(entryDir(id), { recursive: true, force: true });
   } catch (err) {
-    console.error('[treemap] time capsule: older unconfirmed copies of the same files could not be dropped:', err);
+    console.error('[treemap] undo vault: older unconfirmed copies of the same files could not be dropped:', err);
   }
 }
 
@@ -1948,7 +1948,7 @@ async function dropSupersededUnverified(kept: ProtectionOutcome[]): Promise<void
 const NOT_DELETED_MARK = 'not-deleted';
 
 /**
- * Discard the Time Capsule copies of items the Trash refused: copied, never deleted, so each copy
+ * Discard the Undo Vault copies of items the Trash refused: copied, never deleted, so each copy
  * only holds space for a file that still exists. This runs after the trash step, where a throw
  * would lose the only record of what was deleted and the run id an undo needs, so it never
  * throws: it answers what went wrong in a few words, or null, and logs the detail.
@@ -1972,13 +1972,13 @@ async function discardUnusedCopies(outcomes: ProtectionOutcome[]): Promise<{ pro
   let problem: string | null = null;
   const report = (step: string, err: unknown): void => {
     problem ??= err instanceof Error ? err.message : String(err);
-    console.error(`[treemap] time capsule: discarding the copies of items the Trash refused did not finish (${step}):`, err);
+    console.error(`[treemap] undo vault: discarding the copies of items the Trash refused did not finish (${step}):`, err);
   };
   for (const id of ids) {
     // Insurance only, so a mark that could not be written is logged rather than reported: the
     // steps below still discard the copy, and report if they cannot.
     await fsp.writeFile(path.join(entryDir(id), NOT_DELETED_MARK), 'The Trash refused the original, so it was never deleted.\n').catch((err: unknown) => {
-      console.error('[treemap] time capsule: a copy of an item the Trash refused could not be marked:', err);
+      console.error('[treemap] undo vault: a copy of an item the Trash refused could not be marked:', err);
     });
   }
   // Read and written as one, with no other writer between (FG3f #2), and no restore accepted between.
@@ -2015,7 +2015,7 @@ async function discardUnusedCopies(outcomes: ProtectionOutcome[]): Promise<{ pro
   return { problem, held };
 }
 
-/* ---------------- index (Time Capsule tab) ---------------- */
+/* ---------------- index (Undo Vault tab) ---------------- */
 
 async function statusOf(store: CapsuleStore): Promise<TimeCapsuleStatus> {
   const settings = await getSettings();
@@ -2027,7 +2027,7 @@ async function statusOf(store: CapsuleStore): Promise<TimeCapsuleStatus> {
     await fsp.mkdir(capsuleRoot(), { recursive: true });
   } catch (err) {
     available = false;
-    reason = `The Time Capsule folder can’t be created (${err instanceof Error ? err.message : String(err)}), so automatic deletions cannot be protected.`;
+    reason = `The Undo Vault’s folder can’t be created (${err instanceof Error ? err.message : String(err)}), so automatic deletions cannot be protected.`;
   }
 
   return {
@@ -2066,7 +2066,7 @@ export async function deleteCapsuleEntry(id: string): Promise<{ deleted: boolean
   return withCapsuleStore(async () => withPayloadLock(async () => {
     const store = await loadStore();
     const entry = store.entries.find((e) => e.id === id);
-    if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
+    if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Undo Vault');
     if (restoresInFlight.has(entry.id)) throw restoreRunning(entry, 'it cannot be forgotten now');
     // A copy of a deletion still under way (FG3h D): its item may be past its last look and on its way
     // to the Trash with this as its only copy. Forgotten then, it went to the Trash with none.
@@ -2127,7 +2127,7 @@ export async function pruneExpired(now = Date.now()): Promise<{ removed: number;
         name: entry.name,
         originalPath: entry.originalPath,
         sizeBytes: entry.sizeBytes,
-        detail: `Kept for ${timeCapsuleRetentionDays} days, then removed from the Time Capsule.`,
+        detail: `Kept for ${timeCapsuleRetentionDays} days, then removed from the Undo Vault.`,
       });
     }
     if (afterExpiryDropsForTests) await afterExpiryDropsForTests();
@@ -2175,7 +2175,7 @@ export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entr
       // alternative is destroying the only copy of files this app promised to
       // protect.
       console.error(
-        `[treemap] capsule reconcile: ${err.message} ` +
+        `[treemap] undo vault reconcile: ${err.message} ` +
           `${String(stranded)} recovery folders are on disk and were LEFT ALONE.`,
       );
       return { orphansRemoved: 0, entriesLost: 0 };
@@ -2215,7 +2215,7 @@ export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entr
     // either way.
     if (!indexParsed && payloadDirs.length > 0) {
       console.error(
-        `[treemap] capsule reconcile: no index at ${path.join(appDataDir(), INDEX_FILE)}, but ` +
+        `[treemap] undo vault reconcile: no index at ${path.join(appDataDir(), INDEX_FILE)}, but ` +
           `${String(payloadDirs.length)} recovery folders are on disk. They were LEFT ALONE — an index that is ` +
           'missing is not permission to delete what it would have described.',
       );
@@ -2276,7 +2276,7 @@ export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entr
         name: entry.name,
         originalPath: entry.originalPath,
         sizeBytes: entry.sizeBytes,
-        detail: 'Its copy is missing from the Time Capsule folder, so it can no longer be restored.',
+        detail: 'Its copy is missing from the Undo Vault’s folder, so it can no longer be restored.',
       });
     }
 
@@ -2293,11 +2293,11 @@ let maintenanceTimer: NodeJS.Timeout | null = null;
 export function startCapsuleMaintenance(): void {
   if (maintenanceTimer) return;
   maintenanceTimer = setInterval(() => {
-    void pruneExpired().catch((err: unknown) => console.error('[treemap] capsule prune failed:', err));
+    void pruneExpired().catch((err: unknown) => console.error('[treemap] undo vault prune failed:', err));
   }, MAINTENANCE_INTERVAL_MS);
   maintenanceTimer.unref(); // never keeps the process alive on its own
-  void reconcileCapsule().catch((err: unknown) => console.error('[treemap] capsule reconcile failed:', err));
-  void pruneExpired().catch((err: unknown) => console.error('[treemap] capsule prune failed:', err));
+  void reconcileCapsule().catch((err: unknown) => console.error('[treemap] undo vault reconcile failed:', err));
+  void pruneExpired().catch((err: unknown) => console.error('[treemap] undo vault prune failed:', err));
   // What a restore — of a copy here or of an offloaded file — left beside a name when TreeMap was
   // quit or killed part-way (FG3g L4): only names it recorded, and only while each is still the file
   // it made.
@@ -2482,7 +2482,7 @@ export interface UndoPlan {
  * not restored yet. A copy marked as never deleted (`discardUnusedCopies`) is passed over: its
  * original was never deleted, and a restore over it would be refused. A copy marked as not
  * confirmed (`markUnverified`, FG3b) is decided by the disk now: put back when nothing stands at its
- * place — the Trash took it after all — and passed over otherwise, still in the Time Capsule, with
+ * place — the Trash took it after all — and passed over otherwise, still in the Undo Vault, with
  * what the look showed (`PassedOverWhy`): never "still in its place" unless it is the same file.
  */
 export async function planUndoForRun(runId: string): Promise<UndoPlan> {
@@ -2551,10 +2551,10 @@ export function passedOverOf(plan: UndoPlan): { passedOver?: { path: string; rea
 /** Said of a record of the run that TreeMap did not make (FG3g L9). */
 const NOT_OURS_SENTENCE = `${NOT_OURS} (its id is not one TreeMap gives), so nothing is put back from it.`;
 
-/** Said of an item of the run whose copy the Time Capsule no longer holds (FG3f #3). */
+/** Said of an item of the run whose copy the Undo Vault no longer holds (FG3f #3). */
 export const COPY_GONE_SENTENCE =
-  'Its Time Capsule copy is gone — removed to make room for later deletions or once the time copies are kept had passed, ' +
-  'or missing from the capsule folder — so it cannot be put back from here. If it was deleted, look for it in the system Trash.';
+  'Its Undo Vault copy is gone — removed to make room for later deletions or once the time copies are kept had passed, ' +
+  'or missing from the Undo Vault’s folder — so it cannot be put back from here. If it was deleted, look for it in the system Trash.';
 
 /**
  * The run's items an undo cannot put back because their copy is gone, as rows for its answer — or
@@ -2569,11 +2569,11 @@ export function unrestorableOf(plan: UndoPlan): { unrestorable?: { path: string;
 export function passedOverReason(why: PassedOverWhy): string {
   switch (why) {
     case 'never-deleted': return 'The Trash refused it, so it was never deleted.';
-    case 'in-place': return 'It is still in its place, so there was nothing to put back; its copy stays in the Time Capsule.';
+    case 'in-place': return 'It is still in its place, so there was nothing to put back; its copy stays in the Undo Vault.';
     case 'occupied':
       return 'Something stands where it was that TreeMap cannot show is the item it copied — the original may be in the Trash. ' +
-        'An undo never overwrites, so its copy stays in the Time Capsule until its place is empty.';
-    case 'unknown': return 'Its place could not be looked at, so it was not put back; its copy stays in the Time Capsule.';
+        'An undo never overwrites, so its copy stays in the Undo Vault until its place is empty.';
+    case 'unknown': return 'Its place could not be looked at, so it was not put back; its copy stays in the Undo Vault.';
   }
 }
 
@@ -2590,11 +2590,11 @@ export function nothingToUndo(noun: 'commit' | 'run', plan: UndoPlan): AppError 
     return new AppError(409, 'ALREADY_UNDONE', lost === 0
       ? `That ${noun} has already been undone.`
       : `That ${noun} has already been undone as far as it can be: ${formatCount(lost)} item${lost === 1 ? '' : 's'} could not be put back, ` +
-        'because the Time Capsule no longer holds a copy of them.');
+        'because the Undo Vault no longer holds a copy of them.');
   }
   if (plan.passedOver.length === 0) {
     return new AppError(409, 'CAPSULE_EMPTY',
-      `The Time Capsule no longer holds the copies from that ${noun}, so it cannot be undone. ` +
+      `The Undo Vault no longer holds the copies from that ${noun}, so it cannot be undone. ` +
       'Copies are kept for a limited time and can be evicted to make room.');
   }
   const count = (why: PassedOverWhy): number => plan.passedOver.filter((p) => p.why === why).length;
@@ -2602,7 +2602,7 @@ export function nothingToUndo(noun: 'commit' | 'run', plan: UndoPlan): AppError 
   const [inPlace, never, occupied, unknown] = (['in-place', 'never-deleted', 'occupied', 'unknown'] as const).map(count);
   if (inPlace === plan.passedOver.length) {
     return new AppError(409, 'NOTHING_TO_UNDO',
-      `Everything that ${noun} copied is still in its place, so there is nothing to put back. Its copies stay in the Time Capsule.`);
+      `Everything that ${noun} copied is still in its place, so there is nothing to put back. Its copies stay in the Undo Vault.`);
   }
   const parts: string[] = [];
   if (inPlace > 0) parts.push(`${items(inPlace)} still in ${inPlace === 1 ? 'its' : 'their'} place`);
@@ -2613,7 +2613,7 @@ export function nothingToUndo(noun: 'commit' | 'run', plan: UndoPlan): AppError 
   if (unknown > 0) parts.push(`${items(unknown)} whose place could not be looked at`);
   return new AppError(409, 'NOTHING_TO_UNDO',
     `Nothing from that ${noun} can be put back now: ${parts.join('; ')}. ` +
-    'An undo never overwrites what stands at an item\'s place, so the copies stay in the Time Capsule.');
+    'An undo never overwrites what stands at an item\'s place, so the copies stay in the Undo Vault.');
 }
 
 /**
@@ -2634,15 +2634,15 @@ export function nothingToUndo(noun: 'commit' | 'run', plan: UndoPlan): AppError 
  */
 function acceptable(store: CapsuleStore, id: string): TimeCapsuleEntry {
   const entry = store.entries.find((e) => e.id === id);
-  if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
+  if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Undo Vault');
   if (entry.restoredAt) throw new AppError(409, 'ALREADY_RESTORED', `“${entry.name}” has already been restored`);
   if (recordingRestored.has(entry.id)) {
     throw new AppError(409, 'ALREADY_RESTORED',
-      `“${entry.name}” has just been put back; the Time Capsule records that once a deletion under way has finished`);
+      `“${entry.name}” has just been put back; the Undo Vault records that once a deletion under way has finished`);
   }
   if (restoresInFlight.has(entry.id)) throw restoreRunning(entry, 'it is not started a second time');
   if (!entry.hasPayload) {
-    throw new AppError(409, 'PAYLOAD_GONE', `The Time Capsule no longer holds a copy of “${entry.name}”`);
+    throw new AppError(409, 'PAYLOAD_GONE', `The Undo Vault no longer holds a copy of “${entry.name}”`);
   }
   const refused = recordRefusal(entry);
   if (refused) throw new AppError(409, 'CAPSULE_RECORD_INVALID', `${NOT_OURS} (${refused}), so nothing was restored.`);
@@ -2697,7 +2697,7 @@ export async function startCapsuleRestore(entryIds: string[], options: RestoreOp
       const manifest = await readManifest(id).catch((err: unknown) => {
         // Its folder is gone (FG3g L1): evicted, expired or removed outside TreeMap. That is no copy,
         // not a record that cannot be read.
-        if (meansAbsent(err)) throw new AppError(409, 'PAYLOAD_GONE', `The Time Capsule no longer holds a copy of “${entry.name}”`);
+        if (meansAbsent(err)) throw new AppError(409, 'PAYLOAD_GONE', `The Undo Vault no longer holds a copy of “${entry.name}”`);
         return null;
       });
       if (!manifest) {
@@ -2786,7 +2786,7 @@ async function restoreEach(
   }
   if (beforeComplete) {
     await beforeComplete().catch((err: unknown) => {
-      console.error('[treemap] time capsule: recording what a completed restore finished did not succeed:', err);
+      console.error('[treemap] undo vault: recording what a completed restore finished did not succeed:', err);
     });
   }
   // A completed job that carries a sentence: the progress stream sends it as the `complete` event's
@@ -2872,7 +2872,7 @@ function leftBehindSentence(err: unknown, left: { at: string; why: string }[]): 
   const what = cause instanceof CopyCancelled ? 'The restore was cancelled' : `The restore stopped (${messageOf(cause)})`;
   const more = left.length > 1 ? ` and ${formatCount(left.length - 1)} more thing${left.length === 2 ? '' : 's'} it had made` : '';
   return `${what}, but what it had already made at ${left[0].at}${more} could not be removed (${left[0].why}). ` +
-    `Remove ${left.length === 1 ? 'it' : 'them'} before trying again; the copy stays in the Time Capsule.`;
+    `Remove ${left.length === 1 ? 'it' : 'them'} before trying again; the copy stays in the Undo Vault.`;
 }
 
 async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest: EntryManifest, misses: string[]): Promise<void> {
@@ -3089,7 +3089,7 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
       }
     }
   })).catch((err: unknown) => {
-    console.error('[treemap] capsule bookkeeping after a successful restore failed:', err);
+    console.error('[treemap] undo vault bookkeeping after a successful restore failed:', err);
   });
   if (!indexLock.busy) {
     await record(false);

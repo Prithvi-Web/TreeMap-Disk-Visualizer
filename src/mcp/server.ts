@@ -160,7 +160,7 @@ function requireCompleteScanMcp(scanId: string): ScanResult {
  * item whose Trash step did not answer in time (`stopped`) is neither: the Trash may still finish
  * moving it, so it is "not confirmed", never "not moved" — an agent told it was not moved could
  * report no delete, or retry one the Trash then completes (the final review, F2.6). The way back
- * ends when the Trash is emptied — trash_paths keeps no Time Capsule copy — and an agent repeats
+ * ends when the Trash is emptied — trash_paths keeps no Undo Vault copy — and an agent repeats
  * this note to a person, so it says so (review F1.8 of QA third pass D06).
  */
 function trashNote(moved: number, failed: readonly { stopped?: boolean }[]): string {

@@ -318,7 +318,7 @@ for (const [label, harm, said] of [
     assert.ok(fs.existsSync(path.join(proj, 'src', 'main.c')), 'it is still where it was');
     const row = result.skipped.find((s) => s.path === proj);
     assert.equal(row?.code, 'CAPSULE_COPY_GONE', JSON.stringify(result.skipped));
-    assert.match(row?.reason ?? '', /its Time Capsule copy is incomplete/, row?.reason);
+    assert.match(row?.reason ?? '', /its Undo Vault copy is incomplete/, row?.reason);
     assert.match(row?.reason ?? '', said, row?.reason);
     assert.deepEqual(result.trashed, [first], 'the item whose copy is whole went');
   });

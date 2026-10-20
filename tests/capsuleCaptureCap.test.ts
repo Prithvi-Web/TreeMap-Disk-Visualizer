@@ -419,7 +419,7 @@ const CALL_CASES: CallCase[] = [
     name: 'the capture\'s read of a link it is copying',
     skip: NO_LINKS,
     make: () => { const { dir, link } = folderWithLink('call-copy-link'); return { item: dir, what: 'readlink', abs: link, nth: 1 }; },
-    expect: { code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Time Capsule \(looking at .* made no progress for 60 seconds\)/ },
+    expect: { code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Undo Vault \(looking at .* made no progress for 60 seconds\)/ },
   },
   // These two only record something, and a look that fails at once still only leaves it unrecorded
   // (below). No answer within the limit fails the item, as every other call on it does (FG3g review
@@ -429,12 +429,12 @@ const CALL_CASES: CallCase[] = [
     name: 'the capture\'s look at what a link leads to (which only records whether it is a folder)',
     skip: NO_LINKS,
     make: () => { const { dir, link } = folderWithLink('call-link-target'); return { item: dir, what: 'stat', abs: link, nth: 0 }; },
-    expect: { code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Time Capsule \(looking at .*link made no progress for 60 seconds\)/ },
+    expect: { code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Undo Vault \(looking at .*link made no progress for 60 seconds\)/ },
   },
   {
     name: 'the capture\'s look at a folder\'s own times (which only records them)',
     make: () => { const { dir } = folder('call-root-times'); return { item: dir, what: 'lstat', abs: dir, nth: 1 }; },
-    expect: { code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Time Capsule \(looking at .*proj made no progress for 60 seconds\)/ },
+    expect: { code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Undo Vault \(looking at .*proj made no progress for 60 seconds\)/ },
   },
   {
     name: 'the read of a link in the look right before the trash step',

@@ -18,7 +18,7 @@ import { AppError } from '../middleware/errorHandler';
  *
  * Note what is *not* here: nothing on this router deletes anything. A run is
  * started by the scheduler, and the only deletion in the whole feature happens
- * inside `protectAndTrash` — which copies to the Time Capsule, verifies, checks
+ * inside `protectAndTrash` — which copies to the Undo Vault, verifies, checks
  * the open-file guard, and then trashes. The HTTP surface configures and
  * inspects; it never becomes a second way to destroy things.
  *
@@ -114,7 +114,7 @@ autopilotRouter.get('/autopilot/runs', async (req: Request, res: Response) => {
 /**
  * POST /api/autopilot/runs/:id/undo → 202 { jobId }
  *
- * Puts back everything the run deleted, from the Time Capsule, as one verified
+ * Puts back everything the run deleted, from the Undo Vault, as one verified
  * restore job. Refuses outright when the capsule no longer holds any of the run.
  * When it holds only part of it — a copy evicted since to make room, expired or
  * missing, or a record of the run whose id is not one TreeMap gives (FG3g L9) —

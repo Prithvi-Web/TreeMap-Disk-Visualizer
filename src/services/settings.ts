@@ -152,7 +152,7 @@ function normalizeWatchIdle(raw: unknown): number {
 }
 
 /**
- * Time Capsule retention: 1–365 days, defaulting to the 30 §B3 specifies.
+ * Undo Vault retention: 1–365 days, defaulting to the 30 §B3 specifies.
  *
  * Lowering it takes effect on the next sweep and can retire items captured
  * under the old value — retention is read live rather than stamped onto each

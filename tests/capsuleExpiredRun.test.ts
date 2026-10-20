@@ -123,7 +123,7 @@ test('the contract names every kind of item an undo reports it cannot put back: 
   visit(buildOpenApiDocument());
   assert.equal(descriptions.length, 2, `the cart undo and the Autopilot undo each describe it: ${JSON.stringify(descriptions)}`);
   for (const d of descriptions) {
-    for (const kind of [/evicted to make room/, /expired/, /missing from the capsule folder/, /a record in the run that TreeMap did not make/]) {
+    for (const kind of [/evicted to make room/, /expired/, /missing from the Undo Vault’s folder/, /a record in the run that TreeMap did not make/]) {
       assert.match(d, kind, d);
     }
   }

@@ -193,7 +193,7 @@ export interface TrashOptions {
   /**
    * Asked of each path at its own turn, right before its Trash step (FG3f): a sentence and a code
    * when it must not be trashed after all — it is then left where it is and failed with
-   * `refused: true` and that code — or null to go ahead. The Time Capsule's: the item's copy is
+   * `refused: true` and that code — or null to go ahead. The Undo Vault's: the item's copy is
    * still there, and the item is still what was copied.
    */
   checkEach?: (p: string) => Promise<{ reason: string; code: string } | null>;

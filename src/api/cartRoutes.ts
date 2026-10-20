@@ -13,7 +13,7 @@ import {
 import { AppError } from '../middleware/errorHandler';
 
 /**
- * cartRoutes — committing the cleanup cart through the Time Capsule (v4 §4.4).
+ * cartRoutes — committing the cleanup cart through the Undo Vault (v4 §4.4).
  *
  * Deliberately a *second* route rather than a flag on `DELETE /api/files`. The
  * two do different things: `DELETE /api/files` moves things to the Trash, and
@@ -35,7 +35,7 @@ export const cartRouter = Router();
  * POST /api/cart/commit  { paths: string[], dryRun?: boolean }
  *
  * With `dryRun: true`, returns the manifest — every path, its bytes, whether it
- * would be deleted and, when it would not, why — plus the Time Capsule copies
+ * would be deleted and, when it would not, why — plus the Undo Vault copies
  * that would be evicted to make room and B2's open-handle preflight. Nothing is
  * touched.
  *
@@ -126,7 +126,7 @@ cartRouter.post('/cart/commit', idempotency, guardBodyPaths, requireInsideScanRo
 /**
  * POST /api/cart/undo  { runId }  → 202 { jobId, entryCount, bytesTotal }
  *
- * Restores everything one commit deleted, from the Time Capsule, back to the
+ * Restores everything one commit deleted, from the Undo Vault, back to the
  * paths it came from. Progress streams over the capsule's own SSE endpoint —
  * `GET /api/timecapsule/jobs/{jobId}/progress` — because it is the capsule's
  * restore, not a second one (§10: no new pathway). An item whose copy is gone

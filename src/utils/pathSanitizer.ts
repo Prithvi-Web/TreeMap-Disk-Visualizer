@@ -1147,7 +1147,7 @@ export function safetyRecordCandidateTest(root: string): (p: string) => boolean 
 /**
  * Is `p` TreeMap's own app-data folder or anything in it, as a place something would be WRITTEN
  * (FG1)? App-data holds the files TreeMap trusts: its settings, the Autopilot policies and their
- * approval, the offload manifest, the Time Capsule, the spill folder. So no request may make one
+ * approval, the offload manifest, the Undo Vault, the spill folder. So no request may make one
  * of its files — as a relocation's destination, an offload's or any copy it plans, a snapshot
  * restore's, an encode's — whatever the file is called and before it exists.
  *

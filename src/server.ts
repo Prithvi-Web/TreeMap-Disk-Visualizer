@@ -293,7 +293,7 @@ export function startServer(opts: StartOptions): Promise<RunningServer> {
     drainWatchClients(); // end live-activity streams
     drainOffloadClients(); // end offload progress streams
     drainIndexClients(); // end index-build progress streams
-    drainCapsuleClients(); // end Time Capsule restore streams
+    drainCapsuleClients(); // end Undo Vault restore streams
     drainEncodeClients(); // end compression progress streams
     // Closes the index database and detaches its live watchers. Roots left
     // 'ready' are marked stale on next open, since nothing was watching them
@@ -305,7 +305,7 @@ export function startServer(opts: StartOptions): Promise<RunningServer> {
 
   // Recurring scans (and their growth alerts) live for the server's lifetime.
   startScheduler();
-  // Sweeps Time Capsule entries past their retention window, and reconciles
+  // Sweeps Undo Vault entries past their retention window, and reconciles
   // the capsule against its index once at startup (B3).
   startCapsuleMaintenance();
   // D1: bring the fleet listener up ONLY if the user had already turned it on.

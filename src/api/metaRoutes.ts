@@ -270,7 +270,7 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
       idempotency:
         'Destructive endpoints honor an Idempotency-Key header: a retried request replays the stored response instead of executing twice',
       appDataFolder:
-        "TreeMap's own app-data folder (settings, Autopilot policies, the offload manifest, the Time Capsule) is never where a request writes, moves " +
+        "TreeMap's own app-data folder (settings, Autopilot policies, the offload manifest, the Undo Vault) is never where a request writes, moves " +
         'or copies a file — a relocation\'s to, an offload\'s dest and its copies, a snapshot restore\'s destination, an encode: 403 APP_DATA_PATH, ' +
         'however the path is spelled; reading it and deleting in it are unchanged, but for the agent policy and the audit log (agent-policy.json, ' +
         'audit.jsonl): no request removes or moves either, nor app-data or a folder above it, nor a folder or link TreeMap reaches app-data through ' +

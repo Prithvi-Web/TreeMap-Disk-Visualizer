@@ -782,7 +782,7 @@ export interface AppSettings {
   forecastThresholdDays: number;
   /** Live activity mode auto-pauses after this many minutes without events. */
   watchIdleMinutes: number;
-  /** Time Capsule keeps automatically-deleted items restorable this long (B3). */
+  /** The Undo Vault keeps automatically-deleted items restorable this long (B3). */
   timeCapsuleRetentionDays: number;
   /** Ceiling on the capsule, as a percentage of the volume's usable space. */
   timeCapsuleMaxPercent: number;
@@ -927,7 +927,7 @@ export type OffloadStreamEvent =
   | { type: 'cancelled' }
   | { type: 'shutdown' };
 
-/* ---------- Time Capsule (B3) ---------- */
+/* ---------- Undo Vault (B3) ---------- */
 
 export type TimeCapsuleKind = 'file' | 'folder';
 
@@ -1045,7 +1045,7 @@ export interface TimeCapsuleJob {
   finishedAt?: number;
 }
 
-/** Events streamed over the Time Capsule SSE progress endpoint. */
+/** Events streamed over the Undo Vault SSE progress endpoint. */
 export type TimeCapsuleStreamEvent =
   | { type: 'progress'; phase: TimeCapsulePhase; filesDone: number; fileCount: number; bytesDone: number; bytesTotal: number; currentPath: string }
   /**
@@ -1221,7 +1221,7 @@ export interface AutopilotRun {
   bytesMatched: number;
   /** Bytes actually removed (0 for a dry run). */
   bytesDeleted: number;
-  /** Ties this run's deletions to their Time Capsule copies, for undo. */
+  /** Ties this run's deletions to their Undo Vault copies, for undo. */
   capsuleRunId?: string;
   /** Selected but not deleted, each with the reason. */
   skipped: { path: string; reason: string }[];

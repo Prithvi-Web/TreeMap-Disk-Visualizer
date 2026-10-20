@@ -10,7 +10,7 @@ import type { PlacementHooks } from '../utils/copyVerify';
 /**
  * Restore leftovers (FG3g L4).
  *
- * A restore — of a Time Capsule copy or of an offloaded file — writes each file beside its name under
+ * A restore — of an Undo Vault copy or of an offloaded file — writes each file beside its name under
  * `.treemap-restore-…` and puts it at its name only once it verifies (FG3f #8), so a quit or a kill
  * part-way never leaves a part-copied file at the person's own name. It did leave that temporary file
  * beside it, and nothing ever removed it.

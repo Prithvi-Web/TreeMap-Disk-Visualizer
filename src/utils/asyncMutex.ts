@@ -3,7 +3,7 @@
  *
  * For a read-modify-write of one JSON store: load it, change it, save it. Two of those that overlap
  * each save the document they loaded, and the later save silently drops the earlier one's change —
- * `writeJsonFile` queues writes, but a queue of whole documents does not merge them. A Time Capsule
+ * `writeJsonFile` queues writes, but a queue of whole documents does not merge them. An Undo Vault
  * capture that loaded the index, copied for minutes and saved it erased whatever a restore, a
  * "Forget" or another run had recorded meanwhile.
  *

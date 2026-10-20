@@ -8,7 +8,7 @@ import { describeFsError, meansAbsent } from './errno';
 
 /**
  * copyVerify — the copy-and-fingerprint primitive shared by every feature that
- * moves user data before deleting it (Offload, Time Capsule).
+ * moves user data before deleting it (Offload, Undo Vault).
  *
  * There is exactly one implementation on purpose. Both callers depend on the
  * same four properties, and a second copy of this logic is the kind of thing
@@ -145,7 +145,7 @@ function countAbandoned(work: Promise<unknown>): void {
  * throws), judged by the same timer as a copy's stall limit (FG3h A, FG3g review F1.2). The work
  * cannot be stopped and goes on unawaited, counted in `abandonedCallsUnsettled` until it settles —
  * unless `counted` is false, for a caller that bounds the calls it leaves waiting itself (FG3g review
- * F3.3: the Offloaded tab's look, one per drive). The count is what stops the Time Capsule starting
+ * F3.3: the Offloaded tab's look, one per drive). The count is what stops the Undo Vault starting
  * copies, so a look a person can repeat by opening a tab must not add to it.
  */
 export async function withinStallLimit<T>(work: Promise<T>, stallMs: number, onStall: () => T, opts: { counted?: boolean } = {}): Promise<T> {

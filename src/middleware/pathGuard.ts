@@ -474,7 +474,7 @@ export function assertNotSpillPath(p: string): void {
 /**
  * The refusal for a WRITE destination in TreeMap's own app-data folder (`isAppDataPath`), or
  * null (FG1). App-data holds the files TreeMap trusts — its settings, the Autopilot policies and
- * their approval, the offload manifest the reveal route opens from, the Time Capsule — so no
+ * their approval, the offload manifest the reveal route opens from, the Undo Vault — so no
  * request makes a file there: not a relocation's `to`, an offload's `dest` or any copy its plan
  * makes, a snapshot restore's destination, nor an encode (which writes where its original is).
  * Reading app-data, and deleting what a scan covers, are not refused here (the agent policy and the
@@ -516,7 +516,7 @@ export function safetyRecordRefusal(p: string): AppError | null {
   );
 }
 
-/** Throws `safetyRecordRefusal`'s 403: for the Trash step, the Time Capsule, a relocation and the MCP tools. */
+/** Throws `safetyRecordRefusal`'s 403: for the Trash step, the Undo Vault, a relocation and the MCP tools. */
 export function assertNotSafetyRecord(p: string): void {
   const refusal = safetyRecordRefusal(p);
   if (refusal) throw refusal;

@@ -106,7 +106,7 @@ const indexRunning202 = jsonResponse(
 );
 
 /**
- * The refusals an undo meets in the Time Capsule restore it starts, which check every copy before any
+ * The refusals an undo meets in the Undo Vault restore it starts, which check every copy before any
  * is put back: any one refuses the whole undo, nothing put back (F1.17, F1.18).
  */
 const UNDO_RESTORE_409 =
@@ -668,12 +668,12 @@ const schemas: Json = {
         {
           usedBytes: int(),
           capBytes: int('Ceiling: a percentage of the volume’s usable space'),
-          freeBytes: nullable(int('Free space on the capsule’s volume; null when unreadable')),
+          freeBytes: nullable(int('Free space on the Undo Vault’s volume; null when unreadable')),
           retentionDays: int(),
           maxPercent: int(),
           entryCount: int(),
           restorableCount: int('Entries still holding a payload'),
-          available: bool('False when the capsule cannot be used at all'),
+          available: bool('False when the Undo Vault cannot be used at all'),
           reason: str('Why it is unavailable or limited'),
         },
         ['usedBytes', 'capBytes', 'freeBytes', 'retentionDays', 'maxPercent', 'entryCount', 'restorableCount', 'available'],
@@ -724,7 +724,7 @@ const schemas: Json = {
       lastRunAt: int(),
     },
     ['id', 'name', 'path', 'match', 'maxBytesPerRun', 'maxBytesPerWeek', 'cooldownDays', 'dryRunFirst', 'requireConfirmationAbove', 'enabled'],
-    'A standing cleanup instruction. It never deletes until approved, and every deletion routes through the Time Capsule and the open-file guard',
+    'A standing cleanup instruction. It never deletes until approved, and every deletion routes through the Undo Vault and the open-file guard',
   ),
   AutopilotRun: obj(
     {
@@ -741,7 +741,7 @@ const schemas: Json = {
       )),
       bytesMatched: int('What the match totalled, before any cap'),
       bytesDeleted: int('What was actually removed; 0 for a dry run'),
-      capsuleRunId: str('Ties this run’s deletions to their Time Capsule copies'),
+      capsuleRunId: str('Ties this run’s deletions to their Undo Vault copies'),
       skipped: arr(obj({ path: str(), reason: str() }, ['path', 'reason'])),
       unverified: arr(str(), 'Items of skipped whose trash step was not confirmed either way: their copies are kept, and an undo puts each back once its place is empty'),
       undoneAt: int('Set once the run has been undone: an undo\'s restore completed and everything an undo could put back was put back. Never by an undo that failed or was cancelled'),
@@ -900,11 +900,11 @@ const schemas: Json = {
       forecastThresholdDays: num(),
       watchIdleMinutes: num(),
       timeCapsuleRetentionDays: int(
-        'How long the Time Capsule keeps a copy of what a cart commit deleted, in days: 1-365, default 30. '
+        'How long the Undo Vault keeps a copy of what a cart commit deleted, in days: 1-365, default 30. '
           + 'Read live, so lowering it can retire copies captured under the old value at the next sweep.',
       ),
       timeCapsuleMaxPercent: int(
-        'The Time Capsule\'s ceiling, as a percentage of its volume\'s usable space: 1-90, default 10. '
+        'The Undo Vault\'s ceiling, as a percentage of its volume\'s usable space: 1-90, default 10. '
           + 'Anything too large to fit is left undeleted and named in skipped[], never deleted unprotected.',
       ),
       cloud: opaque('Per-provider OAuth app credentials (gdrive / dropbox / onedrive)'),
@@ -2912,14 +2912,14 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/timecapsule',
-    summary: 'Items copied aside before an automated delete, with capacity and history',
+    summary: 'The Undo Vault (API: timecapsule): what the cleanup cart and Autopilot copied aside before trashing it, with capacity and history',
     tag: 'timecapsule',
     destructive: false,
     responses: {
-      '200': jsonResponse('The capsule index', ref('TimeCapsuleIndex')),
+      '200': jsonResponse('The Undo Vault index', ref('TimeCapsuleIndex')),
       '500': errorResponse(
-        'CAPSULE_INDEX_UNREADABLE — the index file exists and will not parse. Every capsule operation refuses ' +
-          'in this state rather than acting on an invented empty capsule, because each entry is the only record ' +
+        'CAPSULE_INDEX_UNREADABLE — the index file exists and will not parse. Every Undo Vault operation refuses ' +
+          'in this state rather than acting on an invented empty Undo Vault, because each entry is the only record ' +
           'of a file it is holding. The message names the file to repair — never to move or delete it, which ' +
           'would make the next sweep read an ABSENT index, call it a first run, and remove every recovery folder.',
       ),
@@ -2931,7 +2931,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Copy a protected item back to its original path, re-verifying every byte',
     tag: 'timecapsule',
     destructive: true,
-    parameters: [pathParam('id', 'Time Capsule entry id'), idempotencyHeader],
+    parameters: [pathParam('id', 'Undo Vault entry id'), idempotencyHeader],
     responses: {
       '202': jsonResponse('Restore started', obj({ jobId: str() }, ['jobId'])),
       '404': errorResponse('ENTRY_NOT_FOUND — no such entry'),
@@ -2944,7 +2944,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Forget one protected item and free the space it holds',
     tag: 'timecapsule',
     destructive: true,
-    parameters: [pathParam('id', 'Time Capsule entry id')],
+    parameters: [pathParam('id', 'Undo Vault entry id')],
     responses: {
       '200': jsonResponse('Forgotten', obj({ deleted: bool(), bytesFreed: int() }, ['deleted', 'bytesFreed'])),
       '404': errorResponse('ENTRY_NOT_FOUND — no such entry'),
@@ -3069,7 +3069,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'post',
     path: '/api/autopilot/runs/{id}/undo',
-    summary: 'Put back everything a run deleted, from the Time Capsule',
+    summary: 'Put back everything a run deleted, from the Undo Vault',
     tag: 'autopilot',
     destructive: true,
     parameters: [pathParam('id', 'Run id'), idempotencyHeader],
@@ -3078,7 +3078,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         jobId: str(),
         entryCount: int(),
         passedOver: arr(opaque('{ path, reason } — a copy of an unconfirmed item not put back yet (its place is not empty), saying what the disk showed; the run stays undoable for it')),
-        unrestorable: arr(opaque('{ path, reason } — an item of the run whose Time Capsule copy is gone (evicted to make room, expired, or missing from the capsule folder), or a record in the run that TreeMap did not make (its id is not one TreeMap gives), which no undo can put back; the run is then not marked undone. A record with a TreeMap id whose original place or manifest TreeMap would not write refuses the whole undo instead (409 CAPSULE_RECORD_INVALID)')),
+        unrestorable: arr(opaque('{ path, reason } — an item of the run whose Undo Vault copy is gone (evicted to make room, expired, or missing from the Undo Vault’s folder), or a record in the run that TreeMap did not make (its id is not one TreeMap gives), which no undo can put back; the run is then not marked undone. A record with a TreeMap id whose original place or manifest TreeMap would not write refuses the whole undo instead (409 CAPSULE_RECORD_INVALID)')),
       }, ['jobId', 'entryCount'])),
       '404': errorResponse('RUN_NOT_FOUND'),
       '409': errorResponse('NOTHING_TO_UNDO (the sentence says what the disk showed of each copy still held), ALREADY_UNDONE, CAPSULE_EMPTY or RESTORE_RUNNING (an undo or restore of the same copies is already under way) — refused rather than half-undone; ' + UNDO_RESTORE_409),
@@ -3227,7 +3227,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'post',
     path: '/api/cart/commit',
-    summary: 'Commit the cleanup cart: protect in the Time Capsule, verify, then Trash — as one undoable run',
+    summary: 'Commit the cleanup cart: protect in the Undo Vault, verify, then Trash — as one undoable run',
     tag: 'cart',
     destructive: true,
     parameters: [idempotencyHeader],
@@ -3252,7 +3252,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             items: arr(opaque('{ path, bytes, willDelete, code?, reason?, installedProgram? } — dry run only. installedProgram (an InstalledProgram) is present only when the item is a part of an installed program, which trashing it would stop working')),
             bytesWouldFree: int('Dry run only'),
             bytesSkipped: int('Dry run only: bytes that would be left behind, unprotectable'),
-            evicts: arr(opaque('{ id, name, originalPath, bytes } — older capsule copies that would be dropped to make room')),
+            evicts: arr(opaque('{ id, name, originalPath, bytes } — older Undo Vault copies that would be dropped to make room')),
             capsule: opaque('{ available, reason?, capBytes, usedBytes }'),
             openHandles: opaque("B2's preflight: what a program is holding open right now"),
             carryOver: arr(opaque('Opaque'), 'Dry run only: hand it back unchanged with the next batch\'s dry run of the same cart'),
@@ -3261,8 +3261,8 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             skipped: arr(opaque('{ path, code?, reason? } — left UNDELETED because they could not be protected (CAPSULE_FULL also when they do not fit beside the copies this run already holds, which are never evicted), their copy was gone by their own trash step (CAPSULE_COPY_GONE), they changed between their copy and their trash step (CAPSULE_CHANGED; the copy is discarded), the Trash refused them (or TreeMap did not hand them to it), the item holding them was not deleted, or the Trash reported taking the item holding them while the disk still shows them in place (code NOT_DELETED)')),
             failedToTrash: arr(opaque("{ path, reason } — protected, then refused by the Trash, and still in place, untouched; the copies were dropped")),
             unverified: arr(opaque('{ path, reason } — present when the Trash reported failing and the disk could not confirm either way (a look that failed, nothing known at the path before the trash step, or a trash command stopped before it answered): the copies were KEPT, and undo puts each back only if its place is empty by then. Also an item inside another one, when that one is unverified, or went to the Trash while the item\'s own place could not be looked at: the copy of the item holding it holds it')),
-            capsuleUnavailable: str('Set when the capsule cannot run at all. Nothing was deleted'),
-            cleanupError: str('Real run only: discarding the copies of what the Trash refused did not finish. Everything in trashed was trashed, and undo with runId puts it back until the Time Capsule removes its copies (after 30 days by default, or sooner to stay under its size cap)'),
+            capsuleUnavailable: str('Set when the Undo Vault cannot run at all. Nothing was deleted'),
+            cleanupError: str('Real run only: discarding the copies of what the Trash refused did not finish. Everything in trashed was trashed, and undo with runId puts it back until the Undo Vault removes its copies (after 30 days by default, or sooner to stay under its size cap)'),
           },
           ['dryRun'],
         ),
@@ -3275,7 +3275,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'post',
     path: '/api/cart/undo',
-    summary: 'Put a whole cart commit back from the Time Capsule, at the original paths',
+    summary: 'Put a whole cart commit back from the Undo Vault, at the original paths',
     tag: 'cart',
     destructive: true,
     parameters: [idempotencyHeader],
@@ -3288,7 +3288,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
           entryCount: int(),
           bytesTotal: int(),
           passedOver: arr(opaque('{ path, reason } — a copy of an unconfirmed item not put back yet (its place is not empty), saying what the disk showed; a later undo can still put it back')),
-          unrestorable: arr(opaque('{ path, reason } — an item of the commit whose Time Capsule copy is gone (evicted to make room, expired, or missing from the capsule folder), or a record in the run that TreeMap did not make (its id is not one TreeMap gives), which no undo can put back. A record with a TreeMap id whose original place or manifest TreeMap would not write refuses the whole undo instead (409 CAPSULE_RECORD_INVALID)')),
+          unrestorable: arr(opaque('{ path, reason } — an item of the commit whose Undo Vault copy is gone (evicted to make room, expired, or missing from the Undo Vault’s folder), or a record in the run that TreeMap did not make (its id is not one TreeMap gives), which no undo can put back. A record with a TreeMap id whose original place or manifest TreeMap would not write refuses the whole undo instead (409 CAPSULE_RECORD_INVALID)')),
         }, ['jobId', 'entryCount', 'bytesTotal']),
       ),
       '400': errorResponse('RUN_ID_REQUIRED'),
@@ -3412,7 +3412,7 @@ export function buildOpenApiDocument(): Json {
       { name: 'cloud', description: "The user's own cloud accounts" },
       { name: 'facts', description: 'Per-path derived facts, delivered as a sidecar to the scan tree' },
       { name: 'query', description: 'The query grammar, and the views saved from it' },
-      { name: 'cart', description: 'Committing the cleanup cart through the Time Capsule, and undoing it' },
+      { name: 'cart', description: 'Committing the cleanup cart through the Undo Vault, and undoing it' },
       { name: 'notes', description: 'Notes pinned to folders — words for the human, and a matching pause for the machine (v4 §9.5)' },
     ],
     paths,

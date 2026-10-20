@@ -674,7 +674,7 @@ async function undoToasts(answer: Record<string, unknown>): Promise<string[]> {
 }
 
 test('an undo that passed over an unconfirmed item says so, rather than that everything is back (FG3c #2)', async () => {
-  const reason = 'It is still in its place, so there was nothing to put back; its copy stays in the Time Capsule.';
+  const reason = 'It is still in its place, so there was nothing to put back; its copy stays in the Undo Vault.';
   const partial = await undoToasts({ jobId: 'j', entryCount: 1, bytesTotal: 10, passedOver: [{ path: '/x/late.txt', reason }] });
   assert.doesNotMatch(partial.join(' | '), /Everything from that run is back/, 'one item was not put back');
   assert.ok(partial.join(' | ').includes(reason), `the item's own sentence is shown (${partial.join(' | ')})`);
@@ -698,9 +698,9 @@ test('undoing a one-item run says "Putting it back…", and a larger one "Puttin
 });
 
 test('an undo that passed over copies for different reasons names each with its own, never one copy\'s for all (FG3d #7)', async () => {
-  const inPlace = 'It is still in its place, so there was nothing to put back; its copy stays in the Time Capsule.';
+  const inPlace = 'It is still in its place, so there was nothing to put back; its copy stays in the Undo Vault.';
   const occupied = 'Something stands where it was that TreeMap cannot show is the item it copied — the original may be in the Trash.';
-  const unknown = 'Its place could not be looked at, so it was not put back; its copy stays in the Time Capsule.';
+  const unknown = 'Its place could not be looked at, so it was not put back; its copy stays in the Undo Vault.';
   const rows = [
     { path: '/x/late-a.txt', reason: inPlace },
     { path: '/x/late-b.txt', reason: occupied },
@@ -715,7 +715,7 @@ test('an undo that passed over copies for different reasons names each with its 
 });
 
 /** The server's sentence for an item whose copy the Time Capsule no longer holds (FG3f #3). */
-const GONE = 'Its Time Capsule copy is gone — removed to make room for later deletions or once the time copies are kept had passed, or missing from the capsule folder — so it cannot be put back from here. If it was deleted, look for it in the system Trash.';
+const GONE = 'Its Undo Vault copy is gone — removed to make room for later deletions or once the time copies are kept had passed, or missing from the Undo Vault’s folder — so it cannot be put back from here. If it was deleted, look for it in the system Trash.';
 
 test('a cart undo that could not put back an item whose copy is gone says how many, and never that everything is back (FG3f #3)', async () => {
   const said = (await undoToasts({ jobId: 'j', entryCount: 2, bytesTotal: 10, unrestorable: [{ path: '/x/a.bin', reason: GONE }] })).join(' | ');

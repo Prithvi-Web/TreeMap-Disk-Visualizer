@@ -9,7 +9,7 @@ import path from 'path';
  * The promise is narrow and absolute: **a portable session leaves nothing on
  * the machine it is troubleshooting.** Everything TreeMap would normally write
  * to `~/Library/Application Support` (or `%APPDATA%`, or `~/.config`) — the
- * settings file, the snapshot history, the SQLite index, the Time Capsule —
+ * settings file, the snapshot history, the SQLite index, the Undo Vault —
  * goes beside the executable instead, on the removable drive it was launched
  * from.
  *
@@ -305,7 +305,7 @@ export function portableStatus(): PortableStatus {
  * is exactly the promise D3 makes and must not break, and a live portable run
  * proved that leaving `TREEMAP_DATA_DIR` unset does precisely that, because
  * "unset" means "use the host default". So storage, the index, the audit log
- * and the Time Capsule all consult this and keep everything in memory.
+ * and the Undo Vault all consult this and keep everything in memory.
  */
 export function isEphemeral(): boolean {
   const status = portableStatus();

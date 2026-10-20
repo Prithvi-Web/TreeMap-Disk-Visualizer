@@ -484,7 +484,7 @@ export function setOffloadVerifyForTests(fn: (destPath: string, realHash: string
 
 /**
  * Bind a job to the shared copy/verify primitive (src/utils/copyVerify.ts),
- * which Time Capsule uses too. Byte progress and cancellation are the only
+ * which the Undo Vault uses too. Byte progress and cancellation are the only
  * job-shaped parts; the copy semantics themselves live in one place.
  */
 function jobProgress(job: OffloadJob, countBytes: boolean): { onBytes?: (n: number) => void; isCancelled: () => boolean } {
@@ -1115,7 +1115,7 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       // that record at a time (FG3g review F2.1). Best effort, and never a reason to roll back; a drive
       // that does not answer is left to finish on its own, the limit counting the wait for its turn.
       // Nothing here may throw: past the trash step a throw rolls back, deleting the verified copies.
-      // Not counted with the calls the Time Capsule left waiting (final review F1.6): one write of a
+      // Not counted with the calls the Undo Vault left waiting (final review F1.6): one write of a
       // drive's record at a time bounds what is left waiting here to one call per drive — a later one
       // only waits its turn — and counted, two offloads to a quiet drive stopped every capsule copy,
       // so every cart commit and Autopilot deletion on every volume, until the drive answered.
@@ -1304,7 +1304,7 @@ const destinationLooksOut = new Map<string, Promise<boolean>>();
 /**
  * Whether a destination's folder is there now. A look at another drive, so it is bounded: one that
  * does not answer within the limit is shown as not connected, its look left to return on its own.
- * One look per drive at a time, and not counted with the calls the Time Capsule left waiting (FG3g
+ * One look per drive at a time, and not counted with the calls the Undo Vault left waiting (FG3g
  * review F3.3): each view of the tab started a fresh look, each one left waiting counted there, and
  * two quiet drives — or one viewed twice — stopped every cart commit and Autopilot deletion with a
  * sentence that blamed the volume being deleted from, while the looks held worker threads unbounded.

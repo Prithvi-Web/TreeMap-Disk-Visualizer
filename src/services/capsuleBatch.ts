@@ -4,7 +4,7 @@ import { realPlaceOf } from '../utils/pathSanitizer';
 import { meansAbsent } from '../utils/errno';
 
 /**
- * A batch as the Time Capsule deletes it (FG3, FG3b, FG3c): each item once, and an item inside
+ * A batch as the Undo Vault deletes it (FG3, FG3b, FG3c): each item once, and an item inside
  * another item of the batch set apart, to go with the item holding it — that one is copied and
  * trashed whole, taking it along, so it gets no copy and no trash step of its own.
  *

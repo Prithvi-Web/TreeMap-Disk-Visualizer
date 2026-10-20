@@ -2018,7 +2018,7 @@ test('an Autopilot undo that passed over an unconfirmed item says so, rather tha
     (watched as { onComplete: () => void }).onComplete();
     return toasts;
   };
-  const reason = 'It is still in its place, so there was nothing to put back; its copy stays in the Time Capsule.';
+  const reason = 'It is still in its place, so there was nothing to put back; its copy stays in the Undo Vault.';
   const partial = await run({ jobId: 'j', entryCount: 1, passedOver: [{ path: '/x/late.bin', reason }] });
   assert.doesNotMatch(partial.join(' | '), /Everything from that run is back/, 'one item was not put back');
   assert.ok(partial.join(' | ').includes(reason), `the item's own sentence is shown (${partial.join(' | ')})`);
