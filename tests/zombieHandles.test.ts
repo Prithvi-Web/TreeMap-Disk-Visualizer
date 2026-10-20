@@ -905,7 +905,7 @@ test('the card offers Restart only where the server allows it, and says why not 
 });
 
 test('the report carries how many held files the probe could not decide, each once (BQL item 11)', async () => {
-  const report = await zombieReport({ handles: async () => ({ handles: [], undecided: 3 }), os: 'linux', uid: OUR_UID });
+  const report = await zombieReport({ handles: async () => ({ handles: [], undecided: 3, unreadablePrograms: 0 }), os: 'linux', uid: OUR_UID });
   assert.equal(report.undecidedCount, 3, 'the probe\'s count reaches the report');
   assert.deepEqual(report.processes, [], 'and no holder is made up for it');
   const plain = await zombieReport({ handles: async () => [], os: 'linux', uid: OUR_UID });
@@ -914,30 +914,41 @@ test('the report carries how many held files the probe could not decide, each on
   assert.equal(groupZombies([]).undecidedCount, 0, 'and a rollup told none has none');
 });
 
+test('the report carries how many programs the pass could not read the open files of (BQL-a review F1.4)', async () => {
+  const report = await zombieReport({ handles: async () => ({ handles: [], undecided: 0, unreadablePrograms: 2 }), os: 'linux', uid: OUR_UID });
+  assert.equal(report.unreadableProgramCount, 2, 'the probe\'s count of programs reaches the report');
+  const plain = await zombieReport({ handles: async () => [], os: 'linux', uid: OUR_UID });
+  assert.equal(plain.unreadableProgramCount, 0, 'a probe that hands in a bare list read every program it saw');
+  assert.equal(groupZombies([], 0, 4).unreadableProgramCount, 4, 'the rollup passes it through');
+  assert.equal(groupZombies([], 3).unreadableProgramCount, 0, 'and a rollup told none has none');
+});
+
 test('the live report reads the platform\'s held-space pass, count and all: zombieReport with nothing handed in carries what getZombieHandleScan said (BQL-a review F1.6)', async () => {
   // Every other test hands the pass in, so reading the bare handle list again (which carries no count) left
   // them all green while the card said "nothing is held" over files nobody checked.
   const plat = platform() as unknown as { getZombieHandleScan?: () => Promise<ZombieHandleScan> };
-  plat.getZombieHandleScan = async () => ({ handles: [], undecided: 3 });
+  plat.getZombieHandleScan = async () => ({ handles: [], undecided: 3, unreadablePrograms: 2 });
   try {
     const report = await zombieReport();
     assert.equal(report.undecidedCount, 3, 'the platform pass\'s count reaches the live report');
+    assert.equal(report.unreadableProgramCount, 2, 'and so does its count of programs it could not read (BQL-a review F1.4)');
   } finally {
     delete plat.getZombieHandleScan; // the provider's own method again
   }
 });
 
 test('a provider with no count of its own hands on its handles as decided — Windows, which reports none (BQL-a review F1.6)', async () => {
-  assert.deepEqual(await new WindowsProvider().getZombieHandleScan(), { handles: [], undecided: 0 });
+  assert.deepEqual(await new WindowsProvider().getZombieHandleScan(), { handles: [], undecided: 0, unreadablePrograms: 0 });
 });
 
 test('the held-up space card never says nothing is stuck when some open files could not be checked, and speaks only for the person\'s own programs (BQL item 11)', () => {
   const empty = { processes: [], totalBytes: 0, unknownSizeCount: 0, fileCount: 0, sharedFileCount: 0, scannedAt: 0 };
-  const clear = paintZombies({ ...empty, undecidedCount: 0 });
-  assert.match(clear, /None of your programs is holding a deleted file open right now\./, 'all checked, none held: said of your programs');
-  assert.doesNotMatch(clear, /Nothing is stuck/, 'never of the whole machine: TreeMap sees another account\'s programs only when it runs as root');
-  const unsure = paintZombies({ ...empty, undecidedCount: 2 });
-  assert.doesNotMatch(unsure, /Nothing is stuck|None of your programs is holding/, 'not everything was checked, so no all-clear');
+  const clear = paintZombies({ ...empty, undecidedCount: 0, unreadableProgramCount: 0 });
+  assert.match(clear, />TreeMap found no deleted file held open by your programs\.</, 'all checked, none held: what it found, of your programs');
+  assert.doesNotMatch(clear, /Nothing is stuck|None of your programs is holding/,
+    'never of the whole machine, nor beyond what it found: TreeMap sees another account\'s programs only as root, and a /proc mounted with hidepid hides some of yours');
+  const unsure = paintZombies({ ...empty, undecidedCount: 2, unreadableProgramCount: 0 });
+  assert.doesNotMatch(unsure, /Nothing is stuck|None of your programs is holding|your programs\./, 'not everything was checked, so no all-clear');
   assert.match(unsure, /TreeMap found no deleted file held open by your programs, but 2 open files couldn’t be checked, so some space may still be held\./,
     'it says what it saw, and how many it could not check');
   assert.match(paintZombies({ ...empty, undecidedCount: 1 }), /but 1 open file couldn’t be checked/, 'one, in the singular');
@@ -948,6 +959,23 @@ test('the held-up space card never says nothing is stuck when some open files co
   assert.match(held, /2 other open files couldn’t be checked, so the real total may be higher\./, 'and the card says why');
   assert.doesNotMatch(paintZombies({ ...empty, processes: [row], totalBytes: 100, fileCount: 1, undecidedCount: 0 }), /At least|couldn’t be checked/,
     'control: everything checked, the total is the total');
+});
+
+test('the held-up space card never gives an all-clear while some programs\' open files could not be read, and says how many (BQL-a review F1.4)', () => {
+  const empty = { processes: [], totalBytes: 0, unknownSizeCount: 0, fileCount: 0, sharedFileCount: 0, scannedAt: 0, undecidedCount: 0 };
+  const one = paintZombies({ ...empty, unreadableProgramCount: 1 });
+  assert.doesNotMatch(one, /your programs\./, 'no all-clear while a program went unread');
+  assert.match(one, /TreeMap found no deleted file held open by your programs, but 1 program’s open files couldn’t be read, so some space may still be held\./,
+    'it says what it saw, and how many programs it could not read');
+  assert.match(paintZombies({ ...empty, undecidedCount: 2, unreadableProgramCount: 3 }),
+    /but 2 open files couldn’t be checked and 3 programs’ open files couldn’t be read, so some space may still be held\./, 'both counts, in the plural');
+  const row = { pid: 7, processName: 'Mail', appBundle: null, bytes: 100, unknownSizeCount: 0, restartable: true, restartRefusal: null,
+    handles: [{ path: '/tmp/held.mbox', bytes: 100, holders: 1 }] };
+  const held = paintZombies({ ...empty, processes: [row], totalBytes: 100, fileCount: 1, unreadableProgramCount: 1 });
+  assert.match(held, /At least 100 B held by a program that won’t let go/, 'with holders listed, the total is a floor');
+  assert.match(held, /1 other program’s open files couldn’t be read, so the real total may be higher\./, 'and the card says why');
+  assert.match(paintZombies({ ...empty, processes: [row], totalBytes: 100, fileCount: 1, unreadableProgramCount: 2 }),
+    /2 other programs’ open files couldn’t be read/, 'in the plural');
 });
 
 test('the restart refusals are stated in one sentence the Missing GB page quotes (QA D40)', () => {

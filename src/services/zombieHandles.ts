@@ -103,6 +103,14 @@ export interface ZombieReport {
    * is a floor.
    */
   undecidedCount: number;
+  /**
+   * Programs whose open files the pass could not read at all (the BQL-a
+   * review, F1.4): on Linux, one whose /proc/<pid>/fd refused — of the
+   * account TreeMap runs as but not dumpable, or of an account it could not
+   * read, or any as root. Any deleted file one holds is not in the report, so
+   * with any the report is not complete and the total is a floor. 0 on macOS.
+   */
+  unreadableProgramCount: number;
   scannedAt: number;
 }
 
@@ -398,13 +406,16 @@ function heldFileKey(h: { path: string; bytes: number | null; ino?: number | nul
  * The pure per-process rollup: group by pid, sum known bytes, count
  * unknowns, biggest holder first — and total the held FILES, each once,
  * however many programs hold it. `undecided` is the pass's count of open
- * files it could not decide (BQL item 11), carried as it is. Exported so the
+ * files it could not decide (BQL item 11), and `unreadablePrograms` its count
+ * of programs it could not read (the BQL-a review, F1.4), each carried as it
+ * is. Exported so the
  * arithmetic — the part a wrong number would come from — is testable without
  * a live process leaking descriptors.
  */
 export function groupZombies(
   handles: readonly { pid: number; processName: string; path: string; bytes: number | null; ino?: number | null }[],
   undecided = 0,
+  unreadablePrograms = 0,
 ): Omit<ZombieReport, 'scannedAt'> {
   const files = new Map<string, { bytes: number | null; holders: Set<number> }>();
   for (const h of handles) {
@@ -440,12 +451,13 @@ export function groupZombies(
     fileCount: held.length,
     sharedFileCount: held.filter((f) => f.holders.size > 1).length,
     undecidedCount: undecided,
+    unreadableProgramCount: unreadablePrograms,
   };
 }
 
 /** What zombieReport reads the world through. Production passes nothing; the tests hand in each one. */
 export interface ZombieReportDeps {
-  /** The platform's held-space pass: its handles, and how many files it could not decide (a bare list decided all it saw). */
+  /** The platform's held-space pass: its handles, and how many files it could not decide and programs it could not read (a bare list decided and read all it saw). */
   handles?: () => Promise<ZombieHandleInfo[] | ZombieHandleScan>;
   /** Runs `ps` for the .app test and the restart check on macOS. */
   run?: CommandRunner;
@@ -465,8 +477,8 @@ export interface ZombieReportDeps {
 export async function zombieReport(deps: ZombieReportDeps = {}): Promise<ZombieReport> {
   const pass = deps.handles ?? (() => platform().getZombieHandleScan());
   const found = await pass();
-  const scan: ZombieHandleScan = Array.isArray(found) ? { handles: found, undecided: 0 } : found;
-  const grouped = groupZombies(scan.handles, scan.undecided);
+  const scan: ZombieHandleScan = Array.isArray(found) ? { handles: found, undecided: 0, unreadablePrograms: 0 } : found;
+  const grouped = groupZombies(scan.handles, scan.undecided, scan.unreadablePrograms);
   const os = deps.os ?? process.platform;
   const ourUid = deps.uid !== undefined ? deps.uid : currentUid();
 

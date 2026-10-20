@@ -167,10 +167,19 @@ export interface ZombieHandleInfo {
  * inode is not counted: on macOS lsof shows a few, where Unix sockets live,
  * and they hold no space. Only the programs the pass can see are in it —
  * those of the account TreeMap runs as, or every program as root.
+ *
+ * `unreadablePrograms` counts the programs whose open files the pass could
+ * not read at all (the BQL-a review, F1.4): on Linux, a program whose
+ * /proc/<pid>/fd, or a link in it, refuses — one of the account TreeMap runs
+ * as that made itself not dumpable (ssh-agent does), one whose account the
+ * pass cannot read, or, as root, any. Another account's program is not
+ * counted: the pass never answers for those. lsof on macOS reads every
+ * program of the account it runs as, so there it is 0.
  */
 export interface ZombieHandleScan {
   handles: ZombieHandleInfo[];
   undecided: number;
+  unreadablePrograms: number;
 }
 
 /* ---------- Copy-on-write / clone accounting (A2) ---------- */

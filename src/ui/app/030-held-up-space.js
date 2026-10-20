@@ -69,20 +69,29 @@ function renderZombies(report) {
 
   // Open files the server could not decide either way (BQL item 11): it may
   // not look where they are, or could not tell lsof's spelling of a name
-  // apart. Never an all-clear while any went unchecked.
+  // apart. And programs whose open files it could not read at all (BQL-a
+  // review F1.4): on Linux, one of yours that is not dumpable. Never an
+  // all-clear while any went unchecked.
   const undecided = report.undecidedCount || 0;
+  const unreadable = report.unreadableProgramCount || 0;
+  const unreadableWords = (n, other) => `${n} ${other ? 'other ' : ''}${n === 1 ? 'program’s' : 'programs’'} open files couldn’t be read`;
   if (!zombieProcs.length) {
     // Empty (§3.5 state 1) — and here empty is the good news, so it says so
     // rather than looking like a panel with nothing to offer. Said of the
-    // person's own programs: another account's are seen only when TreeMap
-    // runs as root.
-    body.innerHTML = undecided > 0
-      ? `<div class="muted" style="padding:4px 2px;">TreeMap found no deleted file held open by your programs, but ${undecided} open file${undecided === 1 ? '' : 's'} couldn’t be checked, so some space may still be held.</div>`
-      : `<div class="muted" style="padding:4px 2px;">None of your programs is holding a deleted file open right now.</div>`;
+    // person's own programs — another account's are seen only when TreeMap
+    // runs as root — and as what TreeMap found: under a /proc mounted with
+    // hidepid a program of yours that is not dumpable is not even listed.
+    const unchecked = [
+      ...(undecided > 0 ? [`${undecided} open file${undecided === 1 ? '' : 's'} couldn’t be checked`] : []),
+      ...(unreadable > 0 ? [unreadableWords(unreadable)] : []),
+    ].join(' and ');
+    body.innerHTML = unchecked
+      ? `<div class="muted" style="padding:4px 2px;">TreeMap found no deleted file held open by your programs, but ${unchecked}, so some space may still be held.</div>`
+      : `<div class="muted" style="padding:4px 2px;">TreeMap found no deleted file held open by your programs.</div>`;
     return;
   }
 
-  const atLeast = report.unknownSizeCount > 0 || undecided > 0 ? 'At least ' : '';
+  const atLeast = report.unknownSizeCount > 0 || undecided > 0 || unreadable > 0 ? 'At least ' : '';
   const holders = zombieProcs.length === 1 ? 'a program that won’t let go' : `${zombieProcs.length} programs that won’t let go`;
   const head = `<div class="zh-total num">${atLeast}${formatBytes(report.totalBytes)} held by ${holders}</div>`;
 
@@ -138,6 +147,8 @@ function renderZombies(report) {
     ? `<div class="zh-note">${report.unknownSizeCount} held file${report.unknownSizeCount === 1 ? '’s size' : 's’ sizes'} couldn’t be read, so the real total is higher.</div>`
     : '') + (undecided > 0
     ? `<div class="zh-note">${undecided} other open file${undecided === 1 ? '' : 's'} couldn’t be checked, so the real total may be higher.</div>`
+    : '') + (unreadable > 0
+    ? `<div class="zh-note">${unreadableWords(unreadable, true)}, so the real total may be higher.</div>`
     : '');
   // A refresh of the same machine's holders rolls the totals in place; any
   // change in WHO is holding shifts the statics, which FxNum snaps on.

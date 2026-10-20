@@ -44,7 +44,8 @@ const DELETED_SUFFIX = ' (deleted)';
  * probe that never ran. That is the one answer this module's contract forbids,
  * and the `checked: false` state it should produce instead already exists.
  * (The per-pid `continue` further down is a different case and stays: another
- * user's process is genuinely unreadable, and the capability reason says so.)
+ * user's process is genuinely unreadable, and the capability reason says so.
+ * The held-space pass counts the ones it answers for — `scanOpenDescriptors`.)
  */
 async function listPids(procRoot: string): Promise<number[]> {
   const entries: string[] = await fsp.readdir(procRoot);
@@ -77,6 +78,22 @@ export interface ProcFdRecord {
   fdPath: string;
 }
 
+/** The process exited, or the descriptor closed, between one call and the next: /proc's normal case. */
+function wentAway(err: unknown): boolean {
+  return meansAbsent(err) || (err as NodeJS.ErrnoException | null)?.code === 'ESRCH';
+}
+
+/** What one walk of /proc read (`scanOpenDescriptors`). */
+export interface ProcFdScan {
+  records: ProcFdRecord[];
+  /**
+   * The programs whose open files it could not read — their fd folder, or a
+   * descriptor in it, refused — each once; never one that went away
+   * meanwhile (the BQL-a review, F1.4).
+   */
+  refused: number[];
+}
+
 /**
  * Every regular-file descriptor currently open, as seen from `/proc`.
  *
@@ -85,25 +102,42 @@ export interface ProcFdRecord {
  * suite that also runs on macOS.
  */
 export async function readOpenDescriptors(procRoot = '/proc'): Promise<ProcFdRecord[]> {
+  return (await scanOpenDescriptors(procRoot)).records;
+}
+
+/**
+ * `readOpenDescriptors`, with the programs whose open files it could not read
+ * (the BQL-a review, F1.4). /proc/<pid>/fd is readable only by the account a
+ * program runs as — and not even by that account when the program made itself
+ * not dumpable, as ssh-agent does, since its /proc entries are then root's.
+ * The walk passed over every such folder unseen, so the held-space pass said
+ * none of your programs held a deleted file while ssh-agent might have.
+ */
+export async function scanOpenDescriptors(procRoot = '/proc'): Promise<ProcFdScan> {
   const out: ProcFdRecord[] = [];
+  const refused: number[] = [];
 
   for (const pid of await listPids(procRoot)) {
     const fdDir = path.join(procRoot, String(pid), 'fd');
     let fds: string[];
     try {
       fds = await fsp.readdir(fdDir);
-    } catch {
-      continue; // owned by another user, or the process just exited
+    } catch (err) {
+      // Exited, or refused: another account's program, or one of this account that is not dumpable.
+      if (!wentAway(err)) refused.push(pid);
+      continue;
     }
 
     let name: string | null = null;
+    let unread = false;
     for (const fd of fds) {
       const fdPath = path.join(fdDir, fd);
       let target: string;
       try {
         target = await fsp.readlink(fdPath);
-      } catch {
-        continue; // descriptor closed between readdir and readlink
+      } catch (err) {
+        if (!wentAway(err)) unread = true; // refused, not closed between readdir and readlink
+        continue;
       }
       // Sockets, pipes, epoll and anon inodes are not files on disk.
       if (!target.startsWith('/')) continue;
@@ -116,8 +150,28 @@ export async function readOpenDescriptors(procRoot = '/proc'): Promise<ProcFdRec
       name ??= await processName(procRoot, pid);
       out.push({ pid, processName: name, path: resolved, markedDeleted, fdPath });
     }
+    if (unread) refused.push(pid);
   }
-  return out;
+  return { records: out, refused };
+}
+
+/**
+ * Whether the held-space pass answers for a program whose open files it could
+ * not read (the BQL-a review, F1.4): one running as `uid` — its effective id,
+ * from /proc/<pid>/status, which every account may read — any when `uid` is
+ * root's, and one whose account cannot be read, never assumed another
+ * account's. Not one that exited meanwhile: it holds nothing now.
+ */
+async function answersFor(procRoot: string, pid: number, uid: number | null): Promise<boolean> {
+  let status: string;
+  try {
+    status = await fsp.readFile(path.join(procRoot, String(pid), 'status'), 'utf8');
+  } catch (err) {
+    return !wentAway(err); // refused too (a /proc mounted with hidepid): whose it is cannot be read
+  }
+  if (uid === 0) return true;
+  const effective = /^Uid:\s+\d+\s+(\d+)/m.exec(status)?.[1];
+  return uid === null || effective === undefined || Number(effective) === uid;
 }
 
 /**
@@ -207,17 +261,23 @@ export async function zombieHandles(
   return (await zombieHandleScan(procRoot, statOf)).handles;
 }
 
-/** zombieHandles, with how many held files it could not decide (BQL item 11). */
+/**
+ * zombieHandles, with how many held files it could not decide (BQL item 11) and how many programs it
+ * answers for whose open files it could not read (the BQL-a review, F1.4). `uid` is the account TreeMap
+ * runs as, injectable so a test can stand another in.
+ */
 export async function zombieHandleScan(
   procRoot = '/proc',
   statOf: (p: string) => Promise<{ ino: number; size: number }> = (p) => fsp.stat(p),
+  uid: number | null = process.getuid?.() ?? null,
 ): Promise<ZombieHandleScan> {
   const out: ZombieHandleInfo[] = [];
   const seen = new Set<string>();
   // The held files it could not decide, each once however many descriptors and programs hold it (BQL item 11).
   const undecided = new Set<string>();
+  const walk = await scanOpenDescriptors(procRoot);
 
-  for (const rec of await readOpenDescriptors(procRoot)) {
+  for (const rec of walk.records) {
     if (!rec.markedDeleted) continue;
 
     let bytes: number | null = null;
@@ -266,5 +326,7 @@ export async function zombieHandleScan(
     seen.add(key);
     out.push({ pid: rec.pid, processName: rec.processName, path: rec.path, bytes, ino });
   }
-  return { handles: out, undecided: undecided.size };
+  let unreadablePrograms = 0;
+  for (const pid of walk.refused) if (await answersFor(procRoot, pid, uid)) unreadablePrograms++;
+  return { handles: out, undecided: undecided.size, unreadablePrograms };
 }

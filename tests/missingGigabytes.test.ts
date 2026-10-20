@@ -184,6 +184,7 @@ function sourcesFixture(over: SourceOverrides = {}): StatementSources {
         fileCount: 0,
         sharedFileCount: 0,
         undecidedCount: 0,
+        unreadableProgramCount: 0,
         scannedAt: 0,
         ...over.zombies,
       });
@@ -731,7 +732,8 @@ test('nothing held, everything checked: the zero speaks for the programs TreeMap
   const line = lineOf(s, 'openHandles');
   assert.equal(line.bytes, 0, 'a measured zero');
   assert.doesNotMatch(line.detail, /Nothing on this machine/, 'another account\'s programs are not seen unless TreeMap runs as root');
-  assert.match(line.detail, /^None of your programs is holding a deleted file open, so none of their space is held back\. TreeMap sees programs running under another account only when it runs as root; any space they hold is otherwise in Unaccounted\.$/);
+  assert.match(line.detail, /^TreeMap found no deleted file held open by your programs, so it counts none of their space as held back\. TreeMap sees programs running under another account only when it runs as root; any space they hold is otherwise in Unaccounted\.$/,
+    'what it found, never "none of your programs is holding one": a /proc mounted with hidepid hides some of yours (BQL-a review F1.4)');
   assert.deepEqual(line.notes, [], 'and nothing is left unchecked');
   assertBalances(s);
 });
@@ -761,6 +763,33 @@ test('held files that could not all be checked keep the line\'s measured bytes a
   assert.ok(held.notes.includes('1 file a program has open could not be checked, so this line is a floor, not a total: if it was deleted, the space it holds is in Unaccounted.'),
     `in the singular, beside the holders (notes: ${held.notes.join(' | ')})`);
   assertBalances(one);
+});
+
+test('programs whose open files could not be read keep the line\'s measured bytes as a floor and say how many, never a measured "nothing" (BQL-a review F1.4)', async () => {
+  const s = await buildStatement(scanFixture({ store: storeOfSize(GB) }), sourcesFixture({ zombies: { unreadableProgramCount: 1 } }));
+  const line = lineOf(s, 'openHandles');
+  assert.equal(line.bytes, 0, 'what could be read measured nothing: still a measurement, of those programs');
+  assert.equal(line.available, true);
+  assert.doesNotMatch(line.detail, /so it counts none of their space/, 'no all-clear while a program went unread');
+  assert.match(line.detail, /^TreeMap found no deleted file held open by your programs, but could not check every file they have open\./);
+  assert.deepEqual(line.notes, ['The open files of 1 program could not be read, so this line is a floor, not a total: any deleted file it holds open is in Unaccounted.'],
+    'the count, and where any space it holds is');
+  assertBalances(s);
+
+  const two = await buildStatement(
+    scanFixture({ store: storeOfSize(GB) }),
+    sourcesFixture({
+      zombies: {
+        processes: [{ pid: 42, processName: 'Docker', bytes: 3 * GB, appBundle: null, handles: [] }] as never,
+        totalBytes: 3 * GB, fileCount: 1, unreadableProgramCount: 2,
+      },
+    }),
+  );
+  const held = lineOf(two, 'openHandles');
+  assert.equal(held.bytes, 3 * GB, 'with holders, the bytes they hold');
+  assert.ok(held.notes.includes('The open files of 2 programs could not be read, so this line is a floor, not a total: any deleted file they hold open is in Unaccounted.'),
+    `in the plural, beside the holders (notes: ${held.notes.join(' | ')})`);
+  assertBalances(two);
 });
 
 test('where no held-space pass can run — Windows, a Mac without lsof — the line is unknown with the probe\'s reason, never a measured 0 (BQL item 11)', async () => {
@@ -793,11 +822,12 @@ test('the live Missing GB source reads the platform\'s held-space pass, count an
     getZombieHandleScan?: () => Promise<unknown>;
   };
   plat.probeZombieHandles = async () => ({ available: true, mechanism: 'test' });
-  plat.getZombieHandleScan = async () => ({ handles: [], undecided: 3 });
+  plat.getZombieHandleScan = async () => ({ handles: [], undecided: 3, unreadablePrograms: 2 });
   invalidateCapabilities();
   try {
     const held = await liveSources().zombies();
     assert.equal(held.undecidedCount, 3, 'the pass\'s count reaches the live source');
+    assert.equal(held.unreadableProgramCount, 2, 'and so does its count of programs it could not read (BQL-a review F1.4)');
   } finally {
     delete plat.probeZombieHandles; // the provider's own methods again
     delete plat.getZombieHandleScan;

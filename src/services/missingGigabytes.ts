@@ -227,7 +227,7 @@ async function leanZombieReport(): Promise<ZombieReport> {
   const state = await capabilityState('zombieHandles');
   if (!state.available) throw new Error(state.reason ?? 'Held-space detection is not available on this system.');
   const scan = await platform().getZombieHandleScan();
-  return { ...groupZombies(scan.handles, scan.undecided), scannedAt: Date.now() };
+  return { ...groupZombies(scan.handles, scan.undecided, scan.unreadablePrograms), scannedAt: Date.now() };
 }
 
 /**
@@ -675,6 +675,14 @@ async function openHandleLine(held: Promise<ZombieReport>): Promise<StatementLin
     const undecidedNote = undecided === 1
       ? '1 file a program has open could not be checked, so this line is a floor, not a total: if it was deleted, the space it holds is in Unaccounted.'
       : `${String(undecided)} files a program has open could not be checked, so this line is a floor, not a total: if they were deleted, the space they hold is in Unaccounted.`;
+    // And programs whose open files the pass could not read at all (the BQL-a
+    // review, F1.4) — on Linux, one of your account that is not dumpable: the
+    // same floor, the same residual.
+    const unreadable = report.unreadableProgramCount;
+    const unreadableNote = unreadable === 1
+      ? 'The open files of 1 program could not be read, so this line is a floor, not a total: any deleted file it holds open is in Unaccounted.'
+      : `The open files of ${String(unreadable)} programs could not be read, so this line is a floor, not a total: any deleted file they hold open is in Unaccounted.`;
+    const unchecked = [...(undecided > 0 ? [undecidedNote] : []), ...(unreadable > 0 ? [unreadableNote] : [])];
     if (report.processes.length === 0) {
       return {
         id: 'openHandles',
@@ -682,12 +690,14 @@ async function openHandleLine(held: Promise<ZombieReport>): Promise<StatementLin
         bytes: 0,
         available: true,
         // Said of the programs TreeMap can see: lsof and /proc show another
-        // account's open files only to root.
-        detail: undecided > 0
+        // account's open files only to root. And said as what it found, never
+        // "none of your programs is holding one": under a /proc mounted with
+        // hidepid=2 a program of yours that is not dumpable is not even listed.
+        detail: unchecked.length > 0
           ? 'TreeMap found no deleted file held open by your programs, but could not check every file they have open. TreeMap sees programs running under another account only when it runs as root; any space they hold is otherwise in Unaccounted.'
-          : 'None of your programs is holding a deleted file open, so none of their space is held back. TreeMap sees programs running under another account only when it runs as root; any space they hold is otherwise in Unaccounted.',
+          : 'TreeMap found no deleted file held open by your programs, so it counts none of their space as held back. TreeMap sees programs running under another account only when it runs as root; any space they hold is otherwise in Unaccounted.',
         count: 0,
-        notes: undecided > 0 ? [undecidedNote] : [],
+        notes: unchecked,
         remedy: null,
       };
     }
@@ -708,7 +718,7 @@ async function openHandleLine(held: Promise<ZombieReport>): Promise<StatementLin
         `${String(report.unknownSizeCount)} held file${report.unknownSizeCount === 1 ? '' : 's'} could not be sized, so this line is a floor, not a total. The remainder is in Unaccounted.`,
       );
     }
-    if (undecided > 0) notes.push(undecidedNote);
+    notes.push(...unchecked);
     return {
       id: 'openHandles',
       label: 'Held by programs still running',

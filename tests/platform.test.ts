@@ -1119,6 +1119,7 @@ test('B5: the macOS provider hands on the pass\'s count — a held file in a fol
     const scan = await platform().getZombieHandleScan();
     assert.ok(scan.undecided >= 1, `the held file whose place cannot be looked at is counted (undecided: ${String(scan.undecided)})`);
     assert.deepEqual(scan.handles.filter((h) => h.path.includes(path.basename(dir))), [], 'and never claimed deleted');
+    assert.equal(scan.unreadablePrograms, 0, 'lsof reads every program of the account it runs as (BQL-a review F1.4)');
   } finally {
     fs.closeSync(fd);
     await fsp.chmod(locked, 0o700).catch(() => undefined);

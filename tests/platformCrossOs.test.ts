@@ -271,6 +271,57 @@ test('linux: the probe counts each held file it could not decide — the descrip
   }
 });
 
+test('linux: a program whose open files TreeMap may not read is counted, never passed over — one of this account (one that made itself not dumpable, as ssh-agent does), one whose account cannot be read, and every one when TreeMap runs as root; never another account\'s, nor one gone since (BQL-a review F1.4)', {
+  skip: WIN_NO_PROC_FIXTURE || (process.getuid?.() === 0 && 'root can read any folder, so there is no refusal to observe'),
+}, async () => {
+  // /proc/<pid>/fd of a program that is not dumpable is root's, so the account it runs as gets EACCES — and
+  // the walk passed over it unseen: "none of your programs is holding a deleted file open" printed while
+  // ssh-agent might be.
+  const root = await mkTmp();
+  const ME = 1000;
+  const OTHER = 4242;
+  const status = (real: number, effective: number) =>
+    `Name:\tx\nUmask:\t0022\nState:\tS (sleeping)\nUid:\t${String(real)}\t${String(effective)}\t${String(effective)}\t${String(effective)}\nGid:\t100\t100\t100\t100\n`;
+  const refused = [200, 300, 400, 500, 700, 900];
+  try {
+    await fakeProc(root, [
+      { pid: 100, comm: 'bash', fds: [{ name: '3', target: '/home/me/notes.txt' }] }, // read as ever
+      { pid: 200, comm: 'ssh-agent', fds: [{ name: '3', target: '/tmp/ssh-x/agent.1 (deleted)' }] }, // ours, not dumpable
+      { pid: 300, comm: 'postgres', fds: [] }, // another account's
+      { pid: 400, comm: 'gone', fds: [] }, // exited: its status is gone too
+      { pid: 500, comm: 'hidden', fds: [] }, // its status cannot be read either
+      { pid: 600, comm: 'gpg-agent', fds: [{ name: '3', target: '/home/me/.gnupg/x' }] }, // its descriptors listed, none read
+      { pid: 700, comm: 'sudo', fds: [] }, // started by this account, running as root
+      { pid: 800, comm: 'exiting', fds: [] }, // its fd folder gone mid-walk: exited, not refused
+      { pid: 900, comm: 'odd', fds: [] }, // a status with no Uid line: whose it is cannot be read
+    ]);
+    await fsp.writeFile(path.join(root, '100', 'status'), status(ME, ME));
+    await fsp.writeFile(path.join(root, '200', 'status'), status(ME, ME));
+    await fsp.writeFile(path.join(root, '300', 'status'), status(OTHER, OTHER));
+    await fsp.writeFile(path.join(root, '500', 'status'), status(ME, ME));
+    await fsp.writeFile(path.join(root, '600', 'status'), status(ME, ME));
+    await fsp.writeFile(path.join(root, '700', 'status'), status(ME, 0));
+    await fsp.writeFile(path.join(root, '800', 'status'), status(ME, ME));
+    await fsp.rm(path.join(root, '800', 'fd'), { recursive: true });
+    await fsp.writeFile(path.join(root, '900', 'status'), 'Name:\todd\n');
+    for (const pid of refused) await fsp.chmod(path.join(root, String(pid), 'fd'), 0o000);
+    await fsp.chmod(path.join(root, '500', 'status'), 0o000);
+    await fsp.chmod(path.join(root, '600', 'fd'), 0o444); // names can be listed; no link can be read
+    const statOf = async (p: string): Promise<{ ino: number; size: number }> => {
+      throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+    };
+    const mine = await zombieHandleScan(root, statOf, ME);
+    assert.equal(mine.unreadablePrograms, 4,
+      'ssh-agent, gpg-agent and the two whose account cannot be read — never postgres (another account), sudo (running as root), nor the two gone');
+    assert.equal((await zombieHandleScan(root, statOf, 0)).unreadablePrograms, 6, 'as root every program is in scope: postgres and sudo too, never the two gone');
+    assert.deepEqual((await readOpenDescriptors(root)).map((r) => r.pid), [100], 'the open-file walk itself reads what it read before');
+  } finally {
+    for (const pid of [...refused, 600]) await fsp.chmod(path.join(root, String(pid), 'fd'), 0o700).catch(() => undefined);
+    await fsp.chmod(path.join(root, '500', 'status'), 0o600).catch(() => undefined);
+    await fsp.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('linux: the provider hands on the pass\'s count — a deleted file still held whose path TreeMap may not look at is counted as not checked (BQL-a review F1.6)', {
   skip: WIN_NO_PROC_FIXTURE || (process.getuid?.() === 0 && 'root can look into any folder'),
 }, async () => {
@@ -288,16 +339,21 @@ test('linux: the provider hands on the pass\'s count — a deleted file still he
     await fakeProc(root, [{ pid: 9, comm: 'daemon', fds: [
       { name: '3', target: `${path.join(data, 'open', 'held.log')} (deleted)` },
       { name: '4', target: `${path.join(data, 'open', 'gone.log')} (deleted)` },
-    ] }]);
+    ] }, { pid: 10, comm: 'ssh-agent', fds: [] }]);
+    const me = process.getuid?.() ?? 0;
+    await fsp.writeFile(path.join(root, '10', 'status'), `Name:\tssh-agent\nUid:\t${String(me)}\t${String(me)}\t${String(me)}\t${String(me)}\n`);
+    await fsp.chmod(path.join(root, '10', 'fd'), 0o000); // a program of this account whose open files may not be read
     await fsp.chmod(locked, 0o000);
     const provider = new LinuxProvider();
     (provider as unknown as { procRoot: string }).procRoot = root;
     const scan = await provider.getZombieHandleScan();
     const gone = [[9, path.join(data, 'open', 'gone.log'), 12]];
     assert.deepEqual([scan.handles.map((h) => [h.pid, h.path, h.bytes]), scan.undecided], [gone, 1], 'the gone file claimed; the other not, and counted');
+    assert.equal(scan.unreadablePrograms, 1, 'and the program it could not read, as the account TreeMap runs as (BQL-a review F1.4)');
     assert.deepEqual((await provider.getZombieHandles()).map((h) => [h.pid, h.path, h.bytes]), gone, 'the bare list reads the same /proc');
   } finally {
     await fsp.chmod(locked, 0o700).catch(() => undefined);
+    await fsp.chmod(path.join(root, '10', 'fd'), 0o700).catch(() => undefined);
     await fsp.rm(root, { recursive: true, force: true });
     await fsp.rm(data, { recursive: true, force: true });
   }

@@ -295,9 +295,9 @@ export abstract class BaseProvider implements PlatformProvider {
     return [];
   }
 
-  /** A provider with no count of its own decided everything it reported (Windows reports nothing). */
+  /** A provider with no count of its own decided and read everything it reported (Windows reports nothing). */
   async getZombieHandleScan(): Promise<ZombieHandleScan> {
-    return { handles: await this.getZombieHandles(), undecided: 0 };
+    return { handles: await this.getZombieHandles(), undecided: 0, unreadablePrograms: 0 };
   }
 
   async getCloneFamily(_path: string): Promise<CloneFamilyId | null> {

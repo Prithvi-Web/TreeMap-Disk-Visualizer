@@ -739,7 +739,7 @@ test('the README says what Held-Up Space sees and that an open file it cannot ch
   const readme = read('README.md');
   const para = lineStarting(readme, '**Held-Up Space**');
   assert.doesNotMatch(para, /counted, not guessed/, 'nothing counts the programs TreeMap cannot see');
-  assert.match(para, /It sees only the programs running under your account — every program when TreeMap runs as root — and an open file it cannot check is \*\*counted and said, never claimed\*\* either way\./);
+  assert.match(para, /It sees only the programs running under your account — every program when TreeMap runs as root — and an open file it cannot check, or a program of yours whose open files it cannot read, is \*\*counted and said, never claimed\*\* either way\./);
   // The facts: the probes count what they could not decide, the report carries it, and the spec says so.
   assert.match(read('src', 'platform', 'macos', 'lsofGuard.ts'), /undecided\.add\(/, 'the macOS probe counts the files it could not decide');
   assert.match(read('src', 'platform', 'linux', 'procFdGuard.ts'), /undecided\.add\(/, 'and so does the Linux one');
@@ -750,6 +750,19 @@ test('the README says what Held-Up Space sees and that an open file it cannot ch
   assert.ok(schema?.properties?.undecidedCount, 'the spec names the count');
   assert.ok(schema?.required?.includes('undecidedCount'), 'and every report carries it');
   assert.match(schema.properties.undecidedCount.description ?? '', /could not check/);
+  // And the programs whose open files it could not read at all (BQL-a review F1.4).
+  assert.ok(schema.properties.unreadableProgramCount, 'the spec names the count of programs it could not read');
+  assert.ok(schema.required?.includes('unreadableProgramCount'), 'and every report carries it');
+  assert.match(schema.properties.unreadableProgramCount.description ?? '', /could not read/);
+});
+
+test('PLATFORM_NOTES\' Linux zombie-handles row says what the /proc pass does not see and that a program whose open files it may not read is counted (BQL-a review F1.4)', () => {
+  const linux = from(read('docs', 'PLATFORM_NOTES.md'), '## Linux');
+  const row = linux.split('\n').find((l) => l.startsWith('| Zombie handles | `/proc` + kernel\'s `(deleted)` marker |')) ?? '';
+  assert.match(row, /Sees only the programs running under your account \(every program when TreeMap runs as root\)/, 'another account\'s programs are not seen');
+  assert.match(row, /A held file whose path it may not look at is counted and shown as not checked, never claimed, and so is a program whose open files it may not read: one of your account that has made itself not dumpable, as ssh-agent does, or one whose account it cannot read\./,
+    'what it cannot decide, and what it cannot read, is counted');
+  assert.match(row, /Under a `\/proc` mounted with `hidepid=2` such a program is not listed at all, so nothing counts it \|$/, 'and what it can never count is said');
 });
 
 test('PLATFORM_NOTES\' macOS zombie-handles row says what the probe does not see and that what it cannot decide is counted, with the caret bound lsofGuard keeps (BQL item 12)', () => {

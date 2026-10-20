@@ -606,5 +606,7 @@ export async function resolveZombieScan(
     seen.add(key);
     out.push({ pid: rec.pid, processName: rec.processName, path: rec.path, bytes: rec.size, ino: rec.ino });
   }
-  return { handles: out, undecided: undecided.size };
+  // lsof reads every program of the account it runs as — measured: as many programs as ps lists for it — so
+  // none went unread (BQL-a review F1.4).
+  return { handles: out, undecided: undecided.size, unreadablePrograms: 0 };
 }
