@@ -237,7 +237,8 @@ async function turns(n = 30): Promise<void> {
 }
 
 /** A draw the treemap view asked for (loadTreemap): the folder asked, and the tree and scan on screen as it asked. */
-type Draw = { path: string; root: string | null; scanId: unknown };
+/** `at`: the scan state the draw was made in — what the Reclaim legend a draw repaints reads (reclaimNoScanWords). */
+type Draw = { path: string; root: string | null; scanId: unknown; at: { scanning: unknown; indexScanDue: unknown; scanId: unknown; settledScanId: unknown } };
 
 function page(o: { route: Route; system?: unknown; search?: string; root?: unknown; settledScanId?: string | null; index?: boolean; realTreemap?: boolean; realCity?: boolean }) {
   const dom = new Dom();
@@ -315,7 +316,7 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     toast: (m: string, k?: string) => { toasts.push([m, k]); },
     finishScan: async (root: unknown) => { finished.push(root); state.root = root; },
     maybeShowFastRescan: noop, rememberScannedRoot: noop, showFastRescanStat: noop, scanStatsFor: async () => ({}),
-    restoreDashboardPanels: noop, renderIndexBadge: noop, renderIndexLine: noop, disableLive: noop, clearDonut: noop,
+    restoreDashboardPanels: noop, renderIndexBadge: noop, renderIndexLine: noop, disableLive: noop, clearDonut: noop, showListsPending: noop,
     fxStateBeam: noop, fxOrbShow: noop, fxOrbHide: noop, fxScanHeroSync: noop, fxDonutLoadingSync: noop, fxEmptyCtaSync: noop, fxViewEnter: noop,
     hideTooltip: noop, hideCtxMenu: noop, selectionBarFollowView: noop, renderCapabilityNotice: noop,
     scanAccessNotice: async () => false, clearScanQueue: noop, drainScanQueue: noop, quietRescanFailed: (e: unknown) => { quietFailed.push(e); },
@@ -328,12 +329,19 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     // The index-first path (`index`): what openFromIndex and finishScan call besides the lifted functions.
     ...(o.index ? {
       indexTree: noop, updateSelectionBar: noop, DUP_PAGE: 50, formatClock: String, countUp: noop, FxNum: { rollText: noop },
-      renderDiskNotes: noop, fxScanDonePulse: noop, loadWhatsNew: noop, loadDriveHealth: noop, showListsPending: noop,
+      renderDiskNotes: noop, fxScanDonePulse: noop, loadWhatsNew: noop, loadDriveHealth: noop,
       emit: (_topic: unknown, id: unknown) => { emitted.push(id); }, TOPIC: { scan: 'scan' },
       loadDashboardLists: async () => true, loadCostEstimate: noop, buildIndexInBackground: (p: string) => { indexBuilds.push(p); }, renderGrowthProjection: noop,
       loadBudgets: noop, refreshTimebar: noop, enableLive: noop, setTimeout: () => 0,
       // The treemap view's own mount and onScanChange are the page's; what they call is recorded here.
-      loadTreemap: (p: string) => { const r = state.root as { path: string } | null; draws.push({ path: p, root: r ? r.path : null, scanId: state.scanId }); },
+      loadTreemap: (p: string) => {
+        const r = state.root as { path: string } | null;
+        const draw = { path: p, root: r ? r.path : null, scanId: state.scanId } as Draw;
+        // Not enumerable: the tests that compare draws whole compare what they always did.
+        Object.defineProperty(draw, 'at', { enumerable: false,
+          value: { scanning: state.scanning, indexScanDue: state.indexScanDue, scanId: state.scanId, settledScanId: state.settledScanId } });
+        draws.push(draw);
+      },
       fxTmPillBeamsSync: noop, loadSavedViews: noop, refreshDock: noop, tmRejudgeQuery: () => { rejudged.push(state.scanId); }, exitHistoryState: noop,
     } : {}),
   };
@@ -1759,6 +1767,115 @@ test('review F3.1, F3.4: Disk City up while a folder with a saved index is paint
     h.switchView('city');
     assert.equal(cityLine(h), CITY_FROM_INDEX, `${label}: and a redraw says the same`);
     assert.ok(!h.toasts.some(([m]) => /could not be opened/.test(m)), `${label}: control: Disk City mounted every time (${JSON.stringify(h.toasts)})`);
+  }
+});
+
+/* BQJ-1b (2): after a Stop leaves a saved index's tree on screen, its views
+   say nothing will land: Disk City "scan this folder to see its city", the
+   Reclaim legend "scan this folder to score it", the Dashboard's lists "scan
+   this folder to list…". A rescan pressed then asks the index about the
+   folder first (about 400 ms on a large root) before anything is painted,
+   and nothing redrew those lines when the scan chrome began: they said
+   "scan this folder" of the folder being scanned until the paint. */
+
+/** What the Reclaim legend says, by the page's own reclaimNoScanWords, in the scan state a draw was made in. */
+const legendAt = (at: Draw['at']) => liftPage<() => string | null>(['treeScanId', 'treeScanComing', 'reclaimNoScanWords'],
+  `(() => { const state = ${JSON.stringify(at)}; ${['treeScanId', 'treeScanComing', 'reclaimNoScanWords'].map((n) => pageFn(`function ${n}(`)).join('\n')} return reclaimNoScanWords(); })`)();
+const LEGEND_COMING = 'Not scored yet — scoring starts once this folder’s scan finishes.';
+const LEGEND_FROM_INDEX = 'Not scored — opened from the saved index; scan this folder to score it.';
+
+test('BQJ-1b (2): a rescan pressed over a saved index\'s tree a Stop left on screen says it is loading from the moment the scan chrome begins — Disk City\'s line, the Reclaim legend, the Dashboard\'s lists — while the index is still being asked about; a Stop in that window says the saved index again', async () => {
+  /** Mail's saved index's tree on screen with no scan behind it, as a Stop leaves it, and the index's status held. */
+  const held = () => {
+    const base = server({ roots: [], indexed: [MAIL], indexTrees: { [MAIL]: indexTreeOf(MAIL, 37_700_000) } });
+    const probe: { answer: (() => void) | null } = { answer: null };
+    const h = page({ index: true, realCity: true, root: indexTreeOf(MAIL, 37_700_000), route: (m, url, b) => {
+      if (url.startsWith('/api/index/status') && !probe.answer) {
+        return new Promise((resolve) => { probe.answer = () => resolve(base(m, url, b) as { status?: number; body?: unknown }); });
+      }
+      return base(m, url, b);
+    } });
+    return { h, probe };
+  };
+
+  // Disk City.
+  {
+    const { h, probe } = held();
+    h.switchView('city');
+    assert.equal(cityLine(h), CITY_FROM_INDEX, 'control: a saved index\'s tree no scan stands behind is said to be one');
+    const started = h.startScan(MAIL);
+    await turns();
+    assert.ok(probe.answer, 'control: the index is being asked about the folder');
+    assert.equal(h.state.scanning, true, 'control: the scan chrome has begun');
+    assert.equal(cityLine(h), CITY_LOADING, 'from the moment the scan chrome begins the city is loading — never "scan this folder" of the folder being scanned');
+    await pressStop(h);
+    assert.equal(cityLine(h), CITY_FROM_INDEX, 'a Stop in that window: the tree is the saved index again');
+    probe.answer!();
+    await started;
+    await turns();
+    assert.equal(cityLine(h), CITY_FROM_INDEX, 'and the probe answering late changes nothing');
+  }
+
+  // The Reclaim legend, which the map repaints with each draw.
+  {
+    const { h, probe } = held();
+    h.switchView('treemap');
+    assert.equal(legendAt(h.draws.at(-1)!.at), LEGEND_FROM_INDEX, 'control: the legend says what would score the tree');
+    const drawn = h.draws.length;
+    const started = h.startScan(MAIL);
+    await turns();
+    assert.ok(probe.answer, 'control: the index is being asked about the folder');
+    assert.ok(h.draws.length > drawn, 'the map is drawn again as the scan chrome begins, its legend with it');
+    assert.equal(legendAt(h.draws.at(-1)!.at), LEGEND_COMING, 'and the legend says scoring starts once the scan finishes');
+    assert.equal(h.draws.at(-1)!.root, MAIL, 'control: the tree it draws is the one on screen');
+    await pressStop(h);
+    assert.equal(legendAt(h.draws.at(-1)!.at), LEGEND_FROM_INDEX, 'a Stop in that window: what would score it, again');
+    probe.answer!();
+    await started;
+  }
+
+  // Without a Stop: the paint is drawn once; the quiet scan it requests re-enters nothing, its lines already loading.
+  {
+    const { h, probe } = held();
+    h.switchView('treemap');
+    const started = h.startScan(MAIL);
+    await turns();
+    const beforePaint = h.draws.length;
+    probe.answer!();
+    await started;
+    await turns();
+    assert.deepEqual(h.emitted, [null], 'control: painted from the saved index');
+    assert.equal(h.posts.length, 1, 'control: and its scan requested');
+    assert.equal(h.draws.length - beforePaint, 1, `the paint is drawn once — the scan it requests does not draw it again (${h.draws.length - beforePaint})`);
+    assert.equal(legendAt(h.draws.at(-1)!.at), LEGEND_COMING, 'control: and its legend says scoring starts once the scan finishes');
+  }
+
+  // The Dashboard's lists.
+  {
+    const { h, probe } = held();
+    let pending = 0;
+    h.given.showListsPending = () => { pending++; };
+    const started = h.startScan(MAIL);
+    await turns();
+    assert.ok(probe.answer, 'control: the index is being asked about the folder');
+    assert.equal(pending, 1, 'the Dashboard\'s lists say they are on their way as the scan chrome begins, not "scan this folder to list…"');
+    probe.answer!();
+    await started;
+  }
+
+  // Control: over a tree a scan stands behind, nothing is re-entered — its views say nothing of "scan this folder".
+  {
+    const base = server({ roots: [] });
+    const h = page({ index: true, root: indexTreeOf(MAIL, 37_700_000), settledScanId: 'scan-mail', route: base });
+    h.switchView('treemap');
+    const drawn = h.draws.length;
+    let pending = 0;
+    h.given.showListsPending = () => { pending++; };
+    await h.startScan(MAIL);
+    await turns();
+    assert.equal(pending, 0, 'over a scanned tree the lists are not touched by the quiet chrome');
+    assert.ok(h.draws.slice(drawn).every((d) => d.at.scanning !== true || d.at.settledScanId === 'scan-mail'),
+      'and no draw of it speaks for a tree with no scan behind it');
   }
 });
 

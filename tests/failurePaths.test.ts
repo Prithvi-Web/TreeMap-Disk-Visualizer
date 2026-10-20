@@ -366,6 +366,9 @@ function chromeEl() {
 function scanStartHarness(indexed: boolean) {
   const src = [
     slice('function cancelScanById(', 'function skeletonRows('),
+    // The app's one rule for the scan behind the tree on screen, which the quiet chrome reads (BQJ-1b).
+    slice('function treeScanId(', '\n}\n') + '\n}\n',
+    slice('function treeScanComing(', '\n}\n') + '\n}\n',
     slice('function beginScanChrome(', '\n}\n') + '\n}\n',
     slice('function endScanChrome()', 'function failScan('),
     slice('async function indexStatusFor(', '/**\n * Build the index for a freshly-scanned root'),
@@ -423,7 +426,8 @@ function scanStartHarness(indexed: boolean) {
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const fns = new Function(...names, `'use strict';
     let indexLineGen = 0; let indexAutoMaxEntries = null;
-    const finishScan = async (root) => { endScanChrome(); state.root = root; log.push('painted the index tree'); };
+    // An index paint (no scan on hand) leaves that tree's scan due, as the page's finishScan does (review F3.1).
+    const finishScan = async (root) => { endScanChrome(); state.root = root; if (!state.scanId) state.indexScanDue = true; log.push('painted the index tree'); };
     ${src}
     return { startScan, stopScan };`)(...names.map((n) => env[n])) as { startScan: (p: string, o?: object) => Promise<void>; stopScan: () => Promise<void> };
   /** Let the index's next answer go, and the code waiting on it run. */

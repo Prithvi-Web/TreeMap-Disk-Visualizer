@@ -480,6 +480,15 @@ async function showFastRescanStat(scanId) {
  * show a spinner would make the instant open pointless.
  */
 function beginScanChrome({ quiet = false, message = '' } = {}) {
+  // A quiet chrome keeps the view on screen. Over a saved index's tree that
+  // no scan stands behind and none was coming — what a Stop or a failure
+  // leaves (J05) — its lines said nothing will land: Disk City's "scan this
+  // folder to see its city", the Reclaim legend's "scan this folder to score
+  // it", the Dashboard's lists' "scan this folder to list…". This scan makes
+  // them untrue, and nothing repainted them while the index was asked about
+  // (~400 ms on a large root) until the paint (BQJ-1b). Judged before
+  // `scanning` is set, with the app's own rule (treeScanId, treeScanComing).
+  const saidNothingWillLand = quiet && !!state.root && !treeScanId() && !treeScanComing();
   state.scanning = true;
   state.abortScan = null; // no stream yet — Stop before the request answers has no scanId
   state.scanGen++; // this scan's identity while its request is in flight
@@ -521,6 +530,13 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
     $('scanStatus').innerHTML = message
       ? '<span>' + escapeHtml(message) + '</span>'
       : icon('refresh', 14) + '<span>Checking for changes…</span>';
+    if (saidNothingWillLand) {
+      // Said again, as loading: the lists as on their way, and the view on
+      // screen re-entered — its lines read the scan coming now. A Stop in
+      // this window says the saved index again (stopScan re-enters it).
+      showListsPending();
+      withFocusKept(() => { switchView(state.view); });
+    }
     return;
   }
   $('scanStatus').innerHTML = '<span>Starting scan…</span>';
