@@ -262,11 +262,80 @@ test('a returning user finds the Undo Vault by the name it had before 5.2.0, whi
     'an alias scores at the hint\'s discount, so a label or hint match always ranks above it');
   assert.equal(cmdkAliasScore('capsule', undefined), null, 'an entry with no aliases matches nothing through them');
 
-  const items = INDEX.slice(INDEX.indexOf('function cmdkItems'), INDEX.indexOf('function cmdkItems') + 4000);
-  assert.match(items, /label: v\.label, hint: blocked \|\| 'view', aliases: v\.paletteAliases,/, 'a view\'s aliases join its palette row');
-  assert.match(items, /hint: sec\.hint, aliases: sec\.aliases,/, 'and a settings section\'s');
-  const render = INDEX.slice(INDEX.indexOf('function cmdkRender'), INDEX.indexOf('function cmdkRender') + 2400);
-  assert.match(render, /if \(s === null\) s = cmdkAliasScore\(q, item\.aliases\);/, 'aliases are scored when the label and the hint miss');
-  const row = render.slice(render.indexOf("$('cmdkList').innerHTML"), render.indexOf(".join('')", render.indexOf("$('cmdkList').innerHTML")));
-  assert.ok(row.includes('item.label') && !row.includes('aliases'), 'a row shows its label and hint, never its aliases');
+});
+
+/**
+ * The text of the declaration that starts at `at` in the page, through the bracket that closes
+ * the first `open` after it. Only that one kind of bracket is counted, so a ( or [ inside a string
+ * or a comment of a function body cannot end it early.
+ */
+function declarationAt(at: number, open: string, close: string): string {
+  assert.notEqual(at, -1, 'the declaration is in the page');
+  let depth = 0;
+  for (let i = INDEX.indexOf(open, at); i < INDEX.length; i++) {
+    if (INDEX[i] === open) depth++;
+    else if (INDEX[i] === close && --depth === 0) return INDEX.slice(at, i + 1);
+  }
+  return assert.fail(`the declaration at ${at} closes its ${open}`);
+}
+
+/** Every place `head` starts in the page. */
+function everyIndexOf(head: string): number[] {
+  const out: number[] = [];
+  for (let at = INDEX.indexOf(head); at !== -1; at = INDEX.indexOf(head, at + 1)) out.push(at);
+  return out;
+}
+
+/**
+ * The palette as shipped, driven rather than read: the page's own view registry (the built-in
+ * views and every registerView call, so a view's aliases arrive the way the page gives them), its
+ * action and settings registries, and cmdkItems, cmdkRender, the scorers and escapeHtml as they
+ * are, over a stub input box and list. No scan is open, so actions that need one are left out, as
+ * on a fresh start. Typing returns the labels of the rows listed, in order, and each row's HTML.
+ */
+function paletteAsShipped(): (typed: string) => { rows: string[]; html: string[] } {
+  const views = declarationAt(INDEX.indexOf('const VIEWS = ['), '[', ']');
+  const registrations = everyIndexOf('registerView({').map((at) => `${declarationAt(at, '{', '}')})`);
+  assert.ok(registrations.some((r) => r.includes("id: 'capsule'")), 'the Undo Vault view is registered with registerView');
+  const registries = ['CMDK_ACTIONS', 'CMDK_SETTINGS_SECTIONS'].map((name) => `${declarationAt(INDEX.indexOf(`const ${name} = [`), '[', ']')};`);
+  const functions = ['escapeHtml', 'cmdkScore', 'cmdkAliasScore', 'cmdkViewOrder', 'cmdkItems', 'cmdkRender']
+    .map((name) => declarationAt(INDEX.indexOf(`function ${name}(`), '{', '}'));
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function(`'use strict';
+    ${views};
+    function registerView(view) { VIEWS.push(view); }
+    ${registrations.join(';\n')};
+    const state = { cart: new Set(), root: null, scanning: false, view: 'dashboard', savedViews: [] };
+    const tabs = [];
+    const cmdkRoots = [];
+    let cmdkSel = 0;
+    let cmdkShown = [];
+    const input = { value: '', setAttribute() {}, removeAttribute() {} };
+    const list = { innerHTML: '', querySelectorAll() { return []; } };
+    function $(id) { return id === 'cmdkInput' ? input : id === 'cmdkList' ? list : null; }
+    function viewBlockedReason() { return null; }
+    ${registries.join('\n')}
+    ${functions.join('\n')}
+    return (typed) => {
+      input.value = typed;
+      cmdkRender();
+      return { rows: cmdkShown.map((item) => item.label), html: list.innerHTML.split('</button>').filter(Boolean) };
+    };`)();
+}
+
+test('typed into the palette as shipped, the old name lists the Undo Vault and its Settings section, and no row spells it', () => {
+  // Driven, not read (review F2.2): a source check of cmdkRender stayed green when the alias line
+  // was moved below the line that skips a row with no match, which made the alias dead.
+  const type = paletteAsShipped();
+  assert.ok(type('').rows.includes('Undo Vault') && type('').rows.includes('Settings: Undo Vault'), 'an empty box lists both, by their names');
+  for (const typed of ['time capsule', 'Time Capsule', 'timecapsule', 'capsule']) {
+    const { rows, html } = type(typed);
+    assert.ok(rows.includes('Undo Vault'), `typing "${typed}" lists the Undo Vault view: ${JSON.stringify(rows)}`);
+    assert.ok(rows.includes('Settings: Undo Vault'), `typing "${typed}" lists its Settings section: ${JSON.stringify(rows)}`);
+    assert.equal(rows[rows.length - 1], `Search files for “${typed}”`, 'and the free-text row still closes the list');
+    for (const row of html.slice(0, -1)) {
+      assert.doesNotMatch(row, /capsule/i, `no row the palette found spells the old word, typed or not: ${row}`);
+    }
+  }
+  assert.ok(!type('weights').rows.some((label) => label === 'Undo Vault'), 'the view answers only to its own words');
 });
