@@ -29,6 +29,7 @@ import {
   SnapshotRecoveryResult,
   VolumeTopology,
   ZombieHandleInfo,
+  ZombieHandleScan,
 } from './types';
 import { notifyWatchDelivery } from './types';
 import { watchPath, type WatchLease } from './watchRegistry';
@@ -292,6 +293,11 @@ export abstract class BaseProvider implements PlatformProvider {
 
   async getZombieHandles(): Promise<ZombieHandleInfo[]> {
     return [];
+  }
+
+  /** A provider with no count of its own decided everything it reported (Windows reports nothing). */
+  async getZombieHandleScan(): Promise<ZombieHandleScan> {
+    return { handles: await this.getZombieHandles(), undecided: 0 };
   }
 
   async getCloneFamily(_path: string): Promise<CloneFamilyId | null> {

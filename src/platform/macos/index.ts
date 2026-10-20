@@ -6,7 +6,7 @@ import { BaseProvider } from '../base';
 import { fastEnumerationState } from '../fastEnumeration';
 import { nativeScanModule } from '../../services/scan/native';
 import { commandExists, runJson, reasonOf } from '../exec';
-import { openHandlesFor, zombieHandles } from './lsofGuard';
+import { openHandlesFor, zombieHandles, zombieHandleScan } from './lsofGuard';
 import { downloadOrigin, readDownloadOriginsMac } from './provenance';
 import { volumeTopology } from './diskutil';
 import { listSnapshots as tmListSnapshots, mountSnapshot } from './tmutil';
@@ -37,6 +37,7 @@ import type {
   SnapshotRecoveryResult,
   VolumeTopology,
   ZombieHandleInfo,
+  ZombieHandleScan,
 } from '../types';
 
 /**
@@ -81,6 +82,10 @@ export class MacOsProvider extends BaseProvider {
 
   override async getZombieHandles(): Promise<ZombieHandleInfo[]> {
     return zombieHandles();
+  }
+
+  override async getZombieHandleScan(): Promise<ZombieHandleScan> {
+    return zombieHandleScan();
   }
 
   /* ---------------- Sizing (A2, A3) ---------------- */

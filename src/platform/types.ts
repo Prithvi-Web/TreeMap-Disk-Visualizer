@@ -156,6 +156,23 @@ export interface ZombieHandleInfo {
   ino?: number | null;
 }
 
+/**
+ * What one held-space pass found (BQL item 11): the deleted files programs
+ * still hold, and how many open files it could not decide either way. A
+ * file is undecided when what is at its path could not be looked at (a
+ * refused stat: permission denied, say) or, on macOS, when its name as lsof
+ * writes it could stand for more than one name and TreeMap could not rule
+ * each one out; each is counted
+ * once, however many descriptors and programs hold it. A record with no
+ * inode is not counted: on macOS lsof shows a few, where Unix sockets live,
+ * and they hold no space. Only the programs the pass can see are in it —
+ * those of the account TreeMap runs as, or every program as root.
+ */
+export interface ZombieHandleScan {
+  handles: ZombieHandleInfo[];
+  undecided: number;
+}
+
 /* ---------- Copy-on-write / clone accounting (A2) ---------- */
 
 /**

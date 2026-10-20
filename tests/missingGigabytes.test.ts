@@ -16,6 +16,7 @@ import {
   volumeForPath,
   containerSiblings,
   purgeableLine,
+  liveSources,
   type StatementSources,
   type AccountingStatement,
   type StatementLine,
@@ -32,6 +33,7 @@ import { boundaryRecord, readMountTable, setBoundaryDepsForTests, type MountTabl
 import { formatBytes } from '../src/utils/formatBytes';
 import { lastFdaState, rememberFdaState } from '../src/utils/fdaState';
 import { platform } from '../src/platform';
+import { invalidateCapabilities } from '../src/platform/capabilities';
 
 /**
  * The Missing Gigabytes (Phase 5).
@@ -181,6 +183,7 @@ function sourcesFixture(over: SourceOverrides = {}): StatementSources {
         unknownSizeCount: 0,
         fileCount: 0,
         sharedFileCount: 0,
+        undecidedCount: 0,
         scannedAt: 0,
         ...over.zombies,
       });
@@ -721,6 +724,65 @@ test('nothing holding anything is a zero, with no remedy offered', async () => {
   const line = lineOf(s, 'openHandles');
   assert.equal(line.bytes, 0);
   assert.equal(line.remedy, null, 'there is nothing to act on, so no button is offered');
+});
+
+test('nothing held, everything checked: the zero speaks for the programs TreeMap can see, never for the whole machine (BQL item 11)', async () => {
+  const s = await buildStatement(scanFixture({ store: storeOfSize(GB) }), sourcesFixture());
+  const line = lineOf(s, 'openHandles');
+  assert.equal(line.bytes, 0, 'a measured zero');
+  assert.doesNotMatch(line.detail, /Nothing on this machine/, 'another account\'s programs are not seen unless TreeMap runs as root');
+  assert.match(line.detail, /^None of your programs is holding a deleted file open, so none of their space is held back\. TreeMap sees programs running under another account only when it runs as root; any space they hold is otherwise in Unaccounted\.$/);
+  assert.deepEqual(line.notes, [], 'and nothing is left unchecked');
+  assertBalances(s);
+});
+
+test('held files that could not all be checked keep the line\'s measured bytes as a floor and say how many, never a measured "nothing" (BQL item 11)', async () => {
+  const s = await buildStatement(scanFixture({ store: storeOfSize(GB) }), sourcesFixture({ zombies: { undecidedCount: 2 } }));
+  const line = lineOf(s, 'openHandles');
+  assert.equal(line.bytes, 0, 'what could be checked measured nothing: still a measurement, of those files');
+  assert.equal(line.available, true);
+  assert.doesNotMatch(line.detail, /Nothing on this machine|None of your programs is holding/, 'no all-clear while files went unchecked');
+  assert.match(line.detail, /^TreeMap found no deleted file held open by your programs, but could not check every file they have open\./);
+  assert.deepEqual(line.notes, ['2 files a program has open could not be checked, so this line is a floor, not a total: if they were deleted, the space they hold is in Unaccounted.'],
+    'the count, and where any space they hold is');
+  assertBalances(s);
+
+  const one = await buildStatement(
+    scanFixture({ store: storeOfSize(GB) }),
+    sourcesFixture({
+      zombies: {
+        processes: [{ pid: 42, processName: 'Docker', bytes: 3 * GB, appBundle: null, handles: [] }] as never,
+        totalBytes: 3 * GB, fileCount: 1, undecidedCount: 1,
+      },
+    }),
+  );
+  const held = lineOf(one, 'openHandles');
+  assert.equal(held.bytes, 3 * GB, 'with holders, the bytes they hold');
+  assert.ok(held.notes.includes('1 file a program has open could not be checked, so this line is a floor, not a total: if it was deleted, the space it holds is in Unaccounted.'),
+    `in the singular, beside the holders (notes: ${held.notes.join(' | ')})`);
+  assertBalances(one);
+});
+
+test('where no held-space pass can run — Windows, a Mac without lsof — the line is unknown with the probe\'s reason, never a measured 0 (BQL item 11)', async () => {
+  // Windows' provider answers an empty list (it has no mechanism) and its probe says why; the statement
+  // read the empty list as "nothing held", a measured 0 over files nobody checked.
+  const plat = platform() as unknown as { probeZombieHandles: () => Promise<unknown> };
+  const probe = plat.probeZombieHandles;
+  plat.probeZombieHandles = async () => ({ available: false, mechanism: 'none', reason: 'Held-space detection is not available on this computer (test).' });
+  invalidateCapabilities();
+  try {
+    await assert.rejects(liveSources().zombies(), /not available on this computer \(test\)/, 'the pass is refused with the probe\'s reason');
+  } finally {
+    plat.probeZombieHandles = probe;
+    invalidateCapabilities();
+  }
+  // And a refused pass is the line's unknown, with that reason (as a failed one already was).
+  const s = await buildStatement(scanFixture({ store: storeOfSize(GB) }), sourcesFixture({ zombiesThrow: 'Held-space detection is not available on this computer (test).' }));
+  const line = lineOf(s, 'openHandles');
+  assert.equal(line.bytes, null);
+  assert.equal(line.available, false);
+  assert.match(line.reason ?? '', /not available on this computer/);
+  assertBalances(s);
 });
 
 test('held space counts each held file once and names how many programs hold them (QA D17, D41)', async () => {

@@ -730,3 +730,23 @@ test('AGENTS.md, the README and the OpenAPI document say what an orphan is as pa
     assert.match(flat, /no project file[\s\S]*?interpreter[\s\S]*?gone[\s\S]*?superseded/i, `${what} names the three kinds of orphan`);
   }
 });
+
+test('the README says what Held-Up Space sees and that an open file it cannot check is counted, as the report and the spec do — never that the processes it cannot see are counted (BQL item 11)', () => {
+  // The README said "Processes it cannot see are counted, not guessed at": nothing counted them. lsof and
+  // /proc show a program's open files only to the account it runs as (or to root), and what the probes
+  // could not decide went uncounted, so the panel said "Nothing is stuck" over files it never checked.
+  const readme = read('README.md');
+  const para = lineStarting(readme, '**Held-Up Space**');
+  assert.doesNotMatch(para, /counted, not guessed/, 'nothing counts the programs TreeMap cannot see');
+  assert.match(para, /It sees only the programs running under your account — every program when TreeMap runs as root — and an open file it cannot check is \*\*counted and said, never claimed\*\* either way\./);
+  // The facts: the probes count what they could not decide, the report carries it, and the spec says so.
+  assert.match(read('src', 'platform', 'macos', 'lsofGuard.ts'), /undecided\.add\(/, 'the macOS probe counts the files it could not decide');
+  assert.match(read('src', 'platform', 'linux', 'procFdGuard.ts'), /undecided\.add\(/, 'and so does the Linux one');
+  const e = ENDPOINTS.find((x) => x.method === 'get' && x.path === '/api/zombie-handles');
+  assert.ok(e, 'GET /api/zombie-handles is described');
+  const schema = (e.responses as Record<string, { content?: { 'application/json': { schema: { properties?: Record<string, { description?: string }>; required?: string[] } } } }>)['200']
+    ?.content?.['application/json'].schema;
+  assert.ok(schema?.properties?.undecidedCount, 'the spec names the count');
+  assert.ok(schema?.required?.includes('undecidedCount'), 'and every report carries it');
+  assert.match(schema.properties.undecidedCount.description ?? '', /could not check/);
+});

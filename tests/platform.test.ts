@@ -446,6 +446,33 @@ test('resolveZombies: a path TreeMap may not stat is unknown, never "deleted" (Q
   assert.equal(zombies[0].ino, 200, 'the inode travels with the handle, so programs holding the same file can be matched');
 });
 
+test('the held-space probe counts the held files it could not decide — one whose place it may not look at, a name lsof\'s ^X leaves open — each once, and never a record with no inode (BQL item 11)', async () => {
+  // The Held-up space panel said "Nothing is stuck" and Missing GB a measured 0 while every candidate was
+  // skipped unseen: a stat refused (EPERM, as macOS answers under Library/Mail without Full Disk Access),
+  // and a name holding carets. A record with no inode is not counted: lsof shows a handful on this Mac, all
+  // where Unix sockets live, and they hold no space.
+  const MAIL = '/Users/me/Library/Mail/V10/held.mbox';
+  const records = parseLsofRecords([
+    'p501', 'cMail',
+    'f12', 's5242880', 'i2222', `n${MAIL}`,
+    'f13', 's5242880', 'i2222', `n${MAIL}`, // the same file on another descriptor
+    'f14', 's1048576', 'n/Users/me/tmp/noinode.bin',
+    'f15', 's7340032', 'i1111', 'n/Users/me/logs/a^Ab^Bc^Cd^De^Ef.log', // five carets, and nothing at that spelling
+    'f16', 's900', 'i3333', 'n/Users/me/tmp/gone.bin',
+    'p502', 'cmdworker', 'f3', 's5242880', 'i2222', `n${MAIL}`, // another program holding the same file
+  ].join('\n'));
+  const scan = await lsof.resolveZombieScan(records, async (p) => {
+    if (p.includes('/Library/Mail/')) throw Object.assign(new Error(`EPERM: operation not permitted, stat '${p}'`), { code: 'EPERM' });
+    throw ENOENT(p);
+  });
+  assert.deepEqual(scan.handles.map((h) => h.path), ['/Users/me/tmp/gone.bin'], 'only the file shown gone is claimed');
+  assert.equal(scan.undecided, 2, 'the Mail file, once however many descriptors and programs hold it, and the five-caret name');
+  assert.deepEqual(await resolveZombies(records, async (p) => {
+    if (p.includes('/Library/Mail/')) throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+    throw ENOENT(p);
+  }), scan.handles, 'resolveZombies answers the same handles');
+});
+
 /* ══════════════════ Provenance (unit) ══════════════════ */
 
 test('parseQuarantine reads the real four-field record', () => {

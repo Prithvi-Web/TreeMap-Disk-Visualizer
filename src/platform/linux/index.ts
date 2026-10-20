@@ -6,7 +6,7 @@ import { BaseProvider } from '../base';
 import { fastEnumerationState } from '../fastEnumeration';
 import { nativeScanModule } from '../../services/scan/native';
 import { commandExists, runJson } from '../exec';
-import { openHandlesFor, zombieHandles } from './procFdGuard';
+import { openHandlesFor, zombieHandles, zombieHandleScan } from './procFdGuard';
 import { volumeTopology, isRotational, queueDepth, topologyReason } from './topology';
 import { downloadOrigin, provenanceAvailable, readDownloadOriginsLinux } from './provenance';
 import { listSnapshots as btrfsSnapshots, snapshotAvailability } from './btrfs';
@@ -36,6 +36,7 @@ import type {
   SnapshotRecoveryResult,
   VolumeTopology,
   ZombieHandleInfo,
+  ZombieHandleScan,
 } from '../types';
 import { meansAbsent, meansGone } from '../../utils/errno';
 import { notifyWatchDelivery } from '../types';
@@ -244,6 +245,10 @@ export class LinuxProvider extends BaseProvider {
 
   override async getZombieHandles(): Promise<ZombieHandleInfo[]> {
     return zombieHandles();
+  }
+
+  override async getZombieHandleScan(): Promise<ZombieHandleScan> {
+    return zombieHandleScan();
   }
 
   /* ---------------- Sizing ---------------- */

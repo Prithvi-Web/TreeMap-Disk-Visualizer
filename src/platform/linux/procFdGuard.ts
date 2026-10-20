@@ -1,6 +1,6 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
-import type { OpenHandleInfo, ZombieHandleInfo } from '../types';
+import type { OpenHandleInfo, ZombieHandleInfo, ZombieHandleScan } from '../types';
 import { meansAbsent } from '../../utils/errno';
 
 /**
@@ -204,8 +204,18 @@ export async function zombieHandles(
   procRoot = '/proc',
   statOf: (p: string) => Promise<{ ino: number; size: number }> = (p) => fsp.stat(p),
 ): Promise<ZombieHandleInfo[]> {
+  return (await zombieHandleScan(procRoot, statOf)).handles;
+}
+
+/** zombieHandles, with how many held files it could not decide (BQL item 11). */
+export async function zombieHandleScan(
+  procRoot = '/proc',
+  statOf: (p: string) => Promise<{ ino: number; size: number }> = (p) => fsp.stat(p),
+): Promise<ZombieHandleScan> {
   const out: ZombieHandleInfo[] = [];
   const seen = new Set<string>();
+  // The held files it could not decide, each once however many descriptors and programs hold it (BQL item 11).
+  const undecided = new Set<string>();
 
   for (const rec of await readOpenDescriptors(procRoot)) {
     if (!rec.markedDeleted) continue;
@@ -230,7 +240,11 @@ export async function zombieHandles(
       (st) => st.ino,
       (err: unknown) => (meansAbsent(err) ? 'gone' as const : 'unknown' as const),
     );
-    if (now === 'unknown') continue;
+    if (now === 'unknown') {
+      // Counted only while its descriptor still answers: one that went away mid-pass holds nothing now.
+      if (ino !== null) undecided.add(`${String(ino)}\0${rec.path}`);
+      continue;
+    }
 
     // Trap 1: a file genuinely named "notes (deleted)" is not a zombie.
     if (ino !== null) {
@@ -252,5 +266,5 @@ export async function zombieHandles(
     seen.add(key);
     out.push({ pid: rec.pid, processName: rec.processName, path: rec.path, bytes, ino });
   }
-  return out;
+  return { handles: out, undecided: undecided.size };
 }

@@ -901,6 +901,35 @@ test('the card offers Restart only where the server allows it, and says why not 
   assert.match(rows[1], /Part of macOS/, 'and the row says why');
 });
 
+test('the report carries how many held files the probe could not decide, each once (BQL item 11)', async () => {
+  const report = await zombieReport({ handles: async () => ({ handles: [], undecided: 3 }), os: 'linux', uid: OUR_UID });
+  assert.equal(report.undecidedCount, 3, 'the probe\'s count reaches the report');
+  assert.deepEqual(report.processes, [], 'and no holder is made up for it');
+  const plain = await zombieReport({ handles: async () => [], os: 'linux', uid: OUR_UID });
+  assert.equal(plain.undecidedCount, 0, 'a probe that hands in a bare list decided everything it saw');
+  assert.equal(groupZombies([], 2).undecidedCount, 2, 'the rollup passes the count through');
+  assert.equal(groupZombies([]).undecidedCount, 0, 'and a rollup told none has none');
+});
+
+test('the held-up space card never says nothing is stuck when some open files could not be checked, and speaks only for the person\'s own programs (BQL item 11)', () => {
+  const empty = { processes: [], totalBytes: 0, unknownSizeCount: 0, fileCount: 0, sharedFileCount: 0, scannedAt: 0 };
+  const clear = paintZombies({ ...empty, undecidedCount: 0 });
+  assert.match(clear, /None of your programs is holding a deleted file open right now\./, 'all checked, none held: said of your programs');
+  assert.doesNotMatch(clear, /Nothing is stuck/, 'never of the whole machine: TreeMap sees another account\'s programs only when it runs as root');
+  const unsure = paintZombies({ ...empty, undecidedCount: 2 });
+  assert.doesNotMatch(unsure, /Nothing is stuck|None of your programs is holding/, 'not everything was checked, so no all-clear');
+  assert.match(unsure, /TreeMap found no deleted file held open by your programs, but 2 open files couldn’t be checked, so some space may still be held\./,
+    'it says what it saw, and how many it could not check');
+  assert.match(paintZombies({ ...empty, undecidedCount: 1 }), /but 1 open file couldn’t be checked/, 'one, in the singular');
+  const row = { pid: 7, processName: 'Mail', appBundle: null, bytes: 100, unknownSizeCount: 0, restartable: true, restartRefusal: null,
+    handles: [{ path: '/tmp/held.mbox', bytes: 100, holders: 1 }] };
+  const held = paintZombies({ ...empty, processes: [row], totalBytes: 100, fileCount: 1, undecidedCount: 2 });
+  assert.match(held, /At least 100 B held by a program that won’t let go/, 'with holders listed, the total is a floor');
+  assert.match(held, /2 other open files couldn’t be checked, so the real total may be higher\./, 'and the card says why');
+  assert.doesNotMatch(paintZombies({ ...empty, processes: [row], totalBytes: 100, fileCount: 1, undecidedCount: 0 }), /At least|couldn’t be checked/,
+    'control: everything checked, the total is the total');
+});
+
 test('the restart refusals are stated in one sentence the Missing GB page quotes (QA D40)', () => {
   for (const kind of [/part of the operating system/, /system administrator/, /another user/, /TreeMap itself/, /its own parent/]) {
     assert.match(RESTART_REFUSES, kind, `the sentence names every refusal restartProcess makes (${String(kind)})`);

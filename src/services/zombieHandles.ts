@@ -3,7 +3,7 @@ import path from 'path';
 import { setTimeout as delay } from 'timers/promises';
 import { platform } from '../platform';
 import { runText, RunOptions, CommandFailedError } from '../platform/exec';
-import type { ZombieHandleInfo } from '../platform/types';
+import type { ZombieHandleInfo, ZombieHandleScan } from '../platform/types';
 import { AppError } from '../middleware/errorHandler';
 import { displayProcessName, PS_UTF8_ENV } from '../platform/macos/lsofGuard';
 
@@ -94,6 +94,15 @@ export interface ZombieReport {
   fileCount: number;
   /** How many of those more than one program holds. */
   sharedFileCount: number;
+  /**
+   * Open files the pass could not decide either way, each counted once
+   * (BQL item 11): what is at the path could not be looked at, or (macOS) the
+   * name as lsof writes it could stand for more than one name and TreeMap
+   * could not rule each one out. With any, the
+   * report is not a complete answer: the panel says how many, and the total
+   * is a floor.
+   */
+  undecidedCount: number;
   scannedAt: number;
 }
 
@@ -388,12 +397,14 @@ function heldFileKey(h: { path: string; bytes: number | null; ino?: number | nul
 /**
  * The pure per-process rollup: group by pid, sum known bytes, count
  * unknowns, biggest holder first — and total the held FILES, each once,
- * however many programs hold it. Exported so the arithmetic — the part a
- * wrong number would come from — is testable without a live process leaking
- * descriptors.
+ * however many programs hold it. `undecided` is the pass's count of open
+ * files it could not decide (BQL item 11), carried as it is. Exported so the
+ * arithmetic — the part a wrong number would come from — is testable without
+ * a live process leaking descriptors.
  */
 export function groupZombies(
   handles: readonly { pid: number; processName: string; path: string; bytes: number | null; ino?: number | null }[],
+  undecided = 0,
 ): Omit<ZombieReport, 'scannedAt'> {
   const files = new Map<string, { bytes: number | null; holders: Set<number> }>();
   for (const h of handles) {
@@ -428,13 +439,14 @@ export function groupZombies(
     unknownSizeCount: held.filter((f) => f.bytes === null).length,
     fileCount: held.length,
     sharedFileCount: held.filter((f) => f.holders.size > 1).length,
+    undecidedCount: undecided,
   };
 }
 
 /** What zombieReport reads the world through. Production passes nothing; the tests hand in each one. */
 export interface ZombieReportDeps {
-  /** The platform's raw descriptor list. */
-  handles?: () => Promise<ZombieHandleInfo[]>;
+  /** The platform's held-space pass: its handles, and how many files it could not decide (a bare list decided all it saw). */
+  handles?: () => Promise<ZombieHandleInfo[] | ZombieHandleScan>;
   /** Runs `ps` for the .app test and the restart check on macOS. */
   run?: CommandRunner;
   /** The OS the report is for: only macOS has .app bundles, and only macOS and Linux restart anything. */
@@ -451,8 +463,10 @@ export interface ZombieReportDeps {
 
 /** The per-process rollup of the platform's raw descriptor list. */
 export async function zombieReport(deps: ZombieReportDeps = {}): Promise<ZombieReport> {
-  const handles = deps.handles ?? (() => platform().getZombieHandles());
-  const grouped = groupZombies(await handles());
+  const pass = deps.handles ?? (() => platform().getZombieHandleScan());
+  const found = await pass();
+  const scan: ZombieHandleScan = Array.isArray(found) ? { handles: found, undecided: 0 } : found;
+  const grouped = groupZombies(scan.handles, scan.undecided);
   const os = deps.os ?? process.platform;
   const ourUid = deps.uid !== undefined ? deps.uid : currentUid();
 

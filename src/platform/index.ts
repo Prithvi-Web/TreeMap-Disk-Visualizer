@@ -22,6 +22,7 @@ import {
   SnapshotRecoveryResult,
   VolumeTopology,
   ZombieHandleInfo,
+  ZombieHandleScan,
 } from './types';
 
 /**
@@ -74,6 +75,12 @@ export interface PlatformProvider {
    */
   getOpenHandlesBatch(paths: string[]): Promise<OpenHandleBatch>;
   getZombieHandles(): Promise<ZombieHandleInfo[]>;
+  /**
+   * The same held files, with how many open files the pass could not decide
+   * (BQL item 11): a panel that reported only the handles said "nothing is
+   * held" over files it never checked.
+   */
+  getZombieHandleScan(): Promise<ZombieHandleScan>;
 
   /* Byte-accurate sizing (A2) and placeholders (A3) */
   getCloneFamily(path: string): Promise<CloneFamilyId | null>;

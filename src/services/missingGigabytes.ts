@@ -1,6 +1,7 @@
 import { promises as fsp } from 'fs';
 
 import { platform } from '../platform';
+import { capabilityState } from '../platform/capabilities';
 import { wholeDiskOf } from '../platform/macos/diskutil';
 import { ELEVATE_HOW, getSnapshotAccounting } from './snapshotAccounting';
 import { groupZombies, RESTART_REFUSES } from './zombieHandles';
@@ -216,9 +217,17 @@ export function liveSources(): StatementSources {
  *
  * The Held-space view still calls the full `zombieReport()`, because it names
  * the applications and genuinely needs them.
+ *
+ * Gated as GET /api/zombie-handles is (BQL item 11): where no pass can run —
+ * Windows, a Mac without lsof — the provider answers an empty list, and the
+ * line read that as a measured "nothing held". The probe's reason makes the
+ * line unknown instead.
  */
 async function leanZombieReport(): Promise<ZombieReport> {
-  return { ...groupZombies(await platform().getZombieHandles()), scannedAt: Date.now() };
+  const state = await capabilityState('zombieHandles');
+  if (!state.available) throw new Error(state.reason ?? 'Held-space detection is not available on this system.');
+  const scan = await platform().getZombieHandleScan();
+  return { ...groupZombies(scan.handles, scan.undecided), scannedAt: Date.now() };
 }
 
 /**
@@ -657,15 +666,28 @@ async function openHandleLine(held: Promise<ZombieReport>): Promise<StatementLin
   };
   try {
     const report = await held;
+    // Open files the pass could not decide (BQL item 11). The line keeps what
+    // it measured, which is then a floor — as an unsized held file makes it —
+    // and says how many, never a measured "nothing": AGENTS.md's 0 is a
+    // measurement, and these files were not measured. Any space they hold is
+    // in the residual, so the statement still balances.
+    const undecided = report.undecidedCount;
+    const undecidedNote = undecided === 1
+      ? '1 file a program has open could not be checked, so this line is a floor, not a total: if it was deleted, the space it holds is in Unaccounted.'
+      : `${String(undecided)} files a program has open could not be checked, so this line is a floor, not a total: if they were deleted, the space they hold is in Unaccounted.`;
     if (report.processes.length === 0) {
       return {
         id: 'openHandles',
         label: 'Held by programs still running',
         bytes: 0,
         available: true,
-        detail: 'Nothing on this machine is holding a deleted file open, so no space is being held back.',
+        // Said of the programs TreeMap can see: lsof and /proc show another
+        // account's open files only to root.
+        detail: undecided > 0
+          ? 'TreeMap found no deleted file held open by your programs, but could not check every file they have open. TreeMap sees programs running under another account only when it runs as root; any space they hold is otherwise in Unaccounted.'
+          : 'None of your programs is holding a deleted file open, so none of their space is held back. TreeMap sees programs running under another account only when it runs as root; any space they hold is otherwise in Unaccounted.',
         count: 0,
-        notes: [],
+        notes: undecided > 0 ? [undecidedNote] : [],
         remedy: null,
       };
     }
@@ -686,6 +708,7 @@ async function openHandleLine(held: Promise<ZombieReport>): Promise<StatementLin
         `${String(report.unknownSizeCount)} held file${report.unknownSizeCount === 1 ? '' : 's'} could not be sized, so this line is a floor, not a total. The remainder is in Unaccounted.`,
       );
     }
+    if (undecided > 0) notes.push(undecidedNote);
     return {
       id: 'openHandles',
       label: 'Held by programs still running',

@@ -1,6 +1,6 @@
 import { promises as fsp } from 'fs';
 import { runText, CommandUnavailableError, CommandFailedError, type RunOptions } from '../exec';
-import type { OpenHandleInfo, ZombieHandleInfo } from '../types';
+import type { OpenHandleInfo, ZombieHandleInfo, ZombieHandleScan } from '../types';
 import { meansAbsent } from '../../utils/errno';
 
 /**
@@ -409,8 +409,13 @@ export function intersectHandles(
  * which is the only mechanism that works on macOS (see the note at the top).
  */
 export async function zombieHandles(): Promise<ZombieHandleInfo[]> {
+  return (await zombieHandleScan()).handles;
+}
+
+/** The same pass, with how many open files it could not decide (BQL item 11). */
+export async function zombieHandleScan(): Promise<ZombieHandleScan> {
   const stdout = await runLsof(['-F', 'pcnfsi', '-w'], 30_000, 64 * 1024 * 1024);
-  return resolveZombies(parseLsofRecords(stdout), (p) => fsp.stat(p).then((st) => st.ino));
+  return resolveZombieScan(parseLsofRecords(stdout), (p) => fsp.stat(p).then((st) => st.ino));
 }
 
 /**
@@ -423,6 +428,14 @@ export async function resolveZombies(
   records: LsofRecord[],
   inoAt: (path: string) => Promise<number>,
 ): Promise<ZombieHandleInfo[]> {
+  return (await resolveZombieScan(records, inoAt)).handles;
+}
+
+/** resolveZombies, with how many held files it could not decide (BQL item 11). */
+export async function resolveZombieScan(
+  records: LsofRecord[],
+  inoAt: (path: string) => Promise<number>,
+): Promise<ZombieHandleScan> {
   const out: ZombieHandleInfo[] = [];
   // One stat per distinct path, not per descriptor: a browser can hold hundreds
   // of descriptors on the same handful of files. Only "no such file" means the
@@ -444,17 +457,29 @@ export async function resolveZombies(
   // descriptors is one leak, not several, and counting it twice would overstate
   // reclaimable bytes — precisely the kind of confidently-wrong number §10 bans.
   const seen = new Set<string>();
+  // The held files it could not decide, each once however many descriptors and programs hold it (BQL item
+  // 11): never claimed either way, but counted, so the panel says it did not check them rather than "nothing
+  // is held".
+  const undecided = new Set<string>();
 
   for (const rec of records) {
     let isZombie = rec.markedDeleted;
     if (!isZombie) {
-      if (rec.ino === null) continue; // no inode reported — cannot know, so don't claim
+      // No inode reported — cannot know, so don't claim. Not counted either: lsof shows a few such records
+      // on a Mac, all where Unix sockets live, and they hold no space.
+      if (rec.ino === null) continue;
       const live = await lookup(rec.path);
-      if (live === 'unknown') continue; // could not look — cannot know, so don't claim
+      if (live === 'unknown') { // could not look — cannot know, so don't claim
+        undecided.add(`${rec.ino}\0${rec.path}`);
+        continue;
+      }
       // lsof writes a control byte as `^X` and a caret as itself (review F3.1, F3.3): a path holding a caret
       // that names nothing, or another inode, may be a file with a control byte in its name, still in its
       // place — cannot know, so don't claim. Where lsof marks a file (deleted) itself, that still counts.
-      if (live !== rec.ino && rec.path.includes('^')) continue;
+      if (live !== rec.ino && rec.path.includes('^')) {
+        undecided.add(`${rec.ino}\0${rec.path}`);
+        continue;
+      }
       isZombie = live === 'gone' || live !== rec.ino;
     }
     if (!isZombie) continue;
@@ -463,5 +488,5 @@ export async function resolveZombies(
     seen.add(key);
     out.push({ pid: rec.pid, processName: rec.processName, path: rec.path, bytes: rec.size, ino: rec.ino });
   }
-  return out;
+  return { handles: out, undecided: undecided.size };
 }

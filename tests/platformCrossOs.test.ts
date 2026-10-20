@@ -7,7 +7,7 @@ import path from 'node:path';
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-platformCrossOs-data-');
 
-import { readOpenDescriptors, openHandlesFor, zombieHandles } from '../src/platform/linux/procFdGuard';
+import { readOpenDescriptors, openHandlesFor, zombieHandles, zombieHandleScan } from '../src/platform/linux/procFdGuard';
 import { mapLsblk, mapZpool } from '../src/platform/linux/topology';
 import { parseSubvolumeList } from '../src/platform/linux/btrfs';
 import { addThunarAction, removeThunarAction, nautilusScript, xmlEscape } from '../src/platform/linux/shellIntegration';
@@ -236,6 +236,35 @@ test('linux: the descriptor answers but the path refuses — still unknown, neve
       throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
     };
     assert.equal((await zombieHandles(root, gone)).length, 1, 'while "no such file" still is one');
+  } finally {
+    await fsp.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('linux: the probe counts each held file it could not decide — the descriptor answers, the path refuses — once however many descriptors hold it, and not one whose descriptor is gone (BQL item 11)', { skip: WIN_NO_PROC_FIXTURE }, async () => {
+  const root = await mkTmp();
+  try {
+    await fakeProc(root, [
+      { pid: 9, comm: 'daemon', fds: [
+        { name: '3', target: '/root-only/held.log (deleted)' },
+        { name: '4', target: '/root-only/held.log (deleted)' },
+        { name: '5', target: '/root-only/closed.log (deleted)' },
+        { name: '6', target: '/var/log/gone.log (deleted)' },
+      ] },
+      { pid: 10, comm: 'tail', fds: [{ name: '3', target: '/root-only/held.log (deleted)' }] },
+    ]);
+    const fail = (code: string) => Object.assign(new Error(code), { code });
+    const statOf = async (p: string) => {
+      if (p === path.join(root, '9', 'fd', '5')) throw fail('ENOENT'); // the program closed it mid-pass
+      if (p === path.join(root, '9', 'fd', '6')) return { ino: 7, size: 20 };
+      if (p.startsWith(root)) return { ino: 5, size: 10 }; // every descriptor on held.log
+      if (p === '/var/log/gone.log') throw fail('ENOENT');
+      throw fail('EACCES');
+    };
+    const scan = await zombieHandleScan(root, statOf);
+    assert.deepEqual(scan.handles.map((h) => h.path), ['/var/log/gone.log'], 'only the file shown gone is claimed');
+    assert.equal(scan.undecided, 1, 'held.log once — three descriptors in two programs — and not closed.log, which nothing holds now');
+    assert.deepEqual(await zombieHandles(root, statOf), scan.handles, 'zombieHandles answers the same handles');
   } finally {
     await fsp.rm(root, { recursive: true, force: true });
   }
