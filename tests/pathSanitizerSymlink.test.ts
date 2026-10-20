@@ -7,7 +7,7 @@ import path from 'node:path';
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-pathSanitizerSymlink-data-');
 
-import { sanitizePath, PathRejectedError } from '../src/utils/pathSanitizer';
+import { sanitizePath, PathRejectedError, systemFolderRefusal } from '../src/utils/pathSanitizer';
 
 /**
  * The blocklist has to survive symlinks.
@@ -157,10 +157,40 @@ test('an operating-system folder is refused in words true of every route that as
   const folder = rejection(() => sanitizePath(SYSTEM_FOLDER));
   assert.equal(folder.code, 'PATH_BLOCKED', 'the code is unchanged');
   assert.doesNotMatch(folder.message, /Scanning|not allowed/, 'no route but a scan scans');
-  assert.equal(folder.message, `TreeMap does not scan, list or act on "${SYSTEM_FOLDER}": it belongs to the operating system.`);
+  assert.equal(folder.message, `TreeMap does not scan, list or act on "${SYSTEM_FOLDER}": it is one of the system folders TreeMap stays out of.`);
   const inside = path.join(SYSTEM_FOLDER, 'null');
-  assert.equal(rejection(() => sanitizePath(inside)).message, `TreeMap does not scan, list or act on "${inside}": it belongs to the operating system.`,
-    'a path inside one is refused the same way');
+  assert.equal(rejection(() => sanitizePath(inside)).message,
+    `TreeMap does not scan, list or act on "${inside}": it is inside "${SYSTEM_FOLDER}", one of the system folders TreeMap stays out of.`,
+    'a path inside one is refused naming the folder it is inside');
+});
+
+/*
+ * The BQL-a review, F1.5: "it belongs to the operating system" was said of everything the blocklist refuses,
+ * and the blocklist refuses /run whole — where udisks2 (Fedora, Arch, …) mounts a person's own USB or backup
+ * drive, /run/media/<user>/<label>. That drive's folder does not belong to the operating system; it is inside
+ * /run, which does. The sentence names the folder of the blocklist it is in.
+ */
+test('a drive mounted under /run/media is refused as inside "/run" — never as a folder that belongs to the operating system (BQL-a review F1.5)', {
+  skip: process.platform === 'win32' && 'the Unix blocklist',
+}, () => {
+  const drive = '/run/media/me/Backup';
+  const refused = rejection(() => sanitizePath(drive));
+  assert.equal(refused.code, 'PATH_BLOCKED');
+  assert.equal(refused.message, `TreeMap does not scan, list or act on "${drive}": it is inside "/run", one of the system folders TreeMap stays out of.`);
+  assert.doesNotMatch(refused.message, /belongs to/, 'nothing is said of whom the drive belongs to');
+});
+
+test('the refusal names the folder of the blocklist as the path spells it, by Windows\' rules too — its case, a trailing dot, behind \\\\?\\ (BQL-a review F1.5)', () => {
+  assert.equal(systemFolderRefusal('/dev', 'linux'), 'TreeMap does not scan, list or act on "/dev": it is one of the system folders TreeMap stays out of.');
+  assert.equal(systemFolderRefusal('/private/var/db/x.sqlite', 'darwin'),
+    'TreeMap does not scan, list or act on "/private/var/db/x.sqlite": it is inside "/private/var/db", one of the system folders TreeMap stays out of.');
+  assert.equal(systemFolderRefusal('C:\\WINDOWS\\system32\\drivers\\etc', 'win32'),
+    'TreeMap does not scan, list or act on "C:\\WINDOWS\\system32\\drivers\\etc": it is inside "C:\\WINDOWS\\system32", one of the system folders TreeMap stays out of.');
+  assert.equal(systemFolderRefusal('\\\\?\\C:\\Windows\\System32.\\x', 'win32'),
+    'TreeMap does not scan, list or act on "\\\\?\\C:\\Windows\\System32.\\x": it is inside "\\\\?\\C:\\Windows\\System32.", one of the system folders TreeMap stays out of.');
+  assert.equal(systemFolderRefusal('\\\\?\\C:\\$Recycle.Bin', 'win32'),
+    'TreeMap does not scan, list or act on "\\\\?\\C:\\$Recycle.Bin": it is one of the system folders TreeMap stays out of.', 'the folder itself, behind the prefix');
+  assert.equal(systemFolderRefusal('/Users/me/Documents', 'darwin'), null, 'a path in no folder of the blocklist has no such sentence');
 });
 
 test('a link to an operating-system folder is refused in words true of every route: it leads to one (BQL item 5)', {
@@ -173,7 +203,50 @@ test('a link to an operating-system folder is refused in words true of every rou
     const refused = rejection(() => sanitizePath(link));
     assert.equal(refused.code, 'PATH_BLOCKED');
     assert.doesNotMatch(refused.message, /Scanning|not allowed/);
-    assert.equal(refused.message, `TreeMap does not scan, list or act on "${link}": it leads to a path that belongs to the operating system.`);
+    assert.equal(refused.message, `TreeMap does not scan, list or act on "${link}": it leads into "${BLOCKED_TARGET}", one of the system folders TreeMap stays out of.`);
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+/*
+ * The BQL-a review, F1.1: a link is refused for where it leads in three ways, and the sentence said "it leads
+ * to a path that belongs to the operating system" of all of them — false of a link to the person's own folder
+ * spelled through a second name the system gives it (macOS's /.nofollow), and of a chain of links longer than
+ * TreeMap follows to an ordinary folder. Each is said as what it is.
+ */
+test('a link to your own folder spelled through /.nofollow is refused as leading through a second name — never as leading to the operating system (BQL-a review F1.1)', {
+  skip: process.platform !== 'darwin' && '/.nofollow is macOS\'s',
+}, async () => {
+  const dir = await mkTmp();
+  try {
+    const docs = path.join(dir, 'docs');
+    await fsp.mkdir(docs);
+    const link = path.join(dir, 'toMyDocs');
+    await fsp.symlink(`/.nofollow${await fsp.realpath(docs)}`, link);
+    const refused = rejection(() => sanitizePath(link));
+    assert.equal(refused.code, 'PATH_BLOCKED');
+    assert.equal(refused.message,
+      `TreeMap does not scan, list or act on "${link}": it leads through /.nofollow, a second name the system gives a path, and TreeMap acts on a path only by its own name.`);
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a chain of more links than TreeMap follows, to an ordinary folder, is refused as one it cannot follow to its end — never as leading to the operating system (BQL-a review F1.1)', {
+  skip: process.platform === 'win32' && 'creating a symlink needs privilege on Windows',
+}, async () => {
+  const dir = await mkTmp();
+  try {
+    await fsp.mkdir(path.join(dir, 'real'));
+    await fsp.symlink(path.join(dir, 'real'), path.join(dir, 'c0'));
+    for (let i = 1; i < 60; i++) await fsp.symlink(path.join(dir, `c${String(i - 1)}`), path.join(dir, `c${String(i)}`));
+    const end = path.join(dir, 'c59');
+    const refused = rejection(() => sanitizePath(end));
+    assert.equal(refused.code, 'PATH_BLOCKED');
+    assert.equal(refused.message,
+      `TreeMap does not scan, list or act on "${end}": it leads through more links, or a longer path, than TreeMap follows, so where it ends cannot be checked.`);
+    assert.equal(sanitizePath(path.join(dir, 'c9')), path.join(dir, 'c9'), 'control: a chain TreeMap follows to its end is accepted');
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });
   }

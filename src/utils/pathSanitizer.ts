@@ -141,6 +141,63 @@ function isBlocked(resolved: string, platform: NodeJS.Platform = process.platfor
   return UNIX_BLOCKLIST.some((b) => resolved === b || resolved.startsWith(b + '/'));
 }
 
+/**
+ * The folder of the blocklist `resolved` is at or inside, as `resolved` spells it — its case, a trailing dot
+ * or space Windows drops, a `\\?\` in front — and whether `resolved` is that folder itself; null when it is in
+ * none. Pure; `platform` picks the rules.
+ */
+function blockedFolderOf(resolved: string, platform: NodeJS.Platform = process.platform): { folder: string; isIt: boolean } | null {
+  if (platform === 'win32') {
+    const bare = resolved.replace(WIN32_PREFIX_BEFORE_DRIVE, '');
+    const lower = win32Normalize(bare);
+    const entry = WINDOWS_BLOCKLIST.find((b) => lower === b || lower.startsWith(b + path.win32.sep));
+    if (entry === undefined) return null;
+    // win32Normalize keeps every name and separator, so the entry's names are the path's first ones.
+    const asSpelled = bare.split(/([\\/])/).slice(0, 2 * entry.split('\\').length - 1).join('');
+    return { folder: resolved.slice(0, resolved.length - bare.length) + asSpelled, isIt: asSpelled === bare };
+  }
+  const entry = UNIX_BLOCKLIST.find((b) => resolved === b || resolved.startsWith(b + '/'));
+  return entry === undefined ? null : { folder: entry, isIt: entry === resolved };
+}
+
+const STAYS_OUT = 'one of the system folders TreeMap stays out of';
+
+/**
+ * The sentence a path the blocklist refuses is refused with (BQL item 5, the BQL-a review F1.5); null when
+ * the blocklist does not refuse it. True of every route that sanitizes — browsing the folder picker, opening,
+ * deleting and a note ask too, and the picker toasted "Scanning "/dev" is not allowed" over a folder nobody
+ * had asked to scan — and of every path the blocklist refuses: it names the folder of the list the path is
+ * in. "It belongs to the operating system" was not: the list refuses /run whole, where udisks2 mounts a
+ * person's own USB or backup drive (/run/media/<user>/<label>). Pure; `platform` picks the rules.
+ */
+export function systemFolderRefusal(resolved: string, platform: NodeJS.Platform = process.platform): string | null {
+  const at = blockedFolderOf(resolved, platform);
+  if (at === null) return null;
+  return at.isIt
+    ? `TreeMap does not scan, list or act on "${resolved}": it is ${STAYS_OUT}.`
+    : `TreeMap does not scan, list or act on "${resolved}": it is inside "${at.folder}", ${STAYS_OUT}.`;
+}
+
+/**
+ * The sentence a path is refused with for where it leads (the BQL-a review, F1.1): `canonical` is where it
+ * leads when that is what the rules refuse, or null when the path is a folder of the blocklist under another
+ * name (`blockedIdentityOf`, which `folder` then names). A link is refused for where it leads in three ways,
+ * and each is said as what it is: past the walk's bound of links or names (`NO_PLACE`), through a second
+ * name the system gives a path (`aliasNamespaceOf` — a link to your own folder spelled through /.nofollow),
+ * or into a folder of the blocklist. "It leads to a path that belongs to the operating system" was said of
+ * all three.
+ */
+function leadsRefusal(resolved: string, canonical: string | null, folder: string | null): string {
+  const refused = `TreeMap does not scan, list or act on "${resolved}"`;
+  if (canonical !== null && isNoPlace(canonical)) {
+    return `${refused}: it leads through more links, or a longer path, than TreeMap follows, so where it ends cannot be checked.`;
+  }
+  const alias = canonical === null ? null : aliasNamespaceOf(canonical);
+  if (alias !== null) return `${refused}: it leads through ${alias}, a second name the system gives a path, and TreeMap acts on a path only by its own name.`;
+  const into = canonical === null ? folder : blockedFolderOf(canonical)?.folder ?? null;
+  return into === null ? `${refused}: it leads into ${STAYS_OUT}.` : `${refused}: it leads into "${into}", ${STAYS_OUT}.`;
+}
+
 /** A drive behind `\\?\` or `\\.\` with no separator after it: the volume device itself, as spelled. */
 const WIN32_BARE_DRIVE_BEHIND_PREFIX = /^[\\/]{2}[?.][\\/][a-z]:$/i;
 
@@ -642,22 +699,34 @@ function blockedIdentities(): Set<string> {
   return blockedIds;
 }
 
-/** Is `p` the same directory as a blocked one, under any name? */
-function isBlockedByIdentity(p: string): boolean {
+/** The blocked directory `p` is under another name — the entry of the list, as listed — or null. */
+function blockedIdentityOf(p: string): string | null {
   // Cheap pre-filter: only a path whose LAST component is named like a blocked
   // directory can be one under a different prefix. Anything deeper inside an
   // aliased tree is already handled by stripDataVolume, which rewrites the
   // whole path rather than just its tail.
   const base = path.basename(p).toLowerCase();
   const list = process.platform === 'win32' ? WINDOWS_BLOCKLIST : UNIX_BLOCKLIST;
-  if (!list.some((b) => path.basename(b).toLowerCase() === base)) return false;
+  const named = list.filter((b) => path.basename(b).toLowerCase() === base);
+  if (named.length === 0) return null;
   try {
     const st = fs.statSync(p, { bigint: true });
-    return blockedIdentities().has(`${st.dev}:${st.ino}`);
+    const id = `${st.dev}:${st.ino}`;
+    if (!blockedIdentities().has(id)) return null;
+    // The entry it is: one named like it with that identity (the set holds every entry's).
+    return named.find((b) => {
+      try {
+        const own = fs.statSync(b, { bigint: true });
+        return `${own.dev}:${own.ino}` === id;
+      } catch {
+        return false;
+      }
+    }) ?? null;
   } catch {
-    return false; // it does not exist, so it is not a blocked directory
+    return null; // it does not exist, so it is not a blocked directory
   }
 }
+
 
 /**
  * Could some spelling of this path's last component land on the blocklist?
@@ -829,19 +898,16 @@ function judgePath(input: unknown): { resolved: string; leadsRefused: PathReject
   // which matters because paths are sanitized twice on most requests (pathGuard
   // middleware, then again inside the service).
   //
-  // The words are true of every route that sanitizes (BQL item 5): browsing
-  // the folder picker, opening, deleting and a note ask too, and the picker
-  // toasted "Scanning "/dev" is not allowed" over a folder nobody had asked
-  // to scan. Every blocklisted path — /dev, /proc, /private/var/db, Windows'
-  // System32, $Recycle.Bin, … and what lies inside them — belongs to the
-  // operating system.
-  if (blocked) throw new PathRejectedError(`TreeMap does not scan, list or act on "${resolved}": it belongs to the operating system.`, 'PATH_BLOCKED');
+  // The words are true of every route that sanitizes and of every path refused
+  // (`systemFolderRefusal`, `leadsRefusal`).
+  if (blocked) {
+    throw new PathRejectedError(systemFolderRefusal(resolved) ?? `TreeMap does not scan, list or act on "${resolved}": it is ${STAYS_OUT}.`, 'PATH_BLOCKED');
+  }
   const canonical = canonicalize(resolved);
-  if ((canonical !== resolved && isBlocked(canonical)) || isBlockedByIdentity(resolved)) {
-    return {
-      resolved,
-      leadsRefused: new PathRejectedError(`TreeMap does not scan, list or act on "${resolved}": it leads to a path that belongs to the operating system.`, 'PATH_BLOCKED'),
-    };
+  const leads = canonical !== resolved && isBlocked(canonical);
+  const sameAs = leads ? null : blockedIdentityOf(resolved);
+  if (leads || sameAs !== null) {
+    return { resolved, leadsRefused: new PathRejectedError(leadsRefusal(resolved, leads ? canonical : null, sameAs), 'PATH_BLOCKED') };
   }
   return { resolved, leadsRefused: null };
 }
