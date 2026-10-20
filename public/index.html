@@ -9605,6 +9605,13 @@ function restoreDashboardPanels() {
   $('statLargestSize').textContent = largest ? ' · ' + formatBytes(largest.size) : '';
   // The forecast is about the folder on screen, read by its path (B05).
   if (state.root) void renderGrowthProjection();
+  // Cost to keep, Drive health and the budgets said the saved index's tree
+  // filled in once its scan finished; nothing will land now (review F1.12).
+  if (fromIndex) {
+    void loadCostEstimate();
+    void loadDriveHealth();
+    void loadBudgets();
+  }
   // The refused row too: a stopped or failed whole-disk scan's notice
   // ("their size will not be in this total") goes with it (Track U, U-11).
   if (typeof renderRefusedFolders === 'function') renderRefusedFolders();
@@ -10077,6 +10084,9 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
       // screen re-entered — its lines read the scan coming now. A Stop in
       // this window says the saved index again (stopScan re-enters it).
       showListsPending();
+      void loadCostEstimate();
+      void loadDriveHealth();
+      void loadBudgets();
       withFocusKept(() => { switchView(state.view); });
     }
     return;
@@ -10594,6 +10604,10 @@ function putBackHeldTree() {
   state.grid.path = held.gridPath || held.root.path;
   FxNum.rollText($('statLastScan'), formatClock(held.lastScan ? held.lastScan.when : Date.now()));
   void loadWhatsNew();
+  // Its Dashboard cards, which the index paint said were waiting (review F1.12).
+  void loadCostEstimate();
+  void loadDriveHealth();
+  void loadBudgets();
   // Its index badge, which the index paint took down: asked again, as when it landed.
   void indexStatusFor(held.root.path).then((info) => { if (state.root === held.root) renderIndexBadge(info); });
   if (state.live.wanted) enableLive(); // Live survives a Stop, as it survives a rescan
@@ -11086,7 +11100,7 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0, afterStop =
 
   // Painted. Now the expensive server-side walks, filling in behind it.
   void loadWhatsNew(); // "what's new" banner — fetches its snapshots behind the paint too
-  void loadDriveHealth(); // C4 — shells out to smartctl, so never in front of the paint
+  if (state.scanId) void loadDriveHealth(); // C4 — shells out to smartctl, so never in front of the paint; the index paint's card is said below
   state.largest = []; state.types = []; state.bigFolders = [];
   $('statLargest').textContent = '–';
   $('statLargestSize').textContent = '';
@@ -11104,6 +11118,11 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0, afterStop =
     // scan chrome ended above: it is due, for what says whether a scan will
     // draw the tree (review F3.1). The scan chrome's next end clears it.
     state.indexScanDue = true;
+    // Cost to keep, Drive health and the budgets are a scan's too: each says
+    // it fills in once the scan finishes, not the last folder's figures (review F1.12).
+    void loadCostEstimate();
+    void loadDriveHealth();
+    void loadBudgets();
     emit(TOPIC.scan, null);
     // The first paint of a tree hides the welcome, whose "Choose a folder"
     // the folder browser handed focus back to (review F2.6).
@@ -31775,17 +31794,32 @@ async function loadBudgets() {
   // still walking, a budget saved during a rescan emptied the meters and the
   // map's borders (BQJ-1b).
   const scanId = treeScanId();
-  if (!scanId || !state.root) return;
+  if (!state.root) return;
+  if (!scanId) {
+    // The saved index's tree: no scan measured its folders, so the meters
+    // and the map's over-budget borders are no other scan's — the card goes
+    // until its scan lands (review F1.12).
+    state.budgets.list = [];
+    state.budgets.overPaths = new Set();
+    state.budgets.gauges = new Map();
+    renderBudgetWidget();
+    return;
+  }
   // FX: a reload sweeps the existing gauges instead of blanking them; a
   // first paint has no card to veil (renderBudgetWidget hides it empty).
   if (!$('budgetCard').hidden) $('budgetList').classList.add('fx-chart-loading');
+  let list = [];
   try {
     const data = await api(`/api/scan/${scanId}/budgets`);
-    state.budgets.list = data.budgets || [];
-    // The server measured these folders exactly; seed them so the edit dialog
-    // can state a real size even when the folder itself was pruned away.
-    seedNodes(state.budgets.list.map((b) => ({ path: b.path, name: b.name, size: b.actualBytes, type: 'dir' })));
-  } catch { state.budgets.list = []; }
+    list = data.budgets || [];
+  } catch { /* no meters: an empty list */ }
+  // Another tree is on screen since — the rescan landed: its own load paints
+  // its meters, and these are the older scan's (review F1.6).
+  if (scanId !== treeScanId()) return;
+  state.budgets.list = list;
+  // The server measured these folders exactly; seed them so the edit dialog
+  // can state a real size even when the folder itself was pruned away.
+  seedNodes(list.map((b) => ({ path: b.path, name: b.name, size: b.actualBytes, type: 'dir' })));
   state.budgets.overPaths = new Set(state.budgets.list.filter(b => b.overBy > 0).map(b => b.path));
   // v4 §9.4 — the breach projections ride a separate endpoint (the budgets
   // response is byte-locked). Failing to load them costs the projection line,
@@ -35026,7 +35060,19 @@ async function loadCostEstimate(after) {
   // Priced from the scan the tree on screen came from (treeScanId), never a
   // scan still walking (BQJ-1b).
   const scanId = treeScanId();
-  if (!host || !scanId) return;
+  if (!host) return;
+  if (!scanId) {
+    // Over a tree no scan stands behind — the saved index's — nothing is
+    // priced: said, as every view says it (treeScanComing), instead of
+    // keeping the last folder's prices beside this one's map (review F1.12).
+    if (state.root) {
+      host.classList.remove('fx-chart-loading');
+      host.innerHTML = '<div class="muted">' + (treeScanComing()
+        ? 'What keeping this online would cost is worked out from a finished scan — it fills in once the scan finishes.'
+        : 'Opened from the saved index — scan this folder to see what keeping it online would cost.') + '</div>';
+    }
+    return;
+  }
   // First paint loads as labelled skeleton rows; a reload (currency change,
   // rescan) sweeps the standing prices with the veil instead of blanking
   // them. Both painters below settle it.
@@ -35053,15 +35099,20 @@ async function loadCostEstimate(after) {
     const s = await api('/api/cleanup/suggestions?scanId=' + scanId);
     freeable = (s.groups || []).reduce((n, g) => n + (g.advisory ? 0 : g.totalSize), 0);
   } catch { /* the estimate is still worth showing without a what-if */ }
+  // Another tree is on screen since — the rescan landed, or the saved index
+  // painted: its own card is on its way, and these are no prices of it (review F1.6).
+  if (scanId !== treeScanId()) return;
 
   let est;
   try {
     est = await api(`/api/cost/estimate?scanId=${scanId}&freeable=${freeable}&currency=${$('costCurrency').value}`);
   } catch (e) {
+    if (scanId !== treeScanId()) return;
     host.classList.remove('fx-chart-loading');
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
     return;
   }
+  if (scanId !== treeScanId()) return;
   state.cost = est;
 
   // The bytes these prices were worked out from ride in the answer itself —
@@ -35177,7 +35228,21 @@ async function loadDriveHealth() {
   // The drive the scan the tree on screen came from is on (treeScanId) —
   // never a scan still walking (BQJ-1b).
   const scanId = treeScanId();
-  if (!host || !scanId) return;
+  if (!host) return;
+  if (!scanId) {
+    // The saved index's tree: no scan to ask by, so it says what it waits
+    // for, and the report it held — another folder's drive, which a re-entry
+    // of the Dashboard repainted — goes (review F1.12).
+    if (state.root) {
+      state.driveHealth = null;
+      host.classList.remove('fx-chart-loading');
+      fxDriveGaugeDrop(); // before the rewrite that would strand the handle
+      host.innerHTML = '<div class="muted">' + (treeScanComing()
+        ? 'Drive health is read for the drive a finished scan is on — it fills in once the scan finishes.'
+        : 'Opened from the saved index — scan this folder to check its drive.') + '</div>';
+    }
+    return;
+  }
   // First paint loads as labelled skeleton rows; a reload sweeps the standing
   // card with the veil instead of blanking it. Every painter settles it.
   if (host.querySelector('.dh-kv') || host.querySelector('.dh-unknown')) host.classList.add('fx-chart-loading');
@@ -35192,11 +35257,13 @@ async function loadDriveHealth() {
   try {
     data = await api(`/api/health/smart?scanId=${scanId}` + (device ? `&device=${encodeURIComponent(device)}` : ''));
   } catch (e) {
+    if (scanId !== treeScanId()) return; // the older scan's, said over another tree (review F1.6)
     host.classList.remove('fx-chart-loading');
     fxDriveGaugeDrop();
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
     return;
   }
+  if (scanId !== treeScanId()) return; // another tree is on screen since: its own report is on its way
   // Held so a dashboard re-entry rebuilds the gauge from state instead of
   // shelling out to smartctl again (the donut's state.types precedent).
   state.driveHealth = data;

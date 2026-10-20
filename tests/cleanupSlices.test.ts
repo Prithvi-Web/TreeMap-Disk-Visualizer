@@ -994,7 +994,10 @@ test('a finished scan asks for the three dashboard lists first and hands their w
   assert.equal(scanned.handed, scanned.listsWalk, 'the cost card is handed the lists\' own walk to wait for');
   assert.deepEqual(scanned.order, ['lists asked', 'cost card', 'emit scan'], 'the views and the tour the scan event wakes come after the lists answer');
   const fromIndex = await run(null);
-  assert.deepEqual(fromIndex.order, ['emit scan'], 'the index-first paint starts neither the lists nor the cost card');
+  // The index-first paint starts no list walk. The cost card is told the tree on screen has no scan behind it, so
+  // it says it fills in once the scan finishes and asks nothing (tests/treeScanKey.test.ts; review F1.12).
+  assert.deepEqual(fromIndex.order, ['cost card', 'emit scan'], 'the index-first paint starts no list walk; the cost card says what it waits for');
+  assert.equal(fromIndex.handed, undefined, 'handed no walk to wait for: it asks nothing');
 });
 
 /** The cost card out of the built page, with `api` recording what it asks for. */

@@ -65,6 +65,13 @@ function restoreDashboardPanels() {
   $('statLargestSize').textContent = largest ? ' · ' + formatBytes(largest.size) : '';
   // The forecast is about the folder on screen, read by its path (B05).
   if (state.root) void renderGrowthProjection();
+  // Cost to keep, Drive health and the budgets said the saved index's tree
+  // filled in once its scan finished; nothing will land now (review F1.12).
+  if (fromIndex) {
+    void loadCostEstimate();
+    void loadDriveHealth();
+    void loadBudgets();
+  }
   // The refused row too: a stopped or failed whole-disk scan's notice
   // ("their size will not be in this total") goes with it (Track U, U-11).
   if (typeof renderRefusedFolders === 'function') renderRefusedFolders();
@@ -537,6 +544,9 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
       // screen re-entered — its lines read the scan coming now. A Stop in
       // this window says the saved index again (stopScan re-enters it).
       showListsPending();
+      void loadCostEstimate();
+      void loadDriveHealth();
+      void loadBudgets();
       withFocusKept(() => { switchView(state.view); });
     }
     return;

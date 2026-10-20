@@ -476,7 +476,19 @@ async function loadCostEstimate(after) {
   // Priced from the scan the tree on screen came from (treeScanId), never a
   // scan still walking (BQJ-1b).
   const scanId = treeScanId();
-  if (!host || !scanId) return;
+  if (!host) return;
+  if (!scanId) {
+    // Over a tree no scan stands behind — the saved index's — nothing is
+    // priced: said, as every view says it (treeScanComing), instead of
+    // keeping the last folder's prices beside this one's map (review F1.12).
+    if (state.root) {
+      host.classList.remove('fx-chart-loading');
+      host.innerHTML = '<div class="muted">' + (treeScanComing()
+        ? 'What keeping this online would cost is worked out from a finished scan — it fills in once the scan finishes.'
+        : 'Opened from the saved index — scan this folder to see what keeping it online would cost.') + '</div>';
+    }
+    return;
+  }
   // First paint loads as labelled skeleton rows; a reload (currency change,
   // rescan) sweeps the standing prices with the veil instead of blanking
   // them. Both painters below settle it.
@@ -503,15 +515,20 @@ async function loadCostEstimate(after) {
     const s = await api('/api/cleanup/suggestions?scanId=' + scanId);
     freeable = (s.groups || []).reduce((n, g) => n + (g.advisory ? 0 : g.totalSize), 0);
   } catch { /* the estimate is still worth showing without a what-if */ }
+  // Another tree is on screen since — the rescan landed, or the saved index
+  // painted: its own card is on its way, and these are no prices of it (review F1.6).
+  if (scanId !== treeScanId()) return;
 
   let est;
   try {
     est = await api(`/api/cost/estimate?scanId=${scanId}&freeable=${freeable}&currency=${$('costCurrency').value}`);
   } catch (e) {
+    if (scanId !== treeScanId()) return;
     host.classList.remove('fx-chart-loading');
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
     return;
   }
+  if (scanId !== treeScanId()) return;
   state.cost = est;
 
   // The bytes these prices were worked out from ride in the answer itself —
@@ -627,7 +644,21 @@ async function loadDriveHealth() {
   // The drive the scan the tree on screen came from is on (treeScanId) —
   // never a scan still walking (BQJ-1b).
   const scanId = treeScanId();
-  if (!host || !scanId) return;
+  if (!host) return;
+  if (!scanId) {
+    // The saved index's tree: no scan to ask by, so it says what it waits
+    // for, and the report it held — another folder's drive, which a re-entry
+    // of the Dashboard repainted — goes (review F1.12).
+    if (state.root) {
+      state.driveHealth = null;
+      host.classList.remove('fx-chart-loading');
+      fxDriveGaugeDrop(); // before the rewrite that would strand the handle
+      host.innerHTML = '<div class="muted">' + (treeScanComing()
+        ? 'Drive health is read for the drive a finished scan is on — it fills in once the scan finishes.'
+        : 'Opened from the saved index — scan this folder to check its drive.') + '</div>';
+    }
+    return;
+  }
   // First paint loads as labelled skeleton rows; a reload sweeps the standing
   // card with the veil instead of blanking it. Every painter settles it.
   if (host.querySelector('.dh-kv') || host.querySelector('.dh-unknown')) host.classList.add('fx-chart-loading');
@@ -642,11 +673,13 @@ async function loadDriveHealth() {
   try {
     data = await api(`/api/health/smart?scanId=${scanId}` + (device ? `&device=${encodeURIComponent(device)}` : ''));
   } catch (e) {
+    if (scanId !== treeScanId()) return; // the older scan's, said over another tree (review F1.6)
     host.classList.remove('fx-chart-loading');
     fxDriveGaugeDrop();
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
     return;
   }
+  if (scanId !== treeScanId()) return; // another tree is on screen since: its own report is on its way
   // Held so a dashboard re-entry rebuilds the gauge from state instead of
   // shelling out to smartctl again (the donut's state.types precedent).
   state.driveHealth = data;

@@ -1957,6 +1957,66 @@ test('BQJ-1b: the scan the tree on screen came from, through a real rescan — t
   assert.deepEqual(ruleOver(idx.state), { id: null, coming: false }, 'none behind it, none coming');
 });
 
+/* BQJ-1b review F1.12: the Dashboard's Cost to keep, Drive health and folder
+   budgets are each worked out from a scan. Over a tree no scan stands behind
+   they returned early, keeping the last folder's figures beside this one's
+   map; they now say what they wait for (tests/treeScanKey.test.ts) — and are
+   asked to say it whenever the tree on screen changes without a scan landing. */
+
+/** Every call of the three card loaders, with the scan state the page's own rule reads at that moment. */
+function cardsAsked(h: ReturnType<typeof page>): Array<{ card: string; id: string | null; coming: boolean }> {
+  const asked: Array<{ card: string; id: string | null; coming: boolean }> = [];
+  for (const card of ['loadCostEstimate', 'loadDriveHealth', 'loadBudgets']) h.given[card] = () => { asked.push({ card, ...ruleOver(h.state) }); };
+  return asked;
+}
+const CARDS = ['loadBudgets', 'loadCostEstimate', 'loadDriveHealth'];
+const cardsAt = (asked: ReturnType<typeof cardsAsked>, id: string | null, coming: boolean) =>
+  [...new Set(asked.filter((a) => a.id === id && a.coming === coming).map((a) => a.card))].sort();
+
+test('review F1.12: the Dashboard\'s scan-backed cards are said again for the tree on screen — over the index paint, as a rescan of a saved index\'s tree a Stop left begins, and when a Stop puts the older tree back with its scan', async () => {
+  // The index paint: no scan behind the tree, one due.
+  {
+    const h = page({ index: true, route: server({ roots: [], indexed: [MAIL], indexTrees: { [MAIL]: indexTreeOf(MAIL, 37_700_000) } }) });
+    const asked = cardsAsked(h);
+    await h.startScan(MAIL);
+    await turns();
+    assert.deepEqual(h.emitted, [null], 'control: painted from the saved index');
+    assert.deepEqual(cardsAt(asked, null, true), CARDS, 'each card is said again over the index paint, its scan coming — not left with the last folder\'s figures');
+    assert.deepEqual(cardsAt(asked, null, false), [], 'and none is said to be the saved index while its scan is due');
+  }
+  // A rescan pressed over a saved index's tree a Stop left on screen, the index still being asked about.
+  {
+    const base = server({ roots: [], indexed: [MAIL], indexTrees: { [MAIL]: indexTreeOf(MAIL, 37_700_000) } });
+    const probe: { answer: (() => void) | null } = { answer: null };
+    const h = page({ index: true, root: indexTreeOf(MAIL, 37_700_000), route: (m, url, b) => {
+      if (url.startsWith('/api/index/status') && !probe.answer) return new Promise((resolve) => { probe.answer = () => resolve(base(m, url, b) as { status?: number; body?: unknown }); });
+      return base(m, url, b);
+    } });
+    const asked = cardsAsked(h);
+    const started = h.startScan(MAIL);
+    await turns();
+    assert.ok(probe.answer, 'control: the index is being asked about the folder');
+    assert.deepEqual(cardsAt(asked, null, true), CARDS, 'as the scan chrome begins, each card says it fills in once the scan finishes — not "scan this folder"');
+    await pressStop(h);
+    probe.answer!();
+    await started;
+  }
+  // A Stop that puts the older tree back (J06): its cards are its scan's again.
+  {
+    const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
+    const h = page({ index: true, root: mail, settledScanId: 'scan-mail',
+      route: server({ roots: [], indexed: [CORPUS], indexTrees: { [CORPUS]: indexTreeOf(CORPUS, 9_500_000_000) } }) });
+    const asked = cardsAsked(h);
+    await h.startScan(CORPUS);
+    await turns();
+    assert.equal(pathOf(h.state.root), CORPUS, 'control: corpus painted from its saved index over Mail\'s scanned tree');
+    asked.length = 0;
+    await pressStop(h);
+    assert.equal(h.state.root, mail, 'control: the older tree is back');
+    assert.deepEqual(cardsAt(asked, 'scan-mail', false), CARDS, 'each card is asked of the older scan again — not left saying the index paint\'s words');
+  }
+});
+
 /* ══════════════ (E) — the rest of the seventh browser pass (J01, J02, J03, J07) ══════════════ */
 
 test('J01: a scan started from the start screen puts focus on the Dashboard\'s Stop — never on the Dashboard\'s first control, the System card\'s Trash row, whose next Enter opened the Trash sheet over the map', async () => {

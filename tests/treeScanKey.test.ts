@@ -737,13 +737,78 @@ test('the Dashboard\'s folder budgets, cost to keep and drive health are asked o
   await throughThePhases('The budgets', state, asks, fns.budgets, noop);
   await throughThePhases('Cost to keep', state, asks, fns.cost, noop);
   await throughThePhases('Drive health', state, asks, fns.health, noop);
-  for (const phase of [INDEX_RUNNING, INDEX_STOPPED]) {
+  for (const [phase, words, said] of [[INDEX_RUNNING, COMING, 'it fills in once the scan finishes'], [INDEX_STOPPED, OPENED, 'the tree is the saved index']] as const) {
+    // The last folder's figures on the cards, as a scan of it left them (review F1.12).
+    $('costBody').innerHTML = '<div class="cost-row">another folder\'s prices</div>';
+    $('driveHealthBody').innerHTML = '<div class="dh-kv">another folder\'s drive</div>';
+    state.driveHealth = { available: true, smart: {} };
+    state.budgets = { list: [{ path: '/other', overBy: 1 }], overPaths: new Set(['/other']), gauges: new Map([['/other', {}]]) };
     Object.assign(state, phase);
     const before = asks.length;
     await fns.budgets(); await fns.cost(); await fns.health();
     await turns();
     assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked — not of the running scan');
+    assert.match($('costBody').innerHTML, words, `Cost to keep says ${said} — not the last folder's prices beside this one's map`);
+    assert.match($('driveHealthBody').innerHTML, words, `Drive health says ${said} — not the last folder's drive`);
+    assert.equal(state.driveHealth, null, 'and the drive report it held goes: a re-entry of the Dashboard repaints from it');
+    const b = state.budgets as { list: unknown[]; overPaths: Set<string>; gauges: Map<string, unknown> };
+    assert.deepEqual([b.list, [...b.overPaths], b.gauges.size], [[], [], 0], 'the budget meters, and the map\'s over-budget borders, are no other scan\'s');
   }
+});
+
+test('the Dashboard\'s cards keep no answer the older scan gives once the rescan has landed — folder budgets, cost to keep and drive health asked during a rescan and answered after it are not put over the new tree, nor their failures said there', async () => {
+  const fresh = () => ({ list: [], overPaths: new Set(), gauges: new Map() });
+  const old = { budgets: [{ path: '/r/old', name: 'old', actualBytes: 1, maxBytes: 2, overBy: 0 }], groups: [], gauges: [],
+    providers: [{ bytes: 1, current: { tier: null } }], asOf: '2026-01-01', available: true, smart: { modelName: 'old' } };
+  type Case = { name: string; fn: 'budgets' | 'cost' | 'health'; landsOn: string; fails?: boolean; asks: number; host?: string };
+  const cases: Case[] = [
+    { name: 'budgets', fn: 'budgets', landsOn: '/budgets', asks: 1 },
+    { name: 'cost to keep, landing while its what-if is asked', fn: 'cost', landsOn: '/cleanup/suggestions', asks: 1 },
+    { name: 'cost to keep, landing while its prices are asked', fn: 'cost', landsOn: '/cost/estimate', asks: 2 },
+    { name: 'cost to keep, failing once landed', fn: 'cost', landsOn: '/cost/estimate', fails: true, asks: 2, host: 'costBody' },
+    { name: 'drive health', fn: 'health', landsOn: '/health/smart', asks: 1 },
+    { name: 'drive health, failing once landed', fn: 'health', landsOn: '/health/smart', fails: true, asks: 1, host: 'driveHealthBody' },
+  ];
+  for (const c of cases) {
+    const $ = stubDom();
+    const state: Record<string, unknown> = { root: TREE, view: 'dashboard', ...HELD, budgets: fresh(), cost: null, driveHealth: null };
+    const { fns, asks } = page<Record<'budgets' | 'cost' | 'health', () => Promise<void>>>(
+      ['async function loadBudgets(', 'async function loadCostEstimate(', 'async function loadDriveHealth('], {
+        state, $, loadBudgetsSeq: 0, seedNodes: noop, renderBudgetWidget: noop, isSun: () => false, presentView: noop,
+        skeletonRows: () => '<i>loading</i>', costMoney: () => '', costSavingHtml: () => '', fxBarStyle: () => '', formatBytes: String,
+        escapeHtml: esc, FxNum: { rollHtml: noop }, fxBarsIn: noop,
+        smartDeviceFor: () => null, topologyAnswer: async () => null, renderDriveHealth: noop, fxDriveGaugeDrop: noop,
+      }, '{ budgets: loadBudgets, cost: loadCostEstimate, health: loadDriveHealth }', (url) => {
+        if (!url.includes(c.landsOn)) return old;
+        Object.assign(state, LANDED); // finishScan put the new tree on screen while this was out
+        if (c.fails) throw new Error('Scan is still running — try again when it completes');
+        return old;
+      });
+    if (c.host) $(c.host).innerHTML = '<i>the new tree\'s card</i>';
+    await fns[c.fn]();
+    await turns();
+    assert.equal(asks[0].scanId, 'scan-old', `${c.name}: control: asked of the tree's scan, during the rescan`);
+    assert.equal(asks.length, c.asks, `${c.name}: nothing more is asked of the older scan once the new tree is on screen`);
+    const kept = { budgets: (state.budgets as { list: unknown[] }).list.length ? state.budgets : null, cost: state.cost, health: state.driveHealth }[c.fn];
+    assert.equal(kept, null, `${c.name}: the older scan's answer is not kept once the new tree is on screen`);
+    if (c.host) assert.equal($(c.host).innerHTML, '<i>the new tree\'s card</i>', `${c.name}: its failure is not said over the new tree's card`);
+  }
+});
+
+test('a Stop or a failure that leaves the saved index\'s tree on screen says the Dashboard\'s scan-backed cards again — the saved index\'s now, not "fills in once the scan finishes" — and one that leaves a scanned tree asks nothing again', () => {
+  const asked: string[] = [];
+  const state: Record<string, unknown> = { root: TREE, ...INDEX_STOPPED, largest: [], bigFolders: [], types: [], scanStats: null, donut: {} };
+  const { fns } = page<{ restore: () => void }>(['function restoreDashboardPanels('], {
+    state, $: stubDom(), renderBigFiles: noop, renderBigFolders: noop, renderDonut: noop, clearDonut: noop, fxDonutLoadingSync: noop,
+    renderDiskNotes: noop, countUp: noop, formatBytes: String, renderGrowthProjection: noop,
+    loadCostEstimate: () => { asked.push('cost'); }, loadDriveHealth: () => { asked.push('health'); }, loadBudgets: () => { asked.push('budgets'); },
+  }, '{ restore: restoreDashboardPanels }');
+  fns.restore(); // stopScan, failScan, quietRescanFailed
+  assert.deepEqual(asked.sort(), ['budgets', 'cost', 'health'], 'over the saved index\'s tree each card is said again');
+  asked.length = 0;
+  Object.assign(state, STOPPED);
+  fns.restore();
+  assert.deepEqual(asked, [], 'over a tree its scan stands behind, the cards it painted stand');
 });
 
 test('the welcome tour\'s cleanup wins are asked of the scan the tree on screen came from — never the running scan — and over the saved index\'s tree, its scan running, the card waits on the map and asks once that scan lands; with nothing coming it says why there is nothing to suggest, and asks once a scan lands', async () => {

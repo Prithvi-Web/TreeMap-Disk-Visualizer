@@ -8,17 +8,32 @@ async function loadBudgets() {
   // still walking, a budget saved during a rescan emptied the meters and the
   // map's borders (BQJ-1b).
   const scanId = treeScanId();
-  if (!scanId || !state.root) return;
+  if (!state.root) return;
+  if (!scanId) {
+    // The saved index's tree: no scan measured its folders, so the meters
+    // and the map's over-budget borders are no other scan's — the card goes
+    // until its scan lands (review F1.12).
+    state.budgets.list = [];
+    state.budgets.overPaths = new Set();
+    state.budgets.gauges = new Map();
+    renderBudgetWidget();
+    return;
+  }
   // FX: a reload sweeps the existing gauges instead of blanking them; a
   // first paint has no card to veil (renderBudgetWidget hides it empty).
   if (!$('budgetCard').hidden) $('budgetList').classList.add('fx-chart-loading');
+  let list = [];
   try {
     const data = await api(`/api/scan/${scanId}/budgets`);
-    state.budgets.list = data.budgets || [];
-    // The server measured these folders exactly; seed them so the edit dialog
-    // can state a real size even when the folder itself was pruned away.
-    seedNodes(state.budgets.list.map((b) => ({ path: b.path, name: b.name, size: b.actualBytes, type: 'dir' })));
-  } catch { state.budgets.list = []; }
+    list = data.budgets || [];
+  } catch { /* no meters: an empty list */ }
+  // Another tree is on screen since — the rescan landed: its own load paints
+  // its meters, and these are the older scan's (review F1.6).
+  if (scanId !== treeScanId()) return;
+  state.budgets.list = list;
+  // The server measured these folders exactly; seed them so the edit dialog
+  // can state a real size even when the folder itself was pruned away.
+  seedNodes(list.map((b) => ({ path: b.path, name: b.name, size: b.actualBytes, type: 'dir' })));
   state.budgets.overPaths = new Set(state.budgets.list.filter(b => b.overBy > 0).map(b => b.path));
   // v4 §9.4 — the breach projections ride a separate endpoint (the budgets
   // response is byte-locked). Failing to load them costs the projection line,

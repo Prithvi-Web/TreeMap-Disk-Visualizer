@@ -812,6 +812,8 @@ function chromeHarness(scanStats: Record<string, unknown> | null) {
     countUp: (e: El, n: number) => { counted.push([e === $('statFiles') ? 'files' : 'dirs', n]); },
     clearDonut: () => { calls.push('clearDonut'); }, formatBytes: (n: number) => `${n} B`,
     renderGrowthProjection: () => { calls.push('forecast'); },
+    // The Dashboard's scan-backed cards, said again over the saved index's tree (review F1.12).
+    loadCostEstimate: () => { calls.push('cost card'); }, loadDriveHealth: () => { calls.push('drive card'); }, loadBudgets: () => { calls.push('budgets'); },
   };
   // The slice carries 045's own `indexLineGen` and renderIndexLine: the generation a background index build checks before it paints.
   const fns = new Function(...Object.keys(deps), `'use strict'; ${begin} ${restore} return { beginScanChrome, restoreDashboardPanels, gen: () => indexLineGen };`)(
@@ -1479,11 +1481,14 @@ test('Stop over a tree painted from the index: the lists say why they are empty,
   assert.match(h.els.bigFiles.innerHTML, /biggest files/);
   assert.match(h.els.bigFolders.innerHTML, /biggest folders/);
   assert.ok(h.calls.includes('clearDonut'), 'the Mail scan\'s "36.0 MB All types" comes off the ring');
+  assert.deepEqual(['cost card', 'drive card', 'budgets'].filter((c) => h.calls.includes(c)), ['cost card', 'drive card', 'budgets'],
+    'and Cost to keep, Drive health and the budgets say the saved index too, not "fills in once the scan finishes" (review F1.12)');
   const none = chromeHarness(null);
   none.restoreDashboardPanels();
   assert.match(none.els.bigFiles.innerHTML, /Run a scan to find your biggest files/, 'with no tree at all, the first-run sentence');
   assert.ok(none.calls.includes('clearDonut'));
   assert.ok(!none.calls.includes('forecast'), 'and no forecast is asked for a folder that is not there');
+  assert.ok(!none.calls.includes('cost card'), 'nor a card said again over no tree');
 });
 
 test('the engine row names an index read in words, not the internal id "index" (B08)', () => {

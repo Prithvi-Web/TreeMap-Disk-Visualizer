@@ -474,6 +474,10 @@ function putBackHeldTree() {
   state.grid.path = held.gridPath || held.root.path;
   FxNum.rollText($('statLastScan'), formatClock(held.lastScan ? held.lastScan.when : Date.now()));
   void loadWhatsNew();
+  // Its Dashboard cards, which the index paint said were waiting (review F1.12).
+  void loadCostEstimate();
+  void loadDriveHealth();
+  void loadBudgets();
   // Its index badge, which the index paint took down: asked again, as when it landed.
   void indexStatusFor(held.root.path).then((info) => { if (state.root === held.root) renderIndexBadge(info); });
   if (state.live.wanted) enableLive(); // Live survives a Stop, as it survives a rescan
@@ -966,7 +970,7 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0, afterStop =
 
   // Painted. Now the expensive server-side walks, filling in behind it.
   void loadWhatsNew(); // "what's new" banner — fetches its snapshots behind the paint too
-  void loadDriveHealth(); // C4 — shells out to smartctl, so never in front of the paint
+  if (state.scanId) void loadDriveHealth(); // C4 — shells out to smartctl, so never in front of the paint; the index paint's card is said below
   state.largest = []; state.types = []; state.bigFolders = [];
   $('statLargest').textContent = '–';
   $('statLargestSize').textContent = '';
@@ -984,6 +988,11 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0, afterStop =
     // scan chrome ended above: it is due, for what says whether a scan will
     // draw the tree (review F3.1). The scan chrome's next end clears it.
     state.indexScanDue = true;
+    // Cost to keep, Drive health and the budgets are a scan's too: each says
+    // it fills in once the scan finishes, not the last folder's figures (review F1.12).
+    void loadCostEstimate();
+    void loadDriveHealth();
+    void loadBudgets();
     emit(TOPIC.scan, null);
     // The first paint of a tree hides the welcome, whose "Choose a folder"
     // the folder browser handed focus back to (review F2.6).
