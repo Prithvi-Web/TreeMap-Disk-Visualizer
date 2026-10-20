@@ -1882,6 +1882,8 @@ test('J02 (review F1.2): a Stop pressed before POST /api/scan answers says only 
   assert.equal(h.state.scanId, 'scan-late', 'with its scan behind them');
   assert.ok(h.toasts.some(([m]) => m.startsWith('The scan had already finished when you pressed Stop')), `said so (${JSON.stringify(h.toasts)})`);
   assert.doesNotMatch(h.$('startLast').textContent, /You stopped/, 'and nothing says the person stopped it');
+  assert.equal(h.$('stopAnnounce').textContent, `The scan of ${DESK} had already finished when you pressed Stop — its results are on screen.`,
+    'and the live region says so, of the folder that request asked for (review F2.6)');
 
   // A confirmed cancel: stopped, said once it answers.
   const conf = run(() => ({ body: { scanId: 'scan-late', cancelled: true, status: 'error' } }));
@@ -1920,6 +1922,23 @@ test('J02 (review F1.2): a Stop pressed before POST /api/scan answers says only 
   probe({ body: { path: DESK, indexed: true, root: { path: DESK, state: 'ready', live: true } } });
   await turns();
   assert.deepEqual(early.posts, [], 'control: and none is sent when the index answers');
+
+  // The same outright Stop over an older tree — a rescan, its index still asked about: the tree stays, and the Stop is said (review F2.6).
+  const old = { name: 'old', path: '/Users/x/old', size: 1, type: 'dir', children: [] };
+  let probe2: (a: { body: unknown }) => void = () => {};
+  const over = page({ index: true, root: old, settledScanId: 'scan-old',
+    route: (m, url, b) => (url.startsWith('/api/index/status?') ? new Promise((r) => { probe2 = r; }) : base(m, url, b)) });
+  over.switchView('dashboard');
+  void over.startScan(DESK);
+  await turns();
+  assert.equal(over.state.scanning, true, 'control: the rescan has begun, its index asked about');
+  await pressStop(over);
+  assert.equal(over.state.root, old, 'control: the older tree stays on screen');
+  assert.match(over.$('scanStatus').innerHTML, /<span>Scan stopped by user<\/span>/, 'the status line says the scan was stopped — no request is out, none will be sent');
+  assert.equal(over.$('stopAnnounce').textContent, 'Scan stopped.', 'and the live region says it aloud');
+  probe2({ body: { path: DESK, indexed: true, root: { path: DESK, state: 'ready', live: true } } });
+  await turns();
+  assert.deepEqual(over.posts, [], 'control: and no scan is sent when the index answers');
 });
 
 test('J02 (review F1.6): a Stop whose cancel answers that the scan had already failed says it failed, with the reason the scan gives, and offers it again as a failure — never "You stopped…"', async () => {
