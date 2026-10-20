@@ -828,10 +828,20 @@ function judgePath(input: unknown): { resolved: string; leadsRefused: PathReject
   // itself, and re-canonicalising the same string reaches the same verdict —
   // which matters because paths are sanitized twice on most requests (pathGuard
   // middleware, then again inside the service).
-  if (blocked) throw new PathRejectedError(`Scanning "${resolved}" is not allowed`, 'PATH_BLOCKED');
+  //
+  // The words are true of every route that sanitizes (BQL item 5): browsing
+  // the folder picker, opening, deleting and a note ask too, and the picker
+  // toasted "Scanning "/dev" is not allowed" over a folder nobody had asked
+  // to scan. Every blocklisted path — /dev, /proc, /private/var/db, Windows'
+  // System32, $Recycle.Bin, … and what lies inside them — belongs to the
+  // operating system.
+  if (blocked) throw new PathRejectedError(`TreeMap does not scan, list or act on "${resolved}": it belongs to the operating system.`, 'PATH_BLOCKED');
   const canonical = canonicalize(resolved);
   if ((canonical !== resolved && isBlocked(canonical)) || isBlockedByIdentity(resolved)) {
-    return { resolved, leadsRefused: new PathRejectedError(`Scanning "${resolved}" is not allowed`, 'PATH_BLOCKED') };
+    return {
+      resolved,
+      leadsRefused: new PathRejectedError(`TreeMap does not scan, list or act on "${resolved}": it leads to a path that belongs to the operating system.`, 'PATH_BLOCKED'),
+    };
   }
   return { resolved, leadsRefused: null };
 }

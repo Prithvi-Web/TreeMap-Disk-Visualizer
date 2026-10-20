@@ -145,3 +145,36 @@ test('ordinary allowed paths and cloud identifiers are untouched by canonicalisa
   // and all — canonicalisation must not leak into the return value.
   assert.equal(sanitizePath(process.cwd()), path.resolve(process.cwd()));
 });
+
+/*
+ * BQL item 5: the refusal is the sanitizer's for every route that takes a path — GET /api/fs/list, which the
+ * folder picker browses with, opening, deleting, a note — and it said `Scanning "/dev" is not allowed`, so
+ * the picker toasted that over a folder nobody asked to scan. Its words are now true of all of them.
+ */
+const SYSTEM_FOLDER = process.platform === 'win32' ? 'C:\\Windows\\System32' : BLOCKED_TARGET;
+
+test('an operating-system folder is refused in words true of every route that asks — never "Scanning … is not allowed" (BQL item 5)', () => {
+  const folder = rejection(() => sanitizePath(SYSTEM_FOLDER));
+  assert.equal(folder.code, 'PATH_BLOCKED', 'the code is unchanged');
+  assert.doesNotMatch(folder.message, /Scanning|not allowed/, 'no route but a scan scans');
+  assert.equal(folder.message, `TreeMap does not scan, list or act on "${SYSTEM_FOLDER}": it belongs to the operating system.`);
+  const inside = path.join(SYSTEM_FOLDER, 'null');
+  assert.equal(rejection(() => sanitizePath(inside)).message, `TreeMap does not scan, list or act on "${inside}": it belongs to the operating system.`,
+    'a path inside one is refused the same way');
+});
+
+test('a link to an operating-system folder is refused in words true of every route: it leads to one (BQL item 5)', {
+  skip: process.platform === 'win32' && 'creating a symlink needs privilege on Windows',
+}, async () => {
+  const dir = await mkTmp();
+  try {
+    const link = path.join(dir, 'to-dev');
+    await fsp.symlink(BLOCKED_TARGET, link);
+    const refused = rejection(() => sanitizePath(link));
+    assert.equal(refused.code, 'PATH_BLOCKED');
+    assert.doesNotMatch(refused.message, /Scanning|not allowed/);
+    assert.equal(refused.message, `TreeMap does not scan, list or act on "${link}": it leads to a path that belongs to the operating system.`);
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});

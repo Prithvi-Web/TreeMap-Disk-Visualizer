@@ -710,7 +710,7 @@ test('with Windows stood in for process.platform, the receiver refuses a peer’
 });
 
 test('a peer refused by this machine’s path rules is told why in words of its own — never the path as resolved here, which names this machine’s home folder once `~` is expanded (the SEC-3 brief, item 7)', { skip: process.platform === 'win32' && 'making a link needs a privilege the runner may not hold' }, async () => {
-  // The receiver sent the sanitizer's sentence, `Scanning "/Users/<name>/x" is not allowed`, to the
+  // The receiver sent the sanitizer's sentence (then `Scanning "/Users/<name>/x" is not allowed`) to the
   // machine that asked for `~/x`: this machine's home folder, and with it the person's account name.
   const cfg = defaultConfig();
   const offer = beginPairing();

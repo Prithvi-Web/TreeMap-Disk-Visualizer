@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { INDEX, lift } from './fixtures/liftFrontend';
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-folderPicker-data-');
+import { sanitizePath } from '../src/utils/pathSanitizer';
 
 /**
  * The "Choose a folder" picker (QA D05, 5 Oct 2026 — batch QA-4a).
@@ -670,7 +673,7 @@ test('the whole drive is offered only where the picker scans — not for an Auto
  * and on macOS /.vol, /.nofollow and /.resolve once hidden folders are shown;
  * C:\$Recycle.Bin and C:\System Volume Information on Windows. GET
  * /api/fs/list lists them as it lists any folder, and a row for one opened
- * only an error toast (`Scanning "/dev" is not allowed`) — on the first
+ * only an error toast (then `Scanning "/dev" is not allowed`) — on the first
  * thing the first-run chooser offers (G26 review F3.1). The picker leaves out
  * exactly the folders the server refuses by their name: its own blocklists,
  * read below from src/utils/pathSanitizer.ts, so one added there and not to
@@ -790,6 +793,23 @@ test('the picker\'s path line is a field: it shows where you are, and Enter open
   const before = asked.length;
   await keydown({ key: 'a', preventDefault() { assert.fail('only Enter is taken'); } });
   assert.equal(asked.length, before, 'other keys just type');
+});
+
+test('typing an operating-system folder in the path line and pressing Enter says why in words true of browsing — never "Scanning … is not allowed" — and the picker stays where it was (BQL item 5)', async () => {
+  // GET /api/fs/list refuses /dev with the sanitizer's own sentence, and the picker toasts the server's
+  // message; it read `Scanning "/dev" is not allowed` while nobody had asked to scan — the picker may be
+  // choosing an offload destination or an Autopilot folder.
+  const blocked = process.platform === 'win32' ? 'C:\\Windows\\System32' : '/dev';
+  let refusal: Error & { code?: string } = new Error('the sanitizer did not refuse');
+  try { sanitizePath(blocked); } catch (err) { refusal = err as Error & { code?: string }; }
+  assert.equal(refusal.code, 'PATH_BLOCKED', 'control: the server refuses it');
+  const { rt, $, toasts } = browseRuntime((p) => (p === blocked ? Object.assign(new Error(refusal.message), { code: refusal.code }) : HOME));
+  await rt.openBrowse(null);
+  $('browseCurrent').value = blocked;
+  await $('browseCurrent').listeners.keydown({ key: 'Enter', preventDefault() {} });
+  assert.equal(toasts.at(-1), refusal.message, 'the server\'s sentence is what the toast says');
+  assert.doesNotMatch(toasts.at(-1) ?? '', /Scanning/, 'and it speaks of no scan');
+  assert.equal(rt.path(), '/home/u', 'the picker stays where it was');
 });
 
 /** /nope does not open; /data opens; anything else is the home folder. */
