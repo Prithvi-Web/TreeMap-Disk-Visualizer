@@ -711,9 +711,11 @@ test('a peer refused by this machine’s path rules is told words true of every 
   assert.equal(said.size, 1, `one sentence for every cause: ${JSON.stringify([...said])}`);
   const [sentence] = [...said.keys()];
   assert.doesNotMatch(sentence, /operating-system folder/, 'no folder is called an operating-system folder');
-  assert.match(sentence, /it never scans one of the system folders it stays out of or anything inside one/);
-  assert.match(sentence, /a path spelled through a second name the system gives a path/);
-  assert.match(sentence, /a path whose links lead to either, or through more links or names than it follows/);
+  // Each cause in one clause (the BQL-a review, F3.6: the asker shows it in a toast, and at 277 characters it
+  // went before it could be read): a system folder or anything inside one, a second name, a link to either or
+  // one longer than it follows — and no longer than the 152 characters it was before F2.2.
+  assert.ok(sentence.length <= 152, `one short clause the asker can read in its toast: ${String(sentence.length)} characters`);
+  assert.match(sentence, /^That machine’s path rules refuse that folder: it stays out of system folders, second names of paths, and links to either or too long to follow$/);
   assert.ok(!sentence.includes(tmp) && !sentence.includes('/dev'), 'no path of this machine is named');
   assert.deepEqual(scansStarted, [], 'no scan was started');
 });

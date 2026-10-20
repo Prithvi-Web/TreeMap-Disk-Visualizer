@@ -7316,7 +7316,12 @@ sideNavNarrow.addEventListener('change', (e) => {
 applySideNav(sideNavPref() === 'rail' || sideNavNarrow.matches);
 
 /* ───────────────────────────── Toasts ───────────────────────────── */
-function toast(msg, kind = 'success', ms = 4200) {
+// How long a toast stays when its caller names no time: 4.2 s, or about 60 ms
+// a character when that is longer, so a long sentence — a server's or a
+// peer's refusal — can be read before it goes (BQL-a review F3.6).
+const TOAST_MIN_MS = 4200;
+const TOAST_MS_PER_CHAR = 60;
+function toast(msg, kind = 'success', ms = Math.max(TOAST_MIN_MS, String(msg).length * TOAST_MS_PER_CHAR)) {
   const el = document.createElement('div');
   el.className = 'toast ' + kind;
   el.innerHTML = icon(kind === 'error' ? 'alert' : 'checkCircle', 16) + '<span>' + escapeHtml(msg) + '</span>';

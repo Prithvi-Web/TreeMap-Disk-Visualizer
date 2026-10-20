@@ -418,6 +418,26 @@ test('toast() escapes its message, since the safe-sink rule above depends on it'
   assert.match(toastFn, /escapeHtml\s*\(\s*msg\s*\)/, 'toast builds innerHTML, so it must escape');
 });
 
+test('a toast stays long enough to be read: 4.2 s, or about 60 ms a character when that is longer, unless its caller names a time (BQL-a review F3.6)', () => {
+  // A peer's refusal, shown in a plain error toast, ran to 277 characters and went after 4.2 s, mid-sentence.
+  const script = appScript();
+  const start = script.indexOf('/* ───────────────────────────── Toasts ───────────────────────────── */');
+  assert.notEqual(start, -1, 'the toast section is in the page');
+  const end = script.indexOf('\n}\n', script.indexOf('function toast(', start)) + 3;
+  const shown: number[] = [];
+  const box = { appendChild: () => undefined };
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const toast = new Function('document', '$', 'icon', 'escapeHtml', 'setTimeout', `${script.slice(start, end)}\nreturn toast;`)(
+    { createElement: () => ({ classList: { add: () => undefined }, remove: () => undefined }) },
+    () => box, () => '', (s: string) => s,
+    (_fn: () => void, ms: number) => { shown.push(ms); },
+  ) as (msg: string, kind?: string, ms?: number) => void;
+  toast('Asked it to scan — its own screen will show the result');
+  toast('x'.repeat(277), 'error');
+  toast('x'.repeat(277), 'error', 15000);
+  assert.deepEqual(shown, [4200, 277 * 60, 15000], 'a short toast 4.2 s; a 277-character one 16.6 s; a named time as named');
+});
+
 /* ══════════════════════ Zero dependencies (§3) ══════════════════════ */
 
 test('the frontend loads no external script, style or font', () => {

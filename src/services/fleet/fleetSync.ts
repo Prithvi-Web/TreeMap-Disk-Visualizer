@@ -331,9 +331,11 @@ function remoteScanRoot(given: string): string {
  * review, F2.2): a folder of its blocklist (or that folder by another name) or anything inside one, a second
  * name of a path, and a link that leads to either or runs past the links and names it follows (`NO_PLACE`).
  * "An operating-system folder" was untrue of /run/user, and of a long chain of links to an ordinary folder.
+ * One short clause, since the asker shows it in a toast (the BQL-a review, F3.6: at 277 characters it went
+ * before it could be read).
  */
 const PEER_PATH_REFUSALS: Readonly<Record<string, string>> = Object.freeze({
-  PATH_BLOCKED: 'That machine’s own path rules refuse that folder: it never scans one of the system folders it stays out of or anything inside one, a path spelled through a second name the system gives a path, or a path whose links lead to either, or through more links or names than it follows',
+  PATH_BLOCKED: 'That machine’s path rules refuse that folder: it stays out of system folders, second names of paths, and links to either or too long to follow',
   PATH_INVALID: 'That machine cannot read that as a folder on it: it takes an absolute path, or ~ for its home folder, with no null byte',
 });
 
