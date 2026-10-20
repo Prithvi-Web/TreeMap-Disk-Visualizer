@@ -525,6 +525,11 @@ function reclaimCoverageNote() {
   if (loading > 0) {
     return `${head}; ${formatCount(loading)} more ${loading === 1 ? 'is' : 'are'} loading` + (capped ? cap : '.');
   }
+  // Nothing in flight, and no scan behind the tree on screen — the saved
+  // index's: nothing was asked, and nothing will be until a scan of it lands,
+  // so "still loading" would be false (review F3.3).
+  const noScan = reclaimNoScanWords();
+  if (noScan) return ' ' + noScan;
   return head + (capped ? cap : '; the rest are still loading.');
 }
 

@@ -12774,6 +12774,11 @@ function reclaimCoverageNote() {
   if (loading > 0) {
     return `${head}; ${formatCount(loading)} more ${loading === 1 ? 'is' : 'are'} loading` + (capped ? cap : '.');
   }
+  // Nothing in flight, and no scan behind the tree on screen — the saved
+  // index's: nothing was asked, and nothing will be until a scan of it lands,
+  // so "still loading" would be false (review F3.3).
+  const noScan = reclaimNoScanWords();
+  if (noScan) return ' ' + noScan;
   return head + (capped ? cap : '; the rest are still loading.');
 }
 
@@ -33281,6 +33286,22 @@ function reclaimTreeScan() {
 }
 
 /**
+ * What the Reclaim colour mode says of a tree no scan stands behind — the
+ * saved index's, painted before its scan answers or left by a Stop (J05) —
+ * or null while one stands behind it. Nothing is asked of such a tree
+ * (ensureScores) and nothing is pending, so neither the legend nor the
+ * breakdown may say its scores are loading (review F3.3): while the scan
+ * behind it is due or runs (indexScanDue, scanning), scoring waits on that
+ * scan; once nothing will land, a scan of the folder is what would score it.
+ */
+function reclaimNoScanWords() {
+  if (reclaimTreeScan()) return null;
+  return state.scanning || state.indexScanDue
+    ? 'Not scored yet — scoring starts once this folder’s scan finishes.'
+    : 'Not scored — opened from the saved index; scan this folder to score it.';
+}
+
+/**
  * What a failed request is remembered for: the scan the tree on screen came
  * from (reclaimTreeScan — not a scan running behind it), this view, this
  * folder on screen.
@@ -33601,9 +33622,11 @@ function openReclaimWhy(path, anchorEl, point, returnTo = null) {
   const pop = $('rcPopover');
   if (!fact) {
     // Asked and unanswerable: say which, rather than opening an empty panel.
+    // Not asked because no scan stands behind the tree on screen: said as
+    // that, with what would score it (reclaimNoScanWords, review F3.3).
     toast(scoreKnown(path)
       ? 'TreeMap could not score this — none of the six signals could be read for it.'
-      : 'That score has not been worked out yet.', 'success', 5000);
+      : reclaimNoScanWords() || 'That score has not been worked out yet.', 'success', 5000);
     return;
   }
   rcPopoverPath = path;

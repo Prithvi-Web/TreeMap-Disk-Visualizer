@@ -67,7 +67,7 @@ function declSource(name: string): string {
 const SHIPPED = [
   'reclaim', 'RECLAIM_PATH_REFUSALS', 'reclaimTreeScan', 'reclaimFailureScope', 'reclaimAskablePath', 'reclaimAskableNode',
   'ensureScores', 'reclaimScoreBatch', 'fetchScoresForTreemap', 'reclaimCoverageNote',
-  'tmScoreChain', 'tmScoreKey',
+  'tmScoreChain', 'tmScoreKey', 'reclaimNoScanWords', 'scoreFor', 'scoreKnown', 'openReclaimWhy',
 ];
 
 interface Cell { n: { path: string; isTrash?: boolean; freed?: boolean; virtual?: boolean } }
@@ -86,6 +86,9 @@ interface Harness {
   fetchScoresForTreemap: () => void;
   ensureScores: (paths: string[], onLanded?: () => void, onFailed?: () => void) => Promise<void>;
   note: () => string;
+  /** The page's own breakdown opener (openReclaimWhy), and every toast it raised. */
+  why: (path: string) => void;
+  toasts: string[];
   /** The stub stops answering: a loop the code under test still runs ends here instead of keeping the file alive. */
   close: () => void;
 }
@@ -111,6 +114,7 @@ function harness(answer: Answer, opts: { batch?: number; cap?: number } = {}): H
     askedScans: [] as string[],
     signals: [] as Array<AbortSignal | null>,
     calls: { drawView: 0, repaintCells: 0, renderTmLegend: 0 },
+    toasts: [] as string[],
   } as Harness;
   let closed = false;
   h.close = () => { closed = true; };
@@ -148,19 +152,24 @@ function harness(answer: Answer, opts: { batch?: number; cap?: number } = {}): H
     repaintCells: () => { h.calls.repaintCells++; h.fetchScoresForTreemap(); },
     renderTmLegend: () => { h.calls.renderTmLegend++; },
     formatCount: (n: number) => n.toLocaleString('en-US'),
+    // The breakdown's panel is not under test: what it says when there is no score to show is.
+    $: () => ({}), toast: (m: string) => { h.toasts.push(m); },
   };
   const keys = Object.keys(deps);
   const present = SHIPPED.filter((name) => INDEX.includes(`function ${name}(`) || INDEX.includes(`const ${name} = `)
     || INDEX.includes(`let ${name} = `));
-  const src = `'use strict';\n${present.map(declSource).join('\n')}\nreturn { reclaim, ensureScores, fetchScoresForTreemap, reclaimCoverageNote };`;
+  const why = present.includes('openReclaimWhy') ? 'openReclaimWhy' : 'null';
+  const src = `'use strict';\n${present.map(declSource).join('\n')}\nreturn { reclaim, ensureScores, fetchScoresForTreemap, reclaimCoverageNote, why: ${why} };`;
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const out = new Function(...keys, src)(...keys.map((k) => deps[k])) as {
     reclaim: Harness['reclaim']; ensureScores: Harness['ensureScores']; fetchScoresForTreemap: () => void; reclaimCoverageNote: () => string;
+    why: Harness['why'];
   };
   h.reclaim = out.reclaim;
   h.ensureScores = out.ensureScores;
   h.fetchScoresForTreemap = out.fetchScoresForTreemap;
   h.note = out.reclaimCoverageNote;
+  h.why = out.why;
   return h;
 }
 
@@ -490,4 +499,48 @@ test('review F3.2: a rescan\'s request answering while a score batch of the olde
   assert.equal(h.reclaim.scores.size, 3, 'control: and filed');
   assert.equal(h.calls.drawView, 1, 'the map repaints in their colours');
   assert.equal(h.calls.renderTmLegend, 1, 'and the legend says they are scored');
+});
+
+/* ── Review F3.3: a saved index's tree is not "still loading" ──
+   With no scan behind the tree on screen — the saved index's, painted before
+   its scan answers or left by a Stop (J05) — nothing is asked (F2.2) and
+   nothing is pending, yet the legend said "Scored 0 of N on screen; the rest
+   are still loading." for as long as it stood, for good after a Stop, and the
+   right-click breakdown said the score "has not been worked out yet". */
+
+const SCORED_ONCE_SCANNED = ' Not scored yet — scoring starts once this folder’s scan finishes.';
+const SCAN_TO_SCORE = ' Not scored — opened from the saved index; scan this folder to score it.';
+
+test('review F3.3: over a saved index\'s tree no scan stands behind, the legend and the breakdown never say the scores are loading — nothing is asked: while its scan is due or runs they say scoring starts once it finishes, and once a Stop has ended it, to scan the folder to score it', async () => {
+  const h = harness((paths) => ({ values: scoreOf(paths) }));
+  // The index paint: its scan due (finishScan), the scan chrome not yet begun again.
+  Object.assign(h.state, { scanId: null, settledScanId: null, scanning: false, indexScanDue: true });
+  h.cells = files(3, '/r/');
+  h.fetchScoresForTreemap();
+  await turns(60);
+  assert.deepEqual(h.askedScans, [], 'control: nothing is asked — no scan stands behind the tree');
+  assert.equal(h.note(), SCORED_ONCE_SCANNED, 'at the paint, its scan due: scoring waits on that scan');
+  // Its scan runs (beginScanChrome), its request answered (followScanProgress).
+  Object.assign(h.state, { scanning: true, scanId: 'B' });
+  h.fetchScoresForTreemap();
+  await turns(60);
+  assert.deepEqual(h.askedScans, [], 'control: still nothing asked of the running scan');
+  assert.equal(h.note(), SCORED_ONCE_SCANNED, 'and while it runs');
+  h.why('/r/0'); // right-click › Why this reclaim score?
+  assert.deepEqual(h.toasts, [SCORED_ONCE_SCANNED.trim()], 'the breakdown says the same');
+  // Stop, or a failure: the scan chrome ended (endScanChrome), the scan behind the tree = none.
+  Object.assign(h.state, { scanning: false, indexScanDue: false, scanId: null });
+  assert.equal(h.note(), SCAN_TO_SCORE, 'once nothing will land, the legend says what would score the tree');
+  h.why('/r/0');
+  assert.deepEqual(h.toasts.slice(1), [SCAN_TO_SCORE.trim()], 'and so does the breakdown');
+  // A rescan of it pressed (beginScanChrome), the index asked about: no paint yet, so nothing due — but a scan runs.
+  Object.assign(h.state, { scanning: true });
+  assert.equal(h.note(), SCORED_ONCE_SCANNED, 'a scan of it starting: scoring waits on that scan again');
+
+  // A tree its scan stands behind, its scores still to come: as before.
+  const scanned = harness(() => ({ values: {} }));
+  scanned.cells = files(3, '/r/');
+  assert.equal(scanned.note(), ' Scored 0 of 3 on screen; the rest are still loading.', 'control: a scanned tree not yet asked about still says so');
+  scanned.why('/r/0');
+  assert.deepEqual(scanned.toasts, ['That score has not been worked out yet.'], 'control: and its breakdown');
 });

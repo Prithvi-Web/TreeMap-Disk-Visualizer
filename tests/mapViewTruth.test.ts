@@ -143,7 +143,9 @@ function coverage(drawn: number, scored: number, pending: number, unscorable = 0
     else if (i < scored + unscorable) scores.set(c.n.path, null);
     else if (i < scored + unscorable + pending) inFlight.add(c.n.path);
   });
-  const note = load<() => string>(['reclaimCoverageNote', 'reclaimAskableNode', 'reclaimAskablePath'], {
+  const note = load<() => string>(['reclaimCoverageNote', 'reclaimAskableNode', 'reclaimAskablePath', 'reclaimTreeScan', 'reclaimNoScanWords'], {
+    // A scan stands behind the tree on screen (a saved index's tree is reclaimScoreLoop's, review F3.3).
+    state: { scanId: 's1', scanning: false },
     drawnCells: () => cells,
     reclaim: { scores, pending: inFlight, failed: new Set<string>() },
     formatCount: fmtCount,
