@@ -80,6 +80,7 @@ function lensPaint(ctx, cssW, cssH) {
   const half = r / LENS_SCALE + Math.hypot(mx - cursor.x, my - cursor.y) / LENS_SCALE + 2;
   const shapes = lensShapes();
   const labels = [];
+  const framed = []; // the rectangle map's folders on the glass, whose bands go over their leaves
   for (const s of shapes) {
     const b = s.bb
       ? { x0: s.bb.x0, x1: s.bb.x1, y0: s.bb.y0, y1: s.bb.y1 }
@@ -93,25 +94,73 @@ function lensPaint(ctx, cssW, cssH) {
       ctx.beginPath();
       ctx.rect(b.x0, b.y0, Math.max(0.2, b.x1 - b.x0), Math.max(0.2, b.y1 - b.y0));
     }
-    if (s.frame || (s.kind && !s.leaf)) {
+    if (s.kind && !s.leaf) {
       ctx.strokeStyle = 'rgba(255,255,255,0.35)';
       ctx.lineWidth = 0.5;
       ctx.stroke();
       continue;
     }
+    if (s.frame) {
+      // A folder as the map paints it (review F1.2): its own fill where no
+      // rectangle covers it (J51, pass 0), under what is drawn in it — the
+      // server lists a folder before its contents — and its bands (pass 2.7)
+      // after every leaf, below. It showed the ground where the map shows the
+      // folder's colour, under a faint white line.
+      if (s.bg) { ctx.fillStyle = tmLeafFill(ctx, s.bg, b.y0, b.y1 - b.y0); ctx.fill(); }
+      if (s.bands) framed.push(s);
+      continue;
+    }
+    const w = b.x1 - b.x0, h = b.y1 - b.y0;
+    if (!s.kind && s.shows) {
+      // A staged block or a hollow cloud cell: the map clears it to its
+      // ground, so a folder's fill does not show through what is not there.
+      ctx.clearRect(b.x0, b.y0, w, h);
+      ctx.fillStyle = cssVar('--tm-canvas-bg') || '#111';
+      ctx.fill();
+    }
     // A rectangle is painted with the map's own leaf recipe — the opaque,
     // full-strength cushion (G01), as pass 1 eased it for the tile's label
     // (s.stops) — so the glass shows the colour the map shows; when the two
     // recipes differed the glass read bright green over an olive map (QA
-    // D39). Circles and Voronoi cells are opaque on the map too.
+    // D39). Circles and Voronoi cells are opaque on the map too; a hollow
+    // cloud cell is its faint wash over the ground, as on the map.
     ctx.fillStyle = s.n.freed ? 'rgba(120,120,130,0.35)'
       : s.kind ? `rgb(${base[0]},${base[1]},${base[2]})`
-      : tmLeafFill(ctx, s.stops || tmLeafStops(base, b.y1 - b.y0), b.y0, b.y1 - b.y0);
+      : s.shows ? `rgba(${base[0]},${base[1]},${base[2]},0.16)`
+      : tmLeafFill(ctx, s.stops || tmLeafStops(base, h), b.y0, h);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
-    ctx.lineWidth = 0.25;
-    ctx.stroke();
+    if (!s.kind && s.edge) {
+      // Its outline as the map draws it (pass 2.6): the shade of its own
+      // colour the map picked, one of the map's pixels inside its box, and
+      // the highlight along its top under a dark one.
+      ctx.strokeStyle = s.edge;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(b.x0 + 0.5, b.y0 + 0.5, w - 1, h - 1);
+      if (s.lit) {
+        ctx.strokeStyle = `rgba(255,255,255,${TM_LIT})`;
+        ctx.beginPath();
+        ctx.moveTo(b.x0 + 1, b.y0 + 1.5); ctx.lineTo(b.x1 - 1, b.y0 + 1.5);
+        ctx.stroke();
+      }
+    } else {
+      // A tile the map leaves without an outline (too small for one, or a
+      // cell) keeps a hairline of the glass, so the tiles it magnifies stay
+      // apart: on the rectangle map in a shade of its own colour that reaches
+      // TM_EDGE_MIN against it, as the map's outlines do (the owner's outline
+      // decision); a black hairline at 0.45 was lost on a dark tile.
+      const tone = s.kind ? null : tmTone(base, s.seen || s.shows || [base], TM_EDGE_MIN).rgb;
+      ctx.strokeStyle = tone ? `rgb(${tone[0]},${tone[1]},${tone[2]})` : 'rgba(0,0,0,0.45)';
+      ctx.lineWidth = 1 / LENS_SCALE;
+      ctx.stroke();
+    }
     labels.push({ n: s.n, b });
+  }
+  // Each folder's bands, deepest folder first, as pass 2.7 lays them.
+  for (const f of tmFramesDeepestFirst(framed)) {
+    for (const band of f.bands) {
+      ctx.fillStyle = band.rgb;
+      ctx.fillRect(band.x, band.y, band.w, band.h);
+    }
   }
   ctx.restore(); // out of the magnified transform, still inside the clip
 

@@ -138,16 +138,23 @@ test('D27: the centre disc shortens the folder name to the disc rather than sque
 const TILE = { name: 'clip.mov', path: '/r/a/b/c/clip.mov', size: 5e8, type: 'file', depth: 4, expanded: false, x: 10, y: 10, w: 30, h: 30 };
 const GREEN = [48, 209, 88];
 
+/** What the real drawTreemap needs from the page. */
+const MAP_NAMES = ['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'tmDiffWashes', 'tmWashesOver', 'tmSeenThrough', 'TM_DIFF_WASH', 'mix', 'containerListable',
+  // The outline rules the passes read (the owner's outline decision, 20 Oct 2026; J51).
+  'tmLeafEdged', 'TM_DENSE_PX', 'tmSnap', 'tmTone', 'TM_EDGE_MIN', 'TM_LIT', 'tmKidsOf', 'tmParentPath', 'tmFramesDeepestFirst',
+  'tmFrameBands', 'tmEdgeContent', 'tmTouches', 'TM_SIDES', 'TM_FRAME_MIN', 'TM_FRAME_W_TOP', 'TM_FRAME_W',
+  // The map's ground, which a band beside a hollow or staged cell is toned against (review F1.5).
+  'tmGroundRgb', 'tmCssRgba', 'tmOver'];
+
+/** What the real lensPaint needs from the page — the map's outline rules among them (review F1.2). */
+const LENS_NAMES = ['lensPaint', 'lensActive', 'lensShapes', 'LENS_SCALE', 'LENS_RADIUS', 'Canvas2D', 'mix', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'tmSeenThrough', 'TM_DIFF_WASH',
+  'tmTone', 'TM_EDGE_MIN', 'TM_LIT', 'tmFramesDeepestFirst'];
+
 /** The fillStyle the real drawTreemap gives `tile`'s rectangle, and the pixel rect it drew. */
 function mapFill(tile: typeof TILE = TILE, colour: number[] = GREEN) {
   const rec = recordingCtx();
   const state = { treemap: { nodes: [tile], hideCloud: false, rootSize: 1e9, history: { active: false }, pxRects: [] as any[] } };
-  const draw = load<() => void>(['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'tmDiffWashes', 'tmWashesOver', 'tmSeenThrough', 'TM_DIFF_WASH', 'mix', 'containerListable',
-    // The outline rules the passes read (the owner's outline decision, 20 Oct 2026; J51).
-    'tmLeafEdged', 'TM_DENSE_PX', 'tmSnap', 'tmTone', 'TM_EDGE_MIN', 'TM_LIT', 'tmKidsOf', 'tmParentPath', 'tmFramesDeepestFirst',
-    'tmFrameBands', 'tmEdgeContent', 'tmTouches', 'TM_SIDES', 'TM_FRAME_MIN', 'TM_FRAME_W_TOP', 'TM_FRAME_W',
-    // The map's ground, which a band beside a hollow or staged cell is toned against (review F1.5).
-    'tmGroundRgb', 'tmCssRgba', 'tmOver'], {
+  const draw = load<() => void>(MAP_NAMES, {
     $: () => ({ clientWidth: 120 }),
     treemapCanvasHeight: () => 100,
     window: { devicePixelRatio: 1 },
@@ -174,7 +181,7 @@ function mapFill(tile: typeof TILE = TILE, colour: number[] = GREEN) {
 function lensFill(pxRects: any[], colour: number[] = GREEN, at = { x: 25, y: 25 }) {
   const rec = recordingCtx();
   const paint = load<(ctx: unknown, w: number, h: number) => void>(
-    ['lensPaint', 'lensActive', 'lensShapes', 'LENS_SCALE', 'LENS_RADIUS', 'Canvas2D', 'mix', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'tmSeenThrough', 'TM_DIFF_WASH'], {
+    LENS_NAMES, {
       state: { lens: { held: true, pinned: false, at }, treemap: { pxRects, cells: [] } },
       isCells: () => false,
       cssVar: () => '#0b0b0f',
@@ -213,4 +220,129 @@ test('D39: a tile whose cushion eased for its label shows the same eased cushion
   const glass = lensFill(px, KEEP, { x: 40, y: 40 });
   assert.equal(typeof glass, 'object', `the lens fills with a gradient (${String(glass)})`);
   assert.deepEqual((glass as any).stops, (fill as any).stops, 'the glass paints the cushion the map painted');
+});
+
+/** The real drawTreemap's rectangles for `nodes`, each in its own colour, on a 100×100 map — what the lens redraws. */
+function mapRects(nodes: any[], colourOf: (n: any) => number[]) {
+  const state = { treemap: { nodes, hideCloud: false, rootSize: 1e9, history: { active: false }, pxRects: [] as any[] } };
+  load<() => void>(MAP_NAMES, {
+    $: () => ({ clientWidth: 120 }), treemapCanvasHeight: () => 100, window: { devicePixelRatio: 1 },
+    tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: recordingCtx().ctx,
+    cssVar: () => '#0b0b0f', state, tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {},
+    renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {}, cellRgb: colourOf, tmHatchPattern: () => null,
+    tmPreview: { on: false }, roundRect() {}, formatBytes: (n: number) => `${n} B`,
+  }, 'drawTreemap')();
+  return state.treemap.pxRects;
+}
+
+type LensOp = { kind: string; style?: unknown; lineWidth?: number; box: number[] | null; seg?: number[] };
+/** What the real lensPaint draws over `pxRects` with the cursor `at`, in order: each fill and stroke with its paint and the box it covered. */
+function lensOps(pxRects: any[], colourOf: (n: any) => number[], at = { x: 25, y: 25 }): LensOp[] {
+  const ops: LensOp[] = [];
+  const st: Record<string, any> = { fillStyle: '', strokeStyle: '', lineWidth: 1 };
+  let box: number[] | null = null;
+  let pen: number[] | null = null;
+  let segs: number[][] = [];
+  const props: Record<string, unknown> = {
+    measureText: (t: string) => ({ width: String(t).length * 6 }),
+    createLinearGradient: (...args: number[]) => {
+      const g: Grad = { kind: 'linear', args, stops: [] };
+      return Object.assign(g, { addColorStop: (o: number, c: string) => { g.stops.push([o, c]); } });
+    },
+    beginPath: () => { box = null; segs = []; pen = null; },
+    rect: (...a: number[]) => { box = a; },
+    moveTo: (x: number, y: number) => { pen = [x, y]; },
+    lineTo: (x: number, y: number) => { if (pen) segs.push([pen[0], pen[1], x, y]); pen = [x, y]; },
+    fill: () => { ops.push({ kind: 'fill', style: st.fillStyle, box }); },
+    stroke: () => {
+      ops.push({ kind: 'stroke', style: st.strokeStyle, lineWidth: st.lineWidth, box });
+      for (const seg of segs) ops.push({ kind: 'line', style: st.strokeStyle, lineWidth: st.lineWidth, box: null, seg });
+    },
+    fillRect: (...a: number[]) => { ops.push({ kind: 'fillRect', style: st.fillStyle, box: a }); },
+    strokeRect: (...a: number[]) => { ops.push({ kind: 'strokeRect', style: st.strokeStyle, lineWidth: st.lineWidth, box: a }); },
+    clearRect: (...a: number[]) => { ops.push({ kind: 'clearRect', box: a }); },
+  };
+  const ctx: any = new Proxy(props, {
+    get(t, k: string) { return k in t ? t[k] : k in st ? st[k] : () => {}; },
+    set(_t, k: string, v) { st[k] = v; return true; },
+  });
+  load<(ctx: unknown, w: number, h: number) => void>(LENS_NAMES, {
+    state: { lens: { held: true, pinned: false, at }, treemap: { pxRects, cells: [] } },
+    isCells: () => false, cssVar: () => '#0b0b0f', cellRgb: colourOf, altCellPath() {}, window: { devicePixelRatio: 1 },
+  }, 'lensPaint')(ctx, 120, 100);
+  return ops;
+}
+
+const lin = (v: number) => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+const lum = (c: number[]) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+const ratio = (a: number[], b: number[]) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+const rgbOf = (c: string) => (/rgba?\(([^)]*)\)/.exec(c)![1].split(',').slice(0, 3).map(Number));
+const near = (a: number[] | null, b: number[]) => !!a && a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 0.011);
+
+test('the lens redraws what the map now paints — a folder\'s own fill (J51), each leaf\'s toned outline and highlight, each folder\'s bands after its leaves — and a leaf too small for an outline keeps a hairline that reaches 3:1 against it (review F1.2)', () => {
+  // On a 100×100 map, all within the glass about the cursor at (25, 25): Mail, a folder with nothing over the
+  // floor; big.bin, a file with room for an outline; d, a folder tiled by two files too narrow for one (one a dark grey).
+  const nodes = [
+    { name: 'Mail', path: '/r/Mail', size: 3e7, type: 'dir', depth: 1, expanded: true, x: 13, y: 13, w: 12, h: 24 },
+    { name: 'big.bin', path: '/r/big.bin', size: 5e9, type: 'file', depth: 1, expanded: false, x: 25, y: 13, w: 12, h: 12 },
+    { name: 'd', path: '/r/d', size: 4e9, type: 'dir', depth: 1, expanded: true, x: 25, y: 25, w: 12, h: 12 },
+    { name: 't1', path: '/r/d/t1', size: 2e9, type: 'file', depth: 2, expanded: false, x: 25, y: 25, w: 6, h: 12 },
+    { name: 't2', path: '/r/d/t2', size: 2e9, type: 'file', depth: 2, expanded: false, x: 31, y: 25, w: 6, h: 12 },
+  ];
+  const colours: Record<string, number[]> = { '/r/Mail': [255, 69, 58], '/r/big.bin': [48, 209, 88], '/r/d': [10, 132, 255], '/r/d/t1': [58, 64, 72], '/r/d/t2': [255, 214, 10] };
+  const colourOf = (n: any) => colours[n.path];
+  const px = mapRects(nodes, colourOf);
+  const r = (path: string) => px.find((p: any) => p.n.path === path);
+  const mail = r('/r/Mail'), big = r('/r/big.bin'), d = r('/r/d'), t1 = r('/r/d/t1'), t2 = r('/r/d/t2');
+  assert.ok(mail.bg && big.edge && d.bands?.length && !t1.edge && !t2.edge, 'control: the map filled Mail, outlined big.bin, framed d, and left t1 and t2 without an outline of their own');
+  const ops = lensOps(px, colourOf);
+  // Mail: its own fill, the map's cushion, over its box — where the glass showed the ground.
+  const mailFill = ops.findIndex((op) => op.kind === 'fill' && near(op.box, [mail.x, mail.y, mail.w, mail.h]) && typeof op.style === 'object');
+  assert.notEqual(mailFill, -1, 'the glass fills Mail, a folder with nothing drawn in it, as the map does');
+  assert.deepEqual((ops[mailFill].style as Grad).stops.map(([, c]) => c), mail.bg.map((c: number[]) => `rgb(${c.join(',')})`), 'with the cushion the map recorded for it');
+  // big.bin: the map's outline, in its tone, 1 px of the map's (4 on the glass), inside its box; its highlight with it.
+  assert.ok(ops.some((op) => op.kind === 'strokeRect' && op.style === big.edge && op.lineWidth === 1 && near(op.box, [big.x + 0.5, big.y + 0.5, big.w - 1, big.h - 1])), `big.bin is outlined in the map's ${big.edge}`);
+  assert.equal(ops.some((op) => op.kind === 'line' && near(op.seg!, [big.x + 1, big.y + 1.5, big.x + big.w - 1, big.y + 1.5])), !!big.lit, `big.bin's highlight ${big.lit ? 'is' : 'is not'} drawn, as on the map`);
+  // Every band of every folder on the glass, in the map's colours, after every leaf.
+  const lastLeaf = Math.max(...[big, t1, t2].map((leaf) => ops.findIndex((op) => op.kind === 'fill' && near(op.box, [leaf.x, leaf.y, leaf.w, leaf.h]))));
+  assert.ok(lastLeaf > 0, 'control: the leaves are filled on the glass');
+  for (const f of [mail, d]) {
+    for (const b of f.bands) {
+      const at = ops.findIndex((op) => op.kind === 'fillRect' && op.style === b.rgb && near(op.box, [b.x, b.y, b.w, b.h]));
+      assert.ok(at > lastLeaf, `${f.n.path}: its band at ${b.x},${b.y} ${b.w}×${b.h} is laid in the map's ${b.rgb}, over the leaves`);
+    }
+  }
+  // t1 and t2: no outline on the map; on the glass a hairline in a shade that reaches 3:1 against the tile.
+  for (const t of [t1, t2]) {
+    const hair = ops.find((op) => op.kind === 'stroke' && near(op.box, [t.x, t.y, t.w, t.h]));
+    assert.ok(hair, `${t.n.path}: a hairline on the glass`);
+    assert.equal(hair!.lineWidth, 0.25, `${t.n.path}: one pixel of the glass (a quarter of the map's)`);
+    const worst = Math.min(...t.seen.map((c: number[]) => ratio(rgbOf(String(hair!.style)), c)));
+    assert.ok(worst >= 3, `${t.n.path}: its hairline (${hair!.style}) reaches 3:1 against the tile (${worst.toFixed(2)}:1)`);
+  }
+  assert.ok(lum(rgbOf(String(ops.find((op) => op.kind === 'stroke' && near(op.box, [t1.x, t1.y, t1.w, t1.h]))!.style))) > lum(colours['/r/d/t1']), 'on the dark grey tile the hairline is a lighter shade');
+  // The old faint lines are gone from the rectangle map's tiles (the glass's own rim is a ring, not a tile's box).
+  assert.deepEqual(ops.filter((op) => /^(stroke|strokeRect)$/.test(op.kind) && op.box && /^rgba\((255,255,255,0\.35|0,0,0,0\.45)\)$/.test(String(op.style))).map((op) => op.style), [], 'no white 0.35 frame line, no black 0.45 hairline');
+});
+
+test('the lens clears a staged block and a hollow online-only file to the map\'s ground, as the map does — the folder\'s own fill behind them never shows through on the glass (review F1.2)', () => {
+  const nodes = [
+    { name: 'F', path: '/r/F', size: 9e9, type: 'dir', depth: 1, expanded: true, x: 13, y: 13, w: 24, h: 24 },
+    { name: 'Staged', path: '/r/F — freed', parentPath: '/r/F', size: 2e9, type: 'dir', depth: 2, expanded: false, freed: true, x: 13, y: 13, w: 12, h: 12 },
+    { name: 'cloud.mov', path: '/r/F/cloud.mov', size: 2e9, type: 'file', depth: 2, expanded: false, cloudPlaceholder: true, x: 25, y: 13, w: 12, h: 12 },
+  ];
+  const colourOf = (n: any) => (n.path === '/r/F/cloud.mov' ? [255, 159, 10] : [10, 132, 255]);
+  const px = mapRects(nodes, colourOf);
+  const f = px.find((p: any) => p.n.path === '/r/F');
+  assert.ok(f.bg, 'control: the folder is filled where nothing covers it');
+  const ops = lensOps(px, colourOf);
+  const fFill = ops.findIndex((op) => op.kind === 'fill' && near(op.box, [f.x, f.y, f.w, f.h]));
+  for (const [path, own] of [['/r/F — freed', 'rgba(120,120,130,0.35)'], ['/r/F/cloud.mov', 'rgba(255,159,10,0.16)']] as const) {
+    const c = px.find((p: any) => p.n.path === path);
+    const box = [c.x, c.y, c.w, c.h];
+    const clear = ops.findIndex((op) => op.kind === 'clearRect' && near(op.box, box));
+    assert.ok(clear > fFill, `${path}: cleared on the glass after the folder's fill`);
+    assert.ok(ops[clear + 1]?.kind === 'fill' && ops[clear + 1].style === '#0b0b0f' && near(ops[clear + 1].box, box), `${path}: then laid with the map's ground`);
+    assert.ok(ops[clear + 2]?.kind === 'fill' && ops[clear + 2].style === own && near(ops[clear + 2].box, box), `${path}: then its own faint fill, ${own}`);
+  }
 });
