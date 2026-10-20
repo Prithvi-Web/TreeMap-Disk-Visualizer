@@ -516,9 +516,21 @@ export async function zombieHandles(): Promise<ZombieHandleInfo[]> {
   return (await zombieHandleScan()).handles;
 }
 
+/** Tests only (`setZombieScanPidsForTests`): the programs the held-space pass asks lsof about, or null for every one. */
+let zombieScanPidsForTests: readonly number[] | null = null;
+
+/**
+ * Tests only: the held-space pass asks lsof about `pids` alone (`-p`), so a live test counts what it planted
+ * and nothing other programs hold (the BQL-a review, F2.5); null asks about every program again.
+ */
+export function setZombieScanPidsForTests(pids: readonly number[] | null): void {
+  zombieScanPidsForTests = pids;
+}
+
 /** The same pass, with how many open files it could not decide (BQL item 11). */
 export async function zombieHandleScan(): Promise<ZombieHandleScan> {
-  const stdout = await runLsof(['-F', 'pcnfsi', '-w'], 30_000, 64 * 1024 * 1024);
+  const only = zombieScanPidsForTests ? ['-p', zombieScanPidsForTests.join(',')] : [];
+  const stdout = await runLsof(['-F', 'pcnfsi', '-w', ...only], 30_000, 64 * 1024 * 1024);
   return resolveZombieScan(parseLsofRecords(stdout), (p) => fsp.stat(p).then((st) => st.ino));
 }
 

@@ -492,7 +492,9 @@ test('the held-space probe counts the held files it could not decide — one who
 
 /* BQL item 12: a held file whose name holds a caret, decided by every spelling lsof's text could be. */
 
-test('lsofSpellings: every path lsof reads back as a text is among its spellings, and each spelling reads back as that text — every name of up to three characters from carets, letters, hex digits, backslashes and control bytes (BQL item 12)', () => {
+test('lsofSpellings: every path lsof reads back as a text is among its spellings — every name of up to three characters from carets, letters, hex digits, backslashes and control bytes — and the spellings of the texts listed are exactly those (BQL item 12; the BQL-a review, F2.7)', () => {
+  // Each spelling reading back as the text is the search's own last step, so asking it again here proved
+  // nothing (the BQL-a review, F2.7): the exact lists below are the check that no other spelling is offered.
   const chars = ['^', 'A', '1', 'x', 'b', '\\', '\x01', '\x1c', '\x08'];
   let names = [''];
   const all: string[] = [];
@@ -506,7 +508,6 @@ test('lsofSpellings: every path lsof reads back as a text is among its spellings
     const spellings = lsof.lsofSpellings(back);
     assert.ok(spellings, `${JSON.stringify(back)} has spellings`);
     assert.ok(spellings.includes(file), `${JSON.stringify(file)}, read back as ${JSON.stringify(back)}, is among ${JSON.stringify(spellings)}`);
-    for (const s of spellings) assert.equal(lsof.lsofReadBack(s), back, `${JSON.stringify(s)} reads back as ${JSON.stringify(back)}`);
   }
   assert.equal(all.length, 9 + 81 + 729);
   const sorted = (a: string[] | null) => (a ? [...a].sort() : a);
@@ -536,7 +537,6 @@ test('lsofSpellings: a name that ends in 0x1c — alone, or with the start of an
     const spellings = lsof.lsofSpellings(back);
     assert.ok(spellings, `${JSON.stringify(back)} has spellings`);
     assert.ok(spellings.includes(file), `${JSON.stringify(file)}, read back as ${JSON.stringify(back)}, is among ${JSON.stringify(spellings)}`);
-    for (const s of spellings) assert.equal(lsof.lsofReadBack(s), back, `${JSON.stringify(s)} reads back as ${JSON.stringify(back)}`);
   }
   const sorted = (a: string[] | null) => (a ? [...a].sort() : a);
   assert.deepEqual(sorted(lsof.lsofSpellings('/work/rep^\\')), ['/work/rep\x1c', '/work/rep^\\'], 'the 0x1c the text ends in, or a caret and a backslash');
@@ -1131,13 +1131,20 @@ test('B5: the macOS provider hands on the pass\'s count — a held file in a fol
   const target = path.join(locked, 'held.bin');
   await fsp.writeFile(target, Buffer.alloc(1000, 1));
   const fd = fs.openSync(target, 'r'); // held by this process, in place
+  // The pass asks lsof about this process alone (the BQL-a review, F2.5): over the whole machine about fifty
+  // files other programs hold, refused by macOS's privacy controls, were counted already, so "at least one"
+  // held before the file was planted and could not show it was counted.
+  lsof.setZombieScanPidsForTests([process.pid]);
   try {
+    const before = await platform().getZombieHandleScan();
+    assert.equal(before.undecided, 0, 'control: this process holds nothing undecided while its file can be looked at');
     await fsp.chmod(locked, 0o000); // what is at its path can no longer be looked at
     const scan = await platform().getZombieHandleScan();
-    assert.ok(scan.undecided >= 1, `the held file whose place cannot be looked at is counted (undecided: ${String(scan.undecided)})`);
-    assert.deepEqual(scan.handles.filter((h) => h.path.includes(path.basename(dir))), [], 'and never claimed deleted');
+    assert.equal(scan.undecided, 1, 'the held file whose place cannot be looked at is counted, and only it');
+    assert.deepEqual(scan.handles, [], 'and never claimed deleted');
     assert.equal(scan.unreadablePrograms, 0, 'lsof reads every program of the account it runs as (BQL-a review F1.4)');
   } finally {
+    lsof.setZombieScanPidsForTests(null);
     fs.closeSync(fd);
     await fsp.chmod(locked, 0o700).catch(() => undefined);
     await fsp.rm(dir, { recursive: true, force: true });
