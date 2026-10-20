@@ -410,12 +410,19 @@ const namesBelow = (mountPoint: string, p: string): number =>
  * volume — the firmlink is the way through, and the longer mount point (the
  * Data volume's) is the one. Two mounts at one mount point are stacked, and
  * the later in the table is the one on top, which the path reaches.
+ *
+ * Where the firmlinks cannot be read (the one-way fallback, dataVolumeAlias),
+ * a path under a firmlinked folder has no Data-volume spelling, so only the
+ * sealed root holds it — though /Users/me is on the writable Data volume. A
+ * path only the root's mount holds is then unknown, never "read-only" (review
+ * F1.6); one a drive is mounted along is still that drive's.
  */
 export async function mountedReadOnly(p: string, deps: BoundaryDeps = scanDeps()): Promise<boolean | null> {
   const table = await deps.readTable();
   if (table.entries === null) return null;
   const real = await deps.realpath(p).catch(() => p);
   const aliases = await deps.aliases().catch(() => (deps.platform === 'darwin' ? dataVolumeAlias : NO_ALIASES));
+  const firmlinksUnread = deps.platform === 'darwin' && aliases === dataVolumeAlias;
   let best: { entry: MountEntry; below: number } | null = null;
   for (const spelling of [real, ...aliases(real)]) {
     for (const entry of table.entries) {
@@ -427,6 +434,7 @@ export async function mountedReadOnly(p: string, deps: BoundaryDeps = scanDeps()
     }
   }
   if (!best) return null;
+  if (firmlinksUnread && best.entry.mountPoint === '/') return null;
   // macOS's `mount` says "read-only"; Linux's /proc/mounts says "ro".
   return best.entry.options.includes('read-only') || best.entry.options.includes('ro');
 }

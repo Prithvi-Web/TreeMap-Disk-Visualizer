@@ -18,7 +18,7 @@ import { AppError } from '../src/middleware/errorHandler';
 import type { ScanResult } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
-import { firmlinkAliases, mountedReadOnly, parseFirmlinks, setBoundaryDepsForTests, type BoundaryDeps } from '../src/utils/mountBoundaries';
+import { dataVolumeAlias, firmlinkAliases, mountedReadOnly, parseFirmlinks, setBoundaryDepsForTests, type BoundaryDeps } from '../src/utils/mountBoundaries';
 import { parseBsdMount, parseProcMounts } from '../src/platform/atime';
 
 /**
@@ -168,14 +168,21 @@ const MAC_MOUNT = [
 ].join('\n');
 const MAC_FIRMLINKS = ['/Applications\tApplications', '/Library\tLibrary', '/Users\tUsers', '/Volumes\tVolumes', '/private\tprivate', '/usr/local\tusr/local'].join('\n');
 
-/** Boundary deps answering from `table` (null: unreadable) and `aliases`, every path being where it is spelled. */
-function tableDeps(table: string | null, parse: (t: string) => ReturnType<typeof parseBsdMount>, aliases = '', platform: NodeJS.Platform = 'darwin'): Partial<BoundaryDeps> {
+/**
+ * Boundary deps answering from `table` (null: unreadable) and `aliases` (firmlinks as the file spells them),
+ * every path being where it is spelled but for `links`: a link's path and where it leads (review F1.10).
+ */
+function tableDeps(table: string | null, parse: (t: string) => ReturnType<typeof parseBsdMount>, aliases = '', platform: NodeJS.Platform = 'darwin',
+  links: Record<string, string> = {}): Partial<BoundaryDeps> {
   return {
     platform,
     readTable: async () => (table === null
       ? { source: 'mount' as const, entries: null, reason: 'mount: stand-in failure' }
       : { source: 'mount' as const, entries: parse(table), reason: null }),
-    realpath: async (p: string) => p,
+    realpath: async (p: string) => {
+      for (const [link, to] of Object.entries(links)) if (p === link || p.startsWith(`${link}/`)) return to + p.slice(link.length);
+      return p;
+    },
     aliases: async () => (aliases ? firmlinkAliases(parseFirmlinks(aliases)) : () => []),
   };
 }
@@ -216,6 +223,38 @@ test('mountedReadOnly reads the drive a path is on from the mount table: the dee
   assert.equal(await mountedReadOnly('/home/me', partial), null, 'a table that names no mount holding the path is unknown too, never "writable"');
 });
 
+test('mountedReadOnly follows a destination\'s links to the drive it is really on — into a read-only volume, out of one — and a link it cannot follow is judged as spelled (review F1.10)', async () => {
+  const links = {
+    '/Users/me/sim': '/Library/Developer/CoreSimulator/Volumes/iOS_22E238', // a home-folder link into QA's sealed simulator volume
+    '/Volumes/Archive/out': '/Users/me/elsewhere',                       // a link on the read-only drive, leading off it
+  };
+  const mac = tableDeps(MAC_MOUNT, parseBsdMount, MAC_FIRMLINKS, 'darwin', links) as BoundaryDeps;
+  assert.equal(await mountedReadOnly('/Users/me/sim/Library/Developer', mac), true, 'a link into a read-only volume: read-only, where its own spelling is on the writable Data volume');
+  assert.equal(await mountedReadOnly('/Volumes/Archive/out/2026', mac), false, 'a link out of a read-only drive onto the Data volume: writable, where its own spelling is on the read-only drive');
+  assert.equal(await mountedReadOnly('/Users/me/sim', mac), true, 'the link itself: the volume it leads to');
+  // A realpath that fails (the folder is gone, or will not answer): the path as typed, never a throw.
+  const broken = { ...mac, realpath: async () => { throw Object.assign(new Error('ENOENT: stand-in'), { code: 'ENOENT' }); } } as BoundaryDeps;
+  assert.equal(await mountedReadOnly('/Volumes/Archive/missing', broken).catch((e: Error) => `threw ${e.message}`), true, 'a path realpath cannot follow is judged as typed: on the read-only drive');
+  assert.equal(await mountedReadOnly('/Users/me/missing', broken).catch((e: Error) => `threw ${e.message}`), false, 'and one typed under /Users is on the Data volume, through the firmlinks');
+});
+
+test('where the firmlinks cannot be read, a folder that only the sealed root\'s mount holds is unknown, never called read-only — a home folder reaches the writable Data volume through a firmlink the table cannot show (review F1.6)', async () => {
+  const oneWay = { ...(tableDeps(MAC_MOUNT, parseBsdMount) as BoundaryDeps), aliases: async () => dataVolumeAlias };
+  const failing = { ...oneWay, aliases: async () => { throw new Error('firmlinks: stand-in failure'); } };
+  for (const [what, deps] of [['the one-way fallback', oneWay], ['an aliases call that fails', failing]] as const) {
+    for (const [p, want] of [
+      ['/Users/me/Offload', null],          // on the Data volume through /Users — the table cannot say
+      ['/System/Library/Frameworks', null], // truly on the sealed root — but nothing tells the two apart
+      ['/Library/Developer/CoreSimulator/Volumes/iOS_22E238/Library', true], // its own read-only mount, along its path
+      ['/Volumes/Archive/old', true],       // a read-only drive mounted along its path
+      ['/Volumes/Backup/2026', false],      // a writable one
+      ['/System/Volumes/Data/Users/me', false], // the Data volume in its own spelling
+    ] as const) {
+      assert.equal(await mountedReadOnly(p, deps), want, `${what}, ${p}: ${want === null ? 'unknown' : want ? 'read-only' : 'writable'}`);
+    }
+  }
+});
+
 test('a destination on a drive mounted read-only is refused as read-only even where the write check answers "permission denied" first, as macOS does for a root-owned folder on a sealed volume (J54)', {
   skip: process.platform === 'win32' && 'Windows keeps a folder\'s write permission in an ACL fs.access does not read, so the check is not made there',
 }, async () => {
@@ -228,8 +267,8 @@ test('a destination on a drive mounted read-only is refused as read-only even wh
     if (path.resolve(String(p)) === dest) throw Object.assign(new Error('EACCES: stand-in'), { code: 'EACCES' });
     return realAccess(p, mode);
   }) as typeof fs.promises.access;
-  const refusal = async (table: string | null): Promise<string> => {
-    setBoundaryDepsForTests(tableDeps(table, parseBsdMount));
+  const refusal = async (table: string | null, aliases?: typeof dataVolumeAlias): Promise<string> => {
+    setBoundaryDepsForTests(aliases ? { ...tableDeps(table, parseBsdMount), aliases: async () => aliases } : tableDeps(table, parseBsdMount));
     try {
       let message = '';
       await assert.rejects(withOpenFileCheck('clear', () => prepareOffload(scan, [proj], dest)), (e: unknown) => {
@@ -252,6 +291,11 @@ test('a destination on a drive mounted read-only is refused as read-only even wh
     assert.match(writable, /: you do not have permission to add files to it\./, `control: on a writable drive it is permission (${writable})`);
     const unknown = await refusal(null);
     assert.match(unknown, /: you do not have permission to add files to it\./, `a table that cannot be read leaves the write check's own answer (${unknown})`);
+    // A Mac whose firmlinks cannot be read, the destination held only by the sealed root's mount (review F1.6):
+    // it may be on the Data volume, so it is not called read-only.
+    const noFirmlinks = await refusal('/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\n/dev/disk3s5 on /System/Volumes/Data (apfs, local, journaled, nobrowse, protect, root data)', dataVolumeAlias);
+    assert.match(noFirmlinks, /: you do not have permission to add files to it\./, `without the firmlinks, the sealed root does not make it read-only (${noFirmlinks})`);
+    assert.doesNotMatch(noFirmlinks, /read-only/, 'and the refusal does not say so');
   } finally {
     fs.promises.access = realAccess;
   }
