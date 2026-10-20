@@ -223,8 +223,8 @@ test('D39: a tile whose cushion eased for its label shows the same eased cushion
 });
 
 /** The real drawTreemap's rectangles for `nodes`, each in its own colour, on a 100×100 map — what the lens redraws. */
-function mapRects(nodes: any[], colourOf: (n: any) => number[]) {
-  const state = { treemap: { nodes, hideCloud: false, rootSize: 1e9, history: { active: false }, pxRects: [] as any[] } };
+function mapRects(nodes: any[], colourOf: (n: any) => number[], hideCloud = false) {
+  const state = { treemap: { nodes, hideCloud, rootSize: 1e9, history: { active: false }, pxRects: [] as any[] } };
   load<() => void>(MAP_NAMES, {
     $: () => ({ clientWidth: 120 }), treemapCanvasHeight: () => 100, window: { devicePixelRatio: 1 },
     tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: recordingCtx().ctx,
@@ -345,4 +345,28 @@ test('the lens clears a staged block and a hollow online-only file to the map\'s
     assert.ok(ops[clear + 1]?.kind === 'fill' && ops[clear + 1].style === '#0b0b0f' && near(ops[clear + 1].box, box), `${path}: then laid with the map's ground`);
     assert.ok(ops[clear + 2]?.kind === 'fill' && ops[clear + 2].style === own && near(ops[clear + 2].box, box), `${path}: then its own faint fill, ${own}`);
   }
+});
+
+test('the lens lays the map\'s ground over a folder an online-only file is hidden in, inside a folder with its own fill — after that fill, before what is drawn in the folder — as the map does; it showed the fill of the folder above where the hidden file would be (review F2.1)', () => {
+  // On a 100×100 map, within the glass about the cursor at (25, 25): F, whose right half holds only files under
+  // the floor (so it is filled), and in its left half Synced, holding here.bin and an online-only file, hidden.
+  const nodes = [
+    { name: 'F', path: '/r/F', size: 3e10, type: 'dir', depth: 1, expanded: true, x: 13, y: 13, w: 24, h: 24 },
+    { name: 'Synced', path: '/r/F/Synced', size: 2e10, type: 'dir', depth: 2, expanded: true, x: 13, y: 13, w: 12, h: 24 },
+    { name: 'here.bin', path: '/r/F/Synced/here.bin', size: 5e9, type: 'file', depth: 3, expanded: false, x: 13, y: 13, w: 6, h: 24 },
+    { name: 'away.mov', path: '/r/F/Synced/away.mov', size: 5e9, type: 'file', depth: 3, expanded: false, cloudPlaceholder: true, x: 19, y: 13, w: 6, h: 24 },
+  ];
+  const colourOf = (n: any) => (n.type === 'dir' ? [255, 69, 58] : [10, 132, 255]);
+  const px = mapRects(nodes, colourOf, true);
+  const r = (path: string) => px.find((p: any) => p.n.path === path);
+  const f = r('/r/F'), synced = r('/r/F/Synced'), here = r('/r/F/Synced/here.bin');
+  assert.ok(f.bg && !synced.bg && px.length === 3, 'control: F is filled, Synced is not, and the online-only file is hidden');
+  const ops = lensOps(px, colourOf);
+  const fFill = ops.findIndex((op) => op.kind === 'fill' && near(op.box, [f.x, f.y, f.w, f.h]) && typeof op.style === 'object');
+  const hereFill = ops.findIndex((op) => op.kind === 'fill' && near(op.box, [here.x, here.y, here.w, here.h]));
+  assert.ok(fFill >= 0 && hereFill > fFill, 'control: F\'s own fill, then here.bin, on the glass');
+  const box = [synced.x, synced.y, synced.w, synced.h];
+  const clear = ops.findIndex((op) => op.kind === 'clearRect' && near(op.box, box));
+  assert.ok(clear > fFill && clear < hereFill, `Synced's box is cleared on the glass after F's fill and before here.bin (${fFill} < ${clear} < ${hereFill})`);
+  assert.ok(ops[clear + 1]?.kind === 'fill' && ops[clear + 1].style === '#0b0b0f' && near(ops[clear + 1].box, box), 'then laid with the map\'s ground');
 });

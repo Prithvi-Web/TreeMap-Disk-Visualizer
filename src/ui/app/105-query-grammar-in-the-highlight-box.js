@@ -1182,8 +1182,11 @@ function exportTreemapSVG() {
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" font-family="-apple-system, 'Segoe UI', Helvetica, sans-serif">`,
     `<rect width="${w}" height="${h}" fill="${ground}"/>`,
   ];
-  // A folder's own fill where no rectangle covers it (J51), under its contents.
+  // A folder's own fill where no rectangle covers it (J51), under its contents;
+  // and the ground over a folder an online-only file is hidden in, as the
+  // canvas clears it — a folder above it may have laid its fill there (F2.1).
   for (const [i, r] of state.treemap.pxRects.entries()) {
+    if (r.frame && r.showsGround) { parts.push(`<rect ${at(r.x, r.y, r.w, r.h)} fill="${ground}"/>`); continue; }
     if (!r.frame || !r.bg) continue;
     cushion(`tm-f${i}`, r.bg, r);
     parts.push(`<rect ${at(r.x, r.y, r.w, r.h)} fill="url(#tm-f${i})"/>`);

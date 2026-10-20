@@ -1148,7 +1148,11 @@ function drawTreemap() {
   // files under the map's size floor, or past the server's cap. Laid in the
   // server's breadth-first order, so a folder's fill lies under its contents.
   // Not in a folder an online-only file is hidden in: its bytes are not on
-  // this disk, and the folder's colour there would claim the space.
+  // this disk, and the folder's colour there would claim the space. Its box
+  // is cleared to the map's ground instead (r.showsGround), as pass 1 clears a
+  // staged or hollow cell: a folder above it with a fill of its own laid that
+  // fill over its whole box, which showed where the hidden file would be
+  // (review F2.1). What is drawn in it is laid after, over the ground.
   const ground = tmGroundRgb();
   for (const r of px) {
     if (!r.frame) continue;
@@ -1157,7 +1161,13 @@ function drawTreemap() {
     // where the ground shows (review F1.5).
     r.ownRgb = cellRgb(r.n);
     r.groundSeen = tmSeenThrough([ground], tmWashesOver(r, washes));
-    if (cloudHiddenIn.has(r.n.path)) continue;
+    if (cloudHiddenIn.has(r.n.path)) {
+      r.showsGround = true;
+      ctx.clearRect(r.x, r.y, r.w, r.h);
+      ctx.fillStyle = cssVar('--tm-canvas-bg');
+      ctx.fillRect(r.x, r.y, r.w, r.h); // the ground, as the map's first fill laid it
+      continue;
+    }
     let covered = 0;
     for (const c of kids.get(r.n.path) || []) covered += c.w * c.h;
     if (covered >= r.w * r.h - 0.5) continue; // its contents tile it: none of it shows
@@ -1463,9 +1473,12 @@ function renderSearchOverlay() {
   // F1.1). Laid over the folder's box, shallowest folder first, then cleared
   // over what is drawn in it — which is dimmed below, leaf by leaf, or is a
   // folder of its own — so no pixel is dimmed twice. A folder that matches
-  // keeps its fill bright, and its band is dimmed with what it lies on.
+  // keeps its fill bright, and its band is dimmed with what it lies on. The
+  // ground a folder shows where an online-only file is hidden in it
+  // (r.showsGround) is dimmed the same way: it was left undimmed, cleared from
+  // the scrim of the folder above (review F2.1).
   const kids = tmKidsOf(state.treemap.pxRects);
-  const fills = state.treemap.pxRects.filter((r) => r.frame && r.bg).sort((a, b) => a.n.depth - b.n.depth);
+  const fills = state.treemap.pxRects.filter((r) => r.frame && (r.bg || r.showsGround)).sort((a, b) => a.n.depth - b.n.depth);
   for (const r of fills) {
     if (isMatch(r.n)) continue;
     ctx.fillStyle = scrim;

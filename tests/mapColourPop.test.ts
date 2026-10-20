@@ -843,8 +843,8 @@ test('G09: the History diff\'s wash is laid only while the diff is on — Histor
  * 2.87:1 (review F1.3, F1.9). The real exportTreemapSVG runs here over the
  * pxRects the real drawTreemap left, and its SVG is read back.
  */
-function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string, history = { active: false, diff: false }, palette?: Record<string, string>) {
-  const state = { treemap: { nodes: tiles, hideCloud: false, rootSize: 1e12, history, pxRects: [] as any[],
+function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string, history = { active: false, diff: false }, palette?: Record<string, string>, hideCloud = false) {
+  const state = { treemap: { nodes: tiles, hideCloud, rootSize: 1e12, history, pxRects: [] as any[],
     colorMode: 'size', mode: 'treemap', query: '', rootName: 'r' } };
   const rec = recordingCtx();
   const common = {
@@ -1795,6 +1795,88 @@ test('J51 under a search: a folder\'s own fill is dimmed with everything else th
     assert.equal(inbox.at(...where('/c/Mail/INBOX', 0.5, 0.5)), 0, `${theme}, "inbox": the matching folder's own fill is not dimmed`);
     assert.ok(Math.abs(inbox.at(...where('/c/Mail', 0.85, 0.5)) - scrimAlpha) < 1e-6, `${theme}, "inbox": the folder around it is dimmed where its own fill shows`);
     assert.ok(inbox.max() < scrimAlpha + 1e-6, `${theme}, "inbox": no pixel is dimmed twice over`);
+  }
+});
+
+/* ── A folder an online-only file is hidden in, inside a folder with its own fill (review F2.1) ── */
+
+/**
+ * /f, a top-level folder whose right half holds only files under the floor, so it is filled (J51); in its
+ * left half /f/Synced, holding a file that is drawn and an online-only file — hidden while hideCloud is on,
+ * so nothing is drawn over the right half of /f/Synced. On a 200×200 map: /f 0–200, /f/Synced 0–100,
+ * here.bin 0–50, and where away.mov would be, 50–100.
+ */
+function cloudInFilledFolder(): Tile[] {
+  return [
+    { name: 'F', path: '/f', size: 3e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 100, h: 100 },
+    { name: 'Synced', path: '/f/Synced', size: 2e10, type: 'dir', depth: 2, expanded: true, x: 0, y: 0, w: 50, h: 100 },
+    { name: 'here.bin', path: '/f/Synced/here.bin', size: 5e9, type: 'file', depth: 3, expanded: false, x: 0, y: 0, w: 25, h: 100 },
+    { name: 'away.mov', path: '/f/Synced/away.mov', size: 5e9, type: 'file', depth: 3, expanded: false, x: 25, y: 0, w: 25, h: 100, cloudPlaceholder: true } as Tile,
+  ];
+}
+const inHiddenCloud = (x: number, y: number) => x >= 50 && x < 100 && y >= 0 && y < 200;
+
+test('J51 with online-only files hidden: a folder an online-only file is hidden in shows the map\'s ground where that file would be, even inside a folder with its own fill — never the fill of the folder above — and every band beside it reaches 3:1 against that ground, in both themes (review F2.1)', () => {
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const ground = canvasGround(palette);
+    const { raster, px } = rasterPaint(cloudInFilledFolder(), palette, 200, 200, undefined, undefined, true);
+    const f = px.find((r) => r.n.path === '/f')!, synced = px.find((r) => r.n.path === '/f/Synced')!;
+    assert.deepEqual(px.map((r) => r.n.path), ['/f', '/f/Synced', '/f/Synced/here.bin'], `${theme}: control — the online-only file is hidden`);
+    assert.ok(f.bg, `${theme}: control — /f, half of it in files under the floor, is filled`);
+    const fShown = raster.at(150, 100), fWant = lerp(f.bg![0], f.bg![1], 100.5 / 200);
+    assert.ok(contrast(fShown, fWant) < 1.05, `${theme}: control — /f's own cushion shows in its right half (${fShown.map(Math.round)}, want ${fWant.map(Math.round)})`);
+    assert.equal(synced.bg, undefined, `${theme}: /f/Synced is not filled where its online-only file is hidden`);
+    // Where the hidden file would be, clear of every band: the map's ground — not /f's fill, which would claim
+    // the hidden file's bytes in /f's colour.
+    for (const [x, y] of [[75, 100], [75, 20], [60, 180], [94, 100]] as const) {
+      const shown = raster.at(x, y);
+      assert.ok(contrast(shown, ground) < 1.01, `${theme}: the map's ground shows at ${x},${y}, where /f/Synced's online-only file is hidden (${shown.map(Math.round)}; the ground ${ground.map(Math.round)}, /f's fill there ${lerp(f.bg![0], f.bg![1], (y + 0.5) / 200).map(Math.round)})`);
+    }
+    // Every band beside that ground — /f/Synced's own, and /f's over it along their shared top and bottom.
+    const m = measureEdges(raster, px);
+    const beside = m.edges.filter((e) => e.kind === 'frame' && inHiddenCloud(...e.tile));
+    assert.ok(beside.length > 100, `${theme}: control — ${beside.length} places where a band meets that ground were measured`);
+    const weak = beside.map((e) => ({ e, c: contrast(raster.at(...e.line), raster.at(...e.tile)) })).filter(({ c }) => c < EDGE_BAR);
+    assert.deepEqual(weak.slice(0, 6).map(({ e, c }) => `${e.what}: ${fmt(c)}:1 (${raster.at(...e.line).map(Math.round)} on ${raster.at(...e.tile).map(Math.round)})`), [],
+      `${theme}: every band reaches ${EDGE_BAR}:1 against what shows beside it (${weak.length} places under)`);
+    assert.deepEqual(m.under, [], `${theme}: and every other line on the map`);
+  }
+});
+
+test('J51 with online-only files hidden: the SVG export lays the map\'s ground over a folder an online-only file is hidden in, inside a folder with its own fill — after that fill, before what is drawn in the folder — as the canvas does (review F2.1)', () => {
+  const { svg, px } = exportSvg(cloudInFilledFolder(), (n) => ramp.sizeRgb(n.size), '#0e0e13', undefined, undefined, true);
+  const painted = px as Painted[];
+  const r = (path: string) => painted.find((p) => p.n.path === path)!;
+  const f = r('/f'), synced = r('/f/Synced'), here = r('/f/Synced/here.bin');
+  assert.ok(f.bg && !synced.bg && painted.length === 3, 'control: /f is filled, /f/Synced is not, and the online-only file is hidden');
+  const rects = [...svg.matchAll(/<rect ([^>]*?)\/?>/g)].map((m) => ({ a: attrs(m[1]), at: m.index! }));
+  const close = (a: Record<string, string>, box: number[]) => ['x', 'y', 'width', 'height'].every((k, i) => Math.abs(Number(a[k]) - box[i]) < 0.011);
+  const fFill = rects.find(({ a }) => /^url\(#tm-f/.test(a.fill ?? '') && close(a, [f.x, f.y, f.w, f.h]));
+  assert.ok(fFill, 'control: /f\'s own fill is in the SVG');
+  const hereFill = rects.find(({ a }) => /^url\(#tm-c/.test(a.fill ?? '') && close(a, [here.x, here.y, here.w, here.h]));
+  assert.ok(hereFill, 'control: here.bin is in the SVG');
+  const ground = rects.find(({ a }) => a.fill === '#0e0e13' && a.stroke === undefined && close(a, [synced.x, synced.y, synced.w, synced.h]));
+  assert.ok(ground, '/f/Synced\'s box is laid with the map\'s ground, where its online-only file is hidden');
+  assert.ok(fFill!.at < ground!.at && ground!.at < hereFill!.at, `the ground is laid after /f's fill and before here.bin (${fFill!.at} < ${ground!.at} < ${hereFill!.at})`);
+});
+
+test('J51 with online-only files hidden, under a search: the ground a folder shows where its online-only file is hidden is dimmed with everything else that does not match — not left at the strength of the fill above it — and dimmed once; a folder that matches keeps it undimmed (review F2.1)', () => {
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const { px } = rasterPaint(cloudInFilledFolder(), palette, 200, 200, undefined, undefined, true);
+    const scrimAlpha = theme === 'dark' ? 0.78 : 0.82;
+    const none = searchScrim(px, 200, 200, 'zzz-nothing', theme);
+    assert.ok(Math.abs(none.at(150, 100) - scrimAlpha) < 1e-6, `${theme}: control — /f's own fill is dimmed`);
+    for (const [x, y] of [[75, 100], [60, 180]] as const) {
+      assert.ok(Math.abs(none.at(x, y) - scrimAlpha) < 1e-6, `${theme}, "zzz-nothing": where /f/Synced's online-only file is hidden is dimmed (scrim ${none.at(x, y).toFixed(2)} at ${x},${y}, want ${scrimAlpha})`);
+    }
+    assert.ok(none.max() < scrimAlpha + 1e-6, `${theme}, "zzz-nothing": no pixel is dimmed twice over (deepest scrim ${none.max().toFixed(3)})`);
+    const here = searchScrim(px, 200, 200, 'here', theme);
+    assert.equal(here.at(25, 100), 0, `${theme}, "here": the match is not dimmed`);
+    assert.ok(Math.abs(here.at(75, 100) - scrimAlpha) < 1e-6, `${theme}, "here": the ground beside it, where the online-only file is hidden, is dimmed`);
+    const synced = searchScrim(px, 200, 200, 'synced', theme);
+    assert.equal(synced.at(75, 100), 0, `${theme}, "synced": the folder that matches keeps the ground in it undimmed`);
+    assert.ok(Math.abs(synced.at(150, 100) - scrimAlpha) < 1e-6, `${theme}, "synced": the folder around it is dimmed where its own fill shows`);
+    assert.ok(synced.max() < scrimAlpha + 1e-6, `${theme}, "synced": no pixel is dimmed twice over`);
   }
 });
 

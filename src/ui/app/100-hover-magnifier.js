@@ -105,7 +105,14 @@ function lensPaint(ctx, cssW, cssH) {
       // rectangle covers it (J51, pass 0), under what is drawn in it — the
       // server lists a folder before its contents — and its bands (pass 2.7)
       // after every leaf, below. It showed the ground where the map shows the
-      // folder's colour, under a faint white line.
+      // folder's colour, under a faint white line. A folder an online-only
+      // file is hidden in is cleared to the ground, as the map clears it: the
+      // fill of a folder above it does not show there (review F2.1).
+      if (s.showsGround) {
+        ctx.clearRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
+        ctx.fillStyle = cssVar('--tm-canvas-bg') || '#111';
+        ctx.fill();
+      }
       if (s.bg) { ctx.fillStyle = tmLeafFill(ctx, s.bg, b.y0, b.y1 - b.y0); ctx.fill(); }
       if (s.bands) framed.push(s);
       continue;
