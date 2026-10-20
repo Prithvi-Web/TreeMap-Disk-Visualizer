@@ -118,7 +118,11 @@ TreeMap's only destructive action is *move to Trash*. Some of the biggest
 things on a disk must not be moved to the Trash — the file **is** the data, or
 the OS owns it. Those get `action: "advice"`: the group is listed with its size
 so the space is visible, but with no checkboxes, and with `adviceCommand`
-showing the supported way to reclaim it.
+showing the supported way to reclaim it. Windows' Temp folder for the account
+(`%LOCALAPPDATA%\Temp`) is one: running programs keep files in it, and
+programs write there expecting the folder itself to exist, so it is no
+"Developer cache" to move to the Recycle Bin whole; Windows' Storage settings
+clear what nothing is using.
 
 ## Deliberately absent
 

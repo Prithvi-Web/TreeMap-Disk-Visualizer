@@ -8,7 +8,7 @@ isolatedDataDir('treemap-autopilotAdvisory-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { approvePolicyForTests, listPolicies, runPolicy, savePolicies, selectCandidates, simulatePolicy } from '../src/services/autopilot';
-import { loadRuleCatalog } from '../src/services/rulePacks';
+import { loadRuleCatalog, loadRuleCatalogFrom } from '../src/services/rulePacks';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { readJsonFile, writeJsonFile } from '../src/services/storage';
 import { AppError } from '../src/middleware/errorHandler';
@@ -120,6 +120,44 @@ test('every kind the policy editor offers is a rule the packs ship on every plat
     const tree = node(path.dirname(path.dirname(at)), path.basename(path.dirname(at)), [node(path.dirname(at), path.basename(at), [node(at, 'data.bin')])]);
     assert.deepEqual(selectCandidates(collectCleanupSuggestions(tree, []), [], all).map((c) => c.path), [at], `${id}: a policy of every box selects ${at}`);
   }
+});
+
+/**
+ * A tool each Developer caches place belongs to, as its path names it: the box says "Package-manager and
+ * tool caches, and Xcode's on a Mac". A place that names none - Windows' whole Temp folder did - is no
+ * such cache, and a policy of that box would trash it with the box's words as its reason.
+ */
+const DEV_CACHE_TOOLS: Record<string, RegExp> = {
+  macos: /\/(npm|yarn|pip|homebrew|\.m2|\.cargo|\.gradle|xcode|coresimulator)(\/|$)|\/\.npm\//i,
+  linux: /\/(npm|yarn|pip|\.m2|\.cargo|\.gradle)(\/|$)|\/\.npm\//i,
+  windows: /\/(npm-cache|yarn|pip|nuget|\.m2|\.cargo)(\/|$)/i,
+};
+
+test('the Developer caches box says what its rule names on every platform: package-manager and tool caches, never Windows\' Temp folder, which is advice only (BQL-b1 review F3.2)', () => {
+  const hint = lift<Array<{ id: string; hint: string }>>(['AP_GROUPS'], 'AP_GROUPS').find((g) => g.id === 'dev-caches')?.hint ?? '';
+  assert.match(hint, /^Package-manager and tool caches, and Xcode's on a Mac/, 'the box\'s words, which every place below must bear out');
+  const packs = path.join(__dirname, '..', 'src', 'services', 'rulepacks');
+  for (const platform of ['macos', 'linux', 'windows']) {
+    const rules: Array<{ id: string; paths?: string[]; action?: string }> = JSON.parse(fs.readFileSync(path.join(packs, `${platform}.json`), 'utf8')).rules;
+    const places = rules.find((r) => r.id === 'dev-caches')?.paths ?? [];
+    assert.ok(places.length > 0, `${platform}: the packs name Developer caches places`);
+    for (const place of places) {
+      assert.match(place, DEV_CACHE_TOOLS[platform], `${platform}: ${place} is a package manager's or a tool's cache, as the box says`);
+      if (platform !== 'macos') assert.doesNotMatch(place, /xcode|coresimulator/i, `${platform}: Xcode's caches only on a Mac, as the box says`);
+    }
+    assert.ok(places.every((p) => !/\/te?mp$/i.test(p)), `${platform}: no temporary folder is a Developer cache: ${places.join(', ')}`);
+  }
+  // Windows' Temp folder, through the walk and the evaluator a run uses: shown, advice only, never selected.
+  const catalog = loadRuleCatalogFrom(packs, 'win32');
+  const temp = catalog.location.find((r) => r.paths.some((p) => /[\\/]AppData[\\/]Local[\\/]Temp$/i.test(p)));
+  assert.ok(temp, 'the Windows pack still shows the Temp folder');
+  assert.equal(temp.action, 'advice', `its rule (${temp.id}) only advises`);
+  assert.match(temp.adviceCommand ?? '', /Settings ▸ System ▸ Storage ▸ Temporary files/, 'and says where Windows clears it');
+  const at = temp.paths.find((p) => /Temp$/.test(p))!;
+  const tree = node(path.dirname(path.dirname(at)), path.basename(path.dirname(at)), [node(path.dirname(at), path.basename(at), [node(at, 'installer-extract.tmp')])]);
+  const groups = collectCleanupSuggestions(tree, [], catalog);
+  assert.deepEqual(groups.filter((g) => g.items.some((i) => i.path === at)).map((g) => [g.id, g.advisory === true]), [[temp.id, true]], 'it is offered by its advice-only rule alone');
+  assert.deepEqual(selectCandidates(groups, [], { kind: 'suggestion', groupIds: ['dev-caches', temp.id] }), [], 'no policy selects it');
 });
 
 const LIGHTROOM = process.platform === 'darwin' || process.platform === 'win32' ? false : 'the Lightroom rules are for macOS and Windows';

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "pack": "windows",
-  "updated": "2026-07-28",
+  "updated": "2026-10-20",
   "rules": [
     {
       "id": "browser-caches",
@@ -29,9 +29,19 @@
         "{localAppData}/pip/cache",
         "{localAppData}/NuGet/Cache",
         "{home}/.m2/repository",
-        "{home}/.cargo/registry",
-        "{localAppData}/Temp"
+        "{home}/.cargo/registry"
       ]
+    },
+    {
+      "id": "windows-temp",
+      "kind": "location",
+      "title": "Temporary files",
+      "description": "Windows' Temp folder for your account. Programs that are running keep files in it, and programs write there expecting the folder itself to exist, so TreeMap never moves it to the Recycle Bin — let Windows clear what nothing is using.",
+      "category": "junk",
+      "confidence": "high",
+      "action": "advice",
+      "adviceCommand": "Settings ▸ System ▸ Storage ▸ Temporary files",
+      "paths": ["{localAppData}/Temp"]
     },
     {
       "id": "windows-old",
