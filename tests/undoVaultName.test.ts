@@ -32,12 +32,31 @@ const read = (rel: string): string => readFileSync(path.join(ROOT, rel), 'utf8')
 /**
  * The old name in any case, singular or plural, however it is split: a space,
  * a hyphen, any HTML entity (a no-break or thin space written as `&#160;`,
- * `&#x20;`, `&thinsp;`…), a line break, a comment marker that wrapped it
- * ("the Time\n  // Capsule keeps a copy"), or a page script's string joined
- * with + ("'the Time ' +\n  'Capsule'"). "timeCapsule" (an identifier) has no
- * separator, and a file name or id spelled with it is let through below.
+ * `&#x20;`, `&thinsp;`…), a line break or a `<wbr>`/`<br>` in markup, a comment
+ * marker that wrapped it ("the Time\n  // Capsule keeps a copy"), or a page
+ * script's string joined with + ("'the Time ' +\n  'Capsule'"). Text is read
+ * cooked (see `cooked`), so an escape in a page script is the character it
+ * renders. "timeCapsule" (an identifier) has no separator, and a file name or
+ * id spelled with it is let through below.
  */
-const OLD_NAME = /\btime(?:\s|-|&(?:#\d+|#x[0-9a-f]+|[a-z]+);|\/\/|\/\*|\*|<!--|#|['"`]\s*\+\s*['"`])+capsules?\b/gi;
+const OLD_NAME = /\btime(?:\s|-|&(?:#\d+|#x[0-9a-f]+|[a-z]+);|<(?:wbr|br)\s*\/?>|\/\/|\/\*|\*|<!--|#|['"`]\s*\+\s*['"`])+capsules?\b/gi;
+
+/**
+ * `text` with every JavaScript escape — `\u00a0`, `\u{a0}`, `\xa0`, `\n` and
+ * the like — and every numeric HTML entity (`&#160;`, `&#xa0;`) written as the
+ * character it stands for. A page script's `'Time\u00a0Capsule'` shows the old
+ * name on screen while its source text never has a space in it, and an escaped
+ * letter (`Caps\u0075le`) spells it as surely (review F2.4).
+ */
+function cooked(text: string): string {
+  const named: Record<string, string> = { n: '\n', r: '\r', t: '\t', f: '\f', v: '\v' };
+  return text.replace(/\\u\{([0-9a-f]{1,6})\}|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\([nrtfv])|&#x([0-9a-f]{1,6});|&#(\d{1,7});/gi,
+    (whole, braced, u4, x2, letter, hex, dec) => {
+      if (letter) return named[letter] ?? whole; // the class is read in any case; only a lower-case letter is an escape
+      const cp = dec !== undefined ? Number(dec) : parseInt(braced ?? u4 ?? x2 ?? hex, 16);
+      return cp <= 0x10ffff ? String.fromCodePoint(cp) : whole;
+    });
+}
 
 /**
  * "130-time-capsule-tab.js" and the like: the old words in lower case, joined
@@ -55,8 +74,9 @@ function isFileNameOrId(text: string, at: number, hit: string): boolean {
   return /[\w/-]$/.test(before) || /^[\w/-]/.test(after) || /\w\.$/.test(before) || /^\.\w/.test(after);
 }
 
-/** Each place the old name stands in `text`, with a little of what is around it. */
-function oldNameIn(text: string): string[] {
+/** Each place the old name stands in `raw`, read cooked, with a little of what is around it. */
+function oldNameIn(raw: string): string[] {
+  const text = cooked(raw);
   const hits: string[] = [];
   for (const m of text.matchAll(OLD_NAME)) {
     const at = m.index ?? 0;
@@ -167,6 +187,10 @@ test('the old name is found in the plural, hyphenated, behind any HTML entity, a
     "'Reading the Time ' +\n    'Capsule…'", '"the Time" + " Capsule"', '`kept in the Time ` +\n  `Capsule`',
     // A full stop ends a sentence; it is not more of a file name (review F2.3).
     'kept in a time-capsule.', 'stored in a time-capsule.</p>', 'a time-capsule.\n', '"a time-capsule."', 'two time-capsules. Then',
+    // A page script's escape between the words, or a markup break, renders the name all the same (review F2.4).
+    'Time\\u00a0Capsule', 'Time\\xa0Capsule', "'Time\\x20Capsule'", 'Time\\u2009Capsule', 'Time\\u{a0}Capsule', 'Time\\nCapsule',
+    "registerView({ id: 'x', label: 'Time\\u00a0Capsule' })", 'Time Caps\\u0075le', '&#84;ime Capsule',
+    'Time<wbr>Capsule', 'Time<br>Capsule', 'Time<br/>Capsule', 'Time<br />Capsule',
   ]) {
     assert.equal(oldNameIn(said).length, 1, said);
   }
