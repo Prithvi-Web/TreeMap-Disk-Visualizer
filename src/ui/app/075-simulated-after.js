@@ -1535,14 +1535,18 @@ async function liveRelayout() {
 
 function enableLive() {
   const live = state.live;
-  if (live.on || !state.scanId || !state.root) return;
+  // Live watches the scan the tree on screen came from (treeScanId), once it
+  // has landed: a scan still walking answers its watch 409 SCAN_RUNNING, and
+  // the closed stream said "rescan and toggle Live to reconnect" over a rescan
+  // already running (review F1.1). finishScan starts it when that scan lands.
+  if (live.on || state.scanning || !treeScanId() || !state.root) return;
   if (isCloudScan()) { toast('Live mode watches your local disk — cloud accounts can’t stream changes', 'error'); return; }
   if (state.treemap.history.active) {
     const slider = $('tmTimeSlider');
     slider.value = slider.max;
     setHistoryIndex(Number(slider.max)); // live means Live — leave history
   }
-  const es = new EventSource(`/api/watch/${state.scanId}`);
+  const es = new EventSource(`/api/watch/${treeScanId()}`);
   live.es = es;
   live.on = true;
   live.wanted = true;
@@ -1611,6 +1615,14 @@ function disableLive({ keepWanted = false } = {}) {
 
 $('tmLiveToggle').addEventListener('click', () => {
   if (state.live.on) disableLive();
-  else if (state.scanId && state.root) enableLive();
+  else if (!state.scanning && treeScanId() && state.root) enableLive();
+  else if (state.scanning && String(state.scanningPath || '').startsWith('cloud://')) {
+    toast('Live mode watches your local disk — cloud accounts can’t stream changes', 'error'); // enableLive's own refusal, when it lands
+  } else if (state.scanning) {
+    // A scan is running: Live watches it once it lands — finishScan starts it,
+    // as it restarts Live after a rescan.
+    state.live.wanted = true;
+    toast('Live mode starts once the scan finishes.');
+  } else if (state.root) toast('Opened from the saved index — scan this folder to watch it live.');
   else toast('Run a scan first — Live mode watches the scanned folder', 'error');
 });

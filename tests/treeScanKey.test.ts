@@ -45,6 +45,18 @@ function pageFn(decl: string): string {
   return assert.fail(`${decl} never closes`);
 }
 
+/** A top-level statement of the page by its opening text (an event handler's), brace-matched through its closing `;`. */
+function pageStatement(head: string): string {
+  const start = INDEX.indexOf(head);
+  assert.notEqual(start, -1, `${head} is in the page`);
+  let depth = 0;
+  for (let i = INDEX.indexOf('{', start); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, INDEX.indexOf(';', i) + 1);
+  }
+  return assert.fail(`${head} never closes`);
+}
+
 /** Every top-level function declaration in the page: its name and whole source. */
 function pageFunctions(): Array<{ name: string; body: string; at: number }> {
   const out: Array<{ name: string; body: string; at: number }> = [];
@@ -192,7 +204,8 @@ function page<T>(decls: string[], given: Record<string, unknown>, returns: strin
     return answer(url);
   };
   const all = [...RULE, ...decls];
-  const own = new Set(all.map((d) => /function (\w+)\(/.exec(d)![1]));
+  // A decl is a function declaration's head, or a top-level statement's (an event handler, `$(…)`), which declares nothing.
+  const own = new Set(all.flatMap((d) => { const m = /^(?:async )?function (\w+)\(/.exec(d); return m ? [m[1]] : []; }));
   // `given` itself is the scope, so what the page assigns to its own top-level bindings is read back from it.
   if (!('api' in given)) given.api = api;
   if (!('apiPaced' in given)) given.apiPaced = api;
@@ -201,7 +214,7 @@ function page<T>(decls: string[], given: Record<string, unknown>, returns: strin
     get: (t, k) => (k === Symbol.unscopables ? undefined : (t as Record<string, unknown>)[k as string]),
     set: (t, k, v) => { (t as Record<string, unknown>)[k as string] = v; return true; },
   });
-  const fns = new Function('scope', `with (scope) { ${all.map(pageFn).join('\n')}\n return ${returns}; }`)(scope) as T;
+  const fns = new Function('scope', `with (scope) { ${all.map((d) => (d.startsWith('$(') ? pageStatement(d) : pageFn(d))).join('\n')}\n return ${returns}; }`)(scope) as T;
   return { fns, asks };
 }
 
@@ -625,6 +638,74 @@ test('the welcome tour\'s cleanup wins are asked of the scan the tree on screen 
   assert.equal(tour.unknownReason, 'This folder was opened from its saved index, and suggestions need a scan of it.');
 });
 
+/* ───────────────────────────── Live mode ───────────────────────────── */
+
+test('Live: the toggle watches the scan the tree on screen came from once it has landed — never a scan still walking, which answers its watch 409 — and pressed while a scan runs says Live starts once the scan finishes, and finishScan starts it; over the saved index\'s tree it says what would make the folder watchable', () => {
+  const watched: string[] = [];
+  const toasts: Array<[string, string | undefined]> = [];
+  let press: () => void = noop;
+  const els = stubDom();
+  const $ = (id: string) => {
+    const e = els(id);
+    if (id === 'tmLiveToggle') e.addEventListener = ((_type: string, fn: () => void) => { press = fn; }) as El['addEventListener'];
+    return e;
+  };
+  class Watch { readyState = 0; onmessage = null; onerror = null; static CLOSED = 2; constructor(url: string) { watched.push(url); } close(): void {} }
+  const state: Record<string, unknown> = {
+    root: TREE, view: 'dashboard', ...HELD,
+    live: { on: false, wanted: false, es: null, window: [], dirty: 0, pulses: new Set(), pulseRaf: 0, feedTimer: 0, relayoutTimer: 0 },
+    treemap: { history: { active: false }, rootPath: '/r' },
+  };
+  const { fns } = page<{ enable: () => void; disable: () => void }>(['function enableLive(', 'function disableLive(', "$('tmLiveToggle').addEventListener('click', () => {"], {
+    state, $, EventSource: Watch, isCloudScan: () => false, toast: (m: string, k?: string) => { toasts.push([m, k]); },
+    fxTmPillBeamsSync: noop, fxLiveLineDrop: noop, setInterval: () => 0, clearInterval: noop, cancelAnimationFrame: noop,
+    renderLiveFeed: noop, liveRelayout: noop, LIVE_RELAYOUT_MS: 1, setHistoryIndex: noop, presentView: noop,
+  }, '{ enable: enableLive, disable: disableLive }');
+  const live = state.live as { on: boolean; wanted: boolean };
+
+  // A rescan over the older scan's tree, its request answered: the running scan's id is on hand.
+  press();
+  assert.deepEqual(watched, [], 'pressed during a rescan, no watch is opened on the scan still walking (it answers 409 SCAN_RUNNING)');
+  assert.deepEqual(toasts.at(-1), ['Live mode starts once the scan finishes.', undefined], 'it says when Live starts — not an error');
+  assert.equal(live.wanted, true, 'and keeps the wish, for finishScan');
+  fns.enable(); // a stray caller while the scan runs
+  assert.deepEqual(watched, [], 'Live opens no watch while a scan runs, whoever asks');
+  Object.assign(state, LANDED); // finishScan: `if (state.live.wanted) enableLive()`
+  fns.enable();
+  assert.deepEqual(watched, ['/api/watch/scan-new'], 'once the rescan lands, Live watches the new scan');
+  assert.equal(live.on, true);
+  press(); // off
+  assert.equal(live.on, false, 'control: pressed again, Live is off');
+
+  Object.assign(state, STOPPED);
+  press();
+  assert.deepEqual(watched.slice(1), ['/api/watch/scan-old'], 'after a Stop, the older scan whose tree is on screen');
+  press();
+
+  // The saved index's tree, its scan running: nothing to watch yet; Live starts when it lands.
+  live.wanted = false;
+  Object.assign(state, INDEX_RUNNING);
+  press();
+  assert.deepEqual(watched.slice(2), [], 'over the saved index\'s tree no watch is opened on its running scan');
+  assert.deepEqual(toasts.at(-1), ['Live mode starts once the scan finishes.', undefined]);
+  assert.equal(live.wanted, true);
+  // A cloud account's scan running over the local tree: Live never watches a cloud tree, so it promises nothing.
+  live.wanted = false;
+  Object.assign(state, HELD, { scanningPath: 'cloud://gdrive' });
+  press();
+  assert.deepEqual(toasts.at(-1), ['Live mode watches your local disk — cloud accounts can’t stream changes', 'error'],
+    'a cloud account\'s scan running: Live will not start when it lands, and it says why');
+  assert.equal(live.wanted, false, 'nor is it wished for');
+  // Stopped: nothing will land.
+  live.wanted = false;
+  Object.assign(state, INDEX_STOPPED, { scanningPath: null });
+  press();
+  assert.deepEqual(watched.slice(2), [], 'nor once that scan is stopped');
+  assert.deepEqual(toasts.at(-1), ['Opened from the saved index — scan this folder to watch it live.', undefined],
+    'it says the tree is the saved index, and what would make it watchable — not "Run a scan first" as an error over a folder on screen');
+  assert.equal(live.wanted, false, 'and promises nothing');
+});
+
 /* ───────────────────────────── the audit, held ───────────────────────────── */
 
 /**
@@ -648,9 +729,9 @@ const SCAN_ON_HAND: Record<string, string> = {
   loadBoundary: 'the landed scan\'s drives row (TOPIC.scan), dropped once another scan is on hand',
   probeRefusedFolders: 'the landed scan\'s refused folders (TOPIC.scan)',
   openRefusedList: 'the refused row describes the scan whose stats painted it — the running scan\'s progress while one runs',
-  // Live mode watches a finished scan and is off while any scan runs (startScan → disableLive).
+  // Live mode watches a landed scan: startScan turns it off, enableLive refuses while any scan runs, and
+  // this returns while one does — so the scan on hand is the tree's own here.
   liveRelayout: 'Live mode, off while a scan runs',
-  enableLive: 'Live mode, off while a scan runs',
   // Refuses while a scan runs, before asking anything.
   downloadReport: 'refuses in words while a scan runs, before it asks',
   // Acts on files: the server refuses a running scan in words ("Wait for the scan to finish"), and a
