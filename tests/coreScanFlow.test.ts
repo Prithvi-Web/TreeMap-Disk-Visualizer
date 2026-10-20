@@ -184,6 +184,25 @@ const LIFTED_INDEX = ['async function openFromIndex(', 'async function finishSca
  * scan runs (review F1.5).
  */
 const LIFTED_MAP = ['async function loadTreemap(', 'async function tmHeldTreemap(', 'function tmLayoutTree(', 'function tmSquarify(', 'function tmWorstRatio('];
+/**
+ * Disk City, lifted whole for the pages that ask for it (`realCity`): its
+ * loader and its line — what says whether a scan will draw the city, or
+ * that the tree on screen is the saved index (review F3.1, F3.4).
+ */
+const LIFTED_CITY = ['async function loadCity(', 'function renderCityChrome('];
+
+/** A view a page file registers itself (`registerView({ id: '…', … })`), its object brace-matched out of the page. */
+function pageRegisteredView(id: string): string {
+  const at = INDEX.indexOf(`registerView({\n  id: '${id}',`);
+  assert.notEqual(at, -1, `the ${id} view registers itself in the page`);
+  const start = INDEX.indexOf('{', at);
+  let depth = 0;
+  for (let i = start; i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1);
+  }
+  return assert.fail(`the ${id} view never closes`);
+}
 /** A map the page's own loadTreemap drew (drawView): the folder it names, its size, and how many rectangles. */
 type Drawn = { rootPath: string; rootName: string; rootSize: number; nodes: number };
 
@@ -218,7 +237,7 @@ async function turns(n = 30): Promise<void> {
 /** A draw the treemap view asked for (loadTreemap): the folder asked, and the tree and scan on screen as it asked. */
 type Draw = { path: string; root: string | null; scanId: unknown };
 
-function page(o: { route: Route; system?: unknown; search?: string; root?: unknown; settledScanId?: string | null; index?: boolean; realTreemap?: boolean }) {
+function page(o: { route: Route; system?: unknown; search?: string; root?: unknown; settledScanId?: string | null; index?: boolean; realTreemap?: boolean; realCity?: boolean }) {
   const dom = new Dom();
   const $ = (id: string) => dom.get(id);
   const requests: string[] = [];
@@ -332,16 +351,47 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     });
     state.treemap = { rootPath: null, rootName: '', rootSize: 0, nodes: [], nodesFor: null, mode: 'treemap', maxDepth: 4, history: { scrubbing: false } };
   }
+  /** Every trail Disk City drew (renderCrumbs on #cityCrumbs), in order (`realCity` pages). */
+  const cityTrails: string[] = [];
+  if (o.realCity) {
+    // The page's own Disk City view, loader and line. Its drawing is not under
+    // test — a scan-backed city is fetched and built elsewhere (diskCityFresh) —
+    // what it says is.
+    const registry = VIEW_BY_ID;
+    Object.assign(given, {
+      cityLoadSeq: 0, cityShowCard: noop, buildCity: noop, cityEnter: noop, renderCityTable: noop, cityFetchFacts: noop,
+      renderCrumbs: (host: El, p: string) => { if (host.id === 'cityCrumbs') cityTrails.push(p); },
+      cityOnPointerDown: noop, cityOnPointerMove: noop, cityOnPointerUp: noop, cityOnPointerLeave: noop, cityOnWheel: noop, cityOnKey: noop, cityOnResize: noop,
+      cityFitHeight: () => false, citySetHeight: noop, citySetColour: noop, window: { addEventListener: noop, removeEventListener: noop },
+      CITY_HEIGHT_LABEL: liftPage<Record<string, string>>(['CITY_HEIGHT_LABEL'], 'CITY_HEIGHT_LABEL'),
+      CITY_COLOUR_LABEL: liftPage<Record<string, string>>(['CITY_COLOUR_LABEL'], 'CITY_COLOUR_LABEL'),
+      sizeRampCss: () => '', C_RC_LOW: [1, 2, 3], C_AMBER: [4, 5, 6], C_TEAL: [7, 8, 9], ageRgb: () => [0, 0, 0], cityTypeKey: () => ({ shown: [], more: 0 }),
+      baseName: (p: string) => p.slice(p.lastIndexOf('/') + 1),
+      TM_MIN_SIZE: liftPage<number>(['TM_MIN_SIZE'], 'TM_MIN_SIZE'), TM_SERVER_NODE_CAP: liftPage<number>(['TM_SERVER_NODE_CAP'], 'TM_SERVER_NODE_CAP'),
+      // The registry's TOPIC.scan subscriber tells every view (onScanChange); here, Disk City.
+      emit: (_topic: unknown, id: unknown) => {
+        emitted.push(id);
+        (registry.get('city') as { onScanChange: (id: unknown) => void }).onScanChange(id);
+      },
+    });
+    state.city = {
+      hover: null, pan: { x: 0, y: 0 }, zoom: 1, blocks: [], counts: new Map(), countsAsked: new Set(), builtFrom: null, loadFailed: null,
+      colour: 'size', height: 'size', unknownHeight: 0, unresolved: 0, drawn: 0, total: 0,
+    };
+    if (!o.realTreemap) state.treemap = { rootPath: null, nodes: [], nodesFor: null, maxDepth: 4 };
+  }
   const own = new Set([...OWN, ...(o.index ? LIFTED_INDEX.map((d) => /function (\w+)\(/.exec(d)![1]) : []),
-    ...(o.realTreemap ? LIFTED_MAP.map((d) => /function (\w+)\(/.exec(d)![1]) : [])]);
+    ...(o.realTreemap ? LIFTED_MAP.map((d) => /function (\w+)\(/.exec(d)![1]) : []),
+    ...(o.realCity ? LIFTED_CITY.map((d) => /function (\w+)\(/.exec(d)![1]) : [])]);
   const scope = new Proxy(given, {
     has: (t, k) => typeof k === 'string' && k in t && !own.has(k),
     get: (t, k) => (k === Symbol.unscopables ? undefined : t[k as string]),
     set: (t, k, v) => { t[k as string] = v; return true; },
   });
-  const src = [...LIFTED, ...(o.index ? LIFTED_INDEX : []), ...(o.realTreemap ? LIFTED_MAP : [])].map(pageFn).join('\n');
-  // The real treemap view, its unmount aside (it tears down canvas machinery this page has none of).
-  const views = o.index ? `VIEW_BY_ID.set('treemap', { ...(${pageView('treemap')}), unmount() {} });` : '';
+  const src = [...LIFTED, ...(o.index ? LIFTED_INDEX : []), ...(o.realTreemap ? LIFTED_MAP : []), ...(o.realCity ? LIFTED_CITY : [])].map(pageFn).join('\n');
+  // The real treemap view — and Disk City's — their unmounts aside (they tear down canvas machinery this page has none of).
+  const views = (o.index ? `VIEW_BY_ID.set('treemap', { ...(${pageView('treemap')}), unmount() {} });` : '')
+    + (o.realCity ? `\nVIEW_BY_ID.set('city', { ...(${pageRegisteredView('city')}), unmount() {} });` : '');
   const fns = new Function('scope', `with (scope) { ${src}\n${views}\n return { switchView, restoreLastSession, startScan, stopScan, failScan, renderStartChoices, startCloudScan, loadSystem, startRejudgeRefused }; }`)(scope) as {
     switchView: (v: string) => void; restoreLastSession: () => Promise<void>; startScan: (p: string, o?: unknown) => Promise<void>;
     stopScan: () => Promise<void>; failScan: (m: string, e?: unknown) => void; renderStartChoices: () => void;
@@ -355,7 +405,7 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     return b!;
   };
   const openStreams = () => streams.filter((s) => s.readyState !== 2);
-  return { ...fns, dom, $, state, requests, posts, toasts, finished, quietFailed, tourCalls, streams, openStreams, intervals, choices, choice, given, draws, emitted, indexBuilds, drawn, rejudged };
+  return { ...fns, dom, $, state, requests, posts, toasts, finished, quietFailed, tourCalls, streams, openStreams, intervals, choices, choice, given, draws, emitted, indexBuilds, drawn, rejudged, cityTrails };
 }
 
 /** A server: the history and the folders a test names, a scan request answered with the next id, and its cancel. */
@@ -1656,6 +1706,58 @@ test('review F1.5, F2.5: while a rescan runs over an older scan\'s tree, that tr
   await turns();
   assert.equal(h.state.scanning, false, 'control: the rescan landed');
   assert.deepEqual(h.rejudged, ['scan-1'], 'the query is asked again of the scan that landed, its tree now on screen (C11)');
+});
+
+/* Review F3.1, F3.4: the index paint runs with the scan chrome ended —
+   finishScan's first act, endScanChrome, sets `scanning` false — and the
+   scan behind the tree is requested only as the paint returns (startScan →
+   startScanRequest). Disk City read "no scan runs" off that instant and said
+   "Opened from the saved index — scan this folder to see its city." for the
+   whole of the scan it was painted for, and nothing redrew it; a quiet
+   request that failed left a city saying "loading this folder…" for good. */
+
+/** Disk City's line under the city (#cityLod). */
+const cityLine = (h: ReturnType<typeof page>) => h.$('cityLod').textContent;
+const CITY_LOADING = 'loading this folder…';
+const CITY_FROM_INDEX = 'Opened from the saved index — scan this folder to see its city.';
+
+test('review F3.1, F3.4: Disk City up while a folder with a saved index is painted and scanned again says it is loading for as long as that scan runs — the page\'s own openFromIndex and finishScan painting, its scan requested after — and that the tree is the saved index only once a Stop, a failed request or a failed scan has ended it', async () => {
+  for (const end of ['stop-early', 'stop-followed', 'request-fails', 'scan-fails'] as const) {
+    const label = {
+      'stop-early': 'Stopped before its request answers', 'stop-followed': 'Stopped once its scan is followed',
+      'request-fails': 'its quiet request failing', 'scan-fails': 'its scan failing once followed',
+    }[end];
+    let answerScan: ((a: { status: number; body: unknown }) => void) | null = null;
+    const holdScan = end === 'stop-early' || end === 'request-fails';
+    const base = server({ roots: [], indexed: [MAIL], indexTrees: { [MAIL]: indexTreeOf(MAIL, 37_700_000) } });
+    // Mail's saved index's tree on screen with no scan behind it — as a Stop leaves it (J05) — and Disk City up.
+    const h = page({ index: true, realCity: true, root: indexTreeOf(MAIL, 37_700_000), route: (m, url, b) => (
+      holdScan && m === 'POST' && url === '/api/scan' && !answerScan ? new Promise((r) => { answerScan = r; }) : base(m, url, b)) });
+    h.switchView('city');
+    assert.equal(cityLine(h), CITY_FROM_INDEX, `${label}: control: a saved index's tree with no scan behind it is said to be one`);
+    // Rescan — ⌘R, Rescan, or "Scan again: Mail" in the palette: the page's own startScan.
+    await h.startScan(MAIL);
+    await turns();
+    assert.deepEqual(h.emitted, [null], `${label}: control: painted from the saved index, every view told`);
+    assert.equal(h.state.scanning, true, `${label}: control: and its scan runs`);
+    assert.equal(cityLine(h), CITY_LOADING, `${label}: while its scan runs the city is loading — it is drawn when that scan lands — never "scan this folder" of the folder being scanned`);
+    h.switchView('city'); // a redraw of the view on screen
+    assert.equal(cityLine(h), CITY_LOADING, `${label}: and a redraw says the same`);
+    if (end === 'stop-early' || end === 'stop-followed') await pressStop(h);
+    if (end === 'request-fails') answerScan!({ status: 500, body: { error: 'The drive went away.', code: 'INTERNAL' } });
+    if (end === 'scan-fails') h.streams.at(-1)!.onmessage!({ data: JSON.stringify({ type: 'error', message: 'The drive stopped answering.' }) });
+    await turns();
+    if (end === 'stop-early') {
+      answerScan!({ status: 202, body: { scanId: 'scan-late', incremental: false } }); // its late answer is cancelled
+      await turns();
+    }
+    assert.equal(h.state.scanning, false, `${label}: control: its scan has ended`);
+    assert.equal(pathOf(h.state.root), MAIL, `${label}: control: the saved index's tree stays on screen`);
+    assert.equal(cityLine(h), CITY_FROM_INDEX, `${label}: the city then says the tree is the saved index and what would draw it — not "loading this folder…", which nothing will`);
+    h.switchView('city');
+    assert.equal(cityLine(h), CITY_FROM_INDEX, `${label}: and a redraw says the same`);
+    assert.ok(!h.toasts.some(([m]) => /could not be opened/.test(m)), `${label}: control: Disk City mounted every time (${JSON.stringify(h.toasts)})`);
+  }
 });
 
 /* ══════════════ (E) — the rest of the seventh browser pass (J01, J02, J03, J07) ══════════════ */

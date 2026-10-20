@@ -430,6 +430,12 @@ function quietRescanFailed(e) {
   $('scanAnnounce').textContent = 'Couldn’t refresh this folder: ' + why;
   $('indexBadge').classList.add('stale');
   toast('Couldn’t refresh this folder: ' + why, 'error');
+  // The view on screen says what it will now never be drawn from: Disk City's
+  // "loading this folder…" and the Reclaim legend's "scoring starts once this
+  // folder's scan finishes" were of a scan that will not land, and nothing
+  // else redraws them — re-entered, as failScan and stopScan re-enter it
+  // (review F3.4).
+  withFocusKept(() => { switchView(state.view); });
   drainScanQueue(); // a folder waiting behind this one still deserves its turn
 }
 
@@ -712,6 +718,7 @@ async function startCloudScan(providerId, providerName) {
 
 function endScanChrome() {
   state.scanning = false;
+  state.indexScanDue = false; // whatever scan an index paint was due, it has ended or is running and ends here
   state.abortScan = null;
   state.accessNotice = null; // the Full Disk Access notice ends with the scan it was set for (U-11)
   setScanButtonMode('scan');
@@ -971,6 +978,11 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0, afterStop =
     // tree paints this one's, and Stop asks for it by this folder's path (B05).
     if ($('growthProj')) $('growthProj').hidden = true;
     showListsPending();
+    // The scan behind this tree is requested as this paint returns (startScan
+    // → startScanRequest), and the views below are painted before it is, the
+    // scan chrome ended above: it is due, for what says whether a scan will
+    // draw the tree (review F3.1). The scan chrome's next end clears it.
+    state.indexScanDue = true;
     emit(TOPIC.scan, null);
     // The first paint of a tree hides the welcome, whose "Choose a folder"
     // the folder browser handed focus back to (review F2.6).

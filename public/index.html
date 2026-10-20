@@ -7414,6 +7414,13 @@ const state = {
   // a Stop to put back (putBackHeldTree, seventh browser pass J06); null
   // otherwise. `over` is the index's tree that replaced it.
   heldBehindIndex: null,
+  // True from the index paint (finishScan with no scan) until the scan chrome
+  // next ends: the scan behind that tree is requested only as the paint
+  // returns (startScan → startScanRequest), and finishScan has ended the scan
+  // chrome by then, so `scanning` alone says no scan will land. What says
+  // whether a scan will draw the tree on screen reads `scanning ||
+  // indexScanDue` (Disk City's line, the Reclaim legend; review F3.1).
+  indexScanDue: false,
   scanning: false,
   es: null,
   // Settles the running scan's stream and watchdog together. followScanProgress
@@ -10384,6 +10391,12 @@ function quietRescanFailed(e) {
   $('scanAnnounce').textContent = 'Couldn’t refresh this folder: ' + why;
   $('indexBadge').classList.add('stale');
   toast('Couldn’t refresh this folder: ' + why, 'error');
+  // The view on screen says what it will now never be drawn from: Disk City's
+  // "loading this folder…" and the Reclaim legend's "scoring starts once this
+  // folder's scan finishes" were of a scan that will not land, and nothing
+  // else redraws them — re-entered, as failScan and stopScan re-enter it
+  // (review F3.4).
+  withFocusKept(() => { switchView(state.view); });
   drainScanQueue(); // a folder waiting behind this one still deserves its turn
 }
 
@@ -10666,6 +10679,7 @@ async function startCloudScan(providerId, providerName) {
 
 function endScanChrome() {
   state.scanning = false;
+  state.indexScanDue = false; // whatever scan an index paint was due, it has ended or is running and ends here
   state.abortScan = null;
   state.accessNotice = null; // the Full Disk Access notice ends with the scan it was set for (U-11)
   setScanButtonMode('scan');
@@ -10925,6 +10939,11 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0, afterStop =
     // tree paints this one's, and Stop asks for it by this folder's path (B05).
     if ($('growthProj')) $('growthProj').hidden = true;
     showListsPending();
+    // The scan behind this tree is requested as this paint returns (startScan
+    // → startScanRequest), and the views below are painted before it is, the
+    // scan chrome ended above: it is due, for what says whether a scan will
+    // draw the tree (review F3.1). The scan chrome's next end clears it.
+    state.indexScanDue = true;
     emit(TOPIC.scan, null);
     // The first paint of a tree hides the welcome, whose "Choose a folder"
     // the folder browser handed focus back to (review F2.6).
@@ -29079,7 +29098,10 @@ function renderCityChrome() {
       // draws the city. A saved index's tree with no scan behind it and none
       // running — a Stop, a failure — gets no city (buildCity) and nothing
       // will load: said as the Dashboard's lists say it (review F2.1, F2.3).
-      const fromIndex = !!state.root && !state.scanId && !state.scanning;
+      // The index paint itself runs with the scan chrome ended and its scan
+      // not yet requested: that scan is due (indexScanDue), and the city is
+      // loading, not "scan this folder" of the folder being scanned (F3.1).
+      const fromIndex = !!state.root && !state.scanId && !state.scanning && !state.indexScanDue;
       if (!failed) parts.push(fromIndex ? 'Opened from the saved index — scan this folder to see its city.' : 'loading this folder…');
     } else {
       // §6.1 forbids a silent threshold. A map drawing 4,120 of 251,000 things

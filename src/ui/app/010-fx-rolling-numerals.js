@@ -590,6 +590,13 @@ const state = {
   // a Stop to put back (putBackHeldTree, seventh browser pass J06); null
   // otherwise. `over` is the index's tree that replaced it.
   heldBehindIndex: null,
+  // True from the index paint (finishScan with no scan) until the scan chrome
+  // next ends: the scan behind that tree is requested only as the paint
+  // returns (startScan → startScanRequest), and finishScan has ended the scan
+  // chrome by then, so `scanning` alone says no scan will land. What says
+  // whether a scan will draw the tree on screen reads `scanning ||
+  // indexScanDue` (Disk City's line, the Reclaim legend; review F3.1).
+  indexScanDue: false,
   scanning: false,
   es: null,
   // Settles the running scan's stream and watchdog together. followScanProgress

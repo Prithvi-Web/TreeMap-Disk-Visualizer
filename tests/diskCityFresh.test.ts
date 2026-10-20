@@ -946,13 +946,18 @@ test('review F2.2: while a rescan runs over an older scan\'s tree, Disk City\'s 
 /** What Disk City says over a saved index's tree with no scan behind it and none running (review F2.1, F2.3): the Dashboard's own words. */
 const FROM_INDEX = { lod: 'Opened from the saved index — scan this folder to see its city.', status: '' };
 
-test('review F1.5, F2.1, F2.3: a saved index\'s tree on screen, its map laid out by the page — no scan\'s — gets no city: Disk City builds nothing of it and asks no scan for one; while its scan runs it says it is loading, and once a Stop has ended that scan it says the tree is the saved index — never "loading" of a scan that will not land', async () => {
-  for (const answered of [false, true]) {
-    const label = answered ? 'its scan answered and followed' : 'before its scan answers';
+test('review F1.5, F2.1, F2.3, F3.4: a saved index\'s tree on screen, its map laid out by the page — no scan\'s — gets no city: Disk City entered while its scan runs builds nothing of it, asks no scan for one and says it is loading; once a Stop has ended that scan it says the tree is the saved index — never "loading" of a scan that will not land', async () => {
+  for (const running of ['before', 'answered', 'starting'] as const) {
+    const label = { before: 'before its scan answers', answered: 'its scan answered and followed', starting: 'a scan being started over it, the index asked about' }[running];
     const h = cityHarness({ realChrome: true });
     // As loadTreemap leaves a map it laid out of the saved index's tree (tmHeldTreemap): recorded as no scan's.
     const nodes: Node[] = [1, 2, 3].map((i) => ({ path: `/idx/f${i}`, name: 'index:/idx', size: 5000 * i, type: 'file', x: 30 * (i - 1), y: 0, w: 30, h: 100 }));
-    Object.assign(h.state, { root: { path: '/idx', size: 30_000 }, scanning: true, settledScanId: null, scanId: answered ? 's-run' : null });
+    // Its scan running, as the page has it after the index paint: the scan
+    // chrome begun again (beginScanChrome), the paint's scan due (finishScan).
+    // Or a rescan of it just pressed, after a Stop: the scan chrome begun while
+    // the index is asked about, no paint yet, so nothing due.
+    Object.assign(h.state, { root: { path: '/idx', size: 30_000 }, scanning: true, indexScanDue: running !== 'starting', settledScanId: null,
+      scanId: running === 'answered' ? 's-run' : null });
     Object.assign(h.state.treemap, { rootPath: '/idx', nodes, nodesFor: { scanId: null, path: '/idx', nodes, size: 30_000, minSize: 4000 } });
     h.state.view = 'city';
     h.views.city.mount();
@@ -960,9 +965,10 @@ test('review F1.5, F2.1, F2.3: a saved index\'s tree on screen, its map laid out
     assert.deepEqual(h.asked, [], `${label}: no scan is asked for a map — none is behind the tree, and a running one answers 202`);
     assert.deepEqual(cityNames(h), [], `${label}: and no city is built of the saved index's layout, which Disk City never reuses`);
     assert.deepEqual(chromeOf(h), LOADING, `${label}: while its scan runs the city is loading — it is drawn when that scan lands`);
-    // Stop: stopScan ends the scan (scanning false, the scan behind the tree
-    // = settledScanId || null = none) and remounts the view on screen.
-    Object.assign(h.state, { scanning: false, scanId: null });
+    // Stop: stopScan ends the scan chrome (endScanChrome: scanning false, no
+    // scan due), the scan behind the tree = settledScanId || null = none, and
+    // remounts the view on screen.
+    Object.assign(h.state, { scanning: false, indexScanDue: false, scanId: null });
     h.views.city.mount();
     await settle();
     assert.deepEqual(h.asked, [], `${label}, Stopped: still no scan asked for a map — there is none`);
@@ -988,13 +994,16 @@ test('review F2.3: Disk City up on an older scan\'s folder when a saved index\'s
   await settle();
   assert.deepEqual(cityTrail(h).slice(-1), ['/corpus'], 'control: the trail is still the folder drawn while the drill loads');
   // The index paint of /idx (openFromIndex, then finishScan with no scan):
-  // the tree, the folder the map is in, and the views told (TOPIC.scan).
-  Object.assign(h.state, { root: { path: '/idx', size: 30_000 }, scanning: true, settledScanId: null, scanId: null });
+  // the tree, the folder the map is in, and the views told (TOPIC.scan) — as
+  // the page orders it, the scan chrome ended (finishScan's endScanChrome)
+  // and the scan behind the tree due, requested only as the paint returns
+  // (review F3.1, F3.4).
+  Object.assign(h.state, { root: { path: '/idx', size: 30_000 }, scanning: false, indexScanDue: true, settledScanId: null, scanId: null });
   h.state.treemap.rootPath = '/idx';
   h.views.city.onScanChange(null as unknown as string);
   assert.deepEqual(cityTrail(h).slice(-1), ['/idx'], 'the trail names the tree on screen at once, not the older scan\'s folder');
   assert.equal((h.$('cityUpBtn') as { disabled: boolean }).disabled, true, 'and Up is off');
-  assert.deepEqual(chromeOf(h), LOADING, 'and the city is loading: its scan runs');
+  assert.deepEqual(chromeOf(h), LOADING, 'and the city is loading: its scan is due');
   h.server.held[0].land();
   await late;
   await settle();
@@ -1014,7 +1023,7 @@ test('review F2.3: Disk City up on an older scan\'s folder when a saved index\'s
   assert.match(chromeOf(g).lod, /^Mail did not load: HTTP 500/, 'control: the failed drill is said');
   g.card!.show(g.state.city.blocks[0], 10, 10);
   assert.equal((g.$('cityCard') as { hidden: boolean }).hidden, false, 'control: a hover card is up over the older city');
-  Object.assign(g.state, { root: { path: '/idx', size: 30_000 }, scanning: true, settledScanId: null, scanId: null });
+  Object.assign(g.state, { root: { path: '/idx', size: 30_000 }, scanning: false, indexScanDue: true, settledScanId: null, scanId: null });
   g.state.treemap.rootPath = '/idx';
   g.views.city.onScanChange(null as unknown as string);
   assert.deepEqual(chromeOf(g), LOADING, 'the older tree\'s failed drill is not said over the saved index\'s tree');

@@ -1422,7 +1422,10 @@ function renderCityChrome() {
       // draws the city. A saved index's tree with no scan behind it and none
       // running — a Stop, a failure — gets no city (buildCity) and nothing
       // will load: said as the Dashboard's lists say it (review F2.1, F2.3).
-      const fromIndex = !!state.root && !state.scanId && !state.scanning;
+      // The index paint itself runs with the scan chrome ended and its scan
+      // not yet requested: that scan is due (indexScanDue), and the city is
+      // loading, not "scan this folder" of the folder being scanned (F3.1).
+      const fromIndex = !!state.root && !state.scanId && !state.scanning && !state.indexScanDue;
       if (!failed) parts.push(fromIndex ? 'Opened from the saved index — scan this folder to see its city.' : 'loading this folder…');
     } else {
       // §6.1 forbids a silent threshold. A map drawing 4,120 of 251,000 things
