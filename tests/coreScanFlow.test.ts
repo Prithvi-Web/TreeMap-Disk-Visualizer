@@ -164,7 +164,7 @@ const LIFTED = [
   'async function startScan(', 'async function startScanRequest(', 'function followScanProgress(',
   'function endScanChrome(', 'function failScan(', 'function noteLastFolder(', 'function noteStopUnconfirmed(',
   'function browseWholeDrives(', 'function topologyAnswer(',
-  'function startChoiceList(', 'function startFolderName(', 'function startLastLine(', 'function renderStartChoices(', 'function scanStartChoice(', 'async function startNameDrives(',
+  'function startChoiceList(', 'function startFolderName(', 'function startRefusalWords(', 'function startLastLine(', 'function renderStartChoices(', 'function scanStartChoice(', 'async function startNameDrives(',
   'async function startJudge(', 'function startNoteAllowed(',
   'function requestedPath(', 'async function restoreLastSession(', 'function showRestoredPath(', 'async function reopenScan(',
   'async function startCloudScan(', 'async function loadSystem(',
@@ -484,7 +484,9 @@ test('with an agent policy whose allowedRoots hold only Downloads, the start scr
   const back = page({ route: server({ roots: [ROOT_HISTORY], refuse: onlyDownloads }) });
   await boot(back);
   assert.deepEqual(back.choices(), ['Downloads'], 'a returning person: no "Scan Macintosh HD again" either');
-  assert.equal(back.$('startLast').textContent, `Your last scan was of /, which TreeMap may not scan now: ${outsideRoots('/')}.`, 'the last folder is still named, with the server\'s reason');
+  // The reason in the start screen's own words (J07), not POST /api/scan's, which prints the path again.
+  assert.equal(back.$('startLast').textContent, 'Your last scan was of /, which TreeMap may not scan now: it is outside the folders your agent policy allows TreeMap to scan (allowedRoots in agent-policy.json).',
+    'the last folder is still named, with the reason');
   assert.equal(back.$('startLast').hidden, false);
 });
 
@@ -1171,7 +1173,9 @@ test('(vi) a folder the server refused — 400, 403 or 404 — is named and offe
     const h = page({ route: server({ roots: [], scanAnswer: () => ({ status, body: { error, code } }) }) });
     await boot(h);
     await startFrom(h, /^Documents$/);
-    assert.equal(h.$('startLast').textContent, `The scan of /Users/x/Documents failed: ${error.endsWith('.') ? error : `${error}.`}`, `${status}: named, with the reason`);
+    // A refusal of the agent policy in the start screen's own words (J07); the others in the server's.
+    const reason = code === 'POLICY_ROOT_NOT_ALLOWED' ? 'it is outside the folders your agent policy allows TreeMap to scan (allowedRoots in agent-policy.json).' : error.endsWith('.') ? error : `${error}.`;
+    assert.equal(h.$('startLast').textContent, `The scan of /Users/x/Documents failed: ${reason}`, `${status}: named, with the reason`);
     assert.deepEqual(offering(h, '/Users/x/Documents').map((b) => b.textContent), [], `${status}: offered nowhere — neither "Scan Documents again" nor Documents (${h.choices().join(' | ')})`);
     assert.ok(h.choices().includes('Desktop'), `${status}: control: the other choices stay`);
     assert.equal(h.dom.activeElement, h.$('emptyBrowseBtn'), `${status}: focus on the one primary, Choose a folder…`);
@@ -1678,6 +1682,51 @@ test('J03 (the owner, 20 Oct 2026): after another folder\'s scan is stopped or f
   await startFrom(gone, /^Desktop$/);
   await pressStop(gone);
   assert.deepEqual(gone.choices(), ['Scan Desktop again', 'Documents', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'], 'control: an unopenable history folder stays offered nowhere');
+});
+
+test('J07: the start screen says the agent policy\'s refusals in its own plain words — the path once, no API words — and says why only "Choose a folder…" is offered when the policy file cannot be read', async () => {
+  // Seventh browser pass, J07: the line reused POST /api/scan's refusal word
+  // for word — the long path printed twice — and, for a policy file that
+  // will not parse, "…TreeMap refused this operation… Repair it — GET
+  // /api/policy reports its location…", said to a person who had done
+  // nothing; with no history, nothing said why only "Choose a folder…" stood.
+  const LONG = '/Users/x/projects/treemap-work/qa/corpus/Mail';
+  const outside = 'it is outside the folders your agent policy allows TreeMap to scan (allowedRoots in agent-policy.json)';
+  const api = /GET \/api|refused this operation|\/api\//;
+  const back = page({ route: server({ roots: [{ rootPath: LONG, count: 2, latestAt: 1_700_000_000_000, latestSize: 37_700_000 }], refuse: onlyDownloads }) });
+  await boot(back);
+  assert.deepEqual(back.choices(), ['Downloads'], 'control: the policy holds');
+  assert.equal(back.$('startLast').textContent, `Your last scan was of ${LONG}, which TreeMap may not scan now: ${outside}.`, 'allowedRoots: plain words');
+  assert.equal(back.$('startLast').textContent.split(LONG).length - 1, 1, 'the path printed once');
+  assert.doesNotMatch(back.$('startLast').textContent, api, 'no API words');
+
+  // A policy file that will not parse refuses every folder: the server's answer, as GET /api/policy gives it.
+  const FILE = '/Users/x/Library/Application Support/TreeMap/agent-policy.json';
+  const SERVER_UNREADABLE = 'The agent policy file could not be read (Unexpected token } in JSON at position 2), so TreeMap refused this operation rather than acting as if you had set no limits. Repair it — GET /api/policy reports its location. A copy of the unreadable file is kept beside it with a .corrupt suffix.';
+  const unreadable = (asked: string[]) => ({ body: { policy: null, unreadable: true, reason: SERVER_UNREADABLE, file: FILE,
+    scanRoots: asked.map((p) => ({ path: p, allowed: false, code: 'POLICY_UNREADABLE', error: SERVER_UNREADABLE })) } });
+  const blocked = `TreeMap can’t scan any folder on this computer until its agent policy file is repaired — ${FILE} could not be read.`;
+  const first = page({ route: server({ roots: [], policyAnswer: unreadable }) });
+  await boot(first);
+  assert.deepEqual(first.choices(), [], 'control: no folder is offered');
+  assert.equal(first.$('startLast').hidden, false, 'with no history, the start screen still says why');
+  assert.equal(first.$('startLast').textContent, blocked, 'in plain words, naming the file to repair');
+  const named = page({ route: server({ roots: [MAIL_HISTORY], policyAnswer: unreadable }) });
+  await boot(named);
+  assert.equal(named.$('startLast').textContent, `Your last scan was of ${MAIL}. ${blocked}`, 'with a history: its folder named, and the same reason');
+  assert.doesNotMatch(named.$('startLast').textContent, api, 'no API words');
+
+  // A scan the rules refuse, by POST /api/scan's own answer: the same plain words.
+  for (const [status, code, error, words] of [
+    [403, 'POLICY_ROOT_NOT_ALLOWED', '"/Users/x/Documents" is outside the allowed roots — edit agent-policy.json (allowedRoots) to widen them', outside],
+    [500, 'POLICY_UNREADABLE', SERVER_UNREADABLE, 'TreeMap’s agent policy file could not be read, and until it is repaired no folder on this computer can be scanned'],
+  ] as const) {
+    const h = page({ route: server({ roots: [], scanAnswer: () => ({ status, body: { error, code } }) }) });
+    await boot(h);
+    await startFrom(h, /^Documents$/);
+    assert.equal(h.$('startLast').textContent, `The scan of /Users/x/Documents failed: ${words}.`, `${code}: the failure said in plain words`);
+    assert.doesNotMatch(h.$('startLast').textContent, api, `${code}: no API words`);
+  }
 });
 
 test('a scan that fails leaves no dead scan id behind, as a Stop leaves none: a failed rescan over an older tree puts back the older tree\'s scan, a failed first scan leaves none (review F2.3)', async () => {

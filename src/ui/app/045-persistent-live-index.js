@@ -743,7 +743,7 @@ function failScan(message, err = null) {
   // why, and offers "Scan … again" for it — unless the server refused the
   // folder itself, which is named but never offered: a path that answers an
   // error is not a choice (the owner, 17 Oct 2026).
-  if (!state.root) noteLastFolder('failed', message, !(err && FOLDER_REFUSED_STATUSES.includes(err.status)));
+  if (!state.root) noteLastFolder('failed', message, !(err && FOLDER_REFUSED_STATUSES.includes(err.status)), (err && err.code) || '');
   // The start screen comes back over the Dashboard's path box, where focus
   // was moved as the scan started: withFocusKept moves it on (review F2.6).
   withFocusKept(() => { switchView(state.view); });
@@ -762,7 +762,7 @@ function failScan(message, err = null) {
  * the start screen held for the same folder stay with it. A cloud account's
  * scan changes nothing there, as a cloud account in the history never did.
  */
-function noteLastFolder(outcome, reason = '', offered = true) {
+function noteLastFolder(outcome, reason = '', offered = true, code = '') {
   const p = state.scanningPath;
   if (!p || p.startsWith('cloud://')) return null;
   // The size and date of its last finished scan, from the start screen's record or the history's (J03).
@@ -774,7 +774,8 @@ function noteLastFolder(outcome, reason = '', offered = true) {
   state.refusedPaths = offered ? others : [...others, p];
   // The history's folder, taken since it could not be opened, is offered again beside others (J03).
   if (offered && state.historyFolder && state.historyFolder.path === p && !state.historyFolder.offered) state.historyFolder = { ...state.historyFolder, offered: true };
-  state.lastFolder = { path: p, outcome, reason, offered, size: prev ? prev.size : null, at: prev ? prev.at : 0 };
+  // `code`: the refusal's, which the start screen says in its own words (startRefusalWords, J07).
+  state.lastFolder = { path: p, outcome, reason, offered, code, size: prev ? prev.size : null, at: prev ? prev.at : 0 };
   return state.lastFolder;
 }
 

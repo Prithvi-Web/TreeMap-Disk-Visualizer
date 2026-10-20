@@ -10608,7 +10608,7 @@ function failScan(message, err = null) {
   // why, and offers "Scan … again" for it — unless the server refused the
   // folder itself, which is named but never offered: a path that answers an
   // error is not a choice (the owner, 17 Oct 2026).
-  if (!state.root) noteLastFolder('failed', message, !(err && FOLDER_REFUSED_STATUSES.includes(err.status)));
+  if (!state.root) noteLastFolder('failed', message, !(err && FOLDER_REFUSED_STATUSES.includes(err.status)), (err && err.code) || '');
   // The start screen comes back over the Dashboard's path box, where focus
   // was moved as the scan started: withFocusKept moves it on (review F2.6).
   withFocusKept(() => { switchView(state.view); });
@@ -10627,7 +10627,7 @@ function failScan(message, err = null) {
  * the start screen held for the same folder stay with it. A cloud account's
  * scan changes nothing there, as a cloud account in the history never did.
  */
-function noteLastFolder(outcome, reason = '', offered = true) {
+function noteLastFolder(outcome, reason = '', offered = true, code = '') {
   const p = state.scanningPath;
   if (!p || p.startsWith('cloud://')) return null;
   // The size and date of its last finished scan, from the start screen's record or the history's (J03).
@@ -10639,7 +10639,8 @@ function noteLastFolder(outcome, reason = '', offered = true) {
   state.refusedPaths = offered ? others : [...others, p];
   // The history's folder, taken since it could not be opened, is offered again beside others (J03).
   if (offered && state.historyFolder && state.historyFolder.path === p && !state.historyFolder.offered) state.historyFolder = { ...state.historyFolder, offered: true };
-  state.lastFolder = { path: p, outcome, reason, offered, size: prev ? prev.size : null, at: prev ? prev.at : 0 };
+  // `code`: the refusal's, which the start screen says in its own words (startRefusalWords, J07).
+  state.lastFolder = { path: p, outcome, reason, offered, code, size: prev ? prev.size : null, at: prev ? prev.at : 0 };
   return state.lastFolder;
 }
 
@@ -40587,22 +40588,44 @@ function startChoiceList(sys, last, drives, refused = [], history = null) {
 }
 
 /**
- * The sentence above the choices about the folder `last` names, or '' when
- * there is nothing to say. `refusal`: the server's words when the rules do
- * not let a scan start at a last folder the history names — it is offered
- * nowhere, and said why (review F3.2).
+ * The page's own words for a refusal the rules make — `v`, { code, error }:
+ * a verdict of GET /api/policy?scanRoot=, or a refused scan's answer. The
+ * server's sentences are written for an agent: the path printed again, "GET
+ * /api/policy reports its location", "refused this operation" said to a
+ * person who has done nothing (seventh browser pass J07). A refusal of any
+ * other kind is the server's own sentence, which is about the folder.
  */
-function startLastLine(last, refusal = '') {
-  if (!last || !last.path) return '';
+function startRefusalWords(v) {
+  if (v.code === 'POLICY_ROOT_NOT_ALLOWED') return 'it is outside the folders your agent policy allows TreeMap to scan (allowedRoots in agent-policy.json)';
+  if (v.code === 'POLICY_UNREADABLE') return 'TreeMap’s agent policy file could not be read, and until it is repaired no folder on this computer can be scanned';
+  return v.error || '';
+}
+
+/**
+ * The sentence above the choices about the folder `last` names, or '' when
+ * there is nothing to say. `refusal`: the rules' verdict ({ code, error })
+ * when they do not let a scan start at a last folder the history names — it
+ * is offered nowhere, and said why (review F3.2). `unreadable`: a verdict of
+ * a policy file that cannot be read, which refuses every folder — said
+ * whether or not a folder is named, with the file to repair, as the reason
+ * only "Choose a folder…" is offered (J07).
+ */
+function startLastLine(last, refusal = null, unreadable = null) {
   const sentence = (s) => (/[.!?…]$/.test(s) ? s : s + '.');
+  const named = !!last && !!last.path;
+  if (unreadable && (!named || last.outcome === 'history')) {
+    const blocked = `TreeMap can’t scan any folder on this computer until its agent policy file is repaired — ${unreadable.file || 'agent-policy.json'} could not be read.`;
+    return named ? `Your last scan was of ${last.path}. ${blocked}` : blocked;
+  }
+  if (!named) return '';
   // Said while the Stop's cancel is out: the scan may yet prove to have finished (J02).
   if (last.outcome === 'stopping') return `Stopping the scan of ${last.path}…`;
   if (last.outcome === 'stopped') return `You stopped the scan of ${last.path}.`;
   if (last.outcome === 'unshown') return `The scan of ${last.path} had already finished when you pressed Stop, but its results could not be shown: ${sentence(last.reason || 'TreeMap could not read them')}`;
   if (last.outcome === 'unstopped') return `TreeMap could not stop the scan of ${last.path}, so it may still be running: ${sentence(last.reason || 'the server did not say why')}`;
-  if (last.outcome === 'failed') return `The scan of ${last.path} failed: ${sentence(last.reason || 'it did not finish')}`;
+  if (last.outcome === 'failed') return `The scan of ${last.path} failed: ${sentence(startRefusalWords({ code: last.code, error: last.reason }) || 'it did not finish')}`;
   if (!last.offered) return `Your last scan was of ${last.path}, which cannot be opened now: ${sentence(last.reason || 'TreeMap could not open it')}`;
-  if (refusal) return `Your last scan was of ${last.path}, which TreeMap may not scan now: ${sentence(refusal)}`;
+  if (refusal) return `Your last scan was of ${last.path}, which TreeMap may not scan now: ${sentence(startRefusalWords(refusal))}`;
   if (last.outcome === 'unreadable') return `Couldn’t reopen your last scan of ${last.path} (${last.reason}).`;
   return '';
 }
@@ -40631,8 +40654,9 @@ function renderStartChoices() {
   const candidates = startChoiceList(sys, last, drives, state.refusedPaths, state.historyFolder);
   const verdict = (p) => startVerdicts.get(p);
   const list = candidates.filter((c) => { const v = verdict(c.path); return v ? v.allowed : !!(c.again && !c.history && retry); });
-  const lastRefused = last && last.path && verdict(last.path) && !verdict(last.path).allowed ? verdict(last.path).error : '';
-  const words = startLastLine(last, lastRefused);
+  const lastVerdict = last && last.path ? verdict(last.path) : null;
+  const unreadable = [...startVerdicts.values()].find((v) => !v.allowed && v.code === 'POLICY_UNREADABLE') || null;
+  const words = startLastLine(last, lastVerdict && !lastVerdict.allowed ? lastVerdict : null, unreadable);
   line.textContent = words;
   line.hidden = !words;
   // One "Scan … again" carries the id focus lands by: the last folder's, never the history's beside it (J03).
@@ -40674,16 +40698,18 @@ async function startJudge(paths) {
   if (!ask.length) return;
   startAsking = new Set([...startAsking, ...ask]);
   let judged = new Map();
+  let file = ''; // the policy file, for a refusal that asks for it to be repaired (J07)
   try {
     const body = await api('/api/policy?' + ask.map((p) => 'scanRoot=' + encodeURIComponent(p)).join('&'));
     judged = new Map((body && Array.isArray(body.scanRoots) ? body.scanRoots : []).map((v) => [v.path, v]));
+    if (body && typeof body.file === 'string') file = body.file;
   } catch (e) {
     console.warn('[treemap] could not ask which folders a scan may start at:', e.message);
   }
   startAsking = new Set([...startAsking].filter((p) => !ask.includes(p)));
   startVerdicts = new Map([...startVerdicts, ...ask.map((p) => {
     const v = judged.get(p);
-    return [p, !v || v.allowed === true ? { allowed: true, error: '' } : { allowed: false, error: String(v.error || '') }];
+    return [p, !v || v.allowed === true ? { allowed: true, error: '' } : { allowed: false, error: String(v.error || ''), code: String(v.code || ''), file }];
   })]);
   withFocusKept(() => { renderStartChoices(); });
 }
