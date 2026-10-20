@@ -645,7 +645,10 @@ export function buildMcpServer(): McpServer {
       title: 'Smart cleanup suggestions',
       description:
         'Well-known reclaimable space in a completed scan, grouped by rule: regenerable build dirs ' +
-        '(node_modules, target, …, each with the command that rebuilds it), tool/browser caches, and OS junk. ' +
+        '(node_modules, target, …), tool/browser caches, and OS junk. A group whose rule knows how its contents ' +
+        'come back carries regenerateCmd: a command, or a sentence where nothing need be run ("automatic on next run"). ' +
+        'As the rule pack writes it: a `<folder>` in it stands for each item\'s own folder name ("python3 -m venv <folder>", ' +
+        'for .venv, venv or env), to be filled in, shell-quoted, before it is run. ' +
         'Groups come back largest first with exact byte totals. Suggested paths can be passed straight to ' +
         'trash_paths (they are always inside the scanned root).',
       inputSchema: {

@@ -14,6 +14,7 @@ process.env.TREEMAP_NO_GDU = '1';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildMcpServer, setToolWaitClockForTests } from '../src/mcp/server';
+import { buildOpenApiDocument } from '../src/api/openapi';
 import { peekScan } from '../src/services/diskScanner';
 import { CommandStopped, setTrashStepForTests } from '../src/services/cleaner';
 import { formatBytes } from '../src/utils/formatBytes';
@@ -246,6 +247,23 @@ test('find_duplicates still hashing says which pass its counts are for (QA D52)'
   assert.equal(s.hashed, 0);
   assert.ok(s.toHash > 0);
   await settle('find_duplicates', { scanId, minSizeBytes: 3 }, () => ({ scanId, minSizeBytes: 3 }));
+});
+
+test('cleanup_suggestions says what regenerateCmd holds - a command, or a sentence where nothing need be run, and a <folder> to fill in and quote - as the OpenAPI schema does (BQL-b1 review F2.3)', async () => {
+  // It promised "each with the command that rebuilds it" while serving the
+  // rule's template: "python3 -m venv <folder>, …", which zsh reads as a
+  // redirect, and "the next test run with coverage writes it again", no
+  // command at all. An MCP client reads only this description.
+  const { tools } = await client.listTools();
+  const description = tools.find((t) => t.name === 'cleanup_suggestions')?.description ?? '';
+  assert.doesNotMatch(description, /the command that rebuilds it/, `no promise of a command for every group: ${description}`);
+  assert.match(description, /regenerateCmd/, 'it names the field');
+  assert.match(description, /a command, or a sentence where nothing need be run/, 'it says the field may be a sentence');
+  const folder = /a `<folder>` in it stands for each item's own folder name\b.*?, to be filled in, shell-quoted, before it is run/;
+  assert.match(description, folder, `it says what <folder> stands for and what to do with it: ${description}`);
+  const doc = buildOpenApiDocument() as { components: { schemas: Record<string, { properties: Record<string, { description?: string }> }> } };
+  assert.match(doc.components.schemas.CleanupSuggestionGroup.properties.regenerateCmd.description ?? '', folder,
+    'control: the OpenAPI schema says the same of the HTTP field');
 });
 
 test('cleanup_suggestions flags node_modules as regenerable', async () => {
