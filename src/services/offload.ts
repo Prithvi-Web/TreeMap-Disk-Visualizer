@@ -24,6 +24,7 @@ import { AsyncMutex } from '../utils/asyncMutex';
 import { recordRestorePartial, restorePlacementHooks, whileRestoring } from './restoreLeftovers';
 import { JUNK_FILES } from './emptyFolderCheck';
 import { liveApfsContainers } from './apfsContainers';
+import { mountedReadOnly } from '../utils/mountBoundaries';
 
 /**
  * Offload — the third option next to "keep" and "trash" (Phase 7).
@@ -662,6 +663,12 @@ async function assertAnotherDrive(topPaths: readonly string[], destDir: string):
  * itself (write and search, which adding an entry needs), nothing written. Any other failure of the
  * ask refuses too, saying it could not be confirmed: refusing is the safe answer to "cannot tell".
  *
+ * A read-only drive is said to be one before permission is blamed (seventh browser pass J54): macOS
+ * answers the ask with EACCES, not EROFS, for a root-owned folder on a sealed read-only volume (an iOS
+ * Simulator's), so a refusal for permission asks the mount table whether the drive is mounted
+ * read-only. The table only words the refusal — the ask decides it — so a table that cannot be read,
+ * or a wrong reading of one, never refuses a folder the ask allows.
+ *
  * Not on Windows: a folder's write permission there is an ACL, which fs.access does not read — it
  * reports every folder writable, read-only drives' included — so the check would promise what it
  * cannot know. There the real run's first copy finds it, and the job rolls back with nothing trashed.
@@ -672,9 +679,11 @@ async function assertDestWritable(destDir: string): Promise<void> {
     await fsp.access(destDir, fs.constants.W_OK | fs.constants.X_OK);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    const why = code === 'EROFS'
+    const denied = code === 'EACCES' || code === 'EPERM';
+    const readOnly = code === 'EROFS' || (denied && (await mountedReadOnly(destDir).catch(() => null)) === true);
+    const why = readOnly
       ? 'it is on a drive that is read-only'
-      : code === 'EACCES' || code === 'EPERM'
+      : denied
         ? 'you do not have permission to add files to it'
         : `TreeMap could not confirm it may write there (${code ?? (err instanceof Error ? err.message : String(err))})`;
     throw new AppError(

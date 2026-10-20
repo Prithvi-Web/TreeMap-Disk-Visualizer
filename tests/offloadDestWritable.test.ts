@@ -18,6 +18,8 @@ import { AppError } from '../src/middleware/errorHandler';
 import type { ScanResult } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
+import { firmlinkAliases, mountedReadOnly, parseFirmlinks, setBoundaryDepsForTests, type BoundaryDeps } from '../src/utils/mountBoundaries';
+import { parseBsdMount, parseProcMounts } from '../src/platform/atime';
 
 /**
  * An offload's dry run refuses a destination it cannot write to (sixth browser pass H02). A sealed,
@@ -146,6 +148,110 @@ test('a destination on a read-only drive, or one whose write check fails some ot
         return true;
       });
     }
+  } finally {
+    fs.promises.access = realAccess;
+  }
+  const plan = await withOpenFileCheck('clear', () => prepareOffload(scan, [proj], dest));
+  assert.equal(plan.plan.length, 1, 'control: asked for real again, the same destination plans its one copy');
+});
+
+/* ── Seventh browser pass J54: a sealed read-only volume is said to be read-only, not a matter of permission ── */
+
+/** This Mac's own mount table and firmlinks, as `mount` and /usr/share/firmlinks print them (18 Oct 2026, trimmed). */
+const MAC_MOUNT = [
+  '/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)',
+  '/dev/disk3s5 on /System/Volumes/Data (apfs, local, journaled, nobrowse, protect, root data)',
+  '/Applications/Clocks.app/Wrapper on /private/var/folders/7x/X/4B95 (nullfs, local, nodev, nosuid, read-only, nobrowse, mounted by me)',
+  '/dev/disk7s1 on /Library/Developer/CoreSimulator/Volumes/iOS_22E238 (apfs, sealed, local, nodev, nosuid, read-only, journaled, noatime, nobrowse)',
+  '/dev/disk8s1 on /Volumes/Archive (exfat, local, nodev, nosuid, read-only, noowners)',
+  '/dev/disk9s1 on /Volumes/Backup (apfs, local, nodev, nosuid, journaled, noowners)',
+].join('\n');
+const MAC_FIRMLINKS = ['/Applications\tApplications', '/Library\tLibrary', '/Users\tUsers', '/Volumes\tVolumes', '/private\tprivate', '/usr/local\tusr/local'].join('\n');
+
+/** Boundary deps answering from `table` (null: unreadable) and `aliases`, every path being where it is spelled. */
+function tableDeps(table: string | null, parse: (t: string) => ReturnType<typeof parseBsdMount>, aliases = '', platform: NodeJS.Platform = 'darwin'): Partial<BoundaryDeps> {
+  return {
+    platform,
+    readTable: async () => (table === null
+      ? { source: 'mount' as const, entries: null, reason: 'mount: stand-in failure' }
+      : { source: 'mount' as const, entries: parse(table), reason: null }),
+    realpath: async (p: string) => p,
+    aliases: async () => (aliases ? firmlinkAliases(parseFirmlinks(aliases)) : () => []),
+  };
+}
+
+test('mountedReadOnly reads the drive a path is on from the mount table: the deepest mount along its path, through the firmlinks — a sealed root does not make the Data volume read-only (J54)', async () => {
+  const mac = tableDeps(MAC_MOUNT, parseBsdMount, MAC_FIRMLINKS) as BoundaryDeps;
+  const cases: Array<[string, boolean]> = [
+    ['/Library/Developer/CoreSimulator/Volumes/iOS_22E238/Library/Developer', true], // QA's sealed simulator volume
+    ['/Library/Developer/CoreSimulator/Volumes/iOS_22E238', true],
+    ['/Users/me/Offload', false],            // on the Data volume, through the /Users firmlink — not the sealed root
+    ['/System/Volumes/Data/Users/me', false], // the same folder, in the Data volume's own spelling
+    ['/Library/Caches', false],               // the Data volume's /Library
+    ['/Volumes/Archive/old', true],           // a read-only drive under /Volumes, itself firmlinked
+    ['/Volumes/Backup/2026', false],          // a writable one beside it
+    ['/private/var/folders/7x/X/4B95/Contents', true], // inside a read-only nullfs view
+    ['/private/var/folders/7x/X', false],
+    ['/System/Library/Frameworks', true],     // the sealed system volume itself
+  ];
+  for (const [p, want] of cases) assert.equal(await mountedReadOnly(p, mac), want, `${p}: ${want ? 'read-only' : 'writable'}`);
+  const linux = tableDeps([
+    '/dev/sda1 / ext4 rw,relatime 0 0',
+    '/dev/sdb1 /mnt/ro ext4 ro,relatime 0 0',
+    '/dev/sdc1 /mnt/ro/inner ext4 rw,relatime 0 0',
+    '/srv/data /mnt/bind\\040ro none ro,bind 0 0',
+    '/dev/sdd1 /mnt/stack ext4 rw,relatime 0 0',
+    '/dev/sde1 /mnt/stack ext4 ro,relatime 0 0', // mounted over the one above: the later is on top
+    '/dev/sdf1 /mnt/restack ext4 ro,relatime 0 0',
+    '/dev/sdg1 /mnt/restack ext4 rw,relatime 0 0',
+  ].join('\n'), parseProcMounts, '', 'linux') as BoundaryDeps;
+  for (const [p, want] of [
+    ['/home/me', false], ['/mnt/ro/x', true], ['/mnt/ro/inner/x', false], ['/mnt/bind ro/y', true], ['/mnt/robot', false],
+    ['/mnt/stack/x', true], ['/mnt/restack/x', false],
+  ] as const) {
+    assert.equal(await mountedReadOnly(p, linux), want, `linux ${p}: ${want ? 'read-only' : 'writable'}`);
+  }
+  assert.equal(await mountedReadOnly('/Users/me', tableDeps(null, parseBsdMount) as BoundaryDeps), null, 'a table that cannot be read is unknown, never "writable"');
+  const partial = tableDeps('/dev/sdb1 /mnt/ro ext4 ro,relatime 0 0', parseProcMounts, '', 'linux') as BoundaryDeps;
+  assert.equal(await mountedReadOnly('/home/me', partial), null, 'a table that names no mount holding the path is unknown too, never "writable"');
+});
+
+test('a destination on a drive mounted read-only is refused as read-only even where the write check answers "permission denied" first, as macOS does for a root-owned folder on a sealed volume (J54)', {
+  skip: process.platform === 'win32' && 'Windows keeps a folder\'s write permission in an ACL fs.access does not read, so the check is not made there',
+}, async () => {
+  const { proj, dest, scan } = project('rdonly');
+  // macOS answers access() with EACCES before EROFS for a root-owned 755 folder on a read-only
+  // mount (QA B/shots/141). A test cannot mount a read-only volume, so the write check answers as
+  // that folder did, and the mount table is a stand-in that lists the destination as its own mount.
+  const realAccess = fs.promises.access;
+  fs.promises.access = (async (p: fs.PathLike, mode?: number) => {
+    if (path.resolve(String(p)) === dest) throw Object.assign(new Error('EACCES: stand-in'), { code: 'EACCES' });
+    return realAccess(p, mode);
+  }) as typeof fs.promises.access;
+  const refusal = async (table: string | null): Promise<string> => {
+    setBoundaryDepsForTests(tableDeps(table, parseBsdMount));
+    try {
+      let message = '';
+      await assert.rejects(withOpenFileCheck('clear', () => prepareOffload(scan, [proj], dest)), (e: unknown) => {
+        assert.ok(e instanceof AppError, `an AppError, not ${String(e)}`);
+        assert.equal(e.code, 'DEST_NOT_WRITABLE', 'refused by its own code');
+        assert.match(e.message, /Nothing was copied or deleted\./, 'and that nothing happened');
+        message = e.message;
+        return true;
+      });
+      return message;
+    } finally {
+      setBoundaryDepsForTests(null);
+    }
+  };
+  try {
+    const sealed = await refusal(`/dev/disk3s5 on / (apfs, local, journaled)\n/dev/disk7s1 on ${dest} (apfs, sealed, local, nodev, nosuid, read-only, journaled)`);
+    assert.match(sealed, /: it is on a drive that is read-only\./, `on a read-only mount it says so (${sealed})`);
+    assert.doesNotMatch(sealed, /permission/, 'and not that it is a matter of permission');
+    const writable = await refusal(`/dev/disk3s5 on / (apfs, local, journaled)\n/dev/disk7s1 on ${dest} (apfs, local, journaled)`);
+    assert.match(writable, /: you do not have permission to add files to it\./, `control: on a writable drive it is permission (${writable})`);
+    const unknown = await refusal(null);
+    assert.match(unknown, /: you do not have permission to add files to it\./, `a table that cannot be read leaves the write check's own answer (${unknown})`);
   } finally {
     fs.promises.access = realAccess;
   }

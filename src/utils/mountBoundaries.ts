@@ -390,6 +390,47 @@ function scanDeps(): BoundaryDeps {
   return depsForTests ? { ...live, ...depsForTests } : live;
 }
 
+/** How many names `p` has below `mountPoint`, which it lies at or under. */
+const namesBelow = (mountPoint: string, p: string): number =>
+  p.slice(mountPoint.length).split('/').filter(Boolean).length;
+
+/**
+ * Whether the drive `p` is on is mounted read-only (seventh browser pass J54),
+ * from the mount table — never by writing. null when the table cannot be read,
+ * or names no mount for it: unknown, never "writable".
+ *
+ * The mount that holds `p` is the deepest one along its path, in every
+ * spelling of it (its links resolved, then the firmlinks): on a Mac the root
+ * volume is sealed and read-only, and /Users reaches the writable Data volume
+ * through a firmlink, so the longest mount point under the path as typed
+ * would call every home folder read-only. A drive mounted at /Volumes/Archive
+ * holds /Volumes/Archive/old one name deep where the Data volume's spelling
+ * of it is three, so the drive is the one. Where two spellings reach as deep —
+ * /Users/me under the root, /System/Volumes/Data/Users/me under the Data
+ * volume — the firmlink is the way through, and the longer mount point (the
+ * Data volume's) is the one. Two mounts at one mount point are stacked, and
+ * the later in the table is the one on top, which the path reaches.
+ */
+export async function mountedReadOnly(p: string, deps: BoundaryDeps = scanDeps()): Promise<boolean | null> {
+  const table = await deps.readTable();
+  if (table.entries === null) return null;
+  const real = await deps.realpath(p).catch(() => p);
+  const aliases = await deps.aliases().catch(() => (deps.platform === 'darwin' ? dataVolumeAlias : NO_ALIASES));
+  let best: { entry: MountEntry; below: number } | null = null;
+  for (const spelling of [real, ...aliases(real)]) {
+    for (const entry of table.entries) {
+      if (!isAtOrUnder(entry.mountPoint, spelling)) continue;
+      const below = namesBelow(entry.mountPoint, spelling);
+      if (!best || below < best.below || (below === best.below && entry.mountPoint.length >= best.entry.mountPoint.length)) {
+        best = { entry, below };
+      }
+    }
+  }
+  if (!best) return null;
+  // macOS's `mount` says "read-only"; Linux's /proc/mounts says "ro".
+  return best.entry.options.includes('read-only') || best.entry.options.includes('ro');
+}
+
 /**
  * The one place a scan's never-descend list is composed: the fixed list, and
  * — under `stay` — every drive the mount table shows mounted beneath `root`.
