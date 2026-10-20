@@ -2978,6 +2978,14 @@ body.cart-open .tm-preview-banner .tm-pv-cart-said { display: none; }
 #view-treemap:has(> #treemapWrap.previewing) > .tm-foot,
 #view-treemap:has(> #treemapWrap.previewing) > .drive-dock { margin-right: var(--tm-cart-clear, 0px); }
 #view-treemap:has(> #treemapWrap.previewing) > .tm-altnote { margin-right: calc(4px + var(--tm-cart-clear, 0px)); }
+/* And the key wraps inside that narrower footer: piece by piece, and a
+   marking by its words. Held to one line it could not shrink below the size
+   key and its longest marking side by side, wider than the footer beside the
+   open cart at 1024, and ran on under the cart (review F1.13). The size
+   key's ends and its gradient stay whole (H52). */
+#view-treemap:has(> #treemapWrap.previewing) > .tm-foot .tm-legend,
+#view-treemap:has(> #treemapWrap.previewing) > .tm-foot .tm-legend-bands { flex-wrap: wrap; row-gap: 4px; }
+#view-treemap:has(> #treemapWrap.previewing) > .tm-foot .tm-marks .mk { white-space: normal; }
 /* The time-lapse bar steps aside while the map previews. The preview is of
    the live map — it will not start on a scrubbed one, and a scrub drew
    history under a banner about the cart — and at the desktop window's

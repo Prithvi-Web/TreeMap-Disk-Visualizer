@@ -740,6 +740,118 @@ test('the clearance is there only while the map previews with the cart open, fol
   assert.equal(viewProps['--tm-cart-clear'], undefined, 'and the view drops the clearance');
 });
 
+/** Average glyph width of the footer's 11.5 px type, as a share of its size: an upper bound on QA's readings of B/shots/053 and 060 — "staged for the Trash" 110 px (0.48), "1 MB" 26 px (0.57), "10 GB+" 40 px (0.58). */
+const KEY_CHAR_EM = 0.6;
+/** The selector prefix of the rules that hold while the map previews (J52). */
+const PREVIEWING = '#view-treemap:has(> #treemapWrap.previewing) > .tm-foot ';
+
+type KeyNode = { text: string } | { tag: string; cls: string[]; attrs: Record<string, string>; kids: KeyNode[] };
+
+/** The map key's markup in "Preview after", as the page writes it, in colour mode `mode` with every marking drawn. */
+function keyHtml(mode: 'size' | 'age' | 'reclaim' | 'diff'): string {
+  const host = { innerHTML: '' };
+  const C = [0, 0, 0];
+  const ageLabels = [.../const AGE_BANDS = \[([\s\S]*?)\n\];/.exec(INDEX)![1].matchAll(/label: '([^']*)'/g)].map((m) => m[1]);
+  assert.equal(ageLabels.length, 4, 'control: the Age key\'s four bands');
+  runPageDecls<() => void>(['TM_OPEN_NOUNS', 'tmMarksKey', 'renderTmLegend'], {
+    $: (id: string) => (id === 'tmLegend' ? host : null),
+    state: { treemap: { history: { active: mode === 'diff', diff: mode === 'diff' }, colorMode: mode === 'diff' ? 'size' : mode,
+      marks: { open: new Set(['zip', 'photos']), staged: true, cloud: true, git: true } } },
+    isRectMap: () => true, tmPreview: { on: true }, escapeHtml: (x: string) => x, sizeRampCss: () => 'none', reclaimCoverageNote: () => '',
+    AGE_BANDS: ageLabels.map((label) => ({ rgb: C, label })), C_TEAL: C, C_AMBER: C, C_ORANGE: C, C_RED: C, C_DIFF_SAME: C, C_RC_LOW: C, C_RC_UNSCORED: C,
+  }, 'renderTmLegend')();
+  return host.innerHTML;
+}
+
+/** `html` (the key's own markup: spans, divs, i, an svg) as a tree. */
+function parseKey(html: string): KeyNode[] {
+  const root = { tag: 'root', cls: [] as string[], attrs: {}, kids: [] as KeyNode[] };
+  const stack: Array<typeof root> = [root];
+  const decode = (t: string) => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  for (const m of html.matchAll(/<(\/?)([a-z]+)([^>]*?)(\/?)>|([^<]+)/gi)) {
+    if (m[5] !== undefined) { if (m[5].trim()) stack[stack.length - 1].kids.push({ text: decode(m[5]) }); continue; }
+    if (m[1]) { stack.pop(); continue; }
+    const attrs = Object.fromEntries([...m[3].matchAll(/([\w-]+)="([^"]*)"/g)].map((a) => [a[1], a[2]]));
+    const el = { tag: m[2], cls: (attrs.class || '').split(/\s+/).filter(Boolean), attrs, kids: [] as KeyNode[] };
+    stack[stack.length - 1].kids.push(el);
+    if (!m[4]) stack.push(el);
+  }
+  return root.kids;
+}
+
+/** The stylesheet's selectors for each class the key's markup uses. */
+const KEY_RULES: Record<string, string[]> = {
+  'tm-legend': ['.tm-legend'], 'tm-legend-end': ['.tm-legend .tm-legend-end'], 'legend-grad': ['.legend-grad', '.tm-legend .legend-grad'],
+  'tm-legend-bands': ['.tm-legend-bands'], ab: ['.tm-legend-bands .ab'], sw: ['.tm-legend .sw'], 'rc-legend-note': ['.rc-legend-note'],
+  'tm-marks': ['.tm-marks'], mk: ['.tm-marks .mk'], 'mk-sw': ['.mk-sw'], 'mk-git': ['.tm-marks .mk-git'],
+};
+/** What the stylesheet gives an element of these classes, with the rules that hold while the map previews on top when `previewing`. */
+function keyDecls(cls: string[], previewing: boolean): Map<string, string> {
+  const base = cls.flatMap((c) => KEY_RULES[c] ?? []);
+  const out = new Map(declsFor(...base));
+  if (previewing) for (const [k, v] of declsFor(...base.map((b) => PREVIEWING + b))) out.set(k, v);
+  return out;
+}
+
+/**
+ * The narrowest `node` lays out, from the stylesheet: a fixed width where it has one; a flex row its pieces
+ * side by side with their gap, or the widest piece where it wraps; text its longest word, or all of it where
+ * it is held to one line; at KEY_CHAR_EM of its font size a character.
+ */
+function minContent(node: KeyNode, previewing: boolean, nowrap = false, fontPx = 11.5): number {
+  if ('text' in node) {
+    const width = (t: string) => t.length * fontPx * KEY_CHAR_EM;
+    return nowrap ? width(node.text.trim()) : Math.max(...node.text.trim().split(/\s+/).map(width));
+  }
+  if (node.tag === 'svg') return Number(node.attrs.width);
+  const d = keyDecls(node.cls, previewing);
+  const margin = /^\d+(\.\d+)?px$/.test(d.get('margin-left') ?? '') ? parseFloat(d.get('margin-left')!) : 0;
+  if (/^\d+(\.\d+)?px$/.test(d.get('width') ?? '')) return parseFloat(d.get('width')!) + margin;
+  const nw = nowrap || d.get('white-space') === 'nowrap';
+  const font = /^\d+(\.\d+)?px$/.test(d.get('font-size') ?? '') ? parseFloat(d.get('font-size')!) : fontPx;
+  const kids = node.kids.map((k) => minContent(k, previewing, nw, font));
+  if (!kids.length) return margin;
+  const sum = kids.reduce((a, b) => a + b, 0);
+  if (/flex/.test(d.get('display') ?? '')) {
+    const gaps = (d.get('gap') ?? '0px').split(/\s+/);
+    const colGap = parseFloat(gaps[gaps.length - 1]);
+    return margin + (d.get('flex-wrap') === 'wrap' ? Math.max(...kids) : sum + colGap * (kids.length - 1));
+  }
+  return margin + (nw ? sum : Math.max(...kids));
+}
+
+test('in "Preview after" with the cart open, the key fits the footer held clear of the cart — it wraps piece by piece and a marking by its words, so none of it runs under the cart: at 1024 and 1440 px, the pane open or not, both sidebar states, every colouring, every marking drawn (review F1.13)', () => {
+  const footPad = sheetPx((declsFor('.tm-foot').get('padding') || '').split(/\s+/)[1], "the footer's side padding");
+  const keys = (['size', 'age', 'reclaim', 'diff'] as const).map((mode) => ({ mode, nodes: parseKey(keyHtml(mode)) }));
+  const legend = (nodes: KeyNode[], previewing: boolean) => minContent({ tag: 'div', cls: ['tm-legend'], attrs: {}, kids: nodes }, previewing);
+  const size = keys.find((k) => k.mode === 'size')!;
+  assert.match(keyHtml('size'), /archive or Photos library you can open after the preview/, 'control: the longest marking QA saw under the cart is in the key');
+  let checked = 0;
+  for (const W of [1024, 1440]) {
+    for (const rail of [false, true]) {
+      for (const pane of [false, true]) {
+        const label = `${W} px, sidebar ${rail ? 'rail' : 'open'}, preview pane ${pane ? 'open' : 'shut'}`;
+        const w = cartClearWorld(W, rail, pane);
+        assert.equal(w.fns.sync(), true, `${label}: control — the footer is held clear of the open cart`);
+        const room = w.marks().foot - (w.col.left + footPad);
+        if (W === 1024 && !rail && !pane) {
+          // QA's case (B/shots/060): the key as it lays out outside the preview is wider than that footer.
+          assert.ok(legend(size.nodes, false) > room, `${label}: control — unwrapped, the key needs ${legend(size.nodes, false).toFixed(0)} px of the footer's ${room.toFixed(0)}`);
+        }
+        for (const k of keys) {
+          const need = legend(k.nodes, true);
+          assert.ok(need <= room, `${label}, the ${k.mode} key: its narrowest (${need.toFixed(0)} px) fits the footer's ${room.toFixed(0)} px, left of the cart`);
+        }
+        checked++;
+      }
+    }
+  }
+  assert.equal(checked, 8, 'every state was checked');
+  // The size key's ends and its gradient stay whole: what wraps is the key's pieces and a marking's words.
+  assert.equal(keyDecls(['tm-legend-end'], true).get('white-space'), 'nowrap', 'the size key\'s ends are still held to one line (H52)');
+  assert.ok(legend(size.nodes, true) >= sheetPx(declsFor('.tm-legend .legend-grad').get('width'), 'the gradient\'s width'), 'and the gradient keeps its width');
+});
+
 test('while the cart is open the welcome tour\'s card covers none of it — at every window size, the preview pane open or not, in both sidebar states (sixth browser pass H51)', () => {
   // QA: the tour card (z 96, 18 px from the right, 86 px up) sat on the open cart (z 80): a hit test
   // at the centre of Preview after, Clear, Move all to Trash and each row's × returned the card, so
