@@ -197,5 +197,6 @@ test('C11: the page wires both — every scan announcement reaches tmQueryScanCh
   const at = INDEX.indexOf("id: 'treemap', label: 'Treemap'");
   assert.notEqual(at, -1, 'the Treemap view is registered');
   const mount = INDEX.slice(INDEX.indexOf('mount() {', at), INDEX.indexOf('unmount() {', at));
-  assert.match(mount, /loadTreemap\(state\.treemap\.rootPath\);\s*\n\s*tmRejudgeQuery\(\);/, 'the mount asks the query again after it loads the map');
+  // Once no scan is running: a running scan answers a query 409 (review F2.5; coreScanFlow runs the mount).
+  assert.match(mount, /loadTreemap\(state\.treemap\.rootPath\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!state\.scanning\) tmRejudgeQuery\(\);/, 'the mount asks the query again after it loads the map');
 });

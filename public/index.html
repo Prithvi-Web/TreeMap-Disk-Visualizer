@@ -7871,7 +7871,13 @@ const VIEWS = [
       loadSavedViews(); // Phase 2 §2.4 — the chip strip, fetched lazily on entry
       refreshDock(); // §8.3 — connected drives, fetched lazily on entry like the chips
       loadTreemap(state.treemap.rootPath);
-      tmRejudgeQuery(); // C11 — a query a previous scan of this folder answered is asked of this one
+      // C11 — a query a previous scan of this folder answered is asked of
+      // this one. Not while a scan runs: the tree on screen is still the one
+      // its query answered, and the running scan answers a query 409
+      // SCAN_RUNNING — its highlights cleared and an error said over a tree
+      // they were right for (review F2.5). finishScan re-enters this view
+      // once the scan lands, and it is asked then.
+      if (!state.scanning) tmRejudgeQuery();
     },
     unmount() {
       // Phase 2: stop the debounce, invalidate anything already in flight, and

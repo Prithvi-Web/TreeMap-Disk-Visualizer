@@ -1607,9 +1607,10 @@ test('review F1.5: while a rescan of a folder with a saved index runs over an ol
   assert.deepEqual(mapFailures(h), [], 'and nothing says the map failed');
 });
 
-test('review F1.5: while a rescan runs over an older scan\'s tree, that tree\'s map is asked of the older scan it came from — never of the running scan', async () => {
+test('review F1.5, F2.5: while a rescan runs over an older scan\'s tree, that tree\'s map is asked of the older scan it came from — never of the running scan — and so is no query: the highlight box\'s query is asked again only of the scan that lands', async () => {
   const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
-  const h = page({ index: true, realTreemap: true, root: mail, settledScanId: 'scan-mail', route: mapServer(server({ roots: [] }), { 'scan-mail': mail }) });
+  const complete: Record<string, { name: string; path: string; size: number }> = { 'scan-mail': mail };
+  const h = page({ index: true, realTreemap: true, root: mail, settledScanId: 'scan-mail', route: mapServer(server({ roots: [] }), complete) });
   h.switchView('dashboard');
   await h.startScan(MAIL); // no saved index: the older tree stays on screen while the scan runs
   await turns();
@@ -1621,6 +1622,17 @@ test('review F1.5: while a rescan runs over an older scan\'s tree, that tree\'s 
   assert.equal(mapAsks(h, 'scan-mail').length, 1, 'the scan the tree on screen came from is');
   assert.deepEqual(h.drawn.at(-1), { rootPath: MAIL, rootName: 'Mail', rootSize: 37_700_000, nodes: 1 }, 'and the map of the tree on screen is drawn');
   assert.deepEqual(mapFailures(h), [], 'with nothing said to have failed');
+  // Review F2.5: a grammar query in the box (size>1gb, answered by scan-mail)
+  // asked again here would go to the running scan, which answers 409
+  // SCAN_RUNNING — its highlights cleared and a red error under the box,
+  // over a tree whose highlights were still right.
+  assert.deepEqual(h.rejudged, [], 'no query is asked of the running scan while its tree is not on screen');
+  // The rescan lands: its tree on screen, the view re-entered (finishScan).
+  complete['scan-1'] = mail;
+  h.streams[0].onmessage!({ data: JSON.stringify({ type: 'complete', root: mail, stats: { fileCount: 1, dirCount: 1 } }) });
+  await turns();
+  assert.equal(h.state.scanning, false, 'control: the rescan landed');
+  assert.deepEqual(h.rejudged, ['scan-1'], 'the query is asked again of the scan that landed, its tree now on screen (C11)');
 });
 
 /* ══════════════ (E) — the rest of the seventh browser pass (J01, J02, J03, J07) ══════════════ */
