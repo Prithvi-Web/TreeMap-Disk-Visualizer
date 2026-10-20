@@ -10556,6 +10556,7 @@ function quietRescanFailed(e) {
   // else redraws them — re-entered, as failScan and stopScan re-enter it
   // (review F3.4).
   withFocusKept(() => { switchView(state.view); });
+  tourScanFailed(); // the tour's quick wins, waiting for this scan, say it will not land (review F1.4)
   drainScanQueue(); // a folder waiting behind this one still deserves its turn
 }
 
@@ -32514,6 +32515,9 @@ function cmdkScrollSel() {
  */
 const tour = {
   active: false, step: 'welcome', wins: [], winIx: 0, added: [], unknownReason: '',
+  // The quick wins were asked for over a tree no scan stood behind, and are
+  // asked again as that changes (tourLoadWins, tourRejudgeWins).
+  winsAwaitScan: false,
   // The boot restore has said whether this person has scanned before
   // (tourBootSettled); until it has, a start asked for at boot waits (`wanted`).
   booted: false, wanted: false,
@@ -32538,6 +32542,7 @@ function tourMaybeStart(done, { asked = false } = {}) {
   tour.wins = [];
   tour.winIx = 0;
   tour.unknownReason = '';
+  tour.winsAwaitScan = false;
   // A first scan running when it starts — `?path=`, or a folder the desktop
   // shell handed over — is the scanning step; a scan on screen is the map.
   tour.step = state.scanning && !state.root ? 'scanning' : state.scanId ? 'map' : 'welcome';
@@ -32630,12 +32635,17 @@ function tourRender(takeFocus = true) {
       <h4>${icon('loader', 16)}Reading your files…</h4>
       <p>TreeMap is measuring every file and folder in ${escapeHtml(name)}. The map appears the moment it finishes — a big folder can take a minute.</p>`;
   } else if (tour.step === 'map') {
+    // The quick wins asked for over the saved index's tree while its scan runs
+    // (tourLoadWins): the card says they wait for it, and a scan landing asks.
     host.innerHTML = `
       ${head('The map · step 2 of 4')}
       <h4>${icon('treemap', 16)}This is your disk as a map</h4>
       <p>Every rectangle is a file or folder; bigger means more space. Click a folder to open it, one level at a time; press <kbd>Esc</kbd> to climb back up a level, and hover anything for the details.</p>
-      <div class="tour-row"><button class="btn btn-primary" data-tour-wins>Show me what I could free</button></div>`;
-    host.querySelector('[data-tour-wins]').addEventListener('click', () => { void tourLoadWins(); });
+      ${tour.winsAwaitScan
+    ? '<p class="muted">The quick wins are worked out from a finished scan — they appear here once the scan finishes.</p>'
+    : '<div class="tour-row"><button class="btn btn-primary" data-tour-wins>Show me what I could free</button></div>'}`;
+    const ask = host.querySelector('[data-tour-wins]');
+    if (ask) ask.addEventListener('click', () => { void tourLoadWins(); });
   } else if (tour.step === 'clean') {
     host.innerHTML = `
       ${head('All done', false)}
@@ -32857,18 +32867,24 @@ function tourPlaceSoon() {
 window.addEventListener('resize', tourPlaceSoon);
 document.addEventListener('scroll', tourPlaceSoon, { capture: true, passive: true });
 
-async function tourLoadWins() {
+async function tourLoadWins({ takeFocus = true } = {}) {
   // Of the scan the tree on screen came from (treeScanId), never a scan still
   // walking. The saved index's tree has none: said, as the card's other
-  // non-answers are, rather than a button that does nothing (BQJ-1b).
+  // non-answers are, rather than a button that does nothing (BQJ-1b) — and
+  // asked again as that changes (tourRejudgeWins). A scan of it running: the
+  // card stays on the map, saying the wins wait for it. An "unknown" card
+  // said "The scan is still running" for good, its only button Finish, and
+  // a scan landing never moved it (review F1.4).
   const scanId = treeScanId();
+  tour.winsAwaitScan = !scanId && !!state.root;
   if (!scanId) {
     if (!state.root) return;
-    tour.step = 'unknown';
-    tour.unknownReason = treeScanComing()
-      ? 'The scan is still running, so there is nothing to suggest yet.'
-      : 'This folder was opened from its saved index, and suggestions need a scan of it.';
-    tourRender();
+    if (treeScanComing()) tour.step = 'map';
+    else {
+      tour.step = 'unknown';
+      tour.unknownReason = 'This folder was opened from its saved index, and suggestions need a scan of it.';
+    }
+    tourRender(takeFocus);
     return;
   }
   // A fourth non-answer, and the loudest: the folder was never read. On a Mac
@@ -32882,7 +32898,7 @@ async function tourLoadWins() {
     tour.unknownReason = state.scanRefused.root
       ? refusedFolderWords() + ', so nothing here has been checked.'
       : `${state.scanRefused.dirs} folder${state.scanRefused.dirs === 1 ? '' : 's'} could not be read, so this is not the whole picture.`;
-    tourRender();
+    tourRender(takeFocus);
     return;
   }
   // Three distinct non-answers must not read as "clean" (review round 1):
@@ -32895,14 +32911,14 @@ async function tourLoadWins() {
     if (res && res.available === false) {
       tour.step = 'unknown';
       tour.unknownReason = res.reason || 'Suggestions are not available right now.';
-      tourRender();
+      tourRender(takeFocus);
       return;
     }
     groups = (res && res.groups) || [];
   } catch (e) {
     tour.step = 'unknown';
     tour.unknownReason = 'Could not check: ' + e.message;
-    tourRender();
+    tourRender(takeFocus);
     return;
   }
   // The normal engine's own output, minus what has no delete path: advisory
@@ -32918,21 +32934,37 @@ async function tourLoadWins() {
     tour.unknownReason = r.root
       ? refusedFolderWords() + ', so nothing here has been checked.'
       : `${r.dirs} folder${r.dirs === 1 ? '' : 's'} could not be read, so part of this folder has not been checked.`;
-    tourRender();
+    tourRender(takeFocus);
     return;
   }
   tour.step = tour.wins.length ? 'win' : 'clean';
-  tourRender();
+  tourRender(takeFocus);
 }
 
 /** A scan started while the welcome card is up: the card follows. Called from
  *  beginScanChrome, so Browse, ⌘K, a drop and the card's own button all count. */
 function tourScanStarted() {
   if (tour.active && tour.step === 'welcome') { tour.step = 'scanning'; tourRender(); }
+  if (tour.winsAwaitScan) tourRejudgeWins(); // a scan of the folder may be one the wins wait for now
 }
 /** The scan failed, or was stopped, before it landed: the welcome card and its buttons come back (review F2.2). */
 function tourScanFailed() {
   if (tour.active && tour.step === 'scanning') { tour.step = 'welcome'; tourRender(); }
+  if (tour.winsAwaitScan) tourRejudgeWins(); // the scan the wins waited for will not land
+}
+
+/**
+ * The quick wins were asked for over a tree no scan stood behind
+ * (tourLoadWins): asked again as that changes — a scan of the folder
+ * starting (tourScanStarted), stopped or failing (tourScanFailed), a scan
+ * landing or a Stop putting the older tree back (TOPIC.scan) — so neither
+ * "they appear here once the scan finishes" nor "suggestions need a scan of
+ * it" outlives what it said (review F1.4). Focus moves with the card only if
+ * it was in it.
+ */
+function tourRejudgeWins() {
+  if (!tour.active || !tour.winsAwaitScan) return;
+  void tourLoadWins({ takeFocus: $('tourCard').contains(document.activeElement) });
 }
 
 // A scan landing while the welcome card is up means the user took the step —
@@ -32946,9 +32978,11 @@ subscribe(TOPIC.scan, () => {
     tour.wins = [];
     tour.winIx = 0;
     tour.unknownReason = '';
+    tour.winsAwaitScan = false;
     tour.step = 'scanning'; // moved to the map, and painted there, just below
   }
   if (!tour.active) return;
+  if (tour.winsAwaitScan) { tourRejudgeWins(); return; }
   if (!(tour.step === 'welcome' || tour.step === 'scanning')) return;
   tour.step = 'map';
   // After finishScan's own synchronous switchView(state.view): the first scan

@@ -436,6 +436,7 @@ function quietRescanFailed(e) {
   // else redraws them — re-entered, as failScan and stopScan re-enter it
   // (review F3.4).
   withFocusKept(() => { switchView(state.view); });
+  tourScanFailed(); // the tour's quick wins, waiting for this scan, say it will not land (review F1.4)
   drainScanQueue(); // a folder waiting behind this one still deserves its turn
 }
 

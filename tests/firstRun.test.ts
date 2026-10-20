@@ -995,6 +995,7 @@ test('the tour waits for the boot restore, and never walks someone who has scann
   const asked = make({ scannedBefore: true });
   asked.tourMaybeStart(false, { asked: true });
   assert.deepEqual([asked.tour.active, asked.tour.step], [true, 'welcome'], 'Settings › Show the welcome tour again is their own request: it starts');
+  assert.equal((asked.tour as Record<string, unknown>).winsAwaitScan, false, 'a new run waits for no quick wins an earlier run asked for (review F1.4)');
   const handed = make({ scanning: true, scanId: 'scan-1' });
   handed.tourBootSettled();
   handed.tourMaybeStart(false);
@@ -1019,25 +1020,39 @@ test('a tour held back for someone who has scanned before starts at the map when
   }
   const subscriber = `${INDEX.slice(at, end)});`;
   const run = (deferred: boolean) => {
-    const tour = { active: false, step: 'welcome', wins: [{}], winIx: 1, added: ['/a'], unknownReason: 'x', deferred };
+    // An earlier run's wait for quick wins (review F1.4) is no part of a new one.
+    const tour = { active: false, step: 'welcome', wins: [{}], winIx: 1, added: ['/a'], unknownReason: 'x', deferred, winsAwaitScan: true };
     const state = { root: { name: 'Users' }, view: 'dashboard' };
     const views: string[] = [];
     const renders: string[] = [];
+    const rejudged: string[] = [];
     const landed: Array<() => void> = [];
-    new Function('subscribe', 'TOPIC', 'tour', 'state', 'switchView', 'tourRender', `'use strict'; ${subscriber}`)(
+    new Function('subscribe', 'TOPIC', 'tour', 'state', 'switchView', 'tourRender', 'tourRejudgeWins', `'use strict'; ${subscriber}`)(
       (_topic: string, fn: () => void) => { landed.push(fn); }, { scan: 'scan' }, tour, state,
-      (v: string) => { views.push(v); state.view = v; }, () => { renders.push(tour.step); });
+      (v: string) => { views.push(v); state.view = v; }, () => { renders.push(tour.step); }, () => { rejudged.push(tour.step); });
     landed[0]();
-    return { tour, views, renders };
+    return { tour, views, renders, rejudged };
   };
   const held = run(true);
   await new Promise((r) => setImmediate(r));
   assert.deepEqual([held.tour.active, held.tour.step, held.tour.deferred], [true, 'map', false], 'the tour starts, at the map');
   assert.deepEqual([held.views, held.renders], [['treemap'], ['map']], 'with the map on screen, painted once');
-  assert.deepEqual([held.tour.added, held.tour.wins, held.tour.winIx, held.tour.unknownReason], [[], [], 0, ''], 'as a new run');
+  assert.deepEqual([held.tour.added, held.tour.wins, held.tour.winIx, held.tour.unknownReason, held.tour.winsAwaitScan], [[], [], 0, '', false], 'as a new run');
+  assert.deepEqual(held.rejudged, [], 'waiting for no quick wins');
   const not = run(false);
   await new Promise((r) => setImmediate(r));
   assert.deepEqual([not.tour.active, not.renders], [false, []], 'control: a tour nobody held back stays down');
+});
+
+test('the map card, its quick wins asked for while the scan behind the saved index\'s tree runs, says they appear once the scan finishes — no button that would ask again, and focus on Skip, never <body> (review F1.4)', () => {
+  const card = tourCard('map');
+  assert.ok(card.found['data-tour-wins'], 'control: the map card offers the quick wins');
+  (card.tour as Record<string, unknown>).winsAwaitScan = true; // tourLoadWins, over the saved index's tree while its scan runs
+  card.render();
+  assert.match(card.now().text, /The quick wins are worked out from a finished scan — they appear here once the scan finishes\./, 'it says what the wins wait for');
+  assert.match(card.now().text, /This is your disk as a map/, 'still the map card');
+  assert.equal(card.found['data-tour-wins'], undefined, 'no button that would ask again');
+  assert.equal(card.found['data-tour-skip']?.focused ?? 0, 1, 'focus on Skip, the card\'s one control');
 });
 
 test('right after a Stop the welcome card hands focus to the start screen\'s "Scan … again", never its own buttons (the owner, 17 Oct 2026)', () => {

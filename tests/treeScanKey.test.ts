@@ -227,7 +227,7 @@ function page<T>(decls: string[], given: Record<string, unknown>, returns: strin
     return answer(url);
   };
   const all = [...RULE, ...decls];
-  // A decl is a function declaration's head, or a top-level statement's (an event handler, `$(…)`), which declares nothing.
+  // A decl is a function declaration's head, or a top-level statement's (an event handler, `$(…)`, or a subscriber), which declares nothing.
   const own = new Set(all.flatMap((d) => { const m = /^(?:async )?function (\w+)\(/.exec(d); return m ? [m[1]] : []; }));
   // `given` itself is the scope, so what the page assigns to its own top-level bindings is read back from it.
   if (!('api' in given)) given.api = api;
@@ -237,7 +237,7 @@ function page<T>(decls: string[], given: Record<string, unknown>, returns: strin
     get: (t, k) => (k === Symbol.unscopables ? undefined : (t as Record<string, unknown>)[k as string]),
     set: (t, k, v) => { (t as Record<string, unknown>)[k as string] = v; return true; },
   });
-  const fns = new Function('scope', `with (scope) { ${all.map((d) => (d.startsWith('$(') ? pageStatement(d) : pageFn(d))).join('\n')}\n return ${returns}; }`)(scope) as T;
+  const fns = new Function('scope', `with (scope) { ${all.map((d) => (/^(?:\$|subscribe)\(/.test(d) ? pageStatement(d) : pageFn(d))).join('\n')}\n return ${returns}; }`)(scope) as T;
   return { fns, asks };
 }
 
@@ -746,23 +746,90 @@ test('the Dashboard\'s folder budgets, cost to keep and drive health are asked o
   }
 });
 
-test('the welcome tour\'s cleanup wins are asked of the scan the tree on screen came from — never the running scan — and over the saved index\'s tree it says why there is nothing to suggest, instead of doing nothing', async () => {
-  const tour: Record<string, unknown> = { step: 'map', wins: [], winIx: 0, unknownReason: '' };
-  const state: Record<string, unknown> = { root: TREE, ...HELD, scanRefused: null };
-  const { fns, asks } = page<{ wins: () => Promise<void> }>(['async function tourLoadWins('], {
-    state, tour, tourRender: noop, refusedFolderWords: () => '',
-  }, '{ wins: tourLoadWins }', () => ({ groups: [] }));
+test('the welcome tour\'s cleanup wins are asked of the scan the tree on screen came from — never the running scan — and over the saved index\'s tree, its scan running, the card waits on the map and asks once that scan lands; with nothing coming it says why there is nothing to suggest, and asks once a scan lands', async () => {
+  const tour: Record<string, unknown> = { active: true, step: 'map', wins: [], winIx: 0, unknownReason: '', winsAwaitScan: false };
+  const state: Record<string, unknown> = { root: TREE, ...HELD, scanRefused: null, scanningPath: '/r' };
+  const renders: string[] = [];
+  const focused: unknown[] = [];
+  let cardHoldsFocus = true;
+  let landed: () => void = noop;
+  const { fns, asks } = page<{ wins: () => Promise<void>; started: () => void; failed: () => void }>(
+    ['async function tourLoadWins(', 'function tourRejudgeWins(', 'function tourScanStarted(', 'function tourScanFailed(', 'subscribe(TOPIC.scan, () => {\n  if (tour.deferred'], {
+      state, tour, tourRender: (takeFocus?: boolean) => { renders.push(String(tour.step)); focused.push(takeFocus); }, refusedFolderWords: () => '',
+      subscribe: (_topic: unknown, fn: () => void) => { landed = fn; }, TOPIC: { scan: 'scan' }, switchView: noop, queueMicrotask: noop,
+      $: () => ({ contains: () => cardHoldsFocus }), document: { activeElement: null },
+    }, '{ wins: tourLoadWins, started: tourScanStarted, failed: tourScanFailed }', () => ({ groups: [] }));
   await throughThePhases('The tour\'s wins', state, asks, fns.wins, () => { tour.step = 'map'; });
+
+  // The saved index's tree, its scan running: nothing asked; the card stays on the map, saying the wins wait for it.
   const before = asks.length;
   Object.assign(state, INDEX_RUNNING);
+  tour.step = 'map';
   await fns.wins();
   assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked — not of the running scan');
-  assert.equal(tour.step, 'unknown', 'the card says it cannot tell yet, not "looks clean"');
-  assert.equal(tour.unknownReason, 'The scan is still running, so there is nothing to suggest yet.');
-  Object.assign(state, INDEX_STOPPED);
+  assert.equal(tour.step, 'map', 'the card stays on the map — not a dead-end "still running" card with only Finish');
+  assert.equal(tour.winsAwaitScan, true, 'it waits for the scan');
+  Object.assign(state, LANDED); // finishScan, then TOPIC.scan
+  landed();
+  await turns();
+  assert.deepEqual(asks.slice(before).map((a) => a.scanId), ['scan-new'], 'once the scan lands, the wins are asked of it');
+  assert.equal(tour.step, 'clean', 'and the card says what they are');
+  assert.equal(tour.winsAwaitScan, false);
+  assert.equal(focused.at(-1), true, 'the card held focus: it keeps it, on what it now offers');
+
+  // Waiting, then a Stop puts the older tree back (putBackHeldTree emits TOPIC.scan): asked of that tree's scan.
+  Object.assign(state, INDEX_RUNNING);
+  tour.step = 'map';
   await fns.wins();
-  assert.equal(asks.length, before);
+  const put = asks.length;
+  Object.assign(state, STOPPED);
+  landed();
+  await turns();
+  assert.deepEqual(asks.slice(put).map((a) => a.scanId), ['scan-old'], 'a Stop that puts the older tree back: asked of its scan');
+  cardHoldsFocus = false;
+  Object.assign(state, INDEX_RUNNING);
+  tour.step = 'map';
+  await fns.wins();
+  Object.assign(state, LANDED);
+  landed();
+  await turns();
+  assert.equal(focused.at(-1), false, 'focus elsewhere — the map, a field — is not pulled to the card when a scan lands');
+  cardHoldsFocus = true;
+
+  // Nothing coming: said; a scan of the folder starting, a Stop, and its landing each re-judge the card.
+  const quiet = asks.length;
+  Object.assign(state, INDEX_STOPPED);
+  tour.step = 'map';
+  await fns.wins();
+  assert.equal(asks.length, quiet);
+  assert.equal(tour.step, 'unknown');
   assert.equal(tour.unknownReason, 'This folder was opened from its saved index, and suggestions need a scan of it.');
+  Object.assign(state, { scanning: true, scanId: null, settledScanId: null, indexScanDue: false, scanningPath: '/r' });
+  fns.started(); // beginScanChrome
+  await turns();
+  assert.equal(tour.step, 'map', 'a scan of the folder starting: the card waits for it — "needs a scan of it" is no longer true');
+  Object.assign(state, INDEX_STOPPED);
+  fns.failed(); // stopScan, failScan, quietRescanFailed
+  await turns();
+  assert.deepEqual([tour.step, tour.unknownReason], ['unknown', 'This folder was opened from its saved index, and suggestions need a scan of it.'],
+    'a Stop: nothing will land, said again');
+  Object.assign(state, LANDED);
+  landed();
+  await turns();
+  assert.deepEqual(asks.slice(quiet).map((a) => a.scanId), ['scan-new'], 'a scan of it landing later: the wins are asked of it');
+  assert.equal(tour.step, 'clean');
+  // A card that never waited is left where it is by a scan landing (only the welcome and scanning steps move).
+  tour.step = 'cart';
+  landed();
+  assert.equal(tour.step, 'cart', 'control: a card that asked for nothing is not moved');
+  // A tour finished while its wins waited asks nothing when a scan starts or stops.
+  Object.assign(tour, { active: false, winsAwaitScan: true, step: 'map' });
+  const done = asks.length;
+  Object.assign(state, LANDED);
+  fns.started();
+  fns.failed();
+  await turns();
+  assert.equal(asks.length, done, 'a finished tour asks for no wins');
 });
 
 /* ───────────────────────────── Live mode ───────────────────────────── */
