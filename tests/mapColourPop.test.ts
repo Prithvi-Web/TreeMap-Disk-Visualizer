@@ -1098,19 +1098,52 @@ test('G09/G27: the SVG export draws a cloud placeholder hollow and a staged bloc
 const EDGE_BAR = 3;
 
 /**
+ * The staged block's hatch as the page's tmHatchPattern builds it (review F2.2): an 8×8 tile with two
+ * strokes 1.6 px wide in --warn, from (-2, 10) to (10, -2) and from (-2, 18) to (18, -2) — the lines
+ * x + y = 8 and x + y = 16 — repeated from the canvas's origin and scaled by its transform. `cover` is how
+ * much of each of the tile's 64 pixels the strokes cover, sampled 8×8 within the pixel.
+ */
+type Hatch = { kind: 'hatch'; ink: string; cover: number[] };
+function hatchOf(ink: string): Hatch {
+  const half = 0.8 * Math.SQRT2; // half the stroke's width, measured along x + y
+  const cover: number[] = [];
+  for (let v = 0; v < 8; v++) {
+    for (let u = 0; u < 8; u++) {
+      let n = 0;
+      for (let sy = 0; sy < 8; sy++) for (let sx = 0; sx < 8; sx++) {
+        const s = u + (sx + 0.5) / 8 + v + (sy + 0.5) / 8;
+        if (Math.abs(s - 8) <= half || Math.abs(s - 16) <= half) n++;
+      }
+      cover.push(n / 64);
+    }
+  }
+  return { kind: 'hatch', ink, cover };
+}
+
+/**
  * A 2D context that rasterizes what the painter asks for onto a `W`×`H` grid of pixels, starting from
- * `ground`: rectangles filled and stroked, axis-aligned path strokes, flat colours and vertical
- * gradients, each at its own alpha and globalAlpha, with partial pixels covered by area. Text and
- * patterns are not drawn: what is measured here is the tiles and the lines between them.
+ * `ground`: rectangles filled and stroked, axis-aligned path strokes, flat colours, vertical gradients
+ * and the staged block's hatch (hatchOf), each at its own alpha and globalAlpha, with partial pixels
+ * covered by area; and a rounded rectangle filled (roundRect, then fill), as pass 3 lays the top-level
+ * folders' name tags — each pixel it covers is noted (`tagged`). Text is not drawn: what is measured
+ * here is the tiles and the lines between them.
  */
 function rasterCtx(W: number, H: number, ground: RGB) {
   const px = new Float64Array(W * H * 3);
   for (let i = 0; i < W * H; i++) px.set(ground, i * 3);
+  const tag = new Uint8Array(W * H);
   const st: Record<string, any> = { fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, globalAlpha: 1 };
   const saved: Array<Record<string, any>> = [];
   let path: number[][] = [];
+  let round: { x: number; y: number; w: number; h: number; r: number } | null = null;
   // The transform's scale (setTransform): the painter works in css px, the grid is the device's pixels.
   let k = 1;
+  // The hatch's colour at a device pixel: its ink, as much of it as the tile's pixel there is covered.
+  const hatchAt = (h: Hatch, pxx: number, py: number): RGBA => {
+    const u = ((Math.floor((pxx + 0.5) / k) % 8) + 8) % 8, v = ((Math.floor((py + 0.5) / k) % 8) + 8) % 8;
+    const [r, g, b, a] = rgba(h.ink);
+    return [r, g, b, a * h.cover[v * 8 + u]];
+  };
   const colourAt = (style: any, y: number): RGBA => {
     if (style && typeof style === 'object' && style.stops) {
       const g = style as Grad;
@@ -1128,11 +1161,13 @@ function rasterCtx(W: number, H: number, ground: RGB) {
   const paintRect = (cx0: number, cy0: number, cw: number, ch: number, style: any) => {
     const x = cx0 * k, y = cy0 * k, w = cw * k, h = ch * k;
     if (!(w > 0 && h > 0)) return;
+    const hatch = style && typeof style === 'object' && style.kind === 'hatch' ? style as Hatch : null;
     for (let py = Math.max(0, Math.floor(y)); py < Math.min(H, Math.ceil(y + h)); py++) {
       const cy = Math.min(py + 1, y + h) - Math.max(py, y);
-      const c = colourAt(style, (py + 0.5) / k);
+      const row = hatch ? null : colourAt(style, (py + 0.5) / k);
       for (let pxx = Math.max(0, Math.floor(x)); pxx < Math.min(W, Math.ceil(x + w)); pxx++) {
         const cx = Math.min(pxx + 1, x + w) - Math.max(pxx, x);
+        const c = row ?? hatchAt(hatch!, pxx, py);
         const a = c[3] * Number(st.globalAlpha) * cx * cy;
         const o = (py * W + pxx) * 3;
         for (let i = 0; i < 3; i++) px[o + i] = px[o + i] * (1 - a) + c[i] * a;
@@ -1164,7 +1199,31 @@ function rasterCtx(W: number, H: number, ground: RGB) {
       paintRect(x, y, w, h, `rgb(${ground.join(',')})`);
       st.globalAlpha = keep;
     },
-    beginPath: () => { path = []; },
+    beginPath: () => { path = []; round = null; },
+    // A rounded rectangle's path, its radius clamped as the page's Canvas2D.roundRect clamps it.
+    roundRect: (x: number, y: number, w: number, h: number, r: number) => { path = []; round = { x, y, w, h, r: Math.max(0, Math.min(r, w / 2, h / 2)) }; },
+    // Filling it covers each pixel by the share of its 8×8 samples inside the shape.
+    fill: () => {
+      if (!round) return;
+      const X = round.x * k, Y = round.y * k, RW = round.w * k, RH = round.h * k, R = round.r * k;
+      const c = colourAt(st.fillStyle, 0);
+      for (let py = Math.max(0, Math.floor(Y)); py < Math.min(H, Math.ceil(Y + RH)); py++) {
+        for (let pxx = Math.max(0, Math.floor(X)); pxx < Math.min(W, Math.ceil(X + RW)); pxx++) {
+          let n = 0;
+          for (let sy = 0; sy < 8; sy++) for (let sx = 0; sx < 8; sx++) {
+            const sxp = pxx + (sx + 0.5) / 8, syp = py + (sy + 0.5) / 8;
+            if (sxp < X || sxp > X + RW || syp < Y || syp > Y + RH) continue;
+            const qx = Math.min(Math.max(sxp, X + R), X + RW - R), qy = Math.min(Math.max(syp, Y + R), Y + RH - R);
+            if ((sxp - qx) ** 2 + (syp - qy) ** 2 <= R * R + 1e-9) n++;
+          }
+          if (!n) continue;
+          const a = c[3] * Number(st.globalAlpha) * (n / 64);
+          const o = (py * W + pxx) * 3;
+          for (let i = 0; i < 3; i++) px[o + i] = px[o + i] * (1 - a) + c[i] * a;
+          tag[py * W + pxx] = 1;
+        }
+      }
+    },
     moveTo: (x: number, y: number) => { path.push([x, y]); },
     lineTo: (x: number, y: number) => {
       const [x0, y0] = path[path.length - 1];
@@ -1191,14 +1250,25 @@ function rasterCtx(W: number, H: number, ground: RGB) {
     for (let i = 0; i < W * H; i++) if (luminance([px[i * 3], px[i * 3 + 1], px[i * 3 + 2]] as RGB) < under) n++;
     return n / (W * H);
   };
-  return { ctx, nearBlack, W, H, at: (x: number, y: number) => [0, 1, 2].map((i) => px[(Math.round(y) * W + Math.round(x)) * 3 + i]) as RGB };
+  return {
+    ctx, nearBlack, W, H, at: (x: number, y: number) => [0, 1, 2].map((i) => px[(Math.round(y) * W + Math.round(x)) * 3 + i]) as RGB,
+    /** Whether a name tag (pass 3) covers the pixel, in any part. */
+    tagged: (x: number, y: number) => tag[Math.round(y) * W + Math.round(x)] === 1,
+    taggedShare: () => tag.reduce((n, v) => n + v, 0) / (W * H),
+  };
 }
 
 type Band = { x: number; y: number; w: number; h: number; rgb: string };
 /** A rectangle as drawTreemap leaves it in pxRects, with what it recorded painting it. */
 type Painted = { n: Tile; x: number; y: number; w: number; h: number; frame: boolean; edge?: string; lit?: boolean; stops?: RGB[]; fillRgb?: RGB; bg?: RGB[]; bands?: Band[] };
 
-/** `tiles` painted by the real drawTreemap onto a `W`×`H` css px map in `palette`'s theme, at device pixel ratio `dpr`: a raster of the device's pixels. */
+/**
+ * `tiles` painted by the real drawTreemap onto a `W`×`H` css px map in `palette`'s theme, at device pixel ratio `dpr`: a raster of the device's pixels.
+ * With everything the real map lays over the tiles that bears on its lines (review F2.2): a staged block's
+ * amber hatch, as tmHatchPattern builds it (hatchOf), and each top-level folder's name tag, the half-black
+ * rounded pill pass 3 fills (the page's roundRect, a rounded rectangle path). They were stubbed out, so the
+ * hatch's amber was never beside a band, and the pills never over a line.
+ */
 function rasterPaint(tiles: Tile[], palette: Record<string, string>, W: number, H: number,
   colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.size), history = { active: false, diff: false }, hideCloud = false, dpr = 1) {
   // The grid starts as the card the canvas sits on — what a cleared pixel shows — and the painter lays the
@@ -1210,7 +1280,10 @@ function rasterPaint(tiles: Tile[], palette: Record<string, string>, W: number, 
     tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: raster.ctx,
     cssVar: (name: string) => palette[name] ?? 'rgba(0,0,0,0)',
     state, tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
-    cellRgb: colour, tmHatchPattern: () => null, tmPreview: { on: false }, roundRect() {},
+    cellRgb: colour, tmPreview: { on: false },
+    // The page's fallback ink, as tmHatchPattern has it.
+    tmHatchPattern: () => hatchOf(palette['--warn'] || '#FF9F0A'),
+    roundRect: (c: { roundRect: (x: number, y: number, w: number, h: number, r: number) => void }, x: number, y: number, w: number, h: number, r: number) => c.roundRect(x, y, w, h, r),
     formatBytes: (n: number) => `${Math.round(n)} B`,
   };
   // Resolving the helpers runs the painter; the grid is measured after one clean paint of its own.
@@ -1315,9 +1388,18 @@ function edgesOf(painted: Painted[], W: number, H: number, dpr = 1) {
   return out;
 }
 
-/** The weakest line-against-tile contrast in each `kind`, and every place under the bar. */
+/**
+ * The weakest line-against-tile contrast in each `kind`, and every place under the bar.
+ *
+ * A place where a top-level folder's name tag (pass 3) covers the line's pixel or the tile's, in any part,
+ * is left out, and counted in `tagged` (review F2.2): the tag is a label laid over the map — its folder's
+ * name in white on a half-black pill — so the lines and tiles under it recede behind the name, both
+ * darkened by half, which compresses the contrast between them. Everywhere else the bar holds.
+ */
 function measureEdges(raster: ReturnType<typeof rasterCtx>, px: Painted[], dpr = 1) {
-  const edges = edgesOf(px, raster.W, raster.H, dpr);
+  const all = edgesOf(px, raster.W, raster.H, dpr);
+  const edges = all.filter((e) => !raster.tagged(...e.line) && !raster.tagged(...e.tile));
+  const tagged = all.length - edges.length;
   const under: string[] = [];
   const worst = { leaf: Infinity, frame: Infinity };
   for (const e of edges) {
@@ -1325,7 +1407,7 @@ function measureEdges(raster: ReturnType<typeof rasterCtx>, px: Painted[], dpr =
     worst[e.kind] = Math.min(worst[e.kind], c);
     if (c < EDGE_BAR && under.length < 12) under.push(`${e.what}: ${fmt(c)}:1 (${raster.at(...e.line).map(Math.round)} on ${raster.at(...e.tile).map(Math.round)})`);
   }
-  return { edges, worst, under };
+  return { edges, worst, under, tagged };
 }
 
 /**
@@ -1727,6 +1809,29 @@ test('owner\'s outlines: a folder\'s band beside a cell that shows the map\'s gr
       const m = measureEdges(raster, px);
       const beside = m.edges.filter((e) => e.kind === 'frame' && inCell(...e.tile));
       assert.ok(beside.length > 100, `${theme}, ${what}: control — ${beside.length} places where a band meets that cell were measured`);
+      if (what === 'beside a staged block') {
+        // The block's amber hatch is on the raster, as the page draws it (review F2.2): many of the places a band
+        // meets the block are on a hatch line — the amber at half over the ground the block shows inside its
+        // edge — and the band is held to the bar against those too, below.
+        const inside = over(rgba(palette['--tm-canvas-bg']), canvasGround(palette));
+        const amberLine = lerp(inside, rgba(palette['--warn']).slice(0, 3) as RGB, 0.5);
+        const onLine = beside.filter((e) => contrast(raster.at(...e.tile), amberLine) < 1.1);
+        assert.ok(onLine.length > 10, `${theme}: control — ${onLine.length} of the ${beside.length} places a band meets the staged block are on its hatch's amber lines (${amberLine.map(Math.round)})`);
+      }
+      if (what === 'beside a hollow online-only file') {
+        // A band beside a hollow cell is a shade of the cell's own colour, toward black or white — not of the
+        // folder's (review F1.5; F2.2 found nothing held it).
+        const cellRgb = ramp.sizeRgb(3e9);
+        const shadeOf = (c: RGB, base: RGB) => {
+          // How far toward black (read off its brightest channel) or toward white (off the channel furthest from white).
+          const hi = base.indexOf(Math.max(...base)), lo = base.indexOf(Math.min(...base));
+          const dark = c[hi] / base[hi], light = (c[lo] - base[lo]) / (255 - base[lo]);
+          return c.every((v, i) => Math.abs(v - base[i] * dark) <= 1.5) || c.every((v, i) => Math.abs(v - (base[i] + (255 - base[i]) * light)) <= 1.5);
+        };
+        assert.notDeepEqual(cellRgb, ramp.sizeRgb(4e10), `${theme}: control — the cell's colour is not its folder's`);
+        const off = beside.map((e) => raster.at(...e.line).map(Math.round) as RGB).filter((c) => !shadeOf(c, cellRgb));
+        assert.deepEqual(off.slice(0, 4), [], `${theme}: every band beside the hollow cell is a shade of its colour ${cellRgb} (${off.length} of ${beside.length} not)`);
+      }
       const weak = beside.map((e) => ({ e, c: contrast(raster.at(...e.line), raster.at(...e.tile)) })).filter(({ c }) => c < EDGE_BAR);
       assert.deepEqual(weak.slice(0, 6).map(({ e, c }) => `${e.what}: ${fmt(c)}:1 (${raster.at(...e.line).map(Math.round)} on ${raster.at(...e.tile).map(Math.round)})`), [],
         `${theme}, ${what}: every band reaches ${EDGE_BAR}:1 against what the cell shows (${weak.length} places under)`);
@@ -1942,14 +2047,20 @@ test('map density: a realistic dense map is colour with contrasting lines, not a
     }
     const m = measureEdges(raster, px);
     assert.ok(m.edges.length > 20000, `${theme}: ${m.edges.length} places measured`);
+    // The top-level folders' name tags are on the raster, each over its folder's top-left corner, as pass 3 lays
+    // them (review F2.2): the places under a tag are left out of the measure (measureEdges says why), and few.
+    const tags = px.filter((r) => r.frame && r.n.depth === 1 && r.w >= 90 && r.h >= 44).length;
+    assert.ok(tags >= 5, `${theme}: control — ${tags} top-level folders carry a name tag`);
+    assert.ok(m.tagged > 0, `${theme}: control — ${m.tagged} places where a line meets a tile lie under a name tag`);
+    assert.ok(raster.taggedShare() < 0.02 && m.tagged < m.edges.length * 0.02, `${theme}: the name tags cover ${(raster.taggedShare() * 100).toFixed(2)}% of the map and ${m.tagged} places, under 2% of the ${m.edges.length} measured`);
     assert.deepEqual(m.under, [], `${theme}: lines under ${EDGE_BAR}:1 against the tile beside them`);
   }
   // QA read 8.5% (corpus) and 8.9% (/System/Library) near-black in the real dark map, and 2.3–5.5% in light,
-  // painted BQG-5's way; this layout, painted that way (REL-79) on this raster, measures 13.3% dark and 1.7%
-  // light — the empty folders' slabs and the 0.35 outlines over a gap of the ground — and 0.1% in both now.
-  // The lines are dark shades of each tile's own colour, not black: at luminance < 0.08 the share is 26.2%
-  // (it was 18.4% dark, 2.9% light; 16.5% with 1 px nested bands, before review F1.3) — the outlines the
-  // owner asked to see.
+  // painted BQG-5's way; this layout, painted that way (REL-79) on this raster, name tags and all, measures
+  // 13.3% dark and 1.7% light — the empty folders' slabs and the 0.35 outlines over a gap of the ground — and
+  // 0.3% in both now, most of it under the name tags' half-black pills (0.1% before they were drawn on this
+  // raster, review F2.2). The lines are dark shades of each tile's own colour, not black: at luminance < 0.08
+  // the share is 26.4% (it was 18.5% dark, 3.2% light) — the outlines the owner asked to see.
   const over = Object.entries(share).filter(([, v]) => v >= 0.02).map(([theme, v]) => `${theme} ${(v * 100).toFixed(1)}%`);
   assert.deepEqual(over, [], `near-black (luminance < ${NEAR_BLACK}) at or over 2%: ${over.join(', ')} (dark ${(share.dark * 100).toFixed(1)}%, light ${(share.light * 100).toFixed(1)}%)`);
 });
