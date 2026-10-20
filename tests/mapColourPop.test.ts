@@ -1673,6 +1673,69 @@ test('owner\'s outlines: a folder\'s band beside a cell that shows the map\'s gr
   }
 });
 
+/**
+ * The page's renderSearchOverlay, run after a paint as the page runs it, onto a grid of how much scrim covers
+ * each pixel: a fill adds its alpha over what is there, a clear takes it back to none. The search buffer is
+ * laid over the map whole (presentTreemap), so this is what dims each pixel.
+ */
+function searchScrim(px: Painted[], W: number, H: number, query: string, theme: 'dark' | 'light') {
+  const alpha = new Float64Array(W * H);
+  const st: Record<string, any> = { fillStyle: '#000', strokeStyle: '#000', lineWidth: 1 };
+  let k = 1;
+  const cover = (x: number, y: number, w: number, h: number, a: number | null) => {
+    [x, y, w, h] = [x * k, y * k, w * k, h * k];
+    for (let py = Math.max(0, Math.floor(y)); py < Math.min(H, Math.ceil(y + h)); py++) {
+      for (let pxx = Math.max(0, Math.floor(x)); pxx < Math.min(W, Math.ceil(x + w)); pxx++) {
+        const share = (Math.min(pxx + 1, x + w) - Math.max(pxx, x)) * (Math.min(py + 1, y + h) - Math.max(py, y));
+        const i = py * W + pxx;
+        alpha[i] = a === null ? alpha[i] * (1 - share) : alpha[i] + a * share * (1 - alpha[i]);
+      }
+    }
+  };
+  const ctx: any = new Proxy({
+    setTransform: (a: number) => { k = a; },
+    clearRect: (x: number, y: number, w: number, h: number) => cover(x, y, w, h, null),
+    fillRect: (x: number, y: number, w: number, h: number) => cover(x, y, w, h, rgba(String(st.fillStyle))[3]),
+  } as Record<string, unknown>, {
+    get(t, key: string) { return key in t ? t[key] : key in st ? st[key] : () => {}; },
+    set(_t, key: string, v) { st[key] = v; return true; },
+  });
+  const state = { treemap: { pxRects: px, query, queryMode: 'word', matchedPaths: null, matches: 0 } };
+  load<() => void>(['renderSearchOverlay'], {
+    tmSearchBuffer: { width: W, height: H }, tmBuffer: { width: W, height: H }, window: { devicePixelRatio: 1 }, tmSearchCtx: ctx,
+    state, document: { documentElement: { dataset: { theme } } }, cssVar: () => '#0A84FF', updateTmStatus() {}, isCells: () => false,
+  }, 'renderSearchOverlay', (render) => render());
+  return { at: (x: number, y: number) => alpha[Math.round(y) * W + Math.round(x)], max: () => alpha.reduce((m, v) => Math.max(m, v), 0), matches: state.treemap.matches };
+}
+
+test('J51 under a search: a folder\'s own fill is dimmed with everything else that does not match — never left a bright slab beside the matches — and is dimmed once, not twice over what is drawn in it (review F1.1)', () => {
+  const tiles = subFloorTiles(); // corpus/Mail and its mailboxes, "Wide folder", a folder half covered by big.mov
+  const W = 400, H = 400;
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const { px } = rasterPaint(tiles, palette, W, H);
+    const scrimAlpha = theme === 'dark' ? 0.78 : 0.82; // the page's scrim, rgba(…, 0.78) dark and (…, 0.82) light
+    const where = (path: string, fx: number, fy: number) => { const r = whole(px.find((p) => p.n.path === path)!); return [Math.floor(r.x + r.w * fx), Math.floor(r.y + r.h * fy)] as [number, number]; };
+    const filled = [['/c/Mail/INBOX', 0.5, 0.5], ['/c/Mail/Sent', 0.5, 0.5], ['/c/Mail', 0.85, 0.5], ['/c/Wide folder', 0.5, 0.5], ['/c/Half', 0.75, 0.5], ['/c', 0.9, 0.9]] as const;
+    // A query nothing matches: every folder's own fill is dimmed, as every file is.
+    const none = searchScrim(px, W, H, 'zzz-nothing', theme);
+    assert.equal(none.matches, 0, `${theme}: control — nothing matches`);
+    for (const [path, fx, fy] of filled) {
+      assert.ok(Math.abs(none.at(...where(path, fx, fy)) - scrimAlpha) < 1e-6, `${theme}, "zzz-nothing": ${path}'s own fill is dimmed (scrim ${none.at(...where(path, fx, fy)).toFixed(2)}, want ${scrimAlpha})`);
+    }
+    assert.ok(Math.abs(none.at(...where('/c/Half/big.mov', 0.5, 0.5)) - scrimAlpha) < 1e-6, `${theme}: control — a file that does not match is dimmed`);
+    assert.ok(none.max() < scrimAlpha + 1e-6, `${theme}: no pixel is dimmed twice over (deepest scrim ${none.max().toFixed(3)})`);
+    // A query that matches the file: it stays bright; the folders' fills around it are dimmed.
+    const big = searchScrim(px, W, H, 'big', theme);
+    assert.equal(big.at(...where('/c/Half/big.mov', 0.5, 0.5)), 0, `${theme}, "big": the match is not dimmed`);
+    assert.ok(Math.abs(big.at(...where('/c/Half', 0.75, 0.5)) - scrimAlpha) < 1e-6, `${theme}, "big": its folder's own fill beside it is dimmed`);
+    // A query that matches a folder with nothing drawn in it: its fill is the match, bright; its parent's is dimmed.
+    const inbox = searchScrim(px, W, H, 'inbox', theme);
+    assert.equal(inbox.at(...where('/c/Mail/INBOX', 0.5, 0.5)), 0, `${theme}, "inbox": the matching folder's own fill is not dimmed`);
+    assert.ok(Math.abs(inbox.at(...where('/c/Mail', 0.85, 0.5)) - scrimAlpha) < 1e-6, `${theme}, "inbox": the folder around it is dimmed where its own fill shows`);
+    assert.ok(inbox.max() < scrimAlpha + 1e-6, `${theme}, "inbox": no pixel is dimmed twice over`);
+  }
+});
+
 /* ── A dense corner as the real map draws one ── */
 
 /**

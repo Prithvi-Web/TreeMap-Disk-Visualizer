@@ -1458,7 +1458,21 @@ function renderSearchOverlay() {
     return;
   }
 
-  // Dim non-matching leaves first, then outline matches on top.
+  // A folder's own fill (J51, pass 0) that does not match is dimmed with the
+  // rest: it was left at full colour, a bright slab beside the matches (review
+  // F1.1). Laid over the folder's box, shallowest folder first, then cleared
+  // over what is drawn in it — which is dimmed below, leaf by leaf, or is a
+  // folder of its own — so no pixel is dimmed twice. A folder that matches
+  // keeps its fill bright, and its band is dimmed with what it lies on.
+  const kids = tmKidsOf(state.treemap.pxRects);
+  const fills = state.treemap.pxRects.filter((r) => r.frame && r.bg).sort((a, b) => a.n.depth - b.n.depth);
+  for (const r of fills) {
+    if (isMatch(r.n)) continue;
+    ctx.fillStyle = scrim;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    for (const c of kids.get(r.n.path) || []) ctx.clearRect(c.x, c.y, c.w, c.h);
+  }
+  // Dim non-matching leaves, then outline matches on top.
   for (const r of state.treemap.pxRects) {
     if (r.frame) continue;
     if (!isMatch(r.n)) {
