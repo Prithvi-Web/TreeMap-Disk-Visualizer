@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-mapColourPop-data-');
+
+import { buildTreemap } from '../src/utils/treemap';
+import type { FileNode } from '../src/models/types';
+
 /**
  * The map's colour pops, and its labels can be read — design pass of
  * 14 Oct 2026 (G01, G09).
@@ -15,6 +21,10 @@ import path from 'node:path';
  *
  * G09: the tile labels were fixed black ink, 2.55–3.91:1 on the darker and
  * saturated tiles.
+ *
+ * The owner's outline decision (20 Oct 2026) and J51: the outlines contrast
+ * with the tiles they bound, and a folder no rectangle covers shows its own
+ * colour — measured on rendered pixels at the end of this file.
  *
  * The real painter is cut out of the built page and RUN against a recording
  * 2D context (the mapPaintFidelity precedent). Each tile's gradient stops are
@@ -262,9 +272,18 @@ function tile(i: number, depth: number, bytes: number, h = 200): Tile {
   };
 }
 
-/** The leaf fills pass 1 painted, in tile order (fills[0] is the map's ground). */
-function leafFills(rec: ReturnType<typeof recordingCtx>, n: number): Grad[] {
-  const fills = rec.fills.slice(1, 1 + n);
+/**
+ * The leaf fills pass 1 painted, in tile order: each leaf's own fill over its box, edge to edge — not a
+ * folder's fill under it (pass 0, J51), nor anything laid on it after.
+ */
+function leafFills(rec: ReturnType<typeof recordingCtx>, n: number, px: Array<{ x: number; y: number; w: number; h: number; frame: boolean }> = (rec as { px?: never[] }).px ?? []): Grad[] {
+  // The gradient laid over most of the leaf's own box and no further: a folder's fill under it is bigger.
+  const over = ([x, y, w, h]: number[], r: { x: number; y: number; w: number; h: number }) =>
+    x >= r.x - 1e-6 && y >= r.y - 1e-6 && x + w <= r.x + r.w + 1e-6 && y + h <= r.y + r.h + 1e-6 && w * h >= 0.5 * r.w * r.h;
+  const fills = px.filter((r) => !r.frame).map((r) => {
+    const op = rec.ops.find((o) => o.kind === 'rect' && typeof o.style === 'object' && over(o.rect, r));
+    return op && op.kind === 'rect' ? op.style : undefined;
+  });
   assert.equal(fills.length, n, 'one fill per tile');
   for (const f of fills) assert.equal(typeof f, 'object', `a leaf is a cushion gradient, not a flat colour (${String(f)})`);
   return fills as Grad[];
@@ -772,9 +791,9 @@ test('G09: in the History diff, a label in a folder that grew, shrank or is new 
     `labels were measured with no wash (${washed[0]}), one (${washed[1]}) and two (${washed[2]}) over them`);
 });
 
-/** The flat fills laid over the map after its ground: the History diff's washes, and nothing else the painter fills flat. */
+/** The see-through flat fills laid over the map after its ground: the History diff's washes (a folder's bands are opaque). */
 const washesOn = (rec: ReturnType<typeof paint>) => rec.ops.slice(1)
-  .filter((op): op is Extract<Op, { kind: 'rect' }> => op.kind === 'rect' && typeof op.style === 'string')
+  .filter((op): op is Extract<Op, { kind: 'rect' }> => op.kind === 'rect' && typeof op.style === 'string' && rgba(op.style)[3] < 1)
   .map((op) => `${op.rect.map((v) => v.toFixed(1)).join(' ')} ${String(op.style)}`);
 /** Outside the diff the map is drawn as the live map is: History played back without it, or a diff flag left on after it. */
 const NOT_THE_DIFF = [{ active: true, diff: false }, { active: false, diff: true }];
@@ -838,7 +857,7 @@ function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string, hist
   rec.fills.length = 0;
   rec.texts.length = 0;
   rec.ops.length = 0;
-  rec.strokes.length = 0; // one clean paint's strokes, as its fills (item 14 compares them with the SVG's)
+  rec.strokes.length = 0; // one clean paint's strokes, as its fills (the outline tests compare them with the SVG's)
   draw();
   let svg = '';
   const exp = load<() => void>(['exportTreemapSVG'], {
@@ -862,8 +881,8 @@ test('G01/G09: the SVG export paints each leaf as the canvas does — opaque, in
     { ...tile(2, 6, 3e7, 120), x: 24, w: 9.6 },
   ];
   const colours: RGB[] = [[255, 72, 57], [90, 100, 114], [48, 209, 88]];
-  const { svg, rec } = exportSvg(tiles, (n) => colours[tiles.findIndex((t) => t.path === n.path)], '#0e0e13');
-  const canvas = leafFills(rec, tiles.length);
+  const { svg, rec, px } = exportSvg(tiles, (n) => colours[tiles.findIndex((t) => t.path === n.path)], '#0e0e13');
+  const canvas = leafFills(rec, tiles.length, px);
   const leaves = [...svg.matchAll(/<rect [^>]*><title>[^<]*<\/title><\/rect>/g)].map((m) => attrs(m[0]));
   assert.equal(leaves.length, tiles.length, 'one rectangle per leaf');
   for (const [k, a] of leaves.entries()) {
@@ -893,8 +912,8 @@ test('G09: the SVG export writes each label in the ink, and at the place, the ca
   ];
   const tiles = [...leaves.slice(0, 3), folder, leaves[3]];
   const colours: RGB[] = [[255, 72, 57], [90, 100, 114], [10, 30, 160], [255, 69, 58]];
-  const { svg, rec } = exportSvg(tiles, (n) => colours[leaves.findIndex((t) => t.path === n.path)] ?? [0, 0, 0], '#0e0e13');
-  const canvas = leafFills(rec, leaves.length);
+  const { svg, rec, px } = exportSvg(tiles, (n) => colours[leaves.findIndex((t) => t.path === n.path)] ?? [0, 0, 0], '#0e0e13');
+  const canvas = leafFills(rec, leaves.length, px);
   const written = [...svg.matchAll(/<text ([^>]*)>([^<]*)<\/text>/g)].map((m) => ({ a: attrs(m[1]), text: m[2] }));
   const shifted = rec.texts.find((tx) => tx.text === leaves[3].name);
   assert.ok(shifted && shifted.y - 2 >= 20, `the cornered leaf is labelled below its folder's tag (${shifted && shifted.y} px down)`);
@@ -912,23 +931,6 @@ test('G09: the SVG export writes each label in the ink, and at the place, the ca
       const c = worstContrast(l, { ...onCanvas[j], fillStyle: w.a.fill }, [14, 14, 19]);
       assert.ok(c >= 4.5, `leaf ${k}, "${w.text}" in ${w.a.fill}: ${fmt(c)}:1 on its tile (floor 4.5:1)`);
     }
-  }
-});
-
-test('G01: the SVG export frames each folder as the canvas does — a dark outline, heavier at the top level, and a light rim inside it', () => {
-  const tiles: Tile[] = [
-    { name: 'Top', path: '/r/top', size: 1e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 50, h: 50 },
-    { name: 'Inner', path: '/r/top/in', size: 5e9, type: 'dir', depth: 3, expanded: true, x: 2, y: 5, w: 40, h: 40 },
-    { ...tile(0, 4, 1e9, 100), x: 4, y: 8, w: 10 },
-  ];
-  const { svg } = exportSvg(tiles, () => [255, 72, 57], '#0e0e13');
-  const frames = [...svg.matchAll(/<rect [^>]*fill="none"[^>]*\/>/g)].map((m) => attrs(m[0]));
-  const outline = (d: number) => frames.find((f) => /^rgba\(0,0,0,/.test(f.stroke) && Math.abs(Number(f.x) - (d === 1 ? 0.5 : 20.5)) < 0.06);
-  const top = outline(1), inner = outline(3);
-  assert.ok(top && inner, `each folder has a dark outline (${JSON.stringify(frames)})`);
-  assert.ok(Number(top!['stroke-width']) > Number(inner!['stroke-width']), 'heavier at the top level');
-  for (const [x, what] of [[1.5, 'top'], [21.5, 'inner']] as const) {
-    assert.ok(frames.some((f) => /^rgba\(255,255,255,/.test(f.stroke) && Math.abs(Number(f.x) - x) < 0.06), `the ${what} folder has a light rim inside its outline`);
   }
 });
 
@@ -996,7 +998,7 @@ test('G09: the SVG export lays the History diff\'s wash over each folder that gr
   const tiles = svgDiffTiles();
   const { svg, rec } = exportSvg(tiles, (n) => DIFF_PAGE.diffRgb(n), '#0e0e13', { active: true, diff: true });
   const box = (r: number[]) => r.map((v) => v.toFixed(1)).join(' ');
-  const onCanvas = rec.ops.slice(1).filter((op): op is Extract<Op, { kind: 'rect' }> => op.kind === 'rect' && typeof op.style === 'string')
+  const onCanvas = rec.ops.slice(1).filter((op): op is Extract<Op, { kind: 'rect' }> => op.kind === 'rect' && typeof op.style === 'string' && rgba(op.style)[3] < 1)
     .map((op) => `${box(op.rect)} ${rgba(String(op.style)).join(',')}`);
   assert.equal(onCanvas.length, 2, `the canvas washes the two folders that changed, and not the one that did not (${onCanvas.join(' | ')})`);
   const inSvg = [...svg.matchAll(/<rect ([^>]*)\/>/g)].map((m) => attrs(m[1])).filter((a) => 'fill-opacity' in a)
@@ -1071,69 +1073,32 @@ test('G09/G27: the SVG export draws a cloud placeholder hollow and a staged bloc
   }
 });
 
-/* ══════════════ G01 — depth is told by the folder frames ══════════════ */
+/* ══════════════ The owner's outline decision (20 Oct 2026), and a folder's uncovered area (J51) ══════════════ */
 
-test('G01: each folder is framed by a dark outline — heavier at the top level, faded on a small or deep folder (item 14) — with a light rim drawn inside it where the folder has room, and none in a folder under 12 px', () => {
-  // Every leaf is painted at full strength now (G01), so nesting is read
-  // from the edges, as on a desktop treemap. Nothing pinned the frames: the
-  // whole of pass 2 could go, or turn white, with every test still green
-  // (review F1.8). Item 14 (BQG-5): a 0.42 outline on every nested folder
-  // made a dense corner a black mesh, so a folder under 40 px a side or at
-  // depth 3 and deeper is outlined at 0.25, and the rim needs 12 px a side.
-  const folders: Tile[] = [
-    { name: 'Top', path: '/r/top', size: 1e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 50, h: 50 },
-    { name: 'Mid', path: '/r/top/mid', size: 5e9, type: 'dir', depth: 2, expanded: true, x: 2, y: 5, w: 40, h: 40 },
-    { name: 'Deep', path: '/r/top/mid/deep', size: 2e9, type: 'dir', depth: 3, expanded: true, x: 4, y: 8, w: 30, h: 30 },
-    { name: 'Small', path: '/r/small', size: 1e8, type: 'dir', depth: 2, expanded: true, x: 60, y: 0, w: 3, h: 3 },
-    { name: 'Rim12', path: '/r/rim12', size: 1e7, type: 'dir', depth: 2, expanded: true, x: 70, y: 0, w: 1.2, h: 1.2 },
-    { name: 'Rim11', path: '/r/rim11', size: 1e7, type: 'dir', depth: 2, expanded: true, x: 80, y: 0, w: 1.1, h: 1.1 },
-    { name: 'Tiny', path: '/r/tiny', size: 1e6, type: 'dir', depth: 3, expanded: true, x: 60, y: 60, w: 0.4, h: 0.4 },
-    // At the fade's edge (review F1.6): nested folders of 40 and 39 px a side.
-    { name: 'Fade40', path: '/r/fade40', size: 5e7, type: 'dir', depth: 2, expanded: true, x: 70, y: 10, w: 4, h: 4 },
-    { name: 'Fade39', path: '/r/fade39', size: 4e7, type: 'dir', depth: 2, expanded: true, x: 80, y: 10, w: 3.9, h: 3.9 },
-  ];
-  const want: Record<string, { alpha: number; width: number; rim: boolean }> = {
-    Top: { alpha: 0.6, width: 1.5, rim: true },
-    Mid: { alpha: 0.42, width: 1, rim: true },     // depth 2, 400 px: a nested folder with room keeps its outline
-    Deep: { alpha: 0.25, width: 1, rim: true },    // depth 3: faded
-    Small: { alpha: 0.25, width: 1, rim: true },   // 30 px: faded, still room for a rim
-    Rim12: { alpha: 0.25, width: 1, rim: true },   // 12 px: the smallest with a rim
-    Rim11: { alpha: 0.25, width: 1, rim: false },  // 11 px: no rim
-    Tiny: { alpha: 0.25, width: 1, rim: false },
-    Fade40: { alpha: 0.42, width: 1, rim: true },  // depth 2, 40 px: the smallest that keeps 0.42
-    Fade39: { alpha: 0.25, width: 1, rim: true },  // depth 2, 39 px: faded
-  };
-  const rec = paint(folders);
-  const alphaOf = (style: string) => rgba(style)[3];
-  const isDark = (style: string) => { const [r, g, b] = rgba(style); return r + g + b === 0; };
-  const isLight = (style: string) => { const [r, g, b] = rgba(style); return r === 255 && g === 255 && b === 255; };
-  for (const f of folders) {
-    const x = (f.x / 100) * MAP_W, y = (f.y / 100) * MAP_H, w = (f.w / 100) * MAP_W, h = (f.h / 100) * MAP_H;
-    const near = (r: number[], wanted: number[]) => r.every((v, i) => Math.abs(v - wanted[i]) < 0.01);
-    const at = (wanted: number[]) => rec.strokes.findIndex((st) => near(st.rect, wanted));
-    const o = at([x + 0.5, y + 0.5, w - 1, h - 1]);
-    assert.notEqual(o, -1, `${f.name}: an outline on its edge`);
-    const outline = rec.strokes[o];
-    assert.ok(isDark(outline.style), `${f.name}: the outline is dark (${outline.style})`);
-    assert.deepEqual({ alpha: alphaOf(outline.style), width: outline.width }, { alpha: want[f.name].alpha, width: want[f.name].width }, `${f.name}: its outline`);
-    const rim = at([x + 1.5, y + 1.5, w - 3, h - 3]);
-    if (want[f.name].rim) {
-      assert.notEqual(rim, -1, `${f.name}: a rim inside its outline`);
-      assert.ok(isLight(rec.strokes[rim].style), `${f.name}: the rim is light (${rec.strokes[rim].style})`);
-      assert.ok(rim > o, `${f.name}: the rim is drawn after the outline, so it lies on top of it`);
-    } else {
-      assert.equal(rim, -1, `${f.name}: ${fmt(w)} px is too small for a rim`);
-    }
-  }
-});
+/**
+ * "The maps outlines should be contrasting and easy to see" — the owner, 20 Oct 2026. It outranks BQG-5
+ * item 14's fading, which left a nested folder's outline at a quarter of black and a small leaf's at 0.35
+ * over a gap of the map's ground: too faint to see on a tile, and a near-black grid between small tiles
+ * (QA read 8.5–8.9% near-black in a dense corner of the dark map, where this file's old dense corner
+ * claimed 1.4%). Everything below is measured on rendered pixels — the real drawTreemap rasterized — in
+ * both themes:
+ *   - every leaf outline and every folder band at EDGE_BAR (WCAG's 3:1 for a non-text edge) or better
+ *     against the tile beside it, across the whole size ramp and every other colour the map paints;
+ *   - folder bands heavier and higher-contrast than leaf outlines;
+ *   - the colour still popping inside every tile;
+ *   - a realistic dense map (the server's own layout of a /System/Library-like tree) not a black mesh;
+ *   - a folder's area no rectangle covers (its files under the 4 KB floor, J51) in the folder's own
+ *     colour and cushion, never the map's ground.
+ */
 
-/* ══════════════ Map density: dense areas read as colour, not a black mesh (BQG-5 item 14) ══════════════ */
+/** WCAG's bar for a non-text edge, and the owner's. */
+const EDGE_BAR = 3;
 
 /**
  * A 2D context that rasterizes what the painter asks for onto a `W`×`H` grid of pixels, starting from
  * `ground`: rectangles filled and stroked, axis-aligned path strokes, flat colours and vertical
  * gradients, each at its own alpha and globalAlpha, with partial pixels covered by area. Text and
- * patterns are not drawn: a dense area's tiles are too small for labels.
+ * patterns are not drawn: what is measured here is the tiles and the lines between them.
  */
 function rasterCtx(W: number, H: number, ground: RGB) {
   const px = new Float64Array(W * H * 3);
@@ -1185,6 +1150,13 @@ function rasterCtx(W: number, H: number, ground: RGB) {
     createPattern: () => null,
     fillRect: (x: number, y: number, w: number, h: number) => paintRect(x, y, w, h, st.fillStyle),
     strokeRect: (x: number, y: number, w: number, h: number) => strokeEdges(x, y, w, h),
+    // A cleared pixel shows what is behind the canvas: the map's own ground.
+    clearRect: (x: number, y: number, w: number, h: number) => {
+      const keep = st.globalAlpha;
+      st.globalAlpha = 1;
+      paintRect(x, y, w, h, `rgb(${ground.join(',')})`);
+      st.globalAlpha = keep;
+    },
     beginPath: () => { path = []; },
     moveTo: (x: number, y: number) => { path.push([x, y]); },
     lineTo: (x: number, y: number) => {
@@ -1212,122 +1184,439 @@ function rasterCtx(W: number, H: number, ground: RGB) {
     for (let i = 0; i < W * H; i++) if (luminance([px[i * 3], px[i * 3 + 1], px[i * 3 + 2]] as RGB) < under) n++;
     return n / (W * H);
   };
-  return { ctx, nearBlack, at: (x: number, y: number) => [0, 1, 2].map((i) => px[(y * W + x) * 3 + i]) as RGB };
+  return { ctx, nearBlack, W, H, at: (x: number, y: number) => [0, 1, 2].map((i) => px[(Math.round(y) * W + Math.round(x)) * 3 + i]) as RGB };
 }
 
-/** The dense corner of a real map: a top folder of 3×3 folders, each of 4×4 folders, each of 4×4 small files (about 6 px). */
-function denseLayout(scale = 1): Tile[] {
-  const tiles: Tile[] = [{ name: 'Top', path: '/d', size: 1e9, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 100 * scale, h: 100 * scale }];
-  const split = (x: number, y: number, w: number, h: number, n: number) =>
-    Array.from({ length: n * n }, (_, k) => ({ x: x + (k % n) * (w / n), y: y + Math.floor(k / n) * (h / n), w: w / n, h: h / n }));
-  let seq = 0;
-  for (const a of split(0, 0, 100 * scale, 100 * scale, 3)) {
-    tiles.push({ name: `a${seq}`, path: `/d/a${seq}`, size: 1e8, type: 'dir', depth: 2, expanded: true, ...a });
-    for (const b of split(a.x, a.y, a.w, a.h, 4)) {
-      const folder = `/d/a${seq}/b${tiles.length}`;
-      tiles.push({ name: 'b', path: folder, size: 6e6, type: 'dir', depth: 3, expanded: true, ...b });
-      split(b.x, b.y, b.w, b.h, 4).forEach((c, k) =>
-        tiles.push({ name: `f${k}`, path: `${folder}/f${k}`, size: 1e6 + ((k * 7919 + tiles.length * 104729) % 9) * 5e5, type: 'file', depth: 4, expanded: false, ...c }));
-    }
-    seq++;
-  }
-  return tiles;
-}
+type Band = { x: number; y: number; w: number; h: number; rgb: string };
+/** A rectangle as drawTreemap leaves it in pxRects, with what it recorded painting it. */
+type Painted = { n: Tile; x: number; y: number; w: number; h: number; frame: boolean; edge?: string; lit?: boolean; stops?: RGB[]; fillRgb?: RGB; bg?: RGB[]; bands?: Band[] };
 
-const DENSE_PX = 280;
-
-/** The dense layout painted by the real drawTreemap on a 280 px map in `palette`'s theme. */
-function paintDense(palette: Record<string, string>) {
-  const ground = canvasGround(palette);
-  const raster = rasterCtx(DENSE_PX, DENSE_PX, ground);
-  const state = { treemap: { nodes: denseLayout(), hideCloud: false, rootSize: 1e12, history: { active: false, diff: false }, pxRects: [] as any[], colorMode: 'size', mode: 'treemap', query: '' } };
+/** `tiles` painted by the real drawTreemap onto a `W`×`H` raster in `palette`'s theme. */
+function rasterPaint(tiles: Tile[], palette: Record<string, string>, W: number, H: number,
+  colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.size), history = { active: false, diff: false }, hideCloud = false) {
+  const raster = rasterCtx(W, H, canvasGround(palette));
+  const state = { treemap: { nodes: tiles, hideCloud, rootSize: 1e12, history, pxRects: [] as Painted[], colorMode: 'size', mode: 'treemap', query: '' } };
   const deps = {
-    $: () => ({ clientWidth: DENSE_PX + 20 }), treemapCanvasHeight: () => DENSE_PX, window: { devicePixelRatio: 1 },
+    $: () => ({ clientWidth: W + 20 }), treemapCanvasHeight: () => H, window: { devicePixelRatio: 1 },
     tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: raster.ctx,
     // The grid already starts from the map's real ground, so the painter's own fill of it changes nothing.
     cssVar: (name: string) => (name === '--tm-canvas-bg' ? 'rgba(0,0,0,0)' : palette[name] ?? 'rgba(0,0,0,0)'),
     state, tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
-    cellRgb: (n: Tile) => ramp.sizeRgb(n.size), tmHatchPattern: () => null, tmPreview: { on: false }, roundRect() {},
+    cellRgb: colour, tmHatchPattern: () => null, tmPreview: { on: false }, roundRect() {},
     formatBytes: (n: number) => `${Math.round(n)} B`,
   };
   // Resolving the helpers runs the painter; the grid is measured after one clean paint of its own.
   load<() => void>(['drawTreemap'], { ...deps, tmBufCtx: recordingCtx().ctx }, 'drawTreemap', (draw) => draw());
   load<() => void>(['drawTreemap'], deps, 'drawTreemap', (draw) => draw());
-  return { raster, px: state.treemap.pxRects as Array<{ x: number; y: number; w: number; h: number; frame: boolean }> };
+  return { raster, px: state.treemap.pxRects };
 }
 
-/** Near-black: no brighter than relative luminance 0.03 — about L* 20, the map's own dark ground and anything close to it. */
-const NEAR_BLACK = 0.03;
+/** A leaf the owner's rule outlines: 8 px or more on each side. */
+const OUTLINED_PX = 8;
+/** The band a folder is framed by, as the owner's rule has it: 2 px at the top level, 1 px inside it (never over a third of the folder). */
+const bandOf = (r: { w: number; h: number; n: Tile }) => Math.max(1, Math.min(r.n.depth <= 1 ? 2 : 1, Math.floor(Math.min(r.w, r.h) / 3)));
+/** A painted rectangle on whole pixels (the painter lays them there; a painter that did not is measured where its rectangles round to). */
+const whole = (r: Painted): Painted => ({ ...r, x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.x + r.w) - Math.round(r.x), h: Math.round(r.y + r.h) - Math.round(r.y) });
 
-test('map density: in a dense corner of the map most pixels are colour, not a black mesh — in the dark theme as in the light (BQG-5 item 14)', () => {
-  const dark = paintDense(DARK);
-  const light = paintDense(LIGHT);
-  const leaves = dark.px.filter((r) => !r.frame);
-  assert.equal(leaves.length, 9 * 16 * 16, 'control: every small file is drawn');
-  assert.ok(leaves.every((r) => Math.min(r.w, r.h) < 8), `control: they are dense, under 8 px a side (${leaves[0].w.toFixed(2)} px)`);
-  // Measured here before item 14: 13.5% dark, 2.8% light (QA's own crop: 27.3% and 6.1%). After: 1.4% in
-  // both. The bar sits under both themes' old figures, so either theme's regression fails it (review F1.7).
-  const share = { dark: dark.raster.nearBlack(NEAR_BLACK), light: light.raster.nearBlack(NEAR_BLACK) };
-  const over = Object.entries(share).filter(([, v]) => v >= 0.02).map(([theme, v]) => `${theme} ${(v * 100).toFixed(1)}%`);
-  assert.deepEqual(over, [], `near-black in the dense corner, at or over 2%: ${over.join(', ')} (before item 14: dark 13.5%, light 2.8%)`);
+/**
+ * Every place a line meets a tile, as the raster shows it: [the line's pixel, the tile's pixel beside
+ * it, what and where]. Where the lines are is the owner's rule, not what the painter recorded: each
+ * leaf of OUTLINED_PX and up, along each side (its own outline, or the folder band laid over it where
+ * it lies along its folder's edge); each folder's band (bandOf), along its inner edge, where a tile — a
+ * leaf's inside, or the folder's own fill — lies beside it. Two pixels are left out at each end of a
+ * side, where lines meet lines.
+ */
+function edgesOf(painted: Painted[], W: number, H: number) {
+  const px = painted.map(whole);
+  const line = new Uint8Array(W * H);
+  const mark = (x: number, y: number, w: number, h: number) => {
+    for (let yy = Math.max(0, y); yy < Math.min(H, y + h); yy++) for (let xx = Math.max(0, x); xx < Math.min(W, x + w); xx++) line[yy * W + xx] = 1;
+  };
+  const ring = (x: number, y: number, w: number, h: number, t: number) => { mark(x, y, w, t); mark(x, y + h - t, w, t); mark(x, y, t, h); mark(x + w - t, y, t, h); };
+  for (const r of px) if (r.frame) ring(r.x, r.y, r.w, r.h, bandOf(r));
+  const outlined = (r: Painted) => !r.frame && !!r.stops && Math.min(r.w, r.h) >= OUTLINED_PX;
+  for (const r of px) if (outlined(r)) ring(r.x, r.y, r.w, r.h, 1);
+  const isLine = (x: number, y: number) => x < 0 || y < 0 || x >= W || y >= H || line[y * W + x] === 1;
+  const out: Array<{ line: [number, number]; tile: [number, number]; what: string; kind: 'leaf' | 'frame'; r: Painted }> = [];
+  // Inward from (x, y) along (dx, dy): the last line pixel and the first tile pixel.
+  const inward = (x: number, y: number, dx: number, dy: number): { line: [number, number]; tile: [number, number] } | null => {
+    let k = 0;
+    while (k < 4 && isLine(x + dx * k, y + dy * k)) k++;
+    if (k === 0 || k === 4) return null;
+    return { line: [x + dx * (k - 1), y + dy * (k - 1)], tile: [x + dx * k, y + dy * k] };
+  };
+  for (const r of px) {
+    if (!outlined(r)) continue;
+    const what = `${r.n.path} (${r.w}×${r.h} px)`;
+    for (let y = r.y + 2; y <= r.y + r.h - 3; y++) {
+      for (const [x, dx, side] of [[r.x, 1, 'left'], [r.x + r.w - 1, -1, 'right']] as const) {
+        const e = inward(x, y, dx, 0);
+        if (e) out.push({ ...e, what: `${what}, ${side} side`, kind: 'leaf', r });
+      }
+    }
+    for (let x = r.x + 2; x <= r.x + r.w - 3; x++) {
+      for (const [y, dy, side] of [[r.y, 1, 'top'], [r.y + r.h - 1, -1, 'bottom']] as const) {
+        const e = inward(x, y, 0, dy);
+        if (e) out.push({ ...e, what: `${what}, ${side} side`, kind: 'leaf', r });
+      }
+    }
+  }
+  for (const r of px) {
+    if (!r.frame) continue;
+    const lw = bandOf(r);
+    const what = `folder ${r.n.path} (depth ${r.n.depth})`;
+    const at = (lx: number, ly: number, tx: number, ty: number, side: string) => {
+      if (isLine(tx, ty)) return; // a nested line meets the band here
+      out.push({ line: [lx, ly], tile: [tx, ty], what: `${what}, ${side} band`, kind: 'frame', r });
+    };
+    for (let y = r.y + lw + 2; y <= r.y + r.h - lw - 3; y++) {
+      at(r.x + lw - 1, y, r.x + lw, y, 'left');
+      at(r.x + r.w - lw, y, r.x + r.w - lw - 1, y, 'right');
+    }
+    for (let x = r.x + lw + 2; x <= r.x + r.w - lw - 3; x++) {
+      at(x, r.y + lw - 1, x, r.y + lw, 'top');
+      at(x, r.y + r.h - lw, x, r.y + r.h - lw - 1, 'bottom');
+    }
+  }
+  return out;
+}
+
+/** The weakest line-against-tile contrast in each `kind`, and every place under the bar. */
+function measureEdges(raster: ReturnType<typeof rasterCtx>, px: Painted[]) {
+  const edges = edgesOf(px, raster.W, raster.H);
+  const under: string[] = [];
+  const worst = { leaf: Infinity, frame: Infinity };
+  for (const e of edges) {
+    const c = contrast(raster.at(...e.line), raster.at(...e.tile));
+    worst[e.kind] = Math.min(worst[e.kind], c);
+    if (c < EDGE_BAR && under.length < 12) under.push(`${e.what}: ${fmt(c)}:1 (${raster.at(...e.line).map(Math.round)} on ${raster.at(...e.tile).map(Math.round)})`);
+  }
+  return { edges, worst, under };
+}
+
+/**
+ * Every colour in its own block: a top-level folder holding, in its top-left corner, a nested folder
+ * exactly tiled by a 3×3 grid of `lw`×`lh` leaves, with 6 px of the top-level folder's own fill to its
+ * right and below — all in that colour — in the server's breadth-first order. The top-level band lies
+ * over the nested folder along their shared edges and over its own fill elsewhere; the middle leaf of
+ * each grid touches no folder edge, so its outline alone separates it.
+ */
+function colourBlocks(colours: Array<{ name: string; rgb: RGB; prev?: (s: number) => number | null }>, lw: number, lh: number) {
+  const bw = 3 * lw + 10, bh = 3 * lh + 10, cols = Math.ceil(Math.sqrt(colours.length));
+  const W = cols * bw, H = Math.ceil(colours.length / cols) * bh;
+  const tops: Tile[] = [], nests: Tile[] = [], leaves: Tile[] = [];
+  const colourOf = new Map<string, RGB>();
+  const pct = (v: number, of: number) => (v / of) * 100;
+  for (const [i, c] of colours.entries()) {
+    const x = (i % cols) * bw, y = Math.floor(i / cols) * bh;
+    const t: Tile = { name: `T${i}`, path: `/m/t${i}`, size: 5e9, type: 'dir', depth: 1, expanded: true, x: pct(x, W), y: pct(y, H), w: pct(3 * lw + 6, W), h: pct(3 * lh + 6, H) };
+    const n: Tile = { name: `N${i}`, path: `/m/t${i}/n`, size: 4e9, type: 'dir', depth: 2, expanded: true, x: pct(x, W), y: pct(y, H), w: pct(3 * lw, W), h: pct(3 * lh, H) };
+    for (const tile of [t, n]) { if (c.prev) (tile as any).prevSize = c.prev(tile.size); colourOf.set(tile.path, c.rgb); tops.push(tile); }
+    for (let k = 0; k < 9; k++) {
+      const l: Tile = { name: `f${k}`, path: `/m/t${i}/n/f${k}`, size: 4e8, type: 'file', depth: 3, expanded: false,
+        x: pct(x + (k % 3) * lw, W), y: pct(y + Math.floor(k / 3) * lh, H), w: pct(lw, W), h: pct(lh, H) };
+      if (c.prev) (l as any).prevSize = c.prev(l.size);
+      colourOf.set(l.path, c.rgb);
+      leaves.push(l);
+    }
+  }
+  const byDepth = [...tops.filter((t) => t.depth === 1), ...tops.filter((t) => t.depth === 2), ...leaves];
+  return { tiles: byDepth, W, H, colour: (n: Tile) => colourOf.get(n.path)!, nameOf: (path: string) => colours[Number(/^\/m\/t(\d+)/.exec(path)![1])].name };
+}
+
+const RAMP_COLOURS = STEPS.map((s) => ({ name: `size ramp ${s.t}`, rgb: ramp.sizeRgb(s.bytes) }));
+const EVERY_COLOUR = [...RAMP_COLOURS, ...OTHER_COLOURS, { name: 'the Trash cell', rgb: [108, 122, 137] as RGB }];
+/** Leaf shapes from the smallest with an outline (8 px) to a tall tile with its whole cushion, and a wide one. */
+const LEAF_SHAPES: Array<[number, number]> = [[8, 8], [9, 12], [16, 16], [12, 64], [64, 12]];
+
+test('owner\'s outlines: every leaf outline and every folder band reaches 3:1 against the tile beside it, on rendered pixels — every leaf size from 8 px, the whole size ramp, Age, every Reclaim score, "not scored", the History diff colours and the Trash cell, in both themes', () => {
+  let measured = 0;
+  for (const [lw, lh] of LEAF_SHAPES) {
+    const b = colourBlocks(EVERY_COLOUR, lw, lh);
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      const { raster, px } = rasterPaint(b.tiles, palette, b.W, b.H, b.colour);
+      const m = measureEdges(raster, px);
+      assert.ok(m.edges.filter((e) => e.kind === 'leaf').length > EVERY_COLOUR.length * 9 * 8, `${theme}, ${lw}×${lh} leaves: control — every leaf's sides were measured`);
+      assert.ok(m.edges.filter((e) => e.kind === 'frame').length > EVERY_COLOUR.length * 8, `${theme}, ${lw}×${lh} leaves: control — every folder's bands were measured`);
+      assert.deepEqual(m.under, [], `${theme}, ${lw}×${lh} leaves: lines under ${EDGE_BAR}:1 against the tile beside them`);
+      measured += m.edges.length;
+    }
+  }
+  assert.ok(measured > 50000, `${measured} places measured`);
 });
 
-test('map density: a leaf 8 px or more on a side keeps its inset box, top highlight and outline, and one under 8 px is filled edge to edge without them (review F1.6)', () => {
+test('owner\'s outlines: in the History diff a line is measured as the screen shows it, through each folder\'s wash — 3:1 in a folder that grew, shrank, is new or is unchanged, in both themes', () => {
+  const kinds = Object.keys(PREV);
+  const colours = kinds.flatMap((folder) => kinds.map((leaf) => ({ name: `${leaf} leaf in a ${folder} folder`, rgb: [0, 0, 0] as RGB, folder, leaf })));
+  const b = colourBlocks(colours.map((c) => ({ name: c.name, rgb: c.rgb })), 16, 16);
+  // The diff colours come from each node's earlier size: the folders' from their kind, the leaves' from theirs.
+  for (const t of b.tiles) {
+    const c = colours[Number(/^\/m\/t(\d+)/.exec(t.path)![1])];
+    (t as any).prevSize = PREV[t.type === 'dir' ? c.folder : c.leaf](t.size);
+  }
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const { raster, px } = rasterPaint(b.tiles, palette, b.W, b.H, (n) => DIFF_PAGE.diffRgb(n), { active: true, diff: true });
+    assert.ok(px.some((r) => r.frame && DIFF_PAGE.diffRgb(r.n).join() !== DIFF_PAGE.diffRgb({ size: 1, prevSize: 1 }).join()), 'control: some folders are washed');
+    const m = measureEdges(raster, px);
+    assert.deepEqual(m.under, [], `${theme}: lines under ${EDGE_BAR}:1 against the washed tile beside them`);
+  }
+});
+
+test('owner\'s outlines: a folder\'s band is heavier and higher-contrast than a leaf\'s outline beside the same colour — 2 px at the top level, and on the size ramp always the stronger line', () => {
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const b = colourBlocks(EVERY_COLOUR, 16, 16);
+    const { raster, px } = rasterPaint(b.tiles, palette, b.W, b.H, b.colour);
+    const { edges } = measureEdges(raster, px);
+    for (const [i, c] of EVERY_COLOUR.entries()) {
+      const mine = edges.filter((e) => e.r.n.path.startsWith(`/m/t${i}/`) || e.r.n.path === `/m/t${i}`);
+      const leaf = Math.min(...mine.filter((e) => e.kind === 'leaf' && e.r.n.path.endsWith('/f4')).map((e) => contrast(raster.at(...e.line), raster.at(...e.tile))));
+      const frame = Math.min(...mine.filter((e) => e.kind === 'frame').map((e) => contrast(raster.at(...e.line), raster.at(...e.tile))));
+      assert.ok(Number.isFinite(leaf) && Number.isFinite(frame), `${theme}, ${c.name}: control — both lines measured`);
+      assert.ok(frame >= leaf, `${theme}, ${c.name}: a folder's band (${fmt(frame)}:1) is no weaker than a leaf's outline (${fmt(leaf)}:1)`);
+      if (i < RAMP_COLOURS.length) assert.ok(frame > leaf + 0.5, `${theme}, ${c.name}: on the size ramp the band (${fmt(frame)}:1) is clearly the stronger line than the leaf's outline (${fmt(leaf)}:1)`);
+    }
+    const top = px.find((r) => r.n.depth === 1)!, nested = px.find((r) => r.n.depth === 2)!;
+    assert.equal(top.bands!.find((x) => x.y === top.y)!.h, 2, `${theme}: a top-level folder's band is 2 px`);
+    assert.equal(nested.bands!.find((x) => x.y === nested.y)!.h, 1, `${theme}: a nested folder's band is 1 px, as a leaf's outline is`);
+  }
+});
+
+test('owner\'s outlines: the colour still pops inside every outlined tile — C*ab ≥ 60 at the top of the ramp and at least 0.8 of its colour\'s strength, the outline taking only the tile\'s edge', () => {
+  for (const [lw, lh] of [[8, 8], [16, 16], [12, 64]] as const) {
+    const b = colourBlocks(RAMP_COLOURS, lw, lh);
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      const { raster, px } = rasterPaint(b.tiles, palette, b.W, b.H, b.colour);
+      for (const [i, c] of RAMP_COLOURS.entries()) {
+        const mid = px.find((r) => r.n.path === `/m/t${i}/n/f4`)!;
+        const centre = raster.at(mid.x + Math.floor(mid.w / 2), mid.y + Math.floor(mid.h / 2));
+        const own = lab(c.rgb).C, shown = lab(centre).C;
+        assert.ok(shown / own >= 0.8, `${theme}, ${lw}×${lh}, ${c.name}: inside its outline the tile shows C*ab ${shown.toFixed(1)} of ${own.toFixed(1)}`);
+        if (i === RAMP_COLOURS.length - 1) assert.ok(shown >= 60, `${theme}, ${lw}×${lh}: the top of the ramp shows C*ab ${shown.toFixed(1)} inside its outline`);
+        // The outline is a ring one pixel wide: every pixel inside it is the tile's own cushion.
+        for (let x = mid.x + 1; x < mid.x + mid.w - 1; x++) {
+          const p = raster.at(x, mid.y + Math.floor(mid.h / 2));
+          assert.ok(contrast(p, centre) < 1.2, `${theme}, ${lw}×${lh}, ${c.name}: pixel ${x - mid.x} of its middle row is the tile, not a line`);
+        }
+      }
+    }
+  }
+});
+
+test('owner\'s outlines: a leaf under 8 px is filled edge to edge with no outline or highlight; one of 8 px and up is outlined in a shade of its own colour, a highlight only under a dark one', () => {
   // Literal sizes about the rule's edge, so raising it — to 24 px, say — fails here.
-  const leaf = (name: string, x: number, px: number): Tile => ({ name, path: `/r/${name}`, size: 2e6, type: 'file', depth: 1, expanded: false, x, y: 50, w: px / 10, h: px / 10 });
+  const leaf = (name: string, x: number, px: number, size = 2e6): Tile => ({ name, path: `/r/${name}`, size, type: 'file', depth: 1, expanded: false, x, y: 50, w: px / 10, h: px / 10 });
   const tiles = [leaf('seven', 10, 7), leaf('eight', 20, 8), leaf('nine', 30, 9), leaf('twenty', 40, 20)];
   const rec = paint(tiles);
   const near = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 0.01);
   for (const [name, x, side, edged] of [['seven', 100, 7, false], ['eight', 200, 8, true], ['nine', 300, 9, true], ['twenty', 400, 20, true]] as const) {
     const y = 500;
-    const box = edged ? [x + 0.5, y + 0.5, side - 1, side - 1] : [x, y, side, side];
-    assert.ok(rec.ops.some((op) => op.kind === 'rect' && near(op.rect, box)), `${name} (${side} px): filled ${edged ? 'in its inset box' : 'edge to edge'} (${box.join(' ')})`);
-    const outline = rec.strokes.filter((st) => st.style === 'rgba(0,0,0,0.35)' && near(st.rect, [x + 0.5, y + 0.5, side - 1, side - 1]));
-    assert.equal(outline.length, edged ? 1 : 0, `${name} (${side} px): ${edged ? 'its own 0.35 outline' : 'no outline of its own'}`);
-    const highlight = rec.lines.filter((l) => l.style === 'rgba(255,255,255,0.18)' && near(l.seg, [x + 1, y + 1, x + side - 1, y + 1]));
-    assert.equal(highlight.length, edged ? 1 : 0, `${name} (${side} px): ${edged ? 'its top highlight' : 'no highlight'}`);
+    const r = rec.px.find((p: Painted) => p.n.name === name) as Painted;
+    assert.ok(rec.ops.some((op) => op.kind === 'rect' && near(op.rect, [x, y, side, side]) && typeof op.style === 'object'), `${name} (${side} px): its cushion fills its box edge to edge`);
+    const outline = rec.strokes.filter((st) => near(st.rect, [x + 0.5, y + 0.5, side - 1, side - 1]));
+    assert.equal(outline.length, edged ? 1 : 0, `${name} (${side} px): ${edged ? 'an outline of its own' : 'no outline of its own'}`);
+    if (!edged) { assert.equal(r.edge, undefined, `${name}: no outline recorded`); continue; }
+    assert.equal(outline[0].style, r.edge, `${name}: in the tone it recorded`);
+    const [er, eg, eb, ea] = rgba(outline[0].style);
+    assert.equal(ea, 1, `${name}: the outline is opaque — it does not let the ground through`);
+    assert.ok(!(er === 0 && eg === 0 && eb === 0), `${name}: a shade of its own colour, not flat black (${outline[0].style})`);
+    const highlight = rec.lines.filter((l) => near(l.seg, [x + 1, y + 1.5, x + side - 1, y + 1.5]));
+    assert.equal(highlight.length, r.lit ? 1 : 0, `${name}: a highlight ${r.lit ? 'along its top row, under its dark outline' : 'only under a dark outline'}`);
   }
+  // On a dark tile — Reclaim's "not scored" grey — the shade is lighter than the tile, and no highlight sits beside it.
+  const grey = paint([leaf('grey', 60, 20)], () => [0x3a, 0x40, 0x48]);
+  const g = grey.px[0] as Painted;
+  assert.ok(luminance(rgba(g.edge!).slice(0, 3) as RGB) > luminance([0x3a, 0x40, 0x48]), `a dark tile's outline is a lighter shade (${g.edge})`);
+  assert.equal(g.lit, false, 'and it has no highlight');
 });
 
-test('map density: the SVG export paints the dense corner as the canvas does — small leaves edge to edge with no outline of their own, faded nested outlines, and no rim in a folder under 12 px (BQG-5 item 14)', () => {
-  // The dense corner, 280 px of the 1000 px export map, beside one leaf big enough for its edges.
-  const big: Tile = { name: 'big.bin', path: '/big.bin', size: 5e9, type: 'file', depth: 1, expanded: false, x: 40, y: 0, w: 30, h: 30 };
-  // At the edges of the rules: a 7 px leaf (dense, under 8) and an 8 px folder (under the rim's 12).
-  const seven: Tile = { name: 'seven.bin', path: '/seven.bin', size: 2e6, type: 'file', depth: 1, expanded: false, x: 80, y: 80, w: 0.7, h: 0.7 };
-  const small: Tile = { name: 'small', path: '/small', size: 3e6, type: 'dir', depth: 2, expanded: true, x: 90, y: 0, w: 0.8, h: 0.8 };
-  // And an 8 px leaf, the smallest with edges of its own (review F1.6).
-  const eight: Tile = { name: 'eight.bin', path: '/eight.bin', size: 2e6, type: 'file', depth: 1, expanded: false, x: 80, y: 90, w: 0.8, h: 0.8 };
-  const tiles = [...denseLayout(0.28), big, seven, small, eight];
-  const { svg, rec, px } = exportSvg(tiles, (n) => ramp.sizeRgb(n.size), '#0e0e13');
-  const rects = [...svg.matchAll(/<rect ([^>]*?)\/?>/g)].map((m) => attrs(m[1]));
+/* ── J51: a folder no rectangle covers shows its own colour ── */
+
+/** A top-level folder holding the corpus's Mail (no file over the floor, its mailboxes empty frames too), "Wide folder", and a folder half covered. */
+function subFloorTiles(): Tile[] {
+  const dir = (name: string, path: string, size: number, depth: number, x: number, y: number, w: number, h: number): Tile =>
+    ({ name, path, size, type: 'dir', depth, expanded: true, x, y, w, h });
+  return [
+    dir('corpus', '/c', 4e10, 1, 0, 0, 100, 100),
+    dir('Mail', '/c/Mail', 37.7e6, 2, 5, 5, 40, 30),
+    dir('Wide folder', '/c/Wide folder', 2e6, 2, 50, 5, 5, 5.25),
+    dir('Half', '/c/Half', 1.2e10, 2, 60, 40, 30, 40),
+    { name: 'big.mov', path: '/c/Half/big.mov', size: 6e9, type: 'file', depth: 3, expanded: false, x: 60, y: 40, w: 15, h: 40 },
+    // Mail's mailboxes: frames of their own, each with nothing over the floor either.
+    dir('INBOX', '/c/Mail/INBOX', 20e6, 3, 5, 5, 20, 30),
+    dir('Sent', '/c/Mail/Sent', 10e6, 3, 25, 5, 10, 30),
+  ];
+}
+
+test('J51: a folder whose files are all under the size floor is filled with its own colour and cushion — never the map\'s ground, a black slab in dark or a white grid in light — and so is the part of a folder no rectangle covers', () => {
+  const tiles = subFloorTiles();
+  const W = 400, H = 400;
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const ground = canvasGround(palette);
+    const { raster, px } = rasterPaint(tiles, palette, W, H);
+    const where = (path: string) => px.find((r) => r.n.path === path)!;
+    for (const [path, x, y] of [
+      ['/c/Mail/INBOX', 0.5, 0.5], ['/c/Mail/Sent', 0.5, 0.5], ['/c/Mail', 0.85, 0.5], // Mail shows between and beside its mailboxes
+      ['/c/Wide folder', 0.5, 0.5], ['/c/Half', 0.75, 0.5], ['/c', 0.9, 0.9],
+    ] as const) {
+      const r = whole(where(path));
+      const px0 = Math.floor(r.x + r.w * x), py0 = Math.floor(r.y + r.h * y);
+      const shown = raster.at(px0, py0);
+      // A leaf's cushion of the folder's own colour on the size ramp: 16% white at its top, 22% black at its foot, over its height.
+      const own = ramp.sizeRgb(r.n.size), amp = Math.min(1, r.h / 60);
+      const cushion: RGB[] = [mix3(own, [255, 255, 255], 0.16 * amp) as RGB, mix3(own, [0, 0, 0], 0.22 * amp) as RGB];
+      const want = lerp(cushion[0], cushion[1], (py0 + 0.5 - r.y) / r.h);
+      assert.ok(lab(shown).C - lab(ground).C > 30, `${theme}, ${path}: not the map's ground (${shown.map(Math.round)} on ${ground.map(Math.round)})`);
+      assert.ok(contrast(shown, want) < 1.05, `${theme}, ${path}: shows its own cushion (${shown.map(Math.round)}; its cushion there ${want.map(Math.round)})`);
+      assert.ok(lab(shown).C / lab(own).C >= 0.8, `${theme}, ${path}: at the strength of its colour on the size ramp (C*ab ${lab(shown).C.toFixed(1)} of ${lab(own).C.toFixed(1)})`);
+      assert.deepEqual(r.bg, cushion, `${theme}, ${path}: and the painter recorded that fill, for the SVG export`);
+    }
+    // A staged block and a hollow cloud cell in a filled folder show the map's ground, not the folder's fill:
+    // neither is space the folder holds on this disk.
+    const hollow = rasterPaint([
+      { name: 'F', path: '/f', size: 3e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 100, h: 100 },
+      { name: 'staged.bin', path: '/f/staged.bin', size: 2e9, type: 'file', depth: 2, expanded: false, x: 10, y: 10, w: 30, h: 30, freed: true } as Tile,
+      { name: 'cloud.mov', path: '/f/cloud.mov', size: 2e9, type: 'file', depth: 2, expanded: false, x: 50, y: 10, w: 30, h: 30, cloudPlaceholder: true } as Tile,
+    ], palette, 200, 200);
+    assert.ok(hollow.px[0].bg, `${theme}: control — the folder around them is filled`);
+    assert.ok(contrast(hollow.raster.at(50, 50), ground) < 1.01, `${theme}: the staged block shows the ground (${hollow.raster.at(50, 50).map(Math.round)})`);
+    const faint = over([...ramp.sizeRgb(2e9), 0.16] as RGBA, ground);
+    assert.ok(contrast(hollow.raster.at(130, 50), faint) < 1.02, `${theme}: the hollow cloud cell is its faint wash over the ground (${hollow.raster.at(130, 50).map(Math.round)}, want ${faint.map(Math.round)})`);
+    // With online-only files hidden, a folder holding one is not filled where it would be: its bytes are not
+    // on this disk, so the folder's colour there would claim space it does not take.
+    const withCloud = [
+      { name: 'G', path: '/g', size: 3e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 100, h: 100 },
+      { name: 'here.bin', path: '/g/here.bin', size: 1e10, type: 'file', depth: 2, expanded: false, x: 0, y: 0, w: 50, h: 100 },
+      { name: 'away.mov', path: '/g/away.mov', size: 2e10, type: 'file', depth: 2, expanded: false, x: 50, y: 0, w: 50, h: 100, cloudPlaceholder: true } as Tile,
+    ] as Tile[];
+    const hidden = rasterPaint(withCloud, palette, 200, 200, undefined, undefined, true);
+    assert.equal(hidden.px.length, 2, `${theme}: control — the online-only file is hidden`);
+    assert.equal(hidden.px[0].bg, undefined, `${theme}: the folder is not filled where its hidden online-only file would be`);
+    assert.ok(contrast(hidden.raster.at(150, 100), ground) < 1.01, `${theme}: the map's ground shows there (${hidden.raster.at(150, 100).map(Math.round)})`);
+    // A folder its contents tile exactly needs no fill of its own.
+    const tiled = rasterPaint([
+      { name: 'T', path: '/t', size: 2e9, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 50, h: 50 },
+      { name: 'a', path: '/t/a', size: 1e9, type: 'file', depth: 2, expanded: false, x: 0, y: 0, w: 25, h: 50 },
+      { name: 'b', path: '/t/b', size: 1e9, type: 'file', depth: 2, expanded: false, x: 25, y: 0, w: 25, h: 50 },
+    ], palette, 200, 200);
+    assert.equal(tiled.px[0].bg, undefined, `${theme}: a folder its files tile is not filled under them`);
+  }
+  // The top of the ramp, as a sub-floor folder: still C*ab ≥ 60.
+  const huge = rasterPaint([{ name: 'big', path: '/big', size: 2e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 100, h: 100 }], DARK, 100, 100);
+  assert.ok(lab(huge.raster.at(50, 50)).C >= 60, `a 20 GB folder with nothing drawn in it shows C*ab ${lab(huge.raster.at(50, 50)).C.toFixed(1)}`);
+});
+
+/** The page's own mix, for a test that says what a colour should be. */
+function mix3(a: RGB, b: RGB, t: number): number[] { return a.map((v, i) => Math.round(v + (b[i] - v) * t)); }
+
+/* ── A dense corner as the real map draws one ── */
+
+/**
+ * A deterministic stand-in for the dense corner of /System/Library, laid out by the server's own
+ * buildTreemap at the page's own floor (4,000 bytes) and Depth 4: nine top folders of three to seven
+ * folders, each of two to six folders of 4 KB–600 KB files (and some under the floor), one in twelve
+ * holding nothing over the floor (J51). On a 640×400 map about half its 1,750 leaves are 4–16 px a side.
+ */
+function realisticNodes(): Tile[] {
+  let seed = 20261020;
+  const rnd = () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const between = (lo: number, hi: number) => Math.round(10 ** (Math.log10(lo) + rnd() * (Math.log10(hi) - Math.log10(lo))));
+  const int = (lo: number, hi: number) => lo + Math.floor(rnd() * (hi - lo + 1));
+  const dir = (p: string, children: FileNode[]): FileNode => ({ name: p.slice(p.lastIndexOf('/') + 1), path: p, type: 'dir', size: children.reduce((a, c) => a + c.size, 0), modifiedAt: 0, isHidden: false, children });
+  const files = (d: string, n: number, lo: number, hi: number): FileNode[] =>
+    Array.from({ length: n }, (_, i) => ({ name: `f${i}`, path: `${d}/f${i}`, type: 'file' as const, size: between(lo, hi), modifiedAt: 0, isHidden: false, extension: '' }));
+  const level3 = (p: string, k: number): FileNode => {
+    const d = `${p}/c${k}`;
+    if (rnd() < 0.08) return dir(d, files(d, int(200, 900), 400, 3900));
+    return dir(d, [...files(d, int(4, 14), 4000, 600000), ...files(d, int(0, 20), 200, 3900)]);
+  };
+  const level2 = (p: string, k: number): FileNode => {
+    const d = `${p}/b${k}`;
+    return dir(d, [...Array.from({ length: int(2, 6) }, (_, i) => level3(d, i)), ...files(d, int(1, 6), 8000, 900000)]);
+  };
+  const level1 = (k: number): FileNode => {
+    const d = `/L/a${k}`;
+    return dir(d, [...Array.from({ length: int(3, 7) }, (_, i) => level2(d, i)), ...files(d, int(0, 4), 50000, 4000000)]);
+  };
+  const root = dir('/L', Array.from({ length: 9 }, (_, i) => level1(i)));
+  return buildTreemap(root, { maxDepth: 4, minSize: 4000, maxNodes: 20000 }) as unknown as Tile[];
+}
+const REAL_W = 640, REAL_H = 400;
+/** Near-black: no brighter than relative luminance 0.03 — about L* 20, the map's own dark ground and anything close to it. */
+const NEAR_BLACK = 0.03;
+
+test('map density: a realistic dense map is colour with contrasting lines, not a black mesh — near-black under 2% in dark and light, and every line at 3:1 on its pixels', () => {
+  const nodes = realisticNodes();
+  const share: Record<string, number> = {};
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const { raster, px } = rasterPaint(nodes, palette, REAL_W, REAL_H);
+    const leaves = px.filter((r) => !r.frame);
+    const sides = leaves.map((r) => Math.min(r.w, r.h));
+    // Control: the corner QA measured — mostly small leaves, many of them outlined, nested folders, and J51's empty ones.
+    assert.ok(leaves.length > 1500, `${theme}: control — ${leaves.length} leaves drawn`);
+    assert.ok(sides.filter((s) => s >= 4 && s < 16).length > leaves.length * 0.45, `${theme}: control — about half the leaves are 4–16 px a side`);
+    const outlined = leaves.filter((r) => Math.min(r.w, r.h) >= OUTLINED_PX).length;
+    assert.ok(outlined > 300, `${theme}: control — ${outlined} leaves are big enough for an outline`);
+    assert.ok(px.filter((r) => r.frame && r.n.depth >= 3).length > 100, `${theme}: control — nested folders`);
+    assert.ok(px.filter((r) => r.frame && !px.some((c) => c !== r && c.n.path.startsWith(`${r.n.path}/`))).length >= 10, `${theme}: control — folders with nothing drawn in them (J51)`);
+    share[theme] = raster.nearBlack(NEAR_BLACK);
+    // A top-level folder's band is laid last, over any nested folder's along an edge they share: whole, in its own tones.
+    for (const r of px.filter((p) => p.n.depth === 1)) {
+      for (const b of r.bands!) {
+        const want = rgba(b.rgb).slice(0, 3);
+        for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) {
+          assert.deepEqual(raster.at(x, y).map(Math.round), want, `${theme}, ${r.n.path}: its band at ${x},${y} is its own ${b.rgb}`);
+        }
+      }
+    }
+    const m = measureEdges(raster, px);
+    assert.ok(m.edges.length > 20000, `${theme}: ${m.edges.length} places measured`);
+    assert.deepEqual(m.under, [], `${theme}: lines under ${EDGE_BAR}:1 against the tile beside them`);
+  }
+  // QA read 8.5% (corpus) and 8.9% (/System/Library) near-black in the real dark map, and 2.3–5.5% in light,
+  // painted BQG-5's way; this layout, painted that way (REL-79), measures 10.6% dark and 4.9% light — the
+  // empty folders' slabs and the 0.35 outlines over a gap of the ground — and 0.1% in both now. The lines
+  // are dark shades of each tile's own colour, not black: at luminance < 0.08 the share is 16.5% (it was
+  // 14.6% dark, 8.7% light) — the outlines the owner asked to see.
+  const over = Object.entries(share).filter(([, v]) => v >= 0.02).map(([theme, v]) => `${theme} ${(v * 100).toFixed(1)}%`);
+  assert.deepEqual(over, [], `near-black (luminance < ${NEAR_BLACK}) at or over 2%: ${over.join(', ')} (dark ${(share.dark * 100).toFixed(1)}%, light ${(share.light * 100).toFixed(1)}%)`);
+});
+
+/* ── The SVG export paints what the canvas painted ── */
+
+test('owner\'s outlines: the SVG export paints each leaf\'s toned outline and highlight, each folder\'s own fill and each band as the canvas did, in its order (mapPaintFidelity\'s rule)', () => {
+  const tiles = [...subFloorTiles(), { name: 'grey', path: '/c/Half/grey', size: 3e9, type: 'file', depth: 3, expanded: false, x: 75, y: 40, w: 15, h: 40 } as Tile];
+  const colour = (n: Tile) => (n.name === 'grey' ? [0x3a, 0x40, 0x48] as RGB : ramp.sizeRgb(n.size));
+  const { svg, rec, px } = exportSvg(tiles, colour, '#0e0e13');
+  const painted = px as Painted[];
+  const rects = [...svg.matchAll(/<rect ([^>]*?)\/?>/g)].map((m) => ({ a: attrs(m[1]), at: m.index! }));
   const close = (a: Record<string, string>, box: number[]) => ['x', 'y', 'width', 'height'].every((k, i) => Math.abs(Number(a[k]) - box[i]) < 0.011);
-  const leaves = (px as Array<{ x: number; y: number; w: number; h: number; frame: boolean; n: Tile }>).filter((r) => !r.frame);
-  assert.equal(leaves.length, 9 * 16 * 16 + 3, 'control: every leaf is in the map');
-  // The canvas draws no outline of its own on a dense leaf, the 7 px one included.
-  const sevenPx = leaves.find((r) => r.n.path === '/seven.bin')!;
-  assert.equal(rec.strokes.filter((st) => st.rect.every((v, i) => Math.abs(v - [sevenPx.x + 0.5, sevenPx.y + 0.5, sevenPx.w - 1, sevenPx.h - 1][i]) < 0.011)).length, 0,
-    'the canvas outlines no 7 px leaf');
+  // Each leaf's outline, in the tone the canvas stroked it.
+  const leaves = painted.filter((r) => !r.frame);
+  assert.ok(leaves.some((r) => r.lit) && leaves.some((r) => r.edge && !r.lit), 'control: a lit leaf under a dark outline, and an unlit one under a light outline');
   for (const r of leaves) {
-    const dense = Math.min(r.w, r.h) < 8;
-    const box = dense ? [r.x, r.y, r.w, r.h] : [r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1];
-    const rect = rects.find((a) => /^url\(#tm-c/.test(a.fill ?? '') && close(a, box));
-    assert.ok(rect, `${r.n.path}: its leaf fills ${dense ? 'edge to edge' : 'its inset box'} (${box.map((v) => v.toFixed(2)).join(' ')})`);
-    if (dense) assert.equal(rect!.stroke, undefined, `${r.n.path}: a dense leaf has no outline of its own, as on the canvas`);
-    else assert.equal(rect!.stroke, 'rgba(0,0,0,0.35)', `${r.n.path}: a leaf with room keeps its outline`);
+    const stroke = rec.strokes.find((st) => st.rect.every((v, i) => Math.abs(v - [r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1][i]) < 0.011));
+    const inSvg = rects.find(({ a }) => a.fill === 'none' && a.stroke && close(a, [r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1]));
+    assert.equal(inSvg?.a.stroke, stroke?.style, `${r.n.path}: the SVG outlines it in the canvas's ${stroke?.style}`);
+    const lit = new RegExp(`<line x1="${(r.x + 1).toFixed(2)}" y1="${(r.y + 1.5).toFixed(2)}" x2="${(r.x + r.w - 1).toFixed(2)}" y2="${(r.y + 1.5).toFixed(2)}" stroke="rgba\\(255,255,255,0\\.18\\)"`).test(svg);
+    assert.equal(lit, !!r.lit, `${r.n.path}: ${r.lit ? 'its highlight, as on the canvas' : 'no highlight, as on the canvas'}`);
   }
-  // Every folder's outline and rim, as the canvas stroked them: the canvas strokes on a folder's
-  // outline box or rim box (a leaf's own outline is the stroke on its leaf rect, checked above).
-  const folders = (px as Array<{ x: number; y: number; w: number; h: number; frame: boolean }>).filter((r) => r.frame);
-  const onFolder = (rect: number[]) => folders.some((r) =>
-    [[r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1], [r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3]].some((b) => b.every((v, i) => Math.abs(v - rect[i]) < 0.011)));
-  const frameStrokes = rec.strokes.filter((st) => onFolder(st.rect));
-  const frames = rects.filter((a) => a.fill === 'none');
-  assert.ok(frameStrokes.some((st) => rgba(st.style)[3] === 0.25), 'control: the dense corner has faded outlines');
-  for (const st of frameStrokes) {
-    const [x, y, w, h] = st.rect;
-    const a = frames.find((f) => close(f, [x, y, w, h]) && f.stroke === st.style.replace(/\s+/g, ''));
-    assert.ok(a, `the canvas's ${st.style} stroke at ${st.rect.map((v) => v.toFixed(2)).join(' ')} is in the SVG, in the same colour`);
-    assert.equal(Number(a!['stroke-width']), st.width, 'at the same width');
+  // Each folder's own fill, with the canvas's cushion, before anything drawn in it.
+  for (const r of painted.filter((p) => p.frame && p.bg)) {
+    const fill = rects.find(({ a }) => /^url\(#tm-f/.test(a.fill ?? '') && close(a, [r.x, r.y, r.w, r.h]));
+    assert.ok(fill, `${r.n.path}: its own fill is in the SVG`);
+    const id = /^url\(#([\w-]+)\)$/.exec(fill!.a.fill)![1];
+    const stops = [...new RegExp(`<linearGradient id="${id}"[^>]*>([\\s\\S]*?)</linearGradient>`).exec(svg)![1].matchAll(/stop-color="([^"]*)"/g)].map((m) => m[1]);
+    assert.deepEqual(stops, r.bg!.map((c) => `rgb(${c.join(',')})`), `${r.n.path}: in the canvas's cushion`);
+    const inside = painted.filter((c) => c !== r && c.n.path.startsWith(`${r.n.path}/`) && !c.frame);
+    for (const c of inside) {
+      const leafAt = rects.find(({ a }) => close(a, [c.x, c.y, c.w, c.h]) && /^url\(#tm-c/.test(a.fill ?? ''));
+      assert.ok(leafAt && leafAt.at > fill!.at, `${r.n.path}: ${c.n.path} is drawn over the folder's fill`);
+    }
   }
-  assert.equal(frames.length, frameStrokes.length, 'and the SVG frames nothing the canvas did not: no rim the canvas left out');
+  // Every band, in the canvas's colours and in the canvas's order.
+  const bandsOnCanvas = rec.ops.filter((op): op is Extract<Op, { kind: 'rect' }> => op.kind === 'rect' && typeof op.style === 'string' && rgba(op.style)[3] === 1 && /^rgb\(/.test(op.style))
+    .map((op) => `${op.rect.map((v) => v.toFixed(2)).join(' ')} ${op.style}`);
+  const bandsInSvg = rects.filter(({ a }) => /^rgb\(/.test(a.fill ?? '') && !('fill-opacity' in a)).map(({ a }) => `${['x', 'y', 'width', 'height'].map((k) => Number(a[k]).toFixed(2)).join(' ')} ${a.fill}`);
+  assert.ok(bandsOnCanvas.length >= painted.filter((r) => r.frame).length * 4, `control: each folder's bands are on the canvas (${bandsOnCanvas.length})`);
+  assert.deepEqual(bandsInSvg, bandsOnCanvas, 'the SVG lays the same bands, in the same colours, in the same order');
 });

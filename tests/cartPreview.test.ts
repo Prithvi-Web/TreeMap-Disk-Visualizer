@@ -570,7 +570,7 @@ test('the preview is read-only, like the time slider', () => {
 });
 
 test('a freed block is hatched rather than filled', () => {
-  const body = slice('  // Pass 1: cushion-shaded leaf fills.', '  // Pass 2: directory frames.');
+  const body = slice('  // Pass 1: cushion-shaded leaf fills.', '  // Pass 2.5: diff wash');
   assert.match(body, /if \(r\.n\.freed\)/, 'freed blocks take their own branch');
   assert.match(body, /tmHatchPattern\(ctx\)/, 'and it is the hatch, not a solid fill');
 });

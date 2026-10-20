@@ -1155,14 +1155,17 @@ function exportTreemapPNG() {
 }
 
 /**
- * The map as an SVG, drawn with the canvas's own recipe (review F1.3, F1.9):
- * each leaf the cushion pass 1 painted it with (r.stops — opaque, in the
- * colour mode on screen, eased under its label where it had to be), each
- * folder pass 2's dark outline and light rim, in the History diff pass
- * 2.5's wash over each folder that changed, and each label at the lines
- * and in the ink pass 4 chose (r.label, tmLabelInk). It once redrew the map
- * with the recipe G01 and G09 retired — every leaf faded by depth over the
- * page, in the size ramp whatever the colour mode, its labels fixed black.
+ * The map as an SVG, drawn with the canvas's own recipe (review F1.3, F1.9),
+ * from what the canvas recorded on each rectangle as it painted it: each
+ * folder's own fill where nothing covers it (pass 0, r.bg), each leaf the
+ * cushion pass 1 painted it with (r.stops — opaque, in the colour mode on
+ * screen, eased under its label where it had to be) with its highlight
+ * (r.lit), the History diff pass 2.5's wash over each folder that changed,
+ * each leaf's toned outline (pass 2.6, r.edge), each folder's toned bands in
+ * the order pass 2.7 laid them (r.bands), and each label at the lines and in
+ * the ink pass 4 chose (r.label, tmLabelInk). It once redrew the map with the
+ * recipe G01 and G09 retired — every leaf faded by depth over the page, in
+ * the size ramp whatever the colour mode, its labels fixed black.
  */
 function exportTreemapSVG() {
   const dpr = window.devicePixelRatio || 1;
@@ -1171,49 +1174,42 @@ function exportTreemapSVG() {
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const rgb = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
   const defs = [];
+  const ground = cssVar('--bg-1') || '#0e0e13';
+  const at = (x, y, bw, bh) => `x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${Math.max(0, bw).toFixed(2)}" height="${Math.max(0, bh).toFixed(2)}"`;
+  const cushion = (id, stops, r) => defs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="0" y1="${r.y}" x2="0" y2="${r.y + r.h}">` +
+    `<stop offset="0" stop-color="${rgb(stops[0])}"/><stop offset="1" stop-color="${rgb(stops[1])}"/></linearGradient>`);
   const parts = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" font-family="-apple-system, 'Segoe UI', Helvetica, sans-serif">`,
-    `<rect width="${w}" height="${h}" fill="${cssVar('--bg-1') || '#0e0e13'}"/>`,
+    `<rect width="${w}" height="${h}" fill="${ground}"/>`,
   ];
+  // A folder's own fill where no rectangle covers it (J51), under its contents.
+  for (const [i, r] of state.treemap.pxRects.entries()) {
+    if (!r.frame || !r.bg) continue;
+    cushion(`tm-f${i}`, r.bg, r);
+    parts.push(`<rect ${at(r.x, r.y, r.w, r.h)} fill="url(#tm-f${i})"/>`);
+  }
   // Leaf fills (with native tooltips via <title>).
   for (const [i, r] of state.treemap.pxRects.entries()) {
     if (r.frame) continue;
     const box = `x="${(r.x + 0.5).toFixed(1)}" y="${(r.y + 0.5).toFixed(1)}" width="${Math.max(1, r.w - 1).toFixed(1)}" height="${Math.max(1, r.h - 1).toFixed(1)}"`;
     const title = `<title>${esc(r.n.path)} — ${esc(formatBytes(r.n.size))}</title>`;
     if (r.stops) {
-      defs.push(`<linearGradient id="tm-c${i}" gradientUnits="userSpaceOnUse" x1="0" y1="${r.y}" x2="0" y2="${r.y + r.h}">` +
-        `<stop offset="0" stop-color="${rgb(r.stops[0])}"/><stop offset="1" stop-color="${rgb(r.stops[1])}"/></linearGradient>`);
-      // The box pass 1 filled — edge to edge when the leaf is dense — and its
-      // outline only where the canvas drew one (BQG-5 item 14).
-      const [bx, by, bw, bh] = tmLeafBox(r);
-      const leafBox = `x="${bx.toFixed(2)}" y="${by.toFixed(2)}" width="${bw.toFixed(2)}" height="${bh.toFixed(2)}"`;
-      const edge = tmLeafEdged(r) ? ' stroke="rgba(0,0,0,0.35)" stroke-width="1"' : '';
-      parts.push(`<rect ${leafBox} fill="url(#tm-c${i})"${edge}>${title}</rect>`);
+      // Edge to edge, as pass 1 filled it, and its highlight where the canvas drew one.
+      cushion(`tm-c${i}`, r.stops, r);
+      parts.push(`<rect ${at(r.x, r.y, r.w, r.h)} fill="url(#tm-c${i})">${title}</rect>`);
+      if (r.lit) {
+        parts.push(`<line x1="${(r.x + 1).toFixed(2)}" y1="${(r.y + 1.5).toFixed(2)}" x2="${(r.x + r.w - 1).toFixed(2)}" y2="${(r.y + 1.5).toFixed(2)}" stroke="rgba(255,255,255,${TM_LIT})" stroke-width="1"/>`);
+      }
     } else if (r.n.freed) {
-      // Staged in the cart preview: an outline of what is not freed yet.
+      // Staged in the cart preview: an outline of what is not freed yet, on
+      // the ground — a folder's fill does not show through it.
+      parts.push(`<rect ${at(r.x, r.y, r.w, r.h)} fill="${ground}"/>`);
       parts.push(`<rect ${box} fill="none" stroke="${cssVar('--warn') || '#FF9F0A'}" stroke-dasharray="4 3" stroke-width="1">${title}</rect>`);
     } else {
       // A cloud placeholder, hollow as on the map: its bytes are not here.
       const c = r.n.isTrash ? [108, 122, 137] : cellRgb(r.n);
+      parts.push(`<rect ${at(r.x, r.y, r.w, r.h)} fill="${ground}"/>`);
       parts.push(`<rect ${box} fill="${rgb(c)}" fill-opacity="0.16" stroke="rgba(${c[0]},${c[1]},${c[2]},0.85)" stroke-dasharray="4 3" stroke-width="1">${title}</rect>`);
-    }
-  }
-  // Directory frames, as pass 2 draws them: a dark outline, heavier at the
-  // top level and faded on a small or deep folder, and a light rim inside it
-  // where the folder has room (BQG-5 item 14) — the same helpers.
-  for (const r of state.treemap.pxRects) {
-    if (!r.frame) continue;
-    const outline = tmFrameOutline(r);
-    parts.push(
-      `<rect x="${(r.x + 0.5).toFixed(2)}" y="${(r.y + 0.5).toFixed(2)}" width="${Math.max(0, r.w - 1).toFixed(2)}" height="${Math.max(0, r.h - 1).toFixed(2)}" ` +
-      `fill="none" stroke="rgba(0,0,0,${outline.alpha})" stroke-width="${outline.width}"/>`
-    );
-    const rim = tmFrameRim(r);
-    if (rim > 0) {
-      parts.push(
-        `<rect x="${(r.x + 1.5).toFixed(2)}" y="${(r.y + 1.5).toFixed(2)}" width="${(r.w - 3).toFixed(2)}" height="${(r.h - 3).toFixed(2)}" ` +
-        `fill="none" stroke="rgba(255,255,255,${rim})" stroke-width="1"/>`
-      );
     }
   }
   // The History diff's wash over each folder that grew or shrank (pass 2.5):
@@ -1223,6 +1219,15 @@ function exportTreemapSVG() {
       `<rect x="${(r.x + 0.5).toFixed(1)}" y="${(r.y + 0.5).toFixed(1)}" width="${Math.max(1, r.w - 1).toFixed(1)}" height="${Math.max(1, r.h - 1).toFixed(1)}" ` +
       `fill="${rgb(c)}" fill-opacity="${TM_DIFF_WASH}"/>`
     );
+  }
+  // Each leaf's toned outline (pass 2.6), after the washes as on the canvas.
+  for (const r of state.treemap.pxRects) {
+    if (r.edge) parts.push(`<rect ${at(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1)} fill="none" stroke="${r.edge}" stroke-width="1"/>`);
+  }
+  // Each folder's frame, as pass 2.7 laid it: its toned bands, deepest folder
+  // first, so a folder's band lies over a nested one's where they share an edge.
+  for (const r of tmFramesDeepestFirst(state.treemap.pxRects)) {
+    for (const b of r.bands || []) parts.push(`<rect ${at(b.x, b.y, b.w, b.h)} fill="${b.rgb}"/>`);
   }
   // Labels — at the lines pass 4 wrote them, in the ink it chose. An SVG
   // text's y is its baseline, about 0.8 of the font size below its top.
