@@ -410,6 +410,31 @@ test('Apps, Libraries and Security keep no answer that lands once another tree i
     assert.equal(painted, 0, `${view.id}: the older scan's answer is not painted over the new tree`);
     assert.equal(view.kept(state), null, `${view.id}: nor kept as what the view holds`);
   }
+  // Nor their failures: asked of the older scan, failing once the rescan landed, said over no tree of its own (review F1.9).
+  for (const view of [
+    { id: 'apps', decls: ['async function loadApps('], state: { apps: { loadedFor: null, list: [] } }, hosts: ['appsBody'], reports: [] as string[] },
+    { id: 'games', decls: ['async function loadGames(', 'async function loadMedia('], state: { games: { loadedFor: null }, media: { loadedFor: null } },
+      hosts: ['gamesBody', 'mediaBody'], reports: ['games', 'media'] },
+    { id: 'security', decls: ['async function loadSecurity('], state: { security: { loadedFor: null, report: null } }, hosts: ['securityBody'], reports: ['security'] },
+  ]) {
+    const $ = stubDom();
+    const state: Record<string, unknown> = { root: TREE, ...view.state, ...HELD };
+    const failing: Array<(e: Error) => void> = [];
+    const { fns } = page<{ mount: () => void }>(view.decls, {
+      state, $, skeletonRows: () => '<i>loading</i>', appsScatterDrop: noop, escapeHtml: esc,
+      renderApps: noop, renderGames: noop, renderMedia: noop, renderSecurity: noop,
+    }, `{ mount: () => (${pageView(view.id)}).mount() }`, () => new Promise((_resolve, reject) => { failing.push(reject); }));
+    fns.mount();
+    await turns();
+    assert.ok(failing.length > 0, `${view.id}: control: asked`);
+    Object.assign(state, LANDED); // the new tree is on screen, painted by its own load
+    for (const h of view.hosts) $(h).innerHTML = '<i>the new tree\'s report</i>';
+    for (const r of view.reports) (state[r] as { report: unknown }).report = 'the new tree\'s';
+    for (const fail of failing) fail(new Error('Scan is still running — try again when it completes'));
+    await turns();
+    for (const h of view.hosts) assert.equal($(h).innerHTML, '<i>the new tree\'s report</i>', `${view.id}: the older scan's failure is not said over the new tree (${h})`);
+    for (const r of view.reports) assert.equal((state[r] as { report: unknown }).report, 'the new tree\'s', `${view.id}: nor does it drop the new tree's ${r} report`);
+  }
 });
 
 /* ───────────────────────────── Duplicates ───────────────────────────── */
@@ -551,6 +576,17 @@ test('Missing GB: the statement is asked of the scan the tree on screen came fro
   release(stale);
   await out;
   assert.notEqual(given.missingData, stale, 'the older scan\'s statement is not put on screen over the new tree');
+  // Nor its failure (review F1.9).
+  Object.assign(state, HELD);
+  let refuse: (e: Error) => void = noop;
+  hold = (r: (v: unknown) => void) => { refuse = (e: Error) => r(Promise.reject(e)); };
+  out = fns.load();
+  await turns();
+  Object.assign(state, LANDED);
+  $('missingBody').innerHTML = '<i>the new tree\'s statement</i>';
+  refuse(new Error('Scan is still running — try again when it completes'));
+  await out;
+  assert.equal($('missingBody').innerHTML, '<i>the new tree\'s statement</i>', 'the older scan\'s failure is not said over the new tree');
   const before = asks.length;
   Object.assign(state, INDEX_RUNNING);
   await fns.load();
@@ -730,6 +766,18 @@ test('a path the pruned tree left out is resolved by the scan the tree on screen
   Object.assign(state, INDEX_RUNNING);
   await fns.ensure(['/r/deep/x']);
   assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked of the running scan');
+  // Asked of the older scan during the rescan, answered once it landed: not kept for the new tree (review F1.11).
+  Object.assign(state, HELD);
+  let answerLate: (v: unknown) => void = noop;
+  const late = page<{ ensure: (p: string[]) => Promise<void> }>(['async function ensureNodes('], { state },
+    '{ ensure: ensureNodes }', () => new Promise((resolve) => { answerLate = resolve; }));
+  const out = late.fns.ensure(['/r/deep/x']);
+  await turns();
+  assert.deepEqual(late.asks.map((a) => a.scanId), ['scan-old'], 'control: asked of the tree\'s scan');
+  Object.assign(state, LANDED);
+  answerLate({ nodes: { '/r/deep/x': { path: '/r/deep/x', size: 5 } } });
+  await out;
+  assert.equal((state.nodeCache as Map<string, unknown>).has('/r/deep/x'), false, 'the older scan\'s node is not kept for the new tree');
 });
 
 test('Clean Up: what a match takes on its disk, and the cloud-safe list, are asked of the scan the tree on screen came from — never the running scan', async () => {
@@ -744,11 +792,15 @@ test('Clean Up: what a match takes on its disk, and the cloud-safe list, are ask
   await throughThePhases('Clean Up\'s cloud-safe list', state, cloud.asks, cloud.fns.render, noop);
   for (const phase of [INDEX_RUNNING, INDEX_STOPPED]) {
     Object.assign(state, phase);
+    // Another tree's list on screen, its tab up (review F1.10: the phases before had left the tab hidden already).
+    $('cleanTabCloud').hidden = false;
+    $('cloudResults').innerHTML = '<i>another tree\'s cloud-safe list</i>';
     const asked = onDisk.asks.length + cloud.asks.length;
     assert.equal((await onDisk.fns.measure([{ path: '/r/a' }])).size, 0, 'over the saved index\'s tree no on-disk size is known');
     await cloud.fns.render();
     assert.equal(onDisk.asks.length + cloud.asks.length, asked, 'and nothing is asked — not of the running scan');
     assert.equal($('cleanTabCloud').hidden, true, 'the cloud-safe tab claims nothing');
+    assert.equal($('cloudResults').innerHTML, '', 'and another tree\'s list is not left under it');
   }
 });
 
