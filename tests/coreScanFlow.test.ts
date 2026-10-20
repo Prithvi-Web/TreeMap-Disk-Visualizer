@@ -1879,6 +1879,48 @@ test('BQJ-1b (2): a rescan pressed over a saved index\'s tree a Stop left on scr
   }
 });
 
+/* BQJ-1b: tests/treeScanKey.test.ts holds every view's requests to the scan
+   the tree on screen came from through four phases, written as the
+   (scanning, scanId, settledScanId) the page is in. These are those phases,
+   reached by the page's own startScan, followScanProgress, finishScan and
+   stopScan — and what its one rule, treeScanId, makes of each. */
+
+/** The page's own treeScanId and treeScanComing, read over a page's state. */
+const ruleOver = (st: Record<string, unknown>) => new Function('state',
+  `${pageFn('function treeScanId(')}\n${pageFn('function treeScanComing(')}\nreturn { id: treeScanId(), coming: treeScanComing() };`)(st) as { id: string | null; coming: boolean };
+const phaseOf = (st: Record<string, unknown>) => ({ scanning: st.scanning, scanId: st.scanId, settledScanId: st.settledScanId });
+
+test('BQJ-1b: the scan the tree on screen came from, through a real rescan — the older scan while it runs, the new one once it lands, the older one again after a Stop; none for the saved index\'s tree, one coming while its scan runs', async () => {
+  const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
+  const h = page({ index: true, root: mail, settledScanId: 'scan-mail', route: server({ roots: [] }) });
+  await h.startScan(MAIL); // no saved index: the older tree stays on screen while the scan runs
+  await turns();
+  assert.deepEqual(phaseOf(h.state), { scanning: true, scanId: 'scan-1', settledScanId: 'scan-mail' }, 'during the rescan (treeScanKey\'s HELD)');
+  assert.equal(ruleOver(h.state).id, 'scan-mail', 'the tree\'s scan is the older one — never the scan still walking');
+  h.streams.at(-1)!.onmessage!({ data: JSON.stringify({ type: 'complete', root: mail, stats: { fileCount: 1, dirCount: 1 } }) });
+  await turns();
+  assert.deepEqual(phaseOf(h.state), { scanning: false, scanId: 'scan-1', settledScanId: 'scan-1' }, 'once it lands (LANDED)');
+  assert.equal(ruleOver(h.state).id, 'scan-1', 'the new scan');
+  await h.startScan(MAIL);
+  await turns();
+  assert.deepEqual(phaseOf(h.state), { scanning: true, scanId: 'scan-2', settledScanId: 'scan-1' }, 'control: another rescan runs');
+  assert.equal(ruleOver(h.state).id, 'scan-1');
+  await pressStop(h);
+  assert.deepEqual(phaseOf(h.state), { scanning: false, scanId: 'scan-1', settledScanId: 'scan-1' }, 'after a Stop (STOPPED)');
+  assert.equal(ruleOver(h.state).id, 'scan-1', 'the older scan again');
+
+  // The saved index's tree: painted, its scan running, then Stopped.
+  const idx = page({ index: true, route: server({ roots: [], indexed: [MAIL], indexTrees: { [MAIL]: indexTreeOf(MAIL, 37_700_000) } }) });
+  await idx.startScan(MAIL);
+  await turns();
+  assert.deepEqual(idx.emitted, [null], 'control: painted from the saved index');
+  assert.deepEqual(phaseOf(idx.state), { scanning: true, scanId: 'scan-1', settledScanId: null }, 'its scan running (INDEX_RUNNING)');
+  assert.deepEqual(ruleOver(idx.state), { id: null, coming: true }, 'no scan behind the tree, and one coming');
+  await pressStop(idx);
+  assert.deepEqual(phaseOf(idx.state), { scanning: false, scanId: null, settledScanId: null }, 'Stopped (INDEX_STOPPED)');
+  assert.deepEqual(ruleOver(idx.state), { id: null, coming: false }, 'none behind it, none coming');
+});
+
 /* ══════════════ (E) — the rest of the seventh browser pass (J01, J02, J03, J07) ══════════════ */
 
 test('J01: a scan started from the start screen puts focus on the Dashboard\'s Stop — never on the Dashboard\'s first control, the System card\'s Trash row, whose next Enter opened the Trash sheet over the map', async () => {
