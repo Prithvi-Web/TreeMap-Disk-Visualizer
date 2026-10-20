@@ -28,18 +28,33 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel: string): string => readFileSync(path.join(ROOT, rel), 'utf8');
 
 /**
- * The old name in any case, however it is split: a space, a no-break space
- * (written or as an entity), a line break, or a comment marker that wrapped it
- * ("the Time\n  // Capsule keeps a copy"). "timeCapsule" (an identifier) and
- * "time-capsule" (a file name) are not the name in prose.
+ * The old name in any case, singular or plural, however it is split: a space,
+ * a hyphen, any HTML entity (a no-break or thin space written as `&#160;`,
+ * `&#x20;`, `&thinsp;`…), a line break, a comment marker that wrapped it
+ * ("the Time\n  // Capsule keeps a copy"), or a page script's string joined
+ * with + ("'the Time ' +\n  'Capsule'"). "timeCapsule" (an identifier) has no
+ * separator, and a file name or id spelled with it is let through below.
  */
-const OLD_NAME = /\btime(?:\s|&#160;|&#xa0;|&nbsp;|\/\/|\/\*|\*|<!--|#)+capsule\b/gi;
+const OLD_NAME = /\btime(?:\s|-|&(?:#\d+|#x[0-9a-f]+|[a-z]+);|\/\/|\/\*|\*|<!--|#|['"`]\s*\+\s*['"`])+capsules?\b/gi;
+
+/**
+ * "130-time-capsule-tab.js" and the like: the old words in lower case, joined
+ * by one hyphen and glued to more of a file name or id, are a name a program
+ * reads, never the name in a sentence. A capital letter, any other separator,
+ * or a space on both sides ("a time-capsule copy") makes it prose again.
+ */
+function isFileNameOrId(text: string, at: number, hit: string): boolean {
+  if (!/^time-capsules?$/.test(hit)) return false;
+  const glued = /[\w./-]/;
+  return glued.test(text[at - 1] ?? '') || glued.test(text[at + hit.length] ?? '');
+}
 
 /** Each place the old name stands in `text`, with a little of what is around it. */
 function oldNameIn(text: string): string[] {
   const hits: string[] = [];
   for (const m of text.matchAll(OLD_NAME)) {
     const at = m.index ?? 0;
+    if (isFileNameOrId(text, at, m[0])) continue;
     hits.push(JSON.stringify(text.slice(Math.max(0, at - 40), at + m[0].length + 30)));
   }
   return hits;
@@ -97,6 +112,19 @@ test('the literal reader finds the old name in strings and templates, however sp
   assert.equal(oldNameIn('the Time\n  // Capsule keeps a copy').length, 1, 'a comment that wrapped it is');
 });
 
+test('the old name is found in the plural, hyphenated, behind any HTML entity, and split across a page script\'s +', () => {
+  for (const said of [
+    'two Time Capsules', 'a Time-Capsule copy', 'a time-capsule copy', 'TIME-CAPSULE',
+    'Time&#8201;Capsule', 'Time&#x20;Capsule', 'Time&thinsp;Capsule',
+    "'Reading the Time ' +\n    'Capsule…'", '"the Time" + " Capsule"', '`kept in the Time ` +\n  `Capsule`',
+  ]) {
+    assert.equal(oldNameIn(said).length, 1, said);
+  }
+  for (const name of ['130-time-capsule-tab.js', '"app/130-time-capsule-tab.js",', 'timeCapsule', 'TimeCapsuleEntry', '/api/timecapsule', 'timecapsule.json']) {
+    assert.deepEqual(oldNameIn(name), [], `${name} is a name a program reads, not the name in prose`);
+  }
+});
+
 /* ══════════════ Nowhere a person reads ══════════════ */
 
 test('the page never says "Time Capsule" — not on screen, not in an aria-label or title, not in its source', () => {
@@ -116,9 +144,12 @@ test('the MCP tools and the OpenAPI document never say "Time Capsule"', () => {
   assert.deepEqual([...oldNameInLiterals('src/mcp/server.ts'), ...oldNameInLiterals('src/api/openapi.ts')], []);
 });
 
-test('no sentence the server can say names "Time Capsule": every string in src/services, src/api and src/models', () => {
-  const files = [...tsFilesUnder('src/services'), ...tsFilesUnder('src/api'), ...tsFilesUnder('src/models')];
-  assert.ok(files.includes(path.join('src', 'services', 'timeCapsule.ts')), 'the capsule\'s own service is read');
+test('no sentence the server can say names "Time Capsule": every string in every .ts file under src/ (the page is read whole above)', () => {
+  const files = tsFilesUnder('src').filter((rel) => !rel.startsWith(path.join('src', 'ui') + path.sep));
+  for (const rel of ['services/timeCapsule.ts', 'middleware/pathGuard.ts', 'middleware/errorHandler.ts', 'utils/pathSanitizer.ts',
+    'utils/copyVerify.ts', 'mcp/index.ts', 'server.ts']) {
+    assert.ok(files.includes(path.join('src', rel)), `src/${rel} is read`);
+  }
   assert.deepEqual(files.flatMap(oldNameInLiterals), []);
 });
 
