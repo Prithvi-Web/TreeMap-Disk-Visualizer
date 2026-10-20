@@ -1,6 +1,6 @@
 import { platform } from '../platform';
 import { capabilityState } from '../platform/capabilities';
-import type { OpenHandleInfo } from '../platform/types';
+import type { OpenHandleBatch } from '../platform/types';
 
 /**
  * OpenHandleGuard (B2) — is anything about to be deleted still in use?
@@ -81,7 +81,7 @@ export async function checkOpenHandles(paths: string[]): Promise<OpenHandleRepor
   }
 
   const startedAt = Date.now();
-  let batch: { handles: OpenHandleInfo[]; complete: boolean };
+  let batch: OpenHandleBatch;
   try {
     batch = await platform().getOpenHandlesBatch(paths);
   } catch (err) {
@@ -100,9 +100,10 @@ export async function checkOpenHandles(paths: string[]): Promise<OpenHandleRepor
   // which made the three-state contract at the top of this file a two-state
   // one: Windows' Restart Manager computed the flag in four places and the
   // caller discarded it, so a `node_modules` delete past RM_MAX_RESOURCES
-  // reported a partial probe as a whole one.
+  // reported a partial probe as a whole one. A provider that knows why says so in its own words (Linux:
+  // programs whose open files /proc would not show it, the BQL-a review F2.3).
   const partialReason =
-    'TreeMap could not check every file in this set, so some open files may not be listed.';
+    batch.reason ?? 'TreeMap could not check every file in this set, so some open files may not be listed.';
   return {
     conflicts: batch.handles
       .filter((h) => h.pid !== process.pid) // our own read of a file is not a conflict

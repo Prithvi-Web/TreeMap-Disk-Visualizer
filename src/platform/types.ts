@@ -91,6 +91,12 @@ export interface ChangeEvent {
 export interface OpenHandleBatch {
   handles: OpenHandleInfo[];
   complete: boolean;
+  /**
+   * Why the probe could not see the whole set, in words for the person, where the provider knows (Linux: the
+   * programs whose open files /proc would not show it, the BQL-a review F2.3); the guard's generic sentence
+   * stands in when absent. Only with `complete: false`.
+   */
+  reason?: string;
 }
 
 /**

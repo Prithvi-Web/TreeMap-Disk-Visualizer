@@ -174,6 +174,13 @@ async function answersFor(procRoot: string, pid: number, uid: number | null): Pr
   return uid === null || effective === undefined || Number(effective) === uid;
 }
 
+/** How many of the programs a walk could not read (`ProcFdScan.refused`) TreeMap answers for (`answersFor`). */
+async function unreadableProgramsOf(procRoot: string, refused: readonly number[], uid: number | null): Promise<number> {
+  let count = 0;
+  for (const pid of refused) if (await answersFor(procRoot, pid, uid)) count++;
+  return count;
+}
+
 /**
  * Which processes hold any of `paths` — **or anything beneath them** — open.
  *
@@ -186,7 +193,36 @@ async function answersFor(procRoot: string, pid: number, uid: number | null): Pr
  */
 export async function openHandlesFor(paths: string[], procRoot = '/proc'): Promise<OpenHandleInfo[]> {
   if (paths.length === 0) return [];
+  const wanted = await wantedOf(paths);
+  return intersectHandles(await readOpenDescriptors(procRoot), wanted);
+}
 
+/**
+ * `openHandlesFor`, with how many programs TreeMap answers for whose open files the walk could not read
+ * (the BQL-a review, F2.3) — one of `uid`'s that made itself not dumpable, as ssh-agent does; one whose
+ * account cannot be read; any when `uid` is root's — as the held-space pass counts them (`answersFor`). A
+ * file such a program holds is not among `handles`, so the delete-time guard must not answer as if it had
+ * seen everything. Another account's program is outside what the guard says it sees, and is not counted.
+ */
+export async function openHandleScanFor(
+  paths: string[],
+  procRoot = '/proc',
+  uid: number | null = process.getuid?.() ?? null,
+): Promise<{ handles: OpenHandleInfo[]; unreadablePrograms: number }> {
+  if (paths.length === 0) return { handles: [], unreadablePrograms: 0 };
+  const wanted = await wantedOf(paths);
+  const walk = await scanOpenDescriptors(procRoot);
+  return { handles: intersectHandles(walk.records, wanted), unreadablePrograms: await unreadableProgramsOf(procRoot, walk.refused, uid) };
+}
+
+/** The open-file guard's words for `n` programs whose open files it could not read (`openHandleScanFor`). */
+export function openFilesUnreadReason(n: number): string {
+  const one = n === 1;
+  return `TreeMap could not read which files ${String(n)} ${one ? 'program has' : 'programs have'} open — a program can keep them even from the account it runs as, as ssh-agent does — so a file ${one ? 'it holds' : 'they hold'} open may be in use without being listed.`;
+}
+
+/** Each path with its realpath first, the way the walk's descriptors spell what they point at. */
+async function wantedOf(paths: readonly string[]): Promise<(readonly [string, string])[]> {
   // Compare against realpaths: a descriptor opened through a symlinked
   // directory reports the resolved target, exactly as lsof does on macOS.
   const wanted: (readonly [string, string])[] = [];
@@ -200,8 +236,7 @@ export async function openHandlesFor(paths: string[], procRoot = '/proc'): Promi
     wanted.push([real, p]);
     if (real !== p) wanted.push([p, p]);
   }
-
-  return intersectHandles(await readOpenDescriptors(procRoot), wanted);
+  return wanted;
 }
 
 /**
@@ -326,7 +361,5 @@ export async function zombieHandleScan(
     seen.add(key);
     out.push({ pid: rec.pid, processName: rec.processName, path: rec.path, bytes, ino });
   }
-  let unreadablePrograms = 0;
-  for (const pid of walk.refused) if (await answersFor(procRoot, pid, uid)) unreadablePrograms++;
-  return { handles: out, undecided: undecided.size, unreadablePrograms };
+  return { handles: out, undecided: undecided.size, unreadablePrograms: await unreadableProgramsOf(procRoot, walk.refused, uid) };
 }

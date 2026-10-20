@@ -619,3 +619,21 @@ test('a complete probe carries no partial-coverage caveat', () => {
     }
   })();
 });
+
+test('a probe that says why it could not cover the whole set is passed on in its own words, in place of the generic caveat (BQL-a review F2.3)', async () => {
+  // Linux's /proc walk could not read a program of this account (one that made itself not dumpable): the set
+  // was checked, but "could not check every file in this set" is not what happened — every file was checked
+  // against what it could read.
+  const why = 'TreeMap could not read which files 1 program has open — a program can keep them even from the account it runs as, as ssh-agent does — so a file it holds open may be in use without being listed.';
+  const provider = platform() as unknown as { getOpenHandlesBatch: (p: string[]) => Promise<unknown> };
+  const original = provider.getOpenHandlesBatch.bind(provider);
+  provider.getOpenHandlesBatch = () => Promise.resolve({ handles: [], complete: false, reason: why });
+  try {
+    const report = await checkOpenHandles(['/tmp/x']);
+    assert.deepEqual([report.checked, report.complete, report.conflicts], [true, false, []], 'checked, not whole, nothing found in what it read');
+    assert.ok(report.reason?.startsWith(why), `the provider's words lead: ${String(report.reason)}`);
+    assert.doesNotMatch(report.reason ?? '', /could not check every file/i, 'and the generic caveat is not said beside them');
+  } finally {
+    provider.getOpenHandlesBatch = original;
+  }
+});

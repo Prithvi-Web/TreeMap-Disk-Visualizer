@@ -456,7 +456,7 @@ item that launches TreeMap with no path.
 |---|---|---|---|
 | Fast enumeration | `getdents64` + `statx`, in the native scan core | 2 | Core not loaded → gdu, when one is bundled (an AppImage you built), fetched (`npm run fetch:gdu:dev`) or on PATH, for a full scan with no "Don't scan" list that does not include the drives mounted inside the folder; otherwise `readdir` + `lstat`, concurrency from sysfs (degraded, with the loader's reason) |
 | Live changes | per-directory inotify | 1 | Watch limit → staleness guard |
-| Open handles | `/proc/<pid>/fd` — no subprocess | 1 | `/proc` absent → no warning |
+| Open handles | `/proc/<pid>/fd` — no subprocess | 1 | `/proc` absent → no warning. Sees only the programs running under your account (every program when TreeMap runs as root); when one of them keeps its open files from it (it made itself not dumpable, as ssh-agent does) the check is not complete, and the warning says how many programs it could not read, so a file one holds may be in use without being listed |
 | Zombie handles | `/proc` + kernel's `(deleted)` marker | 1 | as above. Sees only the programs running under your account (every program when TreeMap runs as root). A held file whose path it may not look at is counted and shown as not checked, never claimed, and so is a program whose open files it may not read: one of your account that has made itself not dumpable, as ssh-agent does, or one whose account it cannot read. Under a `/proc` mounted with `hidepid=2` such a program is not listed at all, so nothing counts it |
 | Allocated size | `lstat().blocks × 512` | 1 | Always available, exact |
 | Topology | `lsblk --json` (+ `zpool list -j`) | 3 | `lsblk` missing → stated |

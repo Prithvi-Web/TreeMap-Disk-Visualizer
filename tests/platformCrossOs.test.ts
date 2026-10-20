@@ -7,7 +7,7 @@ import path from 'node:path';
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-platformCrossOs-data-');
 
-import { readOpenDescriptors, openHandlesFor, zombieHandles, zombieHandleScan } from '../src/platform/linux/procFdGuard';
+import { readOpenDescriptors, openFilesUnreadReason, openHandlesFor, zombieHandles, zombieHandleScan } from '../src/platform/linux/procFdGuard';
 import { LinuxProvider } from '../src/platform/linux/index';
 import { mapLsblk, mapZpool } from '../src/platform/linux/topology';
 import { parseSubvolumeList } from '../src/platform/linux/btrfs';
@@ -356,6 +356,67 @@ test('linux: the provider hands on the pass\'s count — a deleted file still he
     await fsp.chmod(path.join(root, '10', 'fd'), 0o700).catch(() => undefined);
     await fsp.rm(root, { recursive: true, force: true });
     await fsp.rm(data, { recursive: true, force: true });
+  }
+});
+
+/*
+ * The BQL-a review, F2.3: the delete-time open-file guard walks /proc as the held-space pass does, and threw
+ * away the programs whose open files it could not read — so a file held open by ssh-agent (a program of this
+ * account that made itself not dumpable) was trashed with no "in use" warning, the batch answered complete,
+ * and the capability said "TreeMap can see files opened by your own programs". The batch now says it could
+ * not see everything, and why; another account's program stays outside what the guard says it sees.
+ */
+test('linux: the open-file guard answers incomplete, saying why, when a program of this account kept its open files from it — never complete over a program it could not read — and another account\'s program changes nothing (BQL-a review F2.3)', {
+  skip: WIN_NO_PROC_FIXTURE || (process.getuid?.() === 0 && 'root can read any folder, so there is no refusal to observe'),
+}, async () => {
+  const root = await mkTmp();
+  const data = await mkTmp();
+  const me = process.getuid?.() ?? 1000;
+  const status = (uid: number) => `Name:\tx\nUid:\t${String(uid)}\t${String(uid)}\t${String(uid)}\t${String(uid)}\n`;
+  try {
+    const report = path.join(await fsp.realpath(data), 'report.txt');
+    await fsp.writeFile(report, 'x');
+    await fakeProc(root, [
+      { pid: 9, comm: 'vim', fds: [{ name: '3', target: report }] },
+      { pid: 10, comm: 'ssh-agent', fds: [] }, // this account's, not dumpable
+      { pid: 11, comm: 'postgres', fds: [] }, // another account's
+    ]);
+    await fsp.writeFile(path.join(root, '10', 'status'), status(me));
+    await fsp.writeFile(path.join(root, '11', 'status'), status(me + 1));
+    await fsp.chmod(path.join(root, '11', 'fd'), 0o000);
+    const provider = new LinuxProvider();
+    (provider as unknown as { procRoot: string }).procRoot = root;
+    const clear = await provider.getOpenHandlesBatch([report]);
+    assert.deepEqual([clear.handles.map((h) => [h.pid, h.path]), clear.complete, clear.reason], [[[9, report]], true, undefined],
+      'control: with only another account\'s program refused, the answer is whole — what the guard says it sees');
+    await fsp.chmod(path.join(root, '10', 'fd'), 0o000);
+    const batch = await provider.getOpenHandlesBatch([report]);
+    assert.deepEqual(batch.handles.map((h) => [h.pid, h.path]), [[9, report]], 'what it could read is still listed');
+    assert.equal(batch.complete, false, 'never complete while a program of this account went unread');
+    assert.equal(batch.reason,
+      'TreeMap could not read which files 1 program has open — a program can keep them even from the account it runs as, as ssh-agent does — so a file it holds open may be in use without being listed.');
+    assert.deepEqual((await provider.getOpenHandles(report)).map((h) => h.pid), [9], 'the single-path guard reads the same /proc');
+    assert.equal(openFilesUnreadReason(2),
+      'TreeMap could not read which files 2 programs have open — a program can keep them even from the account it runs as, as ssh-agent does — so a file they hold open may be in use without being listed.',
+      'in the plural');
+  } finally {
+    for (const pid of [10, 11]) await fsp.chmod(path.join(root, String(pid), 'fd'), 0o700).catch(() => undefined);
+    await fsp.rm(root, { recursive: true, force: true });
+    await fsp.rm(data, { recursive: true, force: true });
+  }
+});
+
+test('linux: the open-file guard\'s capability says it sees the programs of your account whose open files it may read — never every file your own programs open (BQL-a review F2.3)', async () => {
+  const access = fsp.access;
+  (fsp as { access: typeof fsp.access }).access = async () => undefined; // /proc/self/fd is there
+  try {
+    const state = await new LinuxProvider().probeOpenHandleGuard();
+    assert.equal(state.available, true, 'control: the stand-in /proc was found');
+    assert.doesNotMatch(state.reason ?? '', /can see files opened by your own programs/, 'no all-clear over programs it may not read');
+    assert.match(state.reason ?? '', /^TreeMap can see the files opened by the programs of your account whose open files it may read\./);
+    assert.match(state.reason ?? '', /Files held open by another user account or by a system service won't be reported unless TreeMap is run as root\.$/);
+  } finally {
+    (fsp as { access: typeof fsp.access }).access = access;
   }
 });
 

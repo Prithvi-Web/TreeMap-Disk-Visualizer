@@ -6,7 +6,7 @@ import { BaseProvider } from '../base';
 import { fastEnumerationState } from '../fastEnumeration';
 import { nativeScanModule } from '../../services/scan/native';
 import { commandExists, runJson } from '../exec';
-import { openHandlesFor, zombieHandles, zombieHandleScan } from './procFdGuard';
+import { openFilesUnreadReason, openHandleScanFor, openHandlesFor, zombieHandles, zombieHandleScan } from './procFdGuard';
 import { volumeTopology, isRotational, queueDepth, topologyReason } from './topology';
 import { downloadOrigin, provenanceAvailable, readDownloadOriginsLinux } from './provenance';
 import { listSnapshots as btrfsSnapshots, snapshotAvailability } from './btrfs';
@@ -233,14 +233,17 @@ export class LinuxProvider extends BaseProvider {
   /* ---------------- Handles ---------------- */
 
   override async getOpenHandles(p: string): Promise<OpenHandleInfo[]> {
-    return openHandlesFor([p]);
+    return openHandlesFor([p], this.procRoot);
   }
 
   override async getOpenHandlesBatch(paths: string[]): Promise<OpenHandleBatch> {
-    // Complete by construction: the /proc sweep covers every path, so there is nothing to truncate.
-    // A probe that FAILS throws, and `checkOpenHandles` turns that into
-    // `checked: false` rather than an empty, confident answer.
-    return { handles: await openHandlesFor(paths), complete: true };
+    // The /proc sweep covers every path, so nothing is truncated; but a program of this account whose open
+    // files it may not read (one that made itself not dumpable, as ssh-agent does) holds files the sweep
+    // cannot see, so the answer is then not whole, and says why (the BQL-a review, F2.3). A probe that FAILS
+    // throws, and `checkOpenHandles` turns that into `checked: false` rather than an empty, confident answer.
+    const scan = await openHandleScanFor(paths, this.procRoot);
+    if (scan.unreadablePrograms === 0) return { handles: scan.handles, complete: true };
+    return { handles: scan.handles, complete: false, reason: openFilesUnreadReason(scan.unreadablePrograms) };
   }
 
   /** Where the held-space pass reads /proc: a field so a test can point the provider at a fixture tree. */
@@ -453,7 +456,7 @@ export class LinuxProvider extends BaseProvider {
       available: true,
       mechanism: '/proc/<pid>/fd',
       reason:
-        "TreeMap can see files opened by your own programs. Files held open by another user account or by a system service won't be reported unless TreeMap is run as root.",
+        "TreeMap can see the files opened by the programs of your account whose open files it may read. Files held open by another user account or by a system service won't be reported unless TreeMap is run as root.",
     };
   }
 

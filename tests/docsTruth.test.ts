@@ -765,6 +765,14 @@ test('PLATFORM_NOTES\' Linux zombie-handles row says what the /proc pass does no
   assert.match(row, /Under a `\/proc` mounted with `hidepid=2` such a program is not listed at all, so nothing counts it \|$/, 'and what it can never count is said');
 });
 
+test('PLATFORM_NOTES\' Linux open-handles row says whose programs the delete-time guard sees and that one it may not read makes the check incomplete (BQL-a review F2.3)', () => {
+  const linux = from(read('docs', 'PLATFORM_NOTES.md'), '## Linux');
+  const row = linux.split('\n').find((l) => l.startsWith('| Open handles | `/proc/<pid>/fd` — no subprocess |')) ?? '';
+  assert.match(row, /Sees only the programs running under your account \(every program when TreeMap runs as root\)/, 'another account\'s programs are not seen');
+  assert.match(row, /when one of them keeps its open files from it \(it made itself not dumpable, as ssh-agent does\) the check is not complete, and the warning says how many programs it could not read, so a file one holds may be in use without being listed \|$/,
+    'a program it may not read is said, never passed over');
+});
+
 test('PLATFORM_NOTES\' macOS zombie-handles row says what the probe does not see and that what it cannot decide is counted, with the caret bound lsofGuard keeps (BQL item 12)', () => {
   const row = lineStarting(read('docs', 'PLATFORM_NOTES.md'), '| Zombie handles | `lsof -F` + inode comparison |');
   assert.match(row, /Sees only the programs running under your account \(every program when TreeMap runs as root\)/, 'another account\'s programs are not seen');
