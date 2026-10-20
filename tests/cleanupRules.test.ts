@@ -282,6 +282,15 @@ test('a folder holding a *.dist-info folder holds installed packages wherever it
   assert.deepEqual(offered(run(tree([dir('vendor', [pipPackage(), file('pip-26.0.1.dist-info', 10)])]))),
     [R('vendor', 'pip', '__pycache__'), R('vendor', 'pip', '_internal', 'operations', '__pycache__'), R('vendor', 'pip', '_internal', 'operations', 'build')].sort(),
     'control: beside a file named pip-26.0.1.dist-info, build and __pycache__ are offered by their rules');
+  // Control: a FOLDER whose name only holds the suffix, or runs on past it, is
+  // no installed package's record either - the README says a folder holding a
+  // folder named *.dist-info - so a node_modules or target beside a backup of
+  // one is still offered (BQL-b1 review F3.4).
+  for (const near of ['pip-26.0.1.dist-info.bak', 'x.dist-infos']) {
+    assert.deepEqual(offered(run(tree([dir('vendor', [pipPackage(), dir(near, [file('RECORD', 9000)])])]))),
+      [R('vendor', 'pip', '__pycache__'), R('vendor', 'pip', '_internal', 'operations', '__pycache__'), R('vendor', 'pip', '_internal', 'operations', 'build')].sort(),
+      `control: beside a folder named ${near}, build and __pycache__ are offered by their rules`);
+  }
 });
 
 test('__pycache__ is flagged and says it regenerates itself', () => {
