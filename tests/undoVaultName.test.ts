@@ -58,20 +58,28 @@ function cooked(text: string): string {
     });
 }
 
+/** A character that can be part of a file name or path as one word: a letter, digit, underscore, dot, slash or hyphen. */
+const NAME_CHAR = /[\w./-]/;
+
 /**
- * "130-time-capsule-tab.js" and the like: the old words in lower case, joined
- * by one hyphen and glued to more of a file name or id — a letter, digit,
- * underscore, slash or hyphen touching them, or a dot that runs on into more of
- * the name (".js", "a.time-capsule") — are a name a program reads, never the
- * name in a sentence. A capital letter, any other separator, a space on both
- * sides ("a time-capsule copy") or a full stop that ends a sentence ("kept in a
- * time-capsule.") makes it prose again (review F2.3).
+ * "130-time-capsule-tab.js", "src/time-capsule/" and the like: the old words in
+ * lower case, joined by one hyphen, inside a word that is a path or a file name
+ * — the run of name characters around them holds a slash, or a dot that runs on
+ * into more of the name (".js", "a.time-capsule") — are a name a program reads,
+ * never the name in a sentence. Anything else is prose: a capital letter, any
+ * other separator, a word with no slash and no such dot however many hyphens
+ * join it ("a time-capsule copy", "a time-capsule-style copy",
+ * "pre-time-capsule"), or a full stop that ends a sentence ("kept in a
+ * time-capsule.") (reviews F2.3, F3.1).
  */
 function isFileNameOrId(text: string, at: number, hit: string): boolean {
   if (!/^time-capsules?$/.test(hit)) return false;
-  const before = text.slice(Math.max(0, at - 2), at);
-  const after = text.slice(at + hit.length, at + hit.length + 2);
-  return /[\w/-]$/.test(before) || /^[\w/-]/.test(after) || /\w\.$/.test(before) || /^\.\w/.test(after);
+  let start = at;
+  while (start > 0 && NAME_CHAR.test(text[start - 1])) start--;
+  let end = at + hit.length;
+  while (end < text.length && NAME_CHAR.test(text[end])) end++;
+  const word = text.slice(start, end);
+  return word.includes('/') || /\.\w/.test(word);
 }
 
 /** Each place the old name stands in `raw`, read cooked, with a little of what is around it. */
@@ -191,11 +199,18 @@ test('the old name is found in the plural, hyphenated, behind any HTML entity, a
     'Time\\u00a0Capsule', 'Time\\xa0Capsule', "'Time\\x20Capsule'", 'Time\\u2009Capsule', 'Time\\u{a0}Capsule', 'Time\\nCapsule',
     "registerView({ id: 'x', label: 'Time\\u00a0Capsule' })", 'Time Caps\\u0075le', '&#84;ime Capsule',
     'Time<wbr>Capsule', 'Time<br>Capsule', 'Time<br/>Capsule', 'Time<br />Capsule',
+    // A hyphen joins the old name to more prose as surely as a space parts it; a slash beside
+    // a capital, or beside the words parted by a space, is prose with a slash in it (review F3.1).
+    'a time-capsule-style copy', 'the pre-time-capsule copies', 'a time-capsule-ish feel',
+    'the Trash/Time Capsule', 'the Trash/Time-Capsule', 'the Trash/time capsule',
   ]) {
     assert.equal(oldNameIn(said).length, 1, said);
   }
   for (const name of ['130-time-capsule-tab.js', '"app/130-time-capsule-tab.js",', 'timeCapsule', 'TimeCapsuleEntry', '/api/timecapsule', 'timecapsule.json',
-    'x/time-capsule.js', 'see time-capsule.json.', 'src/time-capsule/', 'a.time-capsule']) {
+    'x/time-capsule.js', 'see time-capsule.json.', 'src/time-capsule/', 'a.time-capsule',
+    // Each way a word is a name, on its own: a file name with only a quote before it, and a
+    // path with nothing after it (review F3.1).
+    '"time-capsule-tab.js"', 'x/time-capsule']) {
     assert.deepEqual(oldNameIn(name), [], `${name} is a name a program reads, not the name in prose`);
   }
 });
