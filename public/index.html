@@ -13570,10 +13570,18 @@ const TM_TAG_RADIUS = 9;
  * both darkened by half, about 2:1 between them, under the owner's 3:1 bar —
  * and on the size ramp's red, its blue or a mid grey no colour at all reaches
  * 3:1 there. The name reads on the tiles alone.
+ *
+ * `w`×`h` is the canvas's own size in css px — its device pixels over the
+ * ratio — and the clip runs a css px past it on every side, so no edge of the
+ * clip but a tag's falls on a pixel the map paints (review F1.1, F1.2). At
+ * 125, 150 or 175 % the canvas can be wider or taller than the map's css size
+ * by part of a device pixel, and the map's far edges are laid on its last
+ * device pixel (tmSnap): a clip of the css size alone let that last column
+ * and row of every line there through only in part.
  */
 function tmClipOutTags(ctx, tags, w, h) {
   ctx.beginPath();
-  ctx.rect(0, 0, w, h);
+  ctx.rect(-1, -1, w + 2, h + 2);
   for (const t of tags) {
     // Canvas2D.roundRect's own path, as a subpath of this one.
     const rr = Math.max(0, Math.min(TM_TAG_RADIUS, t.w / 2, t.h / 2));
@@ -13790,7 +13798,7 @@ function drawTreemap() {
   }
   // Passes 2.6 and 2.7 stop at the top-level folders' name tags (tmClipOutTags).
   ctx.save();
-  if (tagRects.length) tmClipOutTags(ctx, tagRects, cssW, cssH);
+  if (tagRects.length) tmClipOutTags(ctx, tagRects, pw / dpr, ph / dpr);
   // Pass 2.6: leaf outlines, inside each leaf's own box, laid after the
   // washes so a line is seen in the tone it was picked in — under two washes
   // even black reached only 2.3:1 on a grey tile.

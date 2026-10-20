@@ -2219,6 +2219,78 @@ test('owner\'s outlines on a Retina screen and at 150 %: every rectangle lies on
   }
 });
 
+/**
+ * A top-level folder F, big enough for a name tag, along the map's top and right edges, beside a file A, over a file B along
+ * the map's bottom and both its sides (review F1.1, F1.2): F's tag puts the clip under the tags on, and F's right band, B's
+ * right outline and B's bottom outline lie on the canvas's last device column and row.
+ */
+function edgeMap(): Tile[] {
+  const t: Tile[] = [
+    { name: 'A', path: '/e/A', size: 3e10, type: 'file', depth: 1, expanded: false, x: 0, y: 0, w: 50, h: 60 },
+    { name: 'F', path: '/e/F', size: 3e10, type: 'dir', depth: 1, expanded: true, x: 50, y: 0, w: 50, h: 60 },
+    { name: 'B', path: '/e/B', size: 4e10, type: 'file', depth: 1, expanded: false, x: 0, y: 60, w: 100, h: 40 },
+  ];
+  for (let i = 0; i < 4; i++) t.push({ name: `c${i}`, path: `/e/F/c${i}`, size: 4e9 + i * 1e9, type: 'file', depth: 2, expanded: false, x: 50 + (i % 2) * 25, y: Math.floor(i / 2) * 30, w: 25, h: 30 });
+  return t;
+}
+
+/**
+ * The canvas's last device column and row, where the map's right and bottom edge lines lie (review F1.1, F1.2): each pixel
+ * there that a leaf's outline (pass 2.6, 1 css px inside its box) or a folder's band (pass 2.7, deepest first) covers whole,
+ * and no name tag covers in any part, should be the last of those lines laid over it, in full. A pixel some line covers only
+ * in part is stepped over: there lines meet lines (a band's corner, an outline's), and two partial covers blend as the
+ * raster's strokes do, not as one. `looked` counts the pixels held to it.
+ */
+function outerEdgePixels(raster: ReturnType<typeof rasterCtx>, px: Painted[], dpr: number) {
+  const lines: Array<{ box: number[]; rgb: string }> = [];
+  for (const r of px) {
+    if (!r.edge) continue;
+    for (const box of [[r.x, r.y, r.w, 1], [r.x, r.y + r.h - 1, r.w, 1], [r.x, r.y, 1, r.h], [r.x + r.w - 1, r.y, 1, r.h]]) lines.push({ box, rgb: r.edge });
+  }
+  for (const r of px.filter((p) => p.frame).sort((a, b) => b.n.depth - a.n.depth)) for (const b of r.bands || []) lines.push({ box: [b.x, b.y, b.w, b.h], rgb: b.rgb });
+  const covers = ([bx, by, bw, bh]: number[], x: number, y: number) =>
+    bx * dpr <= x + 1e-6 && (bx + bw) * dpr >= x + 1 - 1e-6 && by * dpr <= y + 1e-6 && (by + bh) * dpr >= y + 1 - 1e-6;
+  const touches = ([bx, by, bw, bh]: number[], x: number, y: number) =>
+    bx * dpr < x + 1 - 1e-6 && (bx + bw) * dpr > x + 1e-6 && by * dpr < y + 1 - 1e-6 && (by + bh) * dpr > y + 1e-6;
+  let looked = 0;
+  const off: string[] = [];
+  const check = (x: number, y: number) => {
+    if (raster.tagged(x, y)) return;
+    const over = lines.filter((l) => touches(l.box, x, y));
+    if (!over.length || over.some((l) => !covers(l.box, x, y))) return;
+    const last = over[over.length - 1];
+    looked++;
+    const want = rgba(last.rgb).slice(0, 3), got = raster.at(x, y);
+    if (got.some((v, i) => Math.abs(v - want[i]) > 0.5) && off.length < 8) off.push(`${x},${y}: ${got.map(Math.round)} where the line laid over it is ${last.rgb}`);
+  };
+  for (let y = 0; y < raster.H; y++) check(raster.W - 1, y);
+  for (let x = 0; x < raster.W - 1; x++) check(x, raster.H - 1);
+  return { looked, off };
+}
+
+test('owner\'s outlines at 125, 150 and 175 %, on a map whose css size times the ratio is not whole: the clip that keeps the lines from under the name tags covers the whole canvas — the map\'s right and bottom edge lines are laid in full on its last device column and row, and every line reaches 3:1 there, in both themes (review F1.1, F1.2)', () => {
+  // At each ratio a size whose device width and height round up: the canvas, and the map's far edges with it, reach past
+  // the map's css size by part of a device pixel, which a clip of the css size alone lets through only in part.
+  for (const [dpr, W, H] of [[1.25, 643, 403], [1.5, 641, 401], [1.75, 641, 401]] as const) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      const { raster, px } = rasterPaint(edgeMap(), palette, W, H, undefined, undefined, false, dpr);
+      const where = `${theme}, dpr ${dpr}, ${W}×${H}`;
+      const f = px.find((r) => r.n.path === '/e/F')!, b = px.find((r) => r.n.path === '/e/B')!;
+      assert.ok(raster.taggedShare() > 0 && f.w >= 90 && f.h >= 44, `${where}: control — F carries a name tag, so the clip under the tags is on`);
+      const ends = [[f.x + f.w, raster.W], [b.x + b.w, raster.W], [b.y + b.h, raster.H]].map(([at, dev]) => `${(at * dpr).toFixed(3)} of ${dev}`);
+      assert.ok(b.x + b.w > W && b.y + b.h > H && [f.x + f.w, b.x + b.w].every((v) => Math.abs(v * dpr - raster.W) < 1e-6) && Math.abs((b.y + b.h) * dpr - raster.H) < 1e-6,
+        `${where}: control — F's and B's right edges and B's bottom edge lie on the canvas's last device pixel, past the map's css size (${ends.join(', ')} device px)`);
+      const m = measureEdges(raster, px, dpr);
+      const onEdge = m.edges.filter((e) => (e.what.startsWith('/e/B') && e.what.endsWith('right side') && e.line[0] === raster.W - 1) || (e.what.startsWith('/e/B') && e.what.endsWith('bottom side') && e.line[1] === raster.H - 1));
+      assert.ok(onEdge.length > 0.9 * (b.h + b.w) * dpr, `${where}: control — B's right and bottom outlines are measured on the canvas's last device column and row (${onEdge.length} places)`);
+      assert.deepEqual(m.under, [], `${where}: lines under ${EDGE_BAR}:1 against the tile beside them, on the device's pixels`);
+      const o = outerEdgePixels(raster, px, dpr);
+      assert.ok(o.looked > 0.95 * (raster.W + raster.H), `${where}: control — ${o.looked} pixels of the last device column and row lie under a line`);
+      assert.deepEqual(o.off, [], `${where}: on the canvas's last device column and row, pixels a line covers whole that are not that line's own colour, in full — F's right band, B's right or bottom outline`);
+    }
+  }
+});
+
 /* ── The SVG export paints what the canvas painted ── */
 
 test('owner\'s outlines: the SVG export paints each leaf\'s toned outline and highlight, each folder\'s own fill and each band as the canvas did, in its order (mapPaintFidelity\'s rule)', () => {
