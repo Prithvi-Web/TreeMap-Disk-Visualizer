@@ -23,6 +23,7 @@ import {
   SCAN_CANCELLED_MESSAGE,
 } from '../src/services/diskScanner';
 import { waitFor, withinHangGuard } from './fixtures/waitFor';
+import { lift as liftPage } from './fixtures/liftFrontend';
 
 const ROOT = path.sep === '\\' ? 'C:\\root' : '/root';
 
@@ -89,6 +90,16 @@ test('an engine that returns on the flag cannot un-settle the record', () => {
 
   assert.equal(scan.status, 'error');
   assert.equal(scan.finishedAt, settledAt, 'and nothing re-stamps it');
+});
+
+test('the page reads a cancelled scan\'s error in the server\'s own words: its SCAN_STOPPED_REASON is SCAN_CANCELLED_MESSAGE (review F2.7)', () => {
+  // A Stop that races another window's or an agent's cancel reads /result's
+  // error (showFailedAfterStop): the page's constant decides whether that
+  // error is "stopped" or "had already failed". Two literals that agreed only
+  // with each other let a change of the server's wording turn every such Stop
+  // into "The scan had already failed when you pressed Stop: …".
+  const pageReason = liftPage<string>(['SCAN_STOPPED_REASON'], 'SCAN_STOPPED_REASON');
+  assert.equal(pageReason, SCAN_CANCELLED_MESSAGE, 'the page\'s reason for a stopped scan is the server\'s, word for word');
 });
 
 test('cancelling twice is not a second cancellation', () => {
