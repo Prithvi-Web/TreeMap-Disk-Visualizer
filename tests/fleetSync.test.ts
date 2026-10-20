@@ -22,6 +22,7 @@ import { appDataDir } from '../src/services/storage';
 import { POLICY_FILE } from '../src/services/policy';
 import { AppError } from '../src/middleware/errorHandler';
 import { createApp } from '../src/server';
+import { PathRejectedError, sanitizePath } from '../src/utils/pathSanitizer';
 
 /**
  * §D1 — LAN fleet view.
@@ -669,6 +670,52 @@ test('every sentence a peer reads about this machine’s refusal of its folder s
   }
   const wrong = Object.entries(sentences).filter(([, s]) => !/^That machine/.test(s) || /this machine/i.test(s)).map(([k, s]) => `${k}: ${s}`);
   assert.deepEqual(wrong, []);
+});
+
+/*
+ * The BQL-a review, F2.2: every PATH_BLOCKED refusal of a peer's folder is told one sentence, looked up by the
+ * code alone, and it said "an operating-system folder, or one reached through a second name or a link to
+ * either, is never scanned" — untrue of a folder inside a system folder that is no operating-system folder
+ * (/run/user), and of a chain of links to an ordinary folder longer than the sanitizer follows. The sentence
+ * is now true of every cause the sanitizer refuses with that code, and still names no path of this machine.
+ */
+test('a peer refused by this machine’s path rules is told words true of every cause — a system folder or one inside it, a second name, a link to either or one longer than it follows — never that its folder is an operating-system folder (BQL-a review F2.2)', { skip: process.platform === 'win32' && 'making a link needs a privilege the runner may not hold' }, async () => {
+  const cfg = defaultConfig();
+  const offer = beginPairing();
+  const secret = (await call(cfg, 'POST', '/fleet/pair', { body: { code: offer.code, instanceId: 'p' } })).body.secret;
+  cfg.allowRemoteScan = true;
+  scansStarted.length = 0;
+  const tmp = fs.realpathSync(fileTempDir('tm-fleet-words-'));
+  fs.mkdirSync(path.join(tmp, 'real'));
+  let chain = path.join(tmp, 'real');
+  for (let i = 0; i < 60; i++) {
+    const link = path.join(tmp, `l${i}`);
+    fs.symlinkSync(chain, link);
+    chain = link;
+  }
+  fs.symlinkSync('/dev', path.join(tmp, 'to-dev'));
+  let localChain = '';
+  try { sanitizePath(chain); } catch (err) { localChain = err instanceof PathRejectedError ? err.message : String(err); }
+  assert.match(localChain, /more links, or a longer path, than TreeMap follows/, 'control: the chain is refused here for its length, and for nothing else');
+  const causes = ['/dev/null', path.join(tmp, 'to-dev'), chain];
+  if (process.platform === 'darwin') {
+    fs.symlinkSync(`/.nofollow${path.join(tmp, 'real')}`, path.join(tmp, 'to-alias'));
+    causes.push('/.nofollow/private/tmp', path.join(tmp, 'to-alias'));
+  }
+  const said = new Map<string, string[]>();
+  for (const p of causes) {
+    const r = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: p } });
+    assert.deepEqual([r.status, r.body?.code], [400, 'PATH_BLOCKED'], `${p}: ${JSON.stringify(r.body)}`);
+    said.set(String(r.body?.error), [...(said.get(String(r.body?.error)) ?? []), p]);
+  }
+  assert.equal(said.size, 1, `one sentence for every cause: ${JSON.stringify([...said])}`);
+  const [sentence] = [...said.keys()];
+  assert.doesNotMatch(sentence, /operating-system folder/, 'no folder is called an operating-system folder');
+  assert.match(sentence, /it never scans one of the system folders it stays out of or anything inside one/);
+  assert.match(sentence, /a path spelled through a second name the system gives a path/);
+  assert.match(sentence, /a path whose links lead to either, or through more links or names than it follows/);
+  assert.ok(!sentence.includes(tmp) && !sentence.includes('/dev'), 'no path of this machine is named');
+  assert.deepEqual(scansStarted, [], 'no scan was started');
 });
 
 test('with Windows stood in for process.platform, the receiver refuses a peer’s network share before anything touches the path — no realpath, lstat or stat, so no sign-in to the server it names — and no scan starts (the SEC-3 brief, item 6b)', async () => {
