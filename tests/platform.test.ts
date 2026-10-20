@@ -582,6 +582,27 @@ test('a held file whose name holds a caret is decided by every spelling lsof\'s 
   assert.deepEqual([scan.handles, scan.undecided], [[], 0], 'every one found at one of its spellings');
 });
 
+test('the spellings of a caret path are worked out once per path, not once per descriptor — a program holding one file on 500 descriptors costs one search, however many carets (BQL-a review F1.3)', async () => {
+  // The search is synchronous CPU work, a few milliseconds a path and more for odd names; it ran for every
+  // record, and 500 descriptors on one four-caret path held the server's event loop for about two seconds.
+  const FOUR = '/Users/me/Documents/a^b^c^d^e/file.txt';
+  const lines = ['p88', 'cbrowser'];
+  for (let fd = 3; fd < 503; fd++) lines.push(`f${String(fd)}`, 's10', 'i5150', `n${FOUR}`);
+  lines.push('p89', 'chelper', 'f3', 's10', 'i5150', `n${FOUR}`, 'f4', 's20', 'i6161', 'n/x/build^1.log', 'f5', 's30', 'i7171', 'n/x/plain.log');
+  const asked: string[] = [];
+  const counting = (readBack: string) => {
+    asked.push(readBack);
+    return lsof.lsofSpellings(readBack);
+  };
+  const scan = await lsof.resolveZombieScan(parseLsofRecords(lines.join('\n')), async (p) => {
+    if (p === FOUR) return 5150;
+    throw ENOENT(p);
+  }, counting);
+  assert.deepEqual(asked, [FOUR, '/x/build^1.log'], 'each caret path once, across descriptors and programs; a path with no caret never');
+  assert.deepEqual([scan.handles.map((h) => h.path).sort(), scan.undecided], [['/x/build^1.log', '/x/plain.log'], 0],
+    'and the verdicts are the same: the four-caret file in place, the other two gone');
+});
+
 /* ══════════════════ Provenance (unit) ══════════════════ */
 
 test('parseQuarantine reads the real four-field record', () => {

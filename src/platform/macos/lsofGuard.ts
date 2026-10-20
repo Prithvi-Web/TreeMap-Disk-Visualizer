@@ -536,10 +536,14 @@ export async function resolveZombies(
   return (await resolveZombieScan(records, inoAt)).handles;
 }
 
-/** resolveZombies, with how many held files it could not decide (BQL item 11). */
+/**
+ * resolveZombies, with how many held files it could not decide (BQL item 11). `spellingsOf` is the spelling
+ * search (`lsofSpellings`), injected so a test can count how often it runs (BQL-a review F1.3).
+ */
 export async function resolveZombieScan(
   records: LsofRecord[],
   inoAt: (path: string) => Promise<number>,
+  spellingsOf: (readBack: string) => string[] | null = lsofSpellings,
 ): Promise<ZombieHandleScan> {
   const out: ZombieHandleInfo[] = [];
   // One stat per distinct path, not per descriptor: a browser can hold hundreds
@@ -556,6 +560,15 @@ export async function resolveZombieScan(
       inoCache.set(p, hit);
     }
     return hit;
+  };
+  // And one spelling search per distinct path (BQL-a review F1.3): it is synchronous CPU work, a few
+  // milliseconds a path, and per descriptor 500 of them on one four-caret path held the event loop — and
+  // every other request — for about two seconds.
+  const spellingsCache = new Map<string, string[] | null>();
+  const spellingsAt = (p: string): string[] | null => {
+    if (!p.includes('^')) return [p];
+    if (!spellingsCache.has(p)) spellingsCache.set(p, spellingsOf(p));
+    return spellingsCache.get(p) ?? null;
   };
 
   // Deduplicate by (pid, inode): the same unlinked inode held on several
@@ -578,7 +591,7 @@ export async function resolveZombieScan(
       // when one holds its inode; deleted only when none does and every one could be looked at; otherwise —
       // a spelling that cannot be looked at, or more spellings than the guard tries — cannot know, so don't
       // claim, and count it. Where lsof marks a file (deleted) itself, that still counts.
-      const spellings = rec.path.includes('^') ? lsofSpellings(rec.path) : [rec.path];
+      const spellings = spellingsAt(rec.path);
       const places = spellings === null ? null : await Promise.all(spellings.map(lookup));
       if (places?.includes(rec.ino)) continue;
       if (places === null || places.includes('unknown')) { // could not look — cannot know, so don't claim
