@@ -8177,8 +8177,17 @@ function switchView(name) {
  * cart, the Grid's selection bar leaving with the Grid (D03) — rather than
  * falling to <body> (QA B13). On screen means painted: a control in a
  * hidden part of the view has no client rects.
+ *
+ * While a scan runs, its Stop, when it is on screen: a scan started from the
+ * start screen hides the choice that held focus, and the view's first
+ * control is the System card's Trash row, whose next Enter opened the Trash
+ * sheet over the map (seventh browser pass, J01).
  */
 function activeViewControl() {
+  if (state.scanning) {
+    const stop = $('scanBtn');
+    if (stop && !stop.disabled && stop.getClientRects().length > 0) return stop;
+  }
   return [...document.querySelectorAll('.view.active button, .view.active input, .view.active select, .view.active [tabindex="0"]')]
     .find((el) => !el.disabled && el.getClientRects().length > 0) || null;
 }

@@ -116,6 +116,9 @@ class El {
   querySelector(sel: string): El | null { return this.querySelectorAll(sel)[0] ?? null; }
 }
 
+/** The Dashboard's controls in the page's order (activeViewControl takes the first on screen): the System card's Trash row, then the Scan card's path box and Scan/Stop. */
+const DASHBOARD_CONTROLS = ['trashFact', 'pathInput', 'scanBtn'];
+
 class Dom {
   els = new Map<string, El>();
   active: El | null = null;
@@ -125,7 +128,8 @@ class Dom {
     const empty = this.get('emptyState');
     for (const id of ['emptyHero', 'emptyForView', 'startLast', 'startChoices', 'emptyBrowseBtn']) this.get(id).parent = empty;
     const dash = this.get('view-dashboard');
-    for (const id of ['scanBtn', 'pathInput']) this.get(id).parent = dash;
+    // The Dashboard's controls, in the page's order: the System card's Trash row (a role=button row) comes first.
+    for (const id of DASHBOARD_CONTROLS) this.get(id).parent = dash;
     this.get('emptyForView').hidden = true;
     this.get('startLast').hidden = true;
     for (const c of ['btn', 'btn-primary']) this.get('emptyBrowseBtn').cls.add(c); // as the markup ships it
@@ -154,7 +158,7 @@ const TOPO_MAC = { logicalVolumes: [{ mountPoint: '/', name: 'Macintosh HD' }, {
 const LIFTED = [
   'async function api(url', 'function escapeHtml(', 'function asPath(', 'function lastPathSegment(',
   'function viewBlockedReason(', 'function renderEmptyState(', 'function switchView(',
-  'function startLanding(', 'function focusLanding(', 'function withFocusKept(', 'function focusStartScreen(',
+  'function startLanding(', 'function focusLanding(', 'function activeViewControl(', 'function withFocusKept(', 'function focusStartScreen(',
   'function closeEventSource(', 'function setScanButtonMode(', 'function cancelScanById(', 'function abandonIfStopped(',
   'async function stopScan(', 'function stopNotConfirmed(', 'function putBackHeldTree(', 'function beginScanChrome(', 'async function indexStatusFor(',
   'async function startScan(', 'async function startScanRequest(', 'function followScanProgress(',
@@ -257,7 +261,9 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     get activeElement() { return dom.activeElement; },
     get body() { return dom.body; },
     querySelector: (sel: string) => (sel === '.tabbar button[aria-selected="true"]' ? $('tab-dashboard') : null),
-    querySelectorAll: (sel: string) => (sel === '.view' ? [$('view-dashboard'), $('view-grid'), $('view-trends'), $('view-treemap')] : []),
+    querySelectorAll: (sel: string) => (sel === '.view' ? [$('view-dashboard'), $('view-grid'), $('view-trends'), $('view-treemap')]
+      // activeViewControl's question: the controls of the view that is up, in the page's order.
+      : sel.startsWith('.view.active ') ? DASHBOARD_CONTROLS.map($).filter((c) => !!c.parent && c.parent.cls.has('active')) : []),
   };
   const given: Record<string, unknown> = {
     state, $, document, fetch: fetchStub, EventSource: FakeEventSource, location: { search: o.search ?? '' },
@@ -277,7 +283,7 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     hideTooltip: noop, hideCtxMenu: noop, selectionBarFollowView: noop, renderCapabilityNotice: noop,
     scanAccessNotice: async () => false, clearScanQueue: noop, drainScanQueue: noop, quietRescanFailed: (e: unknown) => { quietFailed.push(e); },
     openFromIndex: async () => false,
-    activeViewControl: () => null, tourCardControl: () => null,
+    tourCardControl: () => null,
     // What loadSystem paints besides the start screen: the System card, the key names, the side panels.
     renderKeyNames: noop, paintDiskFacts: noop, loadTrash: noop, loadSnapshots: noop, loadCloudStatus: noop,
     tourScanStarted: () => tourCalls.push('started'), tourScanFailed: () => tourCalls.push('failed'),
@@ -1426,6 +1432,47 @@ test('J06: the older tree an index paint stood over is let go once that folder\'
     await pressStop(h);
     assert.equal(h.state.root, onScreen, `${label}: a later Stop keeps the tree that was on screen`);
   }
+});
+
+/* ══════════════ (E) — the rest of the seventh browser pass (J01, J02, J03, J07) ══════════════ */
+
+test('J01: a scan started from the start screen puts focus on the Dashboard\'s Stop — never on the Dashboard\'s first control, the System card\'s Trash row, whose next Enter opened the Trash sheet over the map', async () => {
+  // Seventh browser pass, J01: with focus on "Scan corpus again", Enter left
+  // document.activeElement on DIV#trashFact (4/4); a second Enter opened the
+  // Trash sheet with "Empty Trash…" over the map. The same after a click on
+  // Desktop or Whole drive.
+  const h = page({ route: server({ roots: [MAIL_HISTORY] }) });
+  await boot(h);
+  for (const words of [/^Scan Mail again/, /^Desktop$/, /Whole drive$/]) {
+    const b = h.choice(words);
+    b.focus();
+    b.click(); // Enter on the focused choice
+    await turns();
+    assert.equal(h.state.scanning, true, `${words}: control: the scan runs`);
+    assert.equal(h.$('scanBtn').painted(), true, `${words}: control: the Dashboard's Stop is on screen`);
+    assert.equal(h.$('trashFact').painted(), true, `${words}: control: and so is the Trash row, before it in the page`);
+    assert.equal(h.dom.activeElement, h.$('scanBtn'), `${words}: focus lands on Stop (${h.dom.activeElement.id})`);
+    await pressStop(h);
+    assert.equal(h.dom.activeElement, h.$('startAgainBtn'), `${words}: control: after Stop, on "Scan … again"`);
+  }
+});
+
+test('J01: Stop takes focus only while a scan runs and Stop is on screen and enabled — otherwise the view\'s first control, as before', () => {
+  type C = { id: string; disabled: boolean; rects: number; getClientRects: () => unknown[] };
+  const mk = (id: string, rects = 1): C => { const c: C = { id, disabled: false, rects, getClientRects: () => Array.from({ length: c.rects }) }; return c; };
+  const pick = (o: { scanning: boolean; stopRects?: number; stopDisabled?: boolean }) => {
+    const trash = mk('trashFact'); const stop = mk('scanBtn', o.stopRects ?? 1);
+    stop.disabled = !!o.stopDisabled;
+    const doc = { querySelectorAll: (sel: string) => (sel.startsWith('.view.active ') ? [trash, stop] : []) };
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const fn = new Function('state', '$', 'document', `'use strict'; ${pageFn('function activeViewControl(')} return activeViewControl;`)(
+      { scanning: o.scanning }, (id: string) => (id === 'scanBtn' ? stop : null), doc) as () => C | null;
+    return fn()?.id ?? null;
+  };
+  assert.equal(pick({ scanning: true }), 'scanBtn', 'a scan running, Stop on screen: Stop');
+  assert.equal(pick({ scanning: true, stopRects: 0 }), 'trashFact', 'Stop off screen (another view is up): the view\'s first control, never a hidden button');
+  assert.equal(pick({ scanning: true, stopDisabled: true }), 'trashFact', 'Stop disabled: the view\'s first control');
+  assert.equal(pick({ scanning: false }), 'trashFact', 'no scan running: the view\'s first control, as before');
 });
 
 test('a scan that fails leaves no dead scan id behind, as a Stop leaves none: a failed rescan over an older tree puts back the older tree\'s scan, a failed first scan leaves none (review F2.3)', async () => {
