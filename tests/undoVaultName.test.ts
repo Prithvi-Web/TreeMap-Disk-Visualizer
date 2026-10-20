@@ -41,14 +41,18 @@ const OLD_NAME = /\btime(?:\s|-|&(?:#\d+|#x[0-9a-f]+|[a-z]+);|\/\/|\/\*|\*|<!--|
 
 /**
  * "130-time-capsule-tab.js" and the like: the old words in lower case, joined
- * by one hyphen and glued to more of a file name or id, are a name a program
- * reads, never the name in a sentence. A capital letter, any other separator,
- * or a space on both sides ("a time-capsule copy") makes it prose again.
+ * by one hyphen and glued to more of a file name or id — a letter, digit,
+ * underscore, slash or hyphen touching them, or a dot that runs on into more of
+ * the name (".js", "a.time-capsule") — are a name a program reads, never the
+ * name in a sentence. A capital letter, any other separator, a space on both
+ * sides ("a time-capsule copy") or a full stop that ends a sentence ("kept in a
+ * time-capsule.") makes it prose again (review F2.3).
  */
 function isFileNameOrId(text: string, at: number, hit: string): boolean {
   if (!/^time-capsules?$/.test(hit)) return false;
-  const glued = /[\w./-]/;
-  return glued.test(text[at - 1] ?? '') || glued.test(text[at + hit.length] ?? '');
+  const before = text.slice(Math.max(0, at - 2), at);
+  const after = text.slice(at + hit.length, at + hit.length + 2);
+  return /[\w/-]$/.test(before) || /^[\w/-]/.test(after) || /\w\.$/.test(before) || /^\.\w/.test(after);
 }
 
 /** Each place the old name stands in `text`, with a little of what is around it. */
@@ -161,10 +165,13 @@ test('the old name is found in the plural, hyphenated, behind any HTML entity, a
     'two Time Capsules', 'a Time-Capsule copy', 'a time-capsule copy', 'TIME-CAPSULE',
     'Time&#8201;Capsule', 'Time&#x20;Capsule', 'Time&thinsp;Capsule',
     "'Reading the Time ' +\n    'Capsule…'", '"the Time" + " Capsule"', '`kept in the Time ` +\n  `Capsule`',
+    // A full stop ends a sentence; it is not more of a file name (review F2.3).
+    'kept in a time-capsule.', 'stored in a time-capsule.</p>', 'a time-capsule.\n', '"a time-capsule."', 'two time-capsules. Then',
   ]) {
     assert.equal(oldNameIn(said).length, 1, said);
   }
-  for (const name of ['130-time-capsule-tab.js', '"app/130-time-capsule-tab.js",', 'timeCapsule', 'TimeCapsuleEntry', '/api/timecapsule', 'timecapsule.json']) {
+  for (const name of ['130-time-capsule-tab.js', '"app/130-time-capsule-tab.js",', 'timeCapsule', 'TimeCapsuleEntry', '/api/timecapsule', 'timecapsule.json',
+    'x/time-capsule.js', 'see time-capsule.json.', 'src/time-capsule/', 'a.time-capsule']) {
     assert.deepEqual(oldNameIn(name), [], `${name} is a name a program reads, not the name in prose`);
   }
 });
