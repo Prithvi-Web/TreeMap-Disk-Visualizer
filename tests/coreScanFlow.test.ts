@@ -160,7 +160,7 @@ const LIFTED = [
   'function viewBlockedReason(', 'function renderEmptyState(', 'function switchView(',
   'function startLanding(', 'function focusLanding(', 'function activeViewControl(', 'function withFocusKept(', 'function focusStartScreen(',
   'function closeEventSource(', 'function setScanButtonMode(', 'function cancelScanById(', 'function abandonIfStopped(',
-  'async function stopScan(', 'function stoppedWords(', 'function stopSettled(', 'async function showFinishedAfterStop(', 'function stopNotConfirmed(', 'function putBackHeldTree(', 'function beginScanChrome(', 'async function indexStatusFor(',
+  'async function stopScan(', 'function stoppedWords(', 'function stopSettled(', 'async function showFinishedAfterStop(', 'async function showFailedAfterStop(', 'function stoppedRequestFailed(', 'function stopNotConfirmed(', 'function putBackHeldTree(', 'function beginScanChrome(', 'async function indexStatusFor(',
   'async function startScan(', 'async function startScanRequest(', 'function followScanProgress(',
   'function endScanChrome(', 'function failScan(', 'function noteLastFolder(', 'function noteStopUnconfirmed(',
   'function browseWholeDrives(', 'function topologyAnswer(',
@@ -207,6 +207,7 @@ const formatBytes = liftPage<(n: number) => string>(['UNITS', 'UI_LOCALE', 'form
 /** The page's own constants the lifted functions read. */
 const START_FOLDERS = liftPage<string[]>(['START_FOLDERS'], 'START_FOLDERS');
 const FOLDER_REFUSED_STATUSES = liftPage<number[]>(['FOLDER_REFUSED_STATUSES'], 'FOLDER_REFUSED_STATUSES');
+const SCAN_STOPPED_REASON = liftPage<string>(['SCAN_STOPPED_REASON'], 'SCAN_STOPPED_REASON');
 const formatDate = liftPage<(ms: number) => string>(['UI_LOCALE', 'DATE_FMT', 'dateMemo', 'formatDate'], 'formatDate');
 
 /** Let `n` turns of the event loop pass: a count, never a time. */
@@ -250,7 +251,7 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
   };
   const state: Record<string, unknown> = {
     view: 'dashboard', system: 'system' in o ? o.system : MAC, capabilities: null, scanId: o.settledScanId ?? null, settledScanId: o.settledScanId ?? null,
-    scanning: false, es: null, abortScan: null, scanGen: 0, root: o.root ?? null, scanStats: null, whatsNew: { seq: 0 },
+    scanning: false, es: null, abortScan: null, scanGen: 0, scanRequestGen: 0, root: o.root ?? null, scanStats: null, whatsNew: { seq: 0 },
     lastFolder: null, scanningPath: null, scannedBefore: false, largest: [], bigFolders: [], types: [],
     // What finishScan and the treemap view read and write besides the tree.
     grid: { path: null, selection: new Set() }, treemap: { rootPath: null }, apps: { loadedFor: null }, live: { wanted: false, on: false },
@@ -286,7 +287,7 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     clearInterval: (id: number) => { intervals.delete(id); },
     console: { warn: noop, error: noop, log: noop },
     VIEW_BY_ID, tabs: [], mountedView: null, indexLineGen: 0, indexAutoMaxEntries: null, browseDrivesSeen: null, topologyShared: null,
-    startDrivesAsked: false, startShown: [], startPainted: null, startVerdicts: new Map(), startAsking: new Set(), START_FOLDERS, FOLDER_REFUSED_STATUSES,
+    startDrivesAsked: false, startShown: [], startPainted: null, startVerdicts: new Map(), startAsking: new Set(), START_FOLDERS, FOLDER_REFUSED_STATUSES, SCAN_STOPPED_REASON,
     TOPOLOGY_SHARE_MS: 3000, REDUCED: true, INSTANT_OPEN_NODES: 25000,
     EMPTY_VIEW_LEADS: {}, EMPTY_VIEW_LEAD_DEFAULT: 'Once a folder is scanned, this view fills in.', // another view's empty state (G02)
     formatBytes, formatDate, formatCount: String, icon: () => '', skeletonRows: () => '',
@@ -595,7 +596,7 @@ test('a folder whose scan was stopped before the server answered is offered agai
   await turns();
   assert.deepEqual(h.choices(), ['Downloads'], 'refused: taken away');
   assert.equal(h.dom.activeElement, h.$('emptyBrowseBtn'), 'focus moving on to Choose a folder…, never <body>');
-  assert.equal(h.$('startLast').textContent, 'You stopped the scan of /Users/x/Pictures.', 'the line, which said only that, stands');
+  assert.equal(h.$('startLast').textContent, 'Stopping the scan of /Users/x/Pictures…', 'the line, which says only that it is stopping — its request has not answered (review F1.2) — stands');
 });
 
 test('the whole drive is named as the folder picker names it: "Startup disk" until the disk layout answers, drive letters on Windows, / on Linux', async () => {
@@ -989,8 +990,8 @@ test('(v) a Stop pressed before POST /api/scan answers, whose late cancel the se
   await boot(h);
   await startFrom(h, /^Desktop$/);
   await pressStop(h);
-  assert.equal(h.$('startLast').textContent, 'You stopped the scan of /Users/x/Desktop.', 'control: said at once');
-  assert.equal(h.$('stopAnnounce').textContent, 'You stopped the scan of /Users/x/Desktop.', 'control: and aloud');
+  assert.equal(h.$('startLast').textContent, 'Stopping the scan of /Users/x/Desktop…', 'control: said at once, while the request is out (review F1.2)');
+  assert.equal(h.$('stopAnnounce').textContent, 'Stopping the scan of /Users/x/Desktop…', 'control: and aloud');
   held[0]({ status: 202, body: { scanId: 'late-1', incremental: false } });
   await turns();
   assert.ok(h.requests.includes('POST /api/scan/late-1/cancel'), 'control: the late answer is cancelled');
@@ -1041,12 +1042,12 @@ test('(v) a Stop pressed before POST /api/scan answers, whose late cancel the se
   await pressStop(t);
   await startFrom(t, /^Documents$/);
   await pressStop(t);
-  assert.equal(t.$('startLast').textContent, 'You stopped the scan of /Users/x/Documents.', 'control: the newer Stop is named');
+  assert.equal(t.$('startLast').textContent, 'Stopping the scan of /Users/x/Documents…', 'control: the newer Stop is named (its request is still out)');
   two[0]({ status: 202, body: { scanId: 'late-1', incremental: false } });
   await turns();
   assert.ok(t.requests.includes('POST /api/scan/late-1/cancel'), 'control: the older request is cancelled');
   assert.deepEqual(t.toasts, [['Could not stop the scan: Internal server error', 'error']], 'control: refused, and toasted');
-  assert.equal(t.$('startLast').textContent, 'You stopped the scan of /Users/x/Documents.', 'the start screen goes on naming the newer Stop');
+  assert.equal(t.$('startLast').textContent, 'Stopping the scan of /Users/x/Documents…', 'the start screen goes on naming the newer Stop');
   assert.equal(t.choices()[0], 'Scan Documents again', 'and offering its folder');
   // But the older request's folder may still be walking, whichever Stop the
   // start screen names now: it is offered nowhere (review F3.1). The Stop
@@ -1061,7 +1062,7 @@ test('(v) a Stop pressed before POST /api/scan answers, whose late cancel the se
   void c.startCloudScan('gdrive', 'Google Drive');
   await turns();
   await pressStop(c);
-  assert.equal(c.$('stopAnnounce').textContent, 'Scan stopped.', 'control: said aloud');
+  assert.equal(c.$('stopAnnounce').textContent, 'Stopping the scan…', 'control: said aloud, while the listing is out (review F1.2)');
   cloudHeld[0]({ status: 202, body: { scanId: 'late-c' } });
   await turns();
   assert.ok(c.requests.includes('POST /api/scan/late-c/cancel'), 'control: the late listing is cancelled');
@@ -1147,7 +1148,7 @@ test('(v) the same for a quiet rescan behind an index paint, and for a cloud acc
   await turns();
   assert.equal(lonely.length, 1, 'control: the cloud listing is asked for');
   await pressStop(lone);
-  assert.match(lone.$('scanStatus').innerHTML, /Scan stopped by user/, 'control: stopped');
+  assert.match(lone.$('scanStatus').innerHTML, /Stopping the scan…/, 'control: stopping, while the listing is out (review F1.2)');
   lonely[0]({ status: 500, body: { error: 'Google Drive did not answer.', code: 'INTERNAL' } });
   await turns();
   assert.deepEqual(lone.toasts, [], 'no red toast for a listing the person stopped');
@@ -1784,6 +1785,175 @@ test('J02: a Stop that lands after the scan has finished says so and shows the f
   assert.equal(again.$('scanStatus').innerHTML, said, 'the running scan\'s status line is its own');
   assert.equal(again.$('stopAnnounce').textContent, '', 'and nothing announces a Stop over it');
   assert.equal(again.$('emptyState').style.display, 'none', 'nor puts the start screen back');
+});
+
+test('J02 (review F1.2): a Stop pressed before POST /api/scan answers says only that it is stopping until the cancel sent when the request answers has answered — a scan that had finished is shown, a confirmed one is "You stopped…", and a request that fails is stopped; a Stop before any request was sent stopped it outright', async () => {
+  const DESK = '/Users/x/Desktop';
+  const finishedTree = { name: 'Desktop', path: DESK, size: 7_000_000, type: 'dir', children: [] };
+  /** Scan requests wait for the test; the cancel of the late scan answers `cancel`; the finished scan can be read. */
+  const run = (cancel: () => Answer) => {
+    const posts: Array<(a: { status: number; body: unknown }) => void> = [];
+    const base = server({ roots: [], scanAnswer: () => new Promise((r) => { posts.push(r); }) });
+    const h = page({ index: true, route: (m, url, b) => {
+      if (m === 'POST' && url === '/api/scan/scan-late/cancel') return cancel();
+      if (url === '/api/scan/scan-late/stats') return { body: { scanId: 'scan-late', status: 'complete', fileCount: 7, dirCount: 1, durationMs: 20 } };
+      if (url === '/api/scan/scan-late/result') return { body: { scanId: 'scan-late', status: 'complete', root: finishedTree } };
+      return base(m, url, b);
+    } });
+    return { h, posts };
+  };
+  const stopping = `Stopping the scan of ${DESK}…`;
+
+  // The scan had finished before the late cancel reached it: shown, never "You stopped…".
+  const { h, posts } = run(() => ({ body: { scanId: 'scan-late', cancelled: false, status: 'complete' } }));
+  await boot(h);
+  await startFrom(h, /^Desktop$/);
+  assert.equal(posts.length, 1, 'control: the request is out, unanswered');
+  await pressStop(h);
+  assert.equal(h.$('startLast').textContent, stopping, 'while the request and its cancel are out, the line says only that it is stopping');
+  assert.equal(h.$('stopAnnounce').textContent, stopping, 'and so does the live region');
+  assert.match(h.$('scanStatus').innerHTML, /Stopping the scan…/, 'and the status line');
+  assert.equal(h.choices()[0], 'Scan Desktop again', 'control: "Scan … again" is offered at once');
+  assert.equal(h.dom.activeElement, h.$('startAgainBtn'), 'control: with focus on it');
+  posts[0]({ status: 202, body: { scanId: 'scan-late', incremental: false } });
+  await turns();
+  assert.ok(h.requests.includes('POST /api/scan/scan-late/cancel'), 'control: the late answer is cancelled');
+  assert.deepEqual(h.state.root, finishedTree, 'the cancel says it had finished: its results are shown');
+  assert.equal(h.state.scanId, 'scan-late', 'with its scan behind them');
+  assert.ok(h.toasts.some(([m]) => m.startsWith('The scan had already finished when you pressed Stop')), `said so (${JSON.stringify(h.toasts)})`);
+  assert.doesNotMatch(h.$('startLast').textContent, /You stopped/, 'and nothing says the person stopped it');
+
+  // A confirmed cancel: stopped, said once it answers.
+  const conf = run(() => ({ body: { scanId: 'scan-late', cancelled: true, status: 'error' } }));
+  await boot(conf.h);
+  await startFrom(conf.h, /^Desktop$/);
+  await pressStop(conf.h);
+  assert.equal(conf.h.$('startLast').textContent, stopping, 'control: stopping, while the request is out');
+  conf.posts[0]({ status: 202, body: { scanId: 'scan-late', incremental: false } });
+  await turns();
+  assert.equal(conf.h.$('startLast').textContent, `You stopped the scan of ${DESK}.`, 'a confirmed cancel: stopped');
+  assert.equal(conf.h.$('stopAnnounce').textContent, `You stopped the scan of ${DESK}.`, 'and said so');
+  assert.match(conf.h.$('scanStatus').innerHTML, /Scan stopped by user/, 'and on the status line');
+  assert.equal(conf.h.dom.activeElement, conf.h.$('startAgainBtn'), 'focus stays on "Scan Desktop again"');
+
+  // The request fails once stopped: no scan ran, so it is stopped — never left "stopping".
+  const failed = run(() => assert.fail('no cancel: the request failed'));
+  await boot(failed.h);
+  await startFrom(failed.h, /^Desktop$/);
+  await pressStop(failed.h);
+  failed.posts[0]({ status: 500, body: { error: 'Internal server error', code: 'INTERNAL' } });
+  await turns();
+  assert.equal(failed.h.$('startLast').textContent, `You stopped the scan of ${DESK}.`, 'a request that failed after the Stop: stopped');
+  assert.equal(failed.h.$('stopAnnounce').textContent, `You stopped the scan of ${DESK}.`, 'and said so');
+  assert.match(failed.h.$('scanStatus').innerHTML, /Scan stopped by user/, 'and on the status line');
+  assert.deepEqual(failed.h.toasts, [], 'with no failure toasted for a scan the person stopped');
+
+  // A Stop while the index was still asked about, before any request was sent: nothing will run, so it is stopped at once.
+  let probe: (a: { body: unknown }) => void = () => {};
+  const base = server({ roots: [], indexed: [DESK] });
+  const early = page({ index: true, route: (m, url, b) => (url.startsWith('/api/index/status?') ? new Promise((r) => { probe = r; }) : base(m, url, b)) });
+  await boot(early);
+  await startFrom(early, /^Desktop$/);
+  await pressStop(early);
+  assert.equal(early.$('startLast').textContent, `You stopped the scan of ${DESK}.`, 'stopped outright: no request is out, none will be sent');
+  assert.match(early.$('scanStatus').innerHTML, /Scan stopped by user/, 'and on the status line');
+  probe({ body: { path: DESK, indexed: true, root: { path: DESK, state: 'ready', live: true } } });
+  await turns();
+  assert.deepEqual(early.posts, [], 'control: and none is sent when the index answers');
+});
+
+test('J02 (review F1.6): a Stop whose cancel answers that the scan had already failed says it failed, with the reason the scan gives, and offers it again as a failure — never "You stopped…"', async () => {
+  const DESK = '/Users/x/Desktop';
+  /** A first scan of Desktop, followed; its cancel answers that it is in error; its result answers `result`. */
+  const run = (result: () => Answer, o: { root?: unknown; settledScanId?: string } = {}) => {
+    const base = server({ roots: [] });
+    return page({ ...o, route: (m, url, b) => {
+      if (m === 'POST' && url === '/api/scan/scan-1/cancel') return { body: { scanId: 'scan-1', cancelled: false, status: 'error' } };
+      if (url === '/api/scan/scan-1/result') return result();
+      return base(m, url, b);
+    } });
+  };
+  const failedResult = () => ({ status: 500, body: { error: 'The drive stopped answering.', code: 'SCAN_FAILED' } });
+
+  const h = run(failedResult);
+  await boot(h);
+  await startFrom(h, /^Desktop$/);
+  await pressStop(h);
+  assert.ok(h.requests.includes('GET /api/scan/scan-1/result'), 'control: the scan is asked why it failed');
+  assert.equal(h.$('startLast').textContent, `The scan of ${DESK} failed: The drive stopped answering.`, 'it failed, with its reason');
+  assert.equal(h.$('stopAnnounce').textContent, `The scan of ${DESK} failed: The drive stopped answering.`, 'said aloud');
+  assert.match(h.$('scanStatus').innerHTML, /The scan had already failed when you pressed Stop: The drive stopped answering\./, 'and on the status line');
+  assert.ok(h.$('scanStatus').cls.has('error'), 'painted as a failure');
+  assert.equal(h.choices()[0], 'Scan Desktop again', 'offered again');
+  assert.ok(h.$('startAgainBtn').cls.has('start-retry'), 'as the retry of a failure');
+  assert.equal(h.dom.activeElement, h.$('startAgainBtn'), 'with focus on it');
+
+  // Its result cannot say why (gone since): it failed, reason unknown.
+  const gone = run(() => ({ status: 404, body: { error: 'Unknown or expired scanId', code: 'SCAN_NOT_FOUND' } }));
+  await boot(gone);
+  await startFrom(gone, /^Desktop$/);
+  await pressStop(gone);
+  assert.equal(gone.$('startLast').textContent, `The scan of ${DESK} failed: it did not finish.`, 'failed, with no reason invented');
+  assert.match(gone.$('scanStatus').innerHTML, /The scan had already failed when you pressed Stop\.</, 'and on the status line');
+
+  // Stopped already — another window's or an agent's cancel: it is stopped.
+  const other = run(() => ({ status: 500, body: { error: 'Scan stopped by user', code: 'SCAN_FAILED' } }));
+  await boot(other);
+  await startFrom(other, /^Desktop$/);
+  await pressStop(other);
+  assert.equal(other.$('startLast').textContent, `You stopped the scan of ${DESK}.`, 'a scan the server says was stopped is stopped');
+  assert.match(other.$('scanStatus').innerHTML, /Scan stopped by user/, 'and on the status line');
+  assert.ok(!other.$('scanStatus').cls.has('error'), 'not painted as a failure');
+
+  // A rescan over a tree: the tree stays, and the status line and the live region say the scan had failed.
+  const tree = { name: 'old', path: '/Users/x/old', size: 1, type: 'dir', children: [] };
+  // Its reason without a full stop, as an engine may give one: the sentence still ends with one.
+  const over = run(() => ({ status: 500, body: { error: 'The drive stopped answering', code: 'SCAN_FAILED' } }), { root: tree, settledScanId: 'scan-old' });
+  over.switchView('dashboard');
+  await over.startScan(DESK);
+  await turns();
+  await pressStop(over);
+  assert.equal(over.state.root, tree, 'control: the older tree stays');
+  assert.equal(over.state.scanId, 'scan-old', 'control: with its own scan');
+  assert.match(over.$('scanStatus').innerHTML, /The scan had already failed when you pressed Stop: The drive stopped answering\./, 'the status line says it failed');
+  assert.equal(over.$('stopAnnounce').textContent, 'The scan had already failed when you pressed Stop: The drive stopped answering.', 'and so does the live region');
+
+  // A scan begun while the reason was asked for owns the screen.
+  let why: (a: { status?: number; body?: unknown }) => void = () => {};
+  const moved = run(() => new Promise((r) => { why = r; }));
+  await boot(moved);
+  await startFrom(moved, /^Desktop$/);
+  await pressStop(moved);
+  moved.$('startAgainBtn').click();
+  await turns();
+  const said = moved.$('scanStatus').innerHTML;
+  why(failedResult());
+  await turns();
+  assert.equal(moved.$('scanStatus').innerHTML, said, 'the running scan\'s status line is its own');
+  assert.equal(moved.$('emptyState').style.display, 'none', 'and no start screen comes back over it');
+  assert.equal(moved.state.scanning, true, 'which runs on');
+});
+
+test('J02 (review F1.10): a Stop of a rescan over a tree says "Stopping the scan…" on the status line and aloud while its cancel is out, and "Scan stopped" once the server confirms it', async () => {
+  const tree = { name: 'old', path: '/Users/x/old', size: 1, type: 'dir', children: [] };
+  let confirm: (a: { status?: number; body?: unknown }) => void = () => {};
+  const base = server({ roots: [] });
+  const h = page({ root: tree, settledScanId: 'scan-old',
+    route: (m, url, b) => (m === 'POST' && url === '/api/scan/scan-1/cancel' ? new Promise((r) => { confirm = r; }) : base(m, url, b)) });
+  h.switchView('dashboard');
+  await h.startScan('/Users/x/Desktop');
+  await turns();
+  assert.equal(h.state.scanId, 'scan-1', 'control: the rescan is followed');
+  h.$('scanBtn').focus();
+  void h.stopScan(); // its cancel is held: Stop's own work is done once it is sent
+  await turns();
+  assert.equal(h.state.root, tree, 'control: the older tree stays on screen');
+  assert.equal(h.$('scanStatus').innerHTML, '<span>Stopping the scan…</span>', 'while the cancel is out the status line says only that it is stopping');
+  assert.equal(h.$('stopAnnounce').textContent, 'Stopping the scan…', 'and so does the live region');
+  confirm({ body: { scanId: 'scan-1', cancelled: true, status: 'error' } });
+  await turns();
+  assert.equal(h.$('scanStatus').innerHTML, '<span>Scan stopped by user</span>', 'confirmed: stopped');
+  assert.equal(h.$('stopAnnounce').textContent, 'Scan stopped.', 'and said so');
 });
 
 test('J03 (the owner, 20 Oct 2026): after another folder\'s scan is stopped or fails, the history\'s folder stays on the start screen — "Scan Mail again" beside the stopped or failed one, the stopped one first, and never a folder the server refused', async () => {

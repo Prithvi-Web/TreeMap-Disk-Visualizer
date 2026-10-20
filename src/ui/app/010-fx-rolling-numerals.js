@@ -603,6 +603,12 @@ const state = {
   // cancelled rather than followed. state.scanning alone cannot tell those
   // apart from "the newer scan is running fine".
   scanGen: 0,
+  // The generation whose scan request (POST /api/scan, /api/cloud/scan) was
+  // sent last: while it is the running generation's and the request has not
+  // answered, a Stop has a cancel still to come — sent, and its answer read,
+  // when the request answers (abandonIfStopped) — so it says "Stopping…"
+  // until then (review F1.2). A Stop before the request is sent stops it.
+  scanRequestGen: 0,
   root: null,
   // The folder the start screen names (the owner, 17 Oct 2026): the last one
   // scanned, from the server (restoreLastSession), or the one whose scan was

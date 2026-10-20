@@ -7427,6 +7427,12 @@ const state = {
   // cancelled rather than followed. state.scanning alone cannot tell those
   // apart from "the newer scan is running fine".
   scanGen: 0,
+  // The generation whose scan request (POST /api/scan, /api/cloud/scan) was
+  // sent last: while it is the running generation's and the request has not
+  // answered, a Stop has a cancel still to come — sent, and its answer read,
+  // when the request answers (abandonIfStopped) — so it says "Stopping…"
+  // until then (review F1.2). A Stop before the request is sent stops it.
+  scanRequestGen: 0,
   root: null,
   // The folder the start screen names (the owner, 17 Oct 2026): the last one
   // scanned, from the server (restoreLastSession), or the one whose scan was
@@ -9498,14 +9504,31 @@ function cancelScanById(scanId) {
  */
 function abandonIfStopped(scanId, gen, path) {
   if (state.scanning && state.scanGen === gen) return false;
-  // Its cancel can be refused as a Stop's own can, and the Stop that ended
-  // this request has already said "stopped": a refusal is said the same way,
-  // and takes back what that Stop — the one of this request's generation —
-  // said on the start screen, while it still says it (review F2.2). Its
-  // folder is offered nowhere whatever has been stopped since (review F3.1).
+  // Its cancel is answered as a Stop's own is (stopSettled, review F1.2): the
+  // Stop that ended this request said only "Stopping…", and the scan may have
+  // finished, or failed, before the cancel reached it. A refusal is said the
+  // same way, and takes back what that Stop — the one of this request's
+  // generation — said on the start screen, while it still says it (review
+  // F2.2). Its folder is offered nowhere whatever has been stopped since
+  // (review F3.1). A 404: the record was already gone, so it is stopped.
   const stop = state.lastStop && state.lastStop.gen === gen ? state.lastStop : null;
-  void cancelScanById(scanId).catch((e) => stopNotConfirmed(e, gen, stop ? stop.noted : null, path));
+  const noted = stop ? stop.noted : null;
+  void cancelScanById(scanId).then(
+    (answer) => stopSettled(answer, gen, noted, scanId, path),
+    (e) => (e.status === 404 ? stopSettled(null, gen, noted, scanId, path) : stopNotConfirmed(e, gen, noted, path)),
+  );
   return true;
+}
+
+/**
+ * A scan request a Stop ended that failed when it answered (startScanRequest,
+ * startCloudScan): no scan ran, so that Stop's "Stopping…" becomes stopped,
+ * while no scan has begun since (stopSettled). Never a failure: the person
+ * stopped it (review F1.1, F1.4).
+ */
+function stoppedRequestFailed(gen, path) {
+  const stop = state.lastStop && state.lastStop.gen === gen ? state.lastStop : null;
+  if (stop) stopSettled(null, gen, stop.noted, null, path);
 }
 
 /**
@@ -9530,6 +9553,11 @@ async function stopScan() {
   // The scan this Stop ends, by generation: a scan begun before the cancel
   // answers owns the status line and the live region (stopNotConfirmed).
   const gen = state.scanGen;
+  // Whether a cancel will answer this Stop: its own (scanId), or the one sent
+  // when the scan request still out answers (abandonIfStopped, review F1.2).
+  // Neither: the request was never sent — startScan was asking the index —
+  // and nothing will run, so it is stopped outright.
+  const answerToCome = !!scanId || state.scanRequestGen === gen;
   // And by its folder, which a refused cancel keeps offered nowhere whatever
   // has been stopped or has failed by the time it answers (review F3.1).
   const stopped = state.scanningPath;
@@ -9555,19 +9583,19 @@ async function stopScan() {
   // was being scanned, "Scan … again" first among its choices (the owner,
   // 17 Oct 2026: "a scan should work again after being stopped"). A tree
   // still on screen — a rescan stopped — stays, with its own scan behind it.
-  // While this Stop's own cancel is out, it says only that it is stopping:
-  // the scan may have finished first (seventh browser pass, J02), and then
-  // "You stopped…" would be false. stopSettled says what the answer says;
-  // `noted` is kept to take it back if the cancel is refused
-  // (noteStopUnconfirmed). A Stop with no scan id yet stopped it outright.
-  const noted = state.root ? null : noteLastFolder(scanId ? 'stopping' : 'stopped');
+  // While a cancel for this Stop is to come, it says only that it is
+  // stopping: the scan may have finished first (seventh browser pass, J02;
+  // review F1.2), and then "You stopped…" would be false. stopSettled says
+  // what the answer says; `noted` is kept to take it back if the cancel is
+  // refused (noteStopUnconfirmed).
+  const noted = state.root ? null : noteLastFolder(answerToCome ? 'stopping' : 'stopped');
   // For a request this Stop ended before it answered, whose cancel is sent
   // when it does (abandonIfStopped).
   state.lastStop = { gen, noted };
 
   const status = $('scanStatus');
   status.classList.remove('error'); // stopping is a choice, not a failure
-  status.innerHTML = icon('stop', 14) + '<span>' + escapeHtml(scanId ? 'Stopping the scan…' : stoppedWords()) + '</span>';
+  status.innerHTML = icon('stop', 14) + '<span>' + escapeHtml(answerToCome ? 'Stopping the scan…' : stoppedWords()) + '</span>';
   restoreDashboardPanels();
   // And put the start screen back if that is where we are — over the
   // Dashboard's Stop, which held focus if it was pressed from the keyboard
@@ -9580,7 +9608,7 @@ async function stopScan() {
   focusStartScreen();
   // And said aloud: the start screen's own line, or the status line's, in a
   // live region nothing hides (review F1.14).
-  $('stopAnnounce').textContent = noted ? startLastLine(noted) : scanId ? 'Stopping the scan…' : stoppedWords(true);
+  $('stopAnnounce').textContent = noted ? startLastLine(noted) : answerToCome ? 'Stopping the scan…' : stoppedWords(true);
 
   // Stopped before POST /api/scan answered — startScanRequest abandons that scan — or before it was
   // sent, while startScan asked the index — and startScan starts none (final review F1.7).
@@ -9612,12 +9640,15 @@ function stoppedWords(spoken = false) {
  * ended — which then owns the screen — it says what the answer says (seventh
  * browser pass, J02): `{ cancelled: false, status: 'complete' }` is a scan
  * that finished before Stop reached it, which the server kept, and it is
- * shown (showFinishedAfterStop); anything else is stopped, and "Stopping…"
- * becomes "You stopped…" on the start screen, or the status line's words.
+ * shown (showFinishedAfterStop); `{ cancelled: false, status: 'error' }` is
+ * a scan that had failed on its own (showFailedAfterStop, review F1.6);
+ * anything else is stopped, and "Stopping…" becomes "You stopped…" on the
+ * start screen, or the status line's words.
  */
 function stopSettled(answer, gen, noted, scanId, path) {
   if (state.scanGen !== gen) return;
   if (answer && answer.cancelled === false && answer.status === 'complete') { void showFinishedAfterStop(scanId, gen, noted, path); return; }
+  if (answer && answer.cancelled === false && answer.status === 'error') { void showFailedAfterStop(scanId, gen, noted, path); return; }
   const status = $('scanStatus');
   status.innerHTML = icon('stop', 14) + '<span>' + escapeHtml(stoppedWords()) + '</span>';
   if (!noted) { $('stopAnnounce').textContent = stoppedWords(true); return; }
@@ -9659,6 +9690,39 @@ async function showFinishedAfterStop(scanId, gen, noted, path) {
   state.scanId = scanId;
   $('stopAnnounce').textContent = `The scan of ${path} had already finished when you pressed Stop — its results are on screen.`;
   await finishScan(result.root, stats && stats.durationMs > 0 ? stats.durationMs : 0, stats, { afterStop: true });
+}
+
+/** The reason a scan gives when it was stopped: the server's SCAN_CANCELLED_MESSAGE (diskScanner.ts). */
+const SCAN_STOPPED_REASON = 'Scan stopped by user';
+
+/**
+ * A scan that had failed on its own before Stop reached it (review F1.6): its
+ * cancel answers { cancelled: false, status: 'error' }, which says nothing of
+ * why, so the scan is asked — its result answers SCAN_FAILED with the reason.
+ * It failed, and is said to have, with that reason where the scan gives one,
+ * and offered again as a failure is; a scan whose reason is that it was
+ * stopped (another window's or an agent's cancel) is stopped. "You stopped…"
+ * of a scan that failed was false, and hid why. Nothing is said over a scan
+ * begun since.
+ */
+async function showFailedAfterStop(scanId, gen, noted, path) {
+  let why = '';
+  try {
+    await api(`/api/scan/${scanId}/result`);
+  } catch (e) {
+    if (e && e.code === 'SCAN_FAILED') why = e.message || '';
+  }
+  if (state.scanGen !== gen) return;
+  if (why === SCAN_STOPPED_REASON) { stopSettled(null, gen, noted, scanId, path); return; }
+  const words = why ? `The scan had already failed when you pressed Stop: ${why}${/[.!?…]$/.test(why) ? '' : '.'}` : 'The scan had already failed when you pressed Stop.';
+  const status = $('scanStatus');
+  status.classList.add('error');
+  status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml(words) + '</span>';
+  if (noted && state.lastFolder === noted) {
+    state.lastFolder = { ...noted, outcome: 'failed', reason: why };
+    $('stopAnnounce').textContent = startLastLine(state.lastFolder);
+    withFocusKept(() => { renderStartChoices(); });
+  } else $('stopAnnounce').textContent = words;
 }
 
 /**
@@ -10239,6 +10303,7 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
     // answer is asked for alongside the scan request, not awaited before it.
     void scanAccessNotice(path, gen);
     const t0 = performance.now();
+    state.scanRequestGen = gen; // a Stop from now has a cancel to come (review F1.2)
     const resp = await api('/api/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -10263,9 +10328,13 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
   // outcome. Reported, its failure tore down the scan running now: the start
   // screen came back over it saying its folder failed, with this request's
   // reason, and Stop could no longer reach it (review F1.1). A failed
-  // background refresh keeps the indexed tree on screen.
+  // background refresh keeps the indexed tree on screen. The Stop that ended
+  // it said "Stopping…" while it was out: no scan ran, so it is stopped.
   } catch (e) {
-    if (!state.scanning || state.scanGen !== gen) return;
+    if (!state.scanning || state.scanGen !== gen) {
+      stoppedRequestFailed(gen, path);
+      return;
+    }
     if (quiet) { quietRescanFailed(e); return; }
     failScan(e.message, e); // the error: a folder the server refused is not offered again
   }
@@ -10565,6 +10634,7 @@ async function startCloudScan(providerId, providerName) {
   try {
     $('scanStatus').innerHTML = `<span>Listing ${escapeHtml(providerName)}…</span>`;
     const t0 = performance.now();
+    state.scanRequestGen = gen; // a Stop from now has a cancel to come (review F1.2)
     const resp = await api('/api/cloud/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -10574,7 +10644,7 @@ async function startCloudScan(providerId, providerName) {
     followScanProgress(resp.scanId, 'cloud://' + providerId, false, t0);
   // Stopped, or replaced by another scan since: nothing to report (startScanRequest, review F1.1).
   } catch (e) {
-    if (!state.scanning || state.scanGen !== gen) return;
+    if (!state.scanning || state.scanGen !== gen) { stoppedRequestFailed(gen, 'cloud://' + providerId); return; }
     failScan(e.message);
   }
 }

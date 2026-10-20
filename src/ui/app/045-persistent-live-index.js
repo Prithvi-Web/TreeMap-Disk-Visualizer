@@ -364,6 +364,7 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
     // answer is asked for alongside the scan request, not awaited before it.
     void scanAccessNotice(path, gen);
     const t0 = performance.now();
+    state.scanRequestGen = gen; // a Stop from now has a cancel to come (review F1.2)
     const resp = await api('/api/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -388,9 +389,13 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
   // outcome. Reported, its failure tore down the scan running now: the start
   // screen came back over it saying its folder failed, with this request's
   // reason, and Stop could no longer reach it (review F1.1). A failed
-  // background refresh keeps the indexed tree on screen.
+  // background refresh keeps the indexed tree on screen. The Stop that ended
+  // it said "Stopping…" while it was out: no scan ran, so it is stopped.
   } catch (e) {
-    if (!state.scanning || state.scanGen !== gen) return;
+    if (!state.scanning || state.scanGen !== gen) {
+      stoppedRequestFailed(gen, path);
+      return;
+    }
     if (quiet) { quietRescanFailed(e); return; }
     failScan(e.message, e); // the error: a folder the server refused is not offered again
   }
@@ -690,6 +695,7 @@ async function startCloudScan(providerId, providerName) {
   try {
     $('scanStatus').innerHTML = `<span>Listing ${escapeHtml(providerName)}…</span>`;
     const t0 = performance.now();
+    state.scanRequestGen = gen; // a Stop from now has a cancel to come (review F1.2)
     const resp = await api('/api/cloud/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -699,7 +705,7 @@ async function startCloudScan(providerId, providerName) {
     followScanProgress(resp.scanId, 'cloud://' + providerId, false, t0);
   // Stopped, or replaced by another scan since: nothing to report (startScanRequest, review F1.1).
   } catch (e) {
-    if (!state.scanning || state.scanGen !== gen) return;
+    if (!state.scanning || state.scanGen !== gen) { stoppedRequestFailed(gen, 'cloud://' + providerId); return; }
     failScan(e.message);
   }
 }
