@@ -26866,8 +26866,8 @@ registerView({
   // useful with no scan loaded and never shows the empty-state screen.
   needsScan: false,
   // The ⌘K palette also finds it by the name it had before 5.2.0, never shown
-  // (cmdkAliasScore in 165-command-palette.js).
-  paletteAliases: ['timecapsule'],
+  // (cmdkAliasMatch in 165-command-palette.js).
+  paletteAliases: ['timecapsule', 'capsule'],
   mount() { loadCapsule(); },
   unmount() {
     // The cap meter and the events list are live handles; a view stops what
@@ -31132,20 +31132,24 @@ function cmdkScore(query, label) {
 
 /**
  * Words an entry answers to that are never on screen — the name a feature had
- * before it was renamed, so a returning user's habit still lands — scored like
- * a hint, at the same discount. Each alias is written as one word and the
- * query's spaces are taken out before it is matched, so the old name typed as
- * two words finds it too while the page never spells it. Pure, like cmdkScore,
- * and extracted by tests/commandPalette.test.ts in the same way.
+ * before it was renamed, so a returning user's habit still lands. Nothing on
+ * the row says why it matched, so an alias is held to more than cmdkScore's
+ * scattered letters ("map" sits in the letters of the old name): with spaces,
+ * hyphens and underscores taken out, what was typed must begin an alias — three
+ * letters at least — or hold a whole one. So the old name typed as one word or
+ * two, hyphenated, in the plural or inside a longer phrase finds the entry,
+ * while the page never spells it; and cmdkRender lists every row found this way
+ * after every row whose own label or hint matched. Pure, like cmdkScore, and
+ * driven by tests/commandPalette.test.ts.
  */
-function cmdkAliasScore(query, aliases) {
-  const q = String(query).replace(/\s+/g, '');
-  let best = null;
-  for (const alias of aliases || []) {
-    const s = cmdkScore(q, alias);
-    if (s !== null && (best === null || s > best)) best = s;
-  }
-  return best === null ? null : best - 8;
+function cmdkAliasMatch(query, aliases) {
+  const MIN_TYPED = 3; // fewer letters begin too many words to say anything
+  const q = String(query).toLowerCase().replace(/[\s_-]+/g, '');
+  if (q.length < MIN_TYPED) return false;
+  return (aliases || []).some((alias) => {
+    const a = String(alias).toLowerCase();
+    return a.startsWith(q) || q.includes(a);
+  });
 }
 
 /** Actions by name. `when` gates entries that would be dead where you are. */
@@ -31188,7 +31192,7 @@ const CMDK_SETTINGS_SECTIONS = [
   { name: 'Drives mounted inside a folder', hint: 'mount, mounted, disk image, simulator, stay on this drive, include' },
   { name: 'Disk-full forecast', hint: 'warning, days, projection' },
   { name: 'Live activity', hint: 'watch, auto-pause' },
-  { name: 'Undo Vault', hint: 'retention, undo copies', aliases: ['timecapsule'] },
+  { name: 'Undo Vault', hint: 'retention, undo copies', aliases: ['timecapsule', 'capsule'] },
   { name: 'Reclaim Score', hint: 'weights, sliders, signals' },
   { name: 'Cleanup target', hint: 'goal, free up, meter' },
   { name: 'Human-scale sizes', hint: 'photo equivalents, tooltips' },
@@ -31281,13 +31285,17 @@ function cmdkRender() {
       const hs = cmdkScore(q, item.hint);
       if (hs !== null) s = hs - 8;
     }
-    if (s === null) s = cmdkAliasScore(q, item.aliases);
+    // Found only by a word it never shows, a row ranks after every row whose
+    // own words matched: nothing on it would say why it is there.
+    const viaAlias = s === null && cmdkAliasMatch(q, item.aliases);
+    if (viaAlias) s = 0;
     if (s === null) continue;
-    scored.push({ item, s });
+    scored.push({ item, s, viaAlias });
   }
-  // Stable order: score first, then registry order (Array.prototype.sort is
-  // stable), so equal scores never jitter between keystrokes.
-  scored.sort((a, b) => b.s - a.s);
+  // Stable order: rows found by their own words before rows found by an
+  // alias, then score, then registry order (Array.prototype.sort is stable),
+  // so equal scores never jitter between keystrokes.
+  scored.sort((a, b) => (Number(a.viaAlias) - Number(b.viaAlias)) || (b.s - a.s));
   // An empty box BROWSES — capping it at 12 hid three views and every action
   // from the arrow keys (QA finding 4). The list scrolls; only typed queries
   // trim to the best dozen.

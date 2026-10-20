@@ -218,10 +218,10 @@ test('typing a setting WORD finds its section — hints are a scoring fallback',
 
 /* ═══════════ The Undo Vault rename (review F1.7) ═══════════ */
 
-/** The page's cmdkScore and cmdkAliasScore together, and the settings sections defined beside them. */
+/** The page's cmdkScore and cmdkAliasMatch together, and the settings sections defined beside them. */
 function aliasScoring(): {
   cmdkScore: (q: string, label: string) => number | null;
-  cmdkAliasScore: (q: string, aliases: unknown) => number | null;
+  cmdkAliasMatch: (q: string, aliases: unknown) => boolean;
   sections: { name: string; hint: string; aliases?: string[] }[];
 } {
   const pick = (name: string): string => {
@@ -230,15 +230,15 @@ function aliasScoring(): {
     const end = INDEX.indexOf('\nfunction ', start + 1);
     return INDEX.slice(start, end === -1 ? INDEX.length : end);
   };
-  // cmdkAliasScore's slice runs on through the action and settings registries, which are plain
+  // cmdkAliasMatch's slice runs on through the action and settings registries, which are plain
   // data here (their run/when functions are never called).
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  return new Function(`${pick('cmdkScore')}\n${pick('cmdkAliasScore')}\n` +
-    'return { cmdkScore, cmdkAliasScore, sections: CMDK_SETTINGS_SECTIONS };')();
+  return new Function(`${pick('cmdkScore')}\n${pick('cmdkAliasMatch')}\n` +
+    'return { cmdkScore, cmdkAliasMatch, sections: CMDK_SETTINGS_SECTIONS };')();
 }
 
 test('a returning user finds the Undo Vault by the name it had before 5.2.0, which the palette never shows', () => {
-  const { cmdkScore, cmdkAliasScore, sections } = aliasScoring();
+  const { cmdkScore, cmdkAliasMatch, sections } = aliasScoring();
   const settings = sections.find((s) => s.name === 'Undo Vault');
   assert.ok(settings, 'the Settings section is listed');
   const view = /registerView\(\{\s+id: 'capsule',\s+label: 'Undo Vault',(?:(?!registerView\(|mount\(\))[\s\S])*?paletteAliases: (\[[^\]]*\]),/.exec(INDEX);
@@ -252,16 +252,20 @@ test('a returning user finds the Undo Vault by the name it had before 5.2.0, whi
     // On screen it is the Undo Vault only: neither its label nor its hint answers the old word…
     assert.equal(cmdkScore('capsule', label), null, `${where}'s label never shows the old word`);
     assert.equal(cmdkScore('capsule', hint), null, `${where}'s hint never shows the old word`);
-    // …but the old name still finds it, typed as one word or two, in any case.
-    for (const typed of ['time capsule', 'Time Capsule', 'timecapsule', 'capsule']) {
-      assert.notEqual(cmdkAliasScore(typed, aliases), null, `typing "${typed}" finds ${where}`);
+    // …but the old name still finds it: as one word or two, in any case, hyphenated, in the
+    // plural, inside a longer phrase, or begun with three letters or more of either word — a
+    // beginning typed with a hyphen or an underscore too.
+    for (const typed of ['time capsule', 'Time Capsule', 'timecapsule', 'time-capsule', 'time_capsule', 'time capsules',
+      'Time-Capsules', 'time capsule backup', 'capsule', 'capsules', 'caps', 'cap', 'time', 'tim', 'time-caps', 'Time_Cap']) {
+      assert.equal(cmdkAliasMatch(typed, aliases), true, `typing "${typed}" finds ${where}`);
     }
-    assert.equal(cmdkAliasScore('weights', aliases), null, `${where} answers only to its own words`);
+    // Letters scattered through the old name, or too few to begin a word, find nothing (review F2.1, F2.5).
+    for (const typed of ['map', 'tap', 'ape', 'mes', 'ps', 'ue', 'a p', 'mule', 'sul', 'ime', 'mec', 'tc', 'mc', 'ti', 'ca',
+      'times', 'weights', '', '   ']) {
+      assert.equal(cmdkAliasMatch(typed, aliases), false, `typing "${typed}" does not find ${where}`);
+    }
   }
-  assert.equal(cmdkAliasScore('capsule', ['timecapsule']), cmdkScore('capsule', 'timecapsule')! - 8,
-    'an alias scores at the hint\'s discount, so a label or hint match always ranks above it');
-  assert.equal(cmdkAliasScore('capsule', undefined), null, 'an entry with no aliases matches nothing through them');
-
+  assert.equal(cmdkAliasMatch('capsule', undefined), false, 'an entry with no aliases matches nothing through them');
 });
 
 /**
@@ -291,14 +295,15 @@ function everyIndexOf(head: string): number[] {
  * views and every registerView call, so a view's aliases arrive the way the page gives them), its
  * action and settings registries, and cmdkItems, cmdkRender, the scorers and escapeHtml as they
  * are, over a stub input box and list. No scan is open, so actions that need one are left out, as
- * on a fresh start. Typing returns the labels of the rows listed, in order, and each row's HTML.
+ * on a fresh start. Typing returns the labels of the rows listed, in order, their hints, and each
+ * row's HTML.
  */
-function paletteAsShipped(): (typed: string) => { rows: string[]; html: string[] } {
+function paletteAsShipped(): (typed: string) => { rows: string[]; hints: string[]; html: string[] } {
   const views = declarationAt(INDEX.indexOf('const VIEWS = ['), '[', ']');
   const registrations = everyIndexOf('registerView({').map((at) => `${declarationAt(at, '{', '}')})`);
   assert.ok(registrations.some((r) => r.includes("id: 'capsule'")), 'the Undo Vault view is registered with registerView');
   const registries = ['CMDK_ACTIONS', 'CMDK_SETTINGS_SECTIONS'].map((name) => `${declarationAt(INDEX.indexOf(`const ${name} = [`), '[', ']')};`);
-  const functions = ['escapeHtml', 'cmdkScore', 'cmdkAliasScore', 'cmdkViewOrder', 'cmdkItems', 'cmdkRender']
+  const functions = ['escapeHtml', 'cmdkScore', 'cmdkAliasMatch', 'cmdkViewOrder', 'cmdkItems', 'cmdkRender']
     .map((name) => declarationAt(INDEX.indexOf(`function ${name}(`), '{', '}'));
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   return new Function(`'use strict';
@@ -319,7 +324,8 @@ function paletteAsShipped(): (typed: string) => { rows: string[]; html: string[]
     return (typed) => {
       input.value = typed;
       cmdkRender();
-      return { rows: cmdkShown.map((item) => item.label), html: list.innerHTML.split('</button>').filter(Boolean) };
+      return { rows: cmdkShown.map((item) => item.label), hints: cmdkShown.map((item) => item.hint || ''),
+        html: list.innerHTML.split('</button>').filter(Boolean) };
     };`)();
 }
 
@@ -338,4 +344,41 @@ test('typed into the palette as shipped, the old name lists the Undo Vault and i
     }
   }
   assert.ok(!type('weights').rows.some((label) => label === 'Undo Vault'), 'the view answers only to its own words');
+});
+
+test('a word the palette never shows is held to more than scattered letters, and the rows it finds come after every row whose own words matched', () => {
+  // Review F2.1 and F2.5: matched as a subsequence, the hidden "timecapsule" listed both Undo Vault
+  // rows for "map" (m-a-p sits in t-i-m-e-c-a-p-s-u-l-e), "tap" or "mes", with nothing on the row to
+  // say why, and ranked them above rows whose own label matched; while "time-capsule" and
+  // "time capsules" found nothing.
+  const type = paletteAsShipped();
+  const score = extractFunction('cmdkScore') as (q: string, label: string) => number | null;
+  const vault = ['Undo Vault', 'Settings: Undo Vault'];
+  /** The rows listed for `typed` that nothing on screen explains: neither label nor hint matches. */
+  const unexplained = (typed: string): string[] => {
+    const { rows, hints } = type(typed);
+    return rows.slice(0, -1).filter((label, i) => score(typed, label) === null && score(typed, hints[i]) === null);
+  };
+
+  assert.deepEqual(type('map').rows.filter((label) => vault.includes(label)), [], 'typing "map" lists no Undo Vault row');
+  for (const typed of ['map', 'tap', 'ape', 'mes', 'ps', 'ue', 'a p', 'mule', 'sul', 'ime', 'mec', 'tc', 'mc', 'ti', 'ca', 'times']) {
+    assert.deepEqual(unexplained(typed), [], `typing "${typed}" lists only rows whose own label or hint matched`);
+  }
+
+  for (const typed of ['time capsule', 'Time Capsule', 'timecapsule', 'TimeCapsule', 'time-capsule', 'Time-Capsule', 'time_capsule',
+    'time capsules', 'Time-Capsules', 'capsules', 'capsule', 'caps', 'cap', 'time', 'time capsule backup', 'my time capsule']) {
+    const { rows } = type(typed);
+    for (const label of vault) assert.ok(rows.includes(label), `typing "${typed}" lists ${label}: ${JSON.stringify(rows)}`);
+  }
+
+  for (const typed of ['time', 'cap']) {
+    const { rows, hints } = type(typed);
+    const hidden = unexplained(typed);
+    assert.deepEqual(hidden, vault, `typing "${typed}" finds both Undo Vault rows only by the old name`);
+    const explained = rows.slice(0, -1).map((label, i) => ({ label, i })).filter(({ label, i }) => score(typed, label) !== null || score(typed, hints[i]) !== null);
+    assert.ok(explained.length > 0, `typing "${typed}" also matches rows by their own words`);
+    for (const { label, i } of explained) {
+      assert.ok(i < rows.indexOf(hidden[0]), `typing "${typed}": "${label}", which matched by its own words, comes before the Undo Vault rows: ${JSON.stringify(rows)}`);
+    }
+  }
 });
