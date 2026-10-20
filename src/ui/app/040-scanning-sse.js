@@ -486,9 +486,13 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   // folder to see its city", the Reclaim legend's "scan this folder to score
   // it", the Dashboard's lists' "scan this folder to list…". This scan makes
   // them untrue, and nothing repainted them while the index was asked about
-  // (~400 ms on a large root) until the paint (BQJ-1b). Judged before
-  // `scanning` is set, with the app's own rule (treeScanId, treeScanComing).
-  const saidNothingWillLand = quiet && !!state.root && !treeScanId() && !treeScanComing();
+  // (~400 ms on a large root) until the paint (BQJ-1b). Only a scan of that
+  // folder (startScan names it first): a scan of another one brings no scan
+  // of this tree, and "scan this folder" stays true of it until that scan's
+  // own chrome takes the Dashboard. Judged before `scanning` is set, with the
+  // app's own rule (treeScanId, treeScanComing).
+  const saidNothingWillLand = quiet && !!state.root && state.scanningPath === state.root.path
+    && !treeScanId() && !treeScanComing();
   state.scanning = true;
   state.abortScan = null; // no stream yet — Stop before the request answers has no scanId
   state.scanGen++; // this scan's identity while its request is in flight

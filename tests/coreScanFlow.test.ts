@@ -1863,6 +1863,24 @@ test('BQJ-1b (2): a rescan pressed over a saved index\'s tree a Stop left on scr
     await started;
   }
 
+  // A scan of another folder over that tree: no scan of the folder on screen is coming, so its lines stay
+  // true as they are — "scan this folder" of Mail — until that scan's own chrome takes the Dashboard.
+  {
+    const { h } = held();
+    h.switchView('treemap');
+    const drawn = h.draws.length;
+    let pending = 0;
+    h.given.showListsPending = () => { pending++; };
+    const started = h.startScan('/Users/x/Desktop');
+    await turns();
+    assert.equal(h.state.scanning, true, 'control: the scan chrome has begun');
+    assert.equal(h.draws.length, drawn, 'the map of Mail is not drawn again for a scan of Desktop');
+    assert.equal(legendAt(h.draws.at(-1)!.at), LEGEND_FROM_INDEX, 'and its legend still says, truly, what would score Mail');
+    assert.equal(pending, 0, 'nor are the lists said to be on their way for a folder no scan is coming for');
+    await pressStop(h);
+    void started;
+  }
+
   // Control: over a tree a scan stands behind, nothing is re-entered — its views say nothing of "scan this folder".
   {
     const base = server({ roots: [] });
