@@ -2966,6 +2966,51 @@ test('owner\'s refinement: a folder\'s texture lies inside its own box — its l
 });
 
 /**
+ * Two nested folders, each with one file at one end and its own fill past it (review F2.5): H, 80×60 px, its file B down
+ * its left 30 px; V, 80×60 px, its file C across its top 24 px — in a top-level folder of its own, on a 200×160 map.
+ */
+function seamFolders() {
+  const W = 200, H = 160, pct = (v: number, of: number) => (v / of) * 100;
+  const node = (path: string, depth: number, dir: boolean, x: number, y: number, w: number, h: number): Tile =>
+    ({ name: path.slice(path.lastIndexOf('/') + 1), path, size: dir ? 1e10 : 5e9, type: dir ? 'dir' : 'file', depth, expanded: dir, x: pct(x, W), y: pct(y, H), w: pct(w, W), h: pct(h, H) });
+  return {
+    W, H, tiles: [node('/s', 1, true, 0, 0, 200, 160), node('/s/H', 2, true, 10, 10, 80, 60), node('/s/V', 2, true, 110, 10, 80, 60),
+      node('/s/H/B', 3, false, 10, 10, 30, 60), node('/s/V/C', 3, false, 110, 10, 80, 24)],
+  };
+}
+
+test('owner\'s refinement: a folder\'s texture seams its own fill every 4 px from its corner wherever that fill shows — past a file at one end of it too, down and across — never cut short by a file it has passed, at device pixel ratios 1 and 2, in both themes (review F2.5)', () => {
+  // The texture sweeps a folder's files in order of where they start, and lets each go once a seam has passed it; a sweep
+  // that kept them covered every later seam with each one it had passed, and the folder's fill beyond went back to a flat
+  // slab — every test passed, as their folders held no file or took the seams the painter laid as the ones expected.
+  const m = seamFolders();
+  for (const dpr of [1, 2]) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      const { raster, px } = rasterPaint(m.tiles, palette, m.W, m.H, undefined, undefined, false, dpr);
+      const fill = (f: Painted, y: number) => lerp(f.bg![0], f.bg![1], Math.max(0, Math.min(1, (y + 0.5 - f.y) / f.h)));
+      // What the raster shows at css px (x, y) — its first device pixel — against folder f's own fill there.
+      const off = (f: Painted, x: number, y: number) => contrast(raster.at(x * dpr, y * dpr), fill(f, y));
+      for (const [path, across] of [['/s/H', true], ['/s/V', false]] as const) {
+        const f = px.find((r) => r.n.path === path)!;
+        const where = `${theme}, dpr ${dpr}, ${path}`;
+        assert.ok(f.bg && f.tex && f.lw === 2, `${where}: control — the folder shows its own fill, seamed, in a 2 px band`);
+        // Clear of the file's line and the band by a px, where no line lies: H's columns 41 to 86 on row 44 (2 past a
+        // seam row), V's rows 35 to 66 on column 152 (2 past a seam column).
+        const wrong: string[] = [];
+        let seams = 0;
+        for (let v = across ? 41 : 35; v <= (across ? 86 : 66); v++) {
+          const x = across ? v : 152, y = across ? 44 : v, seam = (v - (across ? f.x : f.y)) % 4 === 0, c = off(f, x, y);
+          if (seam) seams++;
+          if (seam ? c < 1.15 : c > 1.03) wrong.push(`${x},${y}: ${fmt(c)}:1 from the fill (${seam ? 'a seam' : 'between seams'})`);
+        }
+        assert.ok(seams >= 8, `${where}: control — ${seams} seams looked at`);
+        assert.deepEqual(wrong.slice(0, 6), [], `${where}: a ${across ? 'column' : 'row'} every 4 px past the file is a seam, and only those (${wrong.length} wrong)`);
+      }
+    }
+  }
+});
+
+/**
  * A file A of 8 px and up beside a tile whose texture runs along the edge they share, the two parting by a little over
  * 3.3:1 on their cushions (review F1.5): `above`, A over a 5 px file B (its texture's top row along A's bottom: the
  * review's case); `beside`, A left of a 5 px file B (its texture's left column along A's right side, low on A, where
