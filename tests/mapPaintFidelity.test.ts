@@ -146,9 +146,7 @@ const MAP_NAMES = ['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT
   'tmToneFor', 'tmLumCache', 'tmLitAlpha', 'tmLeafKind', 'tmBandWidth', 'TM_TEXTURE_PX', 'TM_TEXTURE_PITCH', 'tmTextureContrast', 'tmTextureStops',
   'tmFolderPathOf', 'TM_OPPOSITE', 'tmSideAt', 'tmNeighbourhood', 'tmShown', 'tmBaseOf', 'tmFillShown', 'tmUnderBand', 'tmShareOk', 'tmClip',
   'tmEdgeOf', 'tmAcross', 'tmInside', 'tmBandAsks', 'tmMeets', 'tmOverlay', 'tmSeamParts', 'tmPartRect', 'tmMergeRuns', 'tmLeafLines', 'tmBarCorners',
-  // A line under a band that ends inside a device pixel keeps that pixel (review F2.3 of BQJ-2c-r).
-  'tmKeepEdgesUnderBands',
-  'tmLineMask', 'tmClearRuns', 'tmUncovered', 'tmFolderTexture', 'tmLeafTexture',
+  'tmLineMask', 'tmClearRuns', 'tmUncovered', 'tmFolderTexture', 'tmLeafTexture', 'tmSeamPx',
   // The map's ground, which a band beside a hollow or staged cell is toned against (review F1.5), and what a hollow
   // cell (review F2.1) and a staged block (review F1.4 of BQJ-2c-r) show on their outermost device pixel.
   'tmGroundRgb', 'tmCssRgba', 'tmOver', 'tmHollowEdge', 'TM_HOLLOW_WASH', 'TM_HOLLOW_DASH', 'tmStagedEdge',

@@ -1453,19 +1453,29 @@ function underTags(raster: ReturnType<typeof rasterCtx>, bare: ReturnType<typeof
   return { whole, lines, bandPx, shown };
 }
 
+/**
+ * How many device pixels a line or band `px` painter's px wide takes at device pixel ratio `dpr`: under a ratio of 1, `px`
+ * (the painter's px is a device pixel, review F3.6); from 1 up, the most whole device pixels no wider than `px` css px,
+ * and never none — at 150 % a 1 px line is one device pixel and a 3 px band four, at 175 % one and five (residual 4).
+ */
+const devicePx = (px: number, dpr: number) => (dpr < 1 ? px : Math.max(1, Math.floor(px * dpr + 1e-9)));
+/** A leaf's line in css px at device pixel ratio `dpr`: one painter's px, a whole number of device pixels (devicePx). */
+const lineCss = (dpr: number) => devicePx(1, dpr) / dpr;
 /** A leaf the owner's rule gives lines of its own: 8 px or more on each side. Under it, a texture. */
 const OUTLINED_PX = 8;
 /**
  * The band a folder is framed by, as the owner's refinement has it (20 Oct 2026): by the folder's thinner side and
  * depth — 3 px for a top-level folder 96 px or more across, 2 px from 32 px (from 48 px nested), 1 px from 8 px, and
- * none under 8 px — in css px at device pixel ratio `dpr`, and under a ratio of 1 in device pixels, sizes and widths
- * (review F3.6).
+ * none under 8 px — in css px at device pixel ratio `dpr`, a whole number of device pixels wide (devicePx: at 150 % a 1 px
+ * band is one device pixel, residual 4), and under a ratio of 1 in device pixels, sizes and widths (review F3.6).
  */
 const bandOf = (r: { w: number; h: number; n: Tile }, dpr = 1) => {
   const scale = Math.max(1, 1 / dpr), m = Math.min(r.w, r.h) / scale;
   if (m < OUTLINED_PX) return 0;
-  return (r.n.depth <= 1 ? (m >= 96 ? 3 : m >= 32 ? 2 : 1) : (m >= 48 ? 2 : 1)) * scale;
+  return devicePx(r.n.depth <= 1 ? (m >= 96 ? 3 : m >= 32 ? 2 : 1) : (m >= 48 ? 2 : 1), dpr) / dpr;
 };
+/** The folders of `px`, deepest first: the order pass 2.7 lays their bands in. */
+const tmFramesDeepestFirstOf = (px: Painted[]) => px.filter((p) => p.frame).sort((a, b) => b.n.depth - a.n.depth);
 /** A painted rectangle on whole pixels (the painter lays them there; a painter that did not is measured where its rectangles round to). */
 const whole = (r: Painted): Painted => ({ ...r, x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.x + r.w) - Math.round(r.x), h: Math.round(r.y + r.h) - Math.round(r.y) });
 
@@ -2503,12 +2513,15 @@ test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 
   // bound: no step bigger than the one before it, by more than half a point. The seam is the owner's faint texture
   // (1.4:1 at 7 px) below 8 px and his 3:1 line from 8 px, so the mean lightness steps most at 7→8 px: no more than
   // 7 L* there — half the old step — and under 2 L* at every other size.
-  // At 2× a 1 px seam is two device pixels of a tile's 2s: the same share. At 125, 150 and 175 % it covers a device pixel
-  // and part of the next, which `apart` counts whole: there the share is held as the seams' `ink` (tileLook), each pixel
-  // counted by how much of it a seam covers — the formula's share at every ratio, within a point and a half. A painter that
-  // laid each 8 px tile its own right and bottom line at those ratios put a 2 px grid back: 43.7% of the 8 px tiles' area
-  // at 150 %, against 26.4% for 7 px (review F3.2). On a page zoomed out (ratio 0.8, 0.667) the painter's px is a device
-  // pixel, so the grids are of tiles 5 to 18 device px, and a seam is one device pixel (review F3.6).
+  // At 2× a 1 px seam is two device pixels of a tile's 2s: the same share. At 125, 150 and 175 % a texture's seam covers a
+  // device pixel and part of the next, which `apart` counts whole: there the share is held as the seams' `ink` (tileLook),
+  // each pixel counted by how much of it a seam covers — the formula's share at every ratio, within a point and a half. A
+  // line there is a whole number of device pixels (devicePx: one at 125, 150 and 175 %, residual 4), so its share
+  // is the formula's for a seam that wide — thinner than the texture's at 125, 150 and 175 %, where the share falls at 8 px while
+  // the line's weight rises, and the mean lightness alone is held across that step. A painter that laid each 8 px tile its
+  // own right and bottom line at those ratios put a 2 px grid back: 43.7% of the 8 px tiles' area at 150 %, against 26.4%
+  // for 7 px (review F3.2). On a page zoomed out (ratio 0.8, 0.667) the painter's px is a device pixel, so the grids are of
+  // tiles 5 to 18 device px, and a seam is one device pixel (review F3.6).
   const grey = TAPER_COLOURS.find((c) => c.name === 'Reclaim not scored')!;
   const runs = [...TAPER_COLOURS.map((c) => ({ c, dpr: 1 })), { c: TAPER_COLOURS[1], dpr: 2 },
     ...[1.25, 1.5, 1.75].map((dpr) => ({ c: TAPER_COLOURS[1], dpr })), { c: grey, dpr: 1.5 }, { c: TAPER_COLOURS[1], dpr: 0.8 }, { c: grey, dpr: 0.667 }];
@@ -2524,13 +2537,17 @@ test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 
       }
       const where = `${theme}, ${c.name}, dpr ${dpr}`;
       const table = looks.map((l) => `${l.s}px ${(l.apart * 100).toFixed(1)}% (ink ${(l.ink * 100).toFixed(1)}%) ${l.dL.toFixed(1)}L*`).join(', ');
+      // A seam's width in painter's px: a texture's one, a line's a whole number of device pixels (lineCss).
+      const seam = (s: number) => (s >= OUTLINED_PX && dpr >= 1 ? lineCss(dpr) : 1);
       for (const l of looks) {
-        const want = 1 - ((l.s - 1) / l.s) ** 2;
+        const want = 1 - ((l.s - seam(l.s)) / l.s) ** 2;
         if (Number.isInteger(dpr)) assert.ok(Math.abs(l.apart - want) < 0.02, `${where}: ${l.s} px tiles — one 1 px seam each, ${(l.apart * 100).toFixed(1)}% of their pixels (${table})`);
         assert.ok(Math.abs(l.ink - want) < 0.015, `${where}: ${l.s} px tiles — one 1 px seam each, covering ${(l.ink * 100).toFixed(1)}% of their area, where one covers ${(want * 100).toFixed(1)}% (${table})`);
       }
       for (let k = 1; k < looks.length; k++) {
         const step = Math.abs(looks[k].ink - looks[k - 1].ink), before = k > 1 ? Math.abs(looks[k - 1].ink - looks[k - 2].ink) : Infinity;
+        // (Where the line is thinner than the texture's seam, its share steps down at 8 px.)
+        if (looks[k].s === OUTLINED_PX && seam(OUTLINED_PX) < 1 - 1e-9) continue;
         assert.ok(step <= before + 0.005, `${where}: from ${looks[k - 1].s} to ${looks[k].s} px the seams' share steps ${(step * 100).toFixed(1)} points, more than the step before it (${(before * 100).toFixed(1)}) — ${table}`);
         const dL = Math.abs(looks[k].dL - looks[k - 1].dL), bound = looks[k].s === OUTLINED_PX ? 7 : 2;
         assert.ok(dL <= bound, `${where}: from ${looks[k - 1].s} to ${looks[k].s} px the mean lightness steps ${dL.toFixed(1)} L*, over ${bound} — ${table}`);
@@ -2815,10 +2832,12 @@ function darkShare(raster: ReturnType<typeof rasterCtx>, box: { x: number; y: nu
   return n / (box.w * box.h);
 }
 
-test('owner\'s refinement: thinner frames — a corner as dense as /System/Library\'s is at most 25% folder band with at most 22% of its pixels under luminance 0.08, and a folder like corpus/Mail (58×52 px of 24 mailboxes of tiny files) at most 40% band, reading as the colour of what it holds — in both themes, at device pixel ratios 1, 1.5 and 2', () => {
+test('owner\'s refinement: thinner frames — a corner as dense as /System/Library\'s is at most 25% folder band with at most 22% of its pixels under luminance 0.08, and a folder like corpus/Mail (58×52 px of 24 mailboxes of tiny files) at most 40% band, reading as the colour of what it holds — in both themes, at device pixel ratios 1, 1.25, 1.5, 1.75 and 2 (residual 4)', () => {
+  // A line or a band is the most whole device pixels no wider than its css width: at 175 % two device pixels for a 1 px
+  // line or band — the nearest — put corpus/Mail at 42.5% band.
   const dense = denseCornerNodes();
   const mail = mailNodes();
-  for (const dpr of [1, 1.5, 2]) for (const [theme0, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+  for (const dpr of [1, 1.25, 1.5, 1.75, 2]) for (const [theme0, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
     const theme = `${theme0}, dpr ${dpr}`;
     const d = rasterPaint(dense, palette, DENSE_PX, DENSE_PX, undefined, undefined, false, dpr);
     const all = { x: 0, y: 0, w: DENSE_PX, h: DENSE_PX };
@@ -2834,9 +2853,9 @@ test('owner\'s refinement: thinner frames — a corner as dense as /System/Libra
     const m = rasterPaint(mail.tiles, palette, mail.W, mail.H, undefined, undefined, false, dpr);
     const inMail = m.px.filter((r) => r.n.path.startsWith('/c/Mail/'));
     const boxes = inMail.filter((r) => r.frame && r.n.depth === 2).length, files = inMail.filter((r) => !r.frame).length;
-    // (At 150 % a file of 1 css px covers under one css px² once laid on whole device pixels, and is not drawn: its
-    // folder's own fill stands for it.)
-    assert.ok(boxes === 24 && (dpr === 1.5 || files > 300), `${theme}: control — Mail's 24 mailboxes (${boxes}) and their tiny files (${files}) are drawn`);
+    // (At 125, 150 and 175 % a file of 1 css px can cover under one css px² once laid on whole device pixels, and is not
+    // drawn: its folder's own fill stands for it.)
+    assert.ok(boxes === 24 && (!Number.isInteger(dpr) || files > 300), `${theme}: control — Mail's 24 mailboxes (${boxes}) and their tiny files (${files}) are drawn`);
     const mb = bandShare(m.px, mail.mail);
     assert.ok(mb <= 0.4, `${theme}: corpus/Mail is ${(mb * 100).toFixed(1)}% band`);
     // It reads as what it holds: most of its pixels show the tiles — within 1.5:1 of the map with no line or band laid.
@@ -2845,8 +2864,9 @@ test('owner\'s refinement: thinner frames — a corner as dense as /System/Libra
     let same = 0;
     for (let y = mb2.y; y < mb2.y + mb2.h; y++) for (let x = mb2.x; x < mb2.x + mb2.w; x++) if (contrast(m.raster.at(x, y), bare.at(x, y)) < 1.5) same++;
     const shows = same / (mb2.w * mb2.h);
-    // At 150 % a 1 px band spans a device pixel and a half: the half it covers is a blend, neither band nor tile.
-    const bar = dpr === 1.5 ? 0.5 : 0.6;
+    // (At 150 % a 1 px band spanned a device pixel and a half, and the half it covered was a blend, neither band nor tile:
+    // half was asked there. Every band is now whole device pixels, residual 4.)
+    const bar = 0.6;
     assert.ok(shows >= bar, `${theme}: ${(shows * 100).toFixed(1)}% of corpus/Mail shows the colour of what it holds (${bar * 100}% asked)`);
   }
 });
@@ -2984,7 +3004,9 @@ test('owner\'s refinement at every ratio from 105 to 300 %: where a folder\'s ba
 });
 
 /**
- * A folder A filling a map 400 css px square, whose 3 css px band ends inside a device pixel at `dpr`, and along each of its
+ * A folder A filling a map 400 css px square, whose 3 css px band ended inside a device pixel at `dpr` while bands were a
+ * whole number of css px (it is now a whole number of device pixels, residual 4, so the row `k` is the first device row or
+ * column inside the band, and nothing is covered in part), and along each of its
  * sides a nested folder (one file filling it) and a file, each 50 device px across, whose edge lies under A's band on the
  * device pixel A's band covers in part, with a sliver of a file beyond it, under A's band (review F2.3 of BQJ-2c-r). Along
  * its bottom also a folder B, with a 2 css px band, whose edge lies under A's band too, holding a file G whose edge lies under
@@ -3028,52 +3050,39 @@ function underBandEdges(dpr: number) {
   return { tiles, W: 400, H: 400, k, box, colour: (n: Tile) => colours.find(([re]) => re.test(n.path))![1] };
 }
 
-test('owner\'s refinement at 125, 160 and 175 %: where a folder\'s band ends inside a device pixel, a nested folder\'s band or a file\'s line whose own edge lies under that band keeps that device pixel in its own colour, along each of the folder\'s four sides — unless a band between them covers it whole there, which keeps it — and nothing is laid again over the folder\'s band across a corner, in both themes (review F2.3 of BQJ-2c-r)', () => {
+test('owner\'s refinement at 125, 160 and 175 %: a folder\'s band ends on a whole device pixel — a 3 px band was 3.75, 4.8 and 5.25 device px there, and ended inside a device pixel it covered in part, over the line of a nested folder or a file whose edge lay under it — so every device pixel a band covers shows the band\'s own colour, whole, and every line, nested or a file\'s, reaches 3:1 against the tile beside it, in both themes (review F2.3 of BQJ-2c-r; residual 4)', () => {
+  // Laid over a nested folder's band or a file's line whose edge lay under it, a band that ended inside a device pixel
+  // covered that line's one whole device pixel in part too, and the line showed only as blends (2.58:1 at 160 %); the line
+  // was laid again on that row after the band (tmKeepEdgesUnderBands). A band is now a whole number of device pixels from a
+  // folder edge on a whole device pixel: no device pixel is covered in part, and nothing needs laying again.
   for (const dpr of [1.25, 1.6, 1.75]) {
     for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
       const where = `${theme}, dpr ${dpr}`;
       const u = underBandEdges(dpr);
       const { raster, px } = rasterPaint(u.tiles, palette, u.W, u.H, u.colour, undefined, false, dpr);
-      const by = (path: string) => px.find((r) => r.n.path === path)!;
-      // The rectangle of `rects` laid last over the device pixel (x, y), whole.
-      const lastOver = (rects: Band[], x: number, y: number) => [...rects].reverse()
-        .find((l) => l.x * dpr <= x + 1e-6 && (l.x + l.w) * dpr >= x + 1 - 1e-6 && l.y * dpr <= y + 1e-6 && (l.y + l.h) * dpr >= y + 1 - 1e-6);
-      const off: string[] = [];
+      const A = px.find((r) => r.n.path === '/u')!, B = px.find((r) => r.n.path === '/u/B')!;
+      assert.equal(A.lw! * dpr, devicePx(3, dpr), `${where}: control — A's band is ${devicePx(3, dpr)} device px, where 3 css px is ${3 * dpr}`);
+      // Every device pixel of every band, laid deepest folder first, shows the colour of the band laid last over it, whole —
+      // but under A's name tag, where no band is drawn.
+      const laid = tmFramesDeepestFirstOf(px).flatMap((r) => r.bands || []);
       let looked = 0;
-      // Along `side` of each tile, on the device row or column A's band covers in part: its own line's colour, in full.
-      const keeps = (path: string, side: 'top' | 'bottom' | 'left' | 'right', owner = path) => {
-        const [x0, y0, x1, y1] = u.box.get(path)!, vertical = side === 'left' || side === 'right', o = by(owner);
-        for (let t = (vertical ? y0 : x0) + 4; t < (vertical ? y1 : x1) - 4; t++) {
-          const [x, y] = vertical ? [u.k[side], t] : [t, u.k[side]];
-          const l = lastOver((o.frame ? o.bands : o.lines) || [], x, y);
-          looked++;
-          const got = raster.at(x, y);
-          if (!l) { off.push(`${path} ${side}: no line of ${owner} covers ${x},${y} whole`); continue; }
-          const want = rgba(l.rgb).slice(0, 3);
-          if (got.some((v, i) => Math.abs(v - want[i]) > 0.5) && off.length < 12) off.push(`${path} ${side} at ${x},${y}: ${got.map(Math.round)} where ${owner}'s line there is ${l.rgb}`);
+      const off: string[] = [];
+      for (const [i, b] of laid.entries()) {
+        for (let y = Math.round(b.y * dpr); y < Math.round((b.y + b.h) * dpr); y++) {
+          for (let x = Math.round(b.x * dpr); x < Math.round((b.x + b.w) * dpr); x++) {
+            if (raster.tagged(x, y)) continue;
+            // A band laid after this one over the same pixel shows there instead.
+            if (laid.slice(i + 1).some((l) => x >= Math.round(l.x * dpr) && x < Math.round((l.x + l.w) * dpr) && y >= Math.round(l.y * dpr) && y < Math.round((l.y + l.h) * dpr))) continue;
+            looked++;
+            const want = rgba(b.rgb).slice(0, 3), got = raster.at(x, y);
+            if (got.some((v, k) => Math.abs(v - want[k]) > 0.5) && off.length < 8) off.push(`${x},${y}: ${got.map(Math.round)} where the band there is ${b.rgb}`);
+          }
         }
-      };
-      for (const [path, side] of [['/u/Db', 'bottom'], ['/u/Lb', 'bottom'], ['/u/Dt', 'top'], ['/u/Lt', 'top'], ['/u/Dl', 'left'], ['/u/Ll', 'left'],
-        ['/u/Dr', 'right'], ['/u/Lr', 'right'], ['/u/C', 'left'], ['/u/C2', 'bottom']] as const) keeps(path, side);
-      // G's line lies under B's band there, which covers that row whole: B's band keeps it, laid again itself.
-      keeps('/u/B/G', 'bottom', '/u/B');
-      assert.ok(looked > 400, `${where}: control — ${looked} device pixels looked at`);
-      assert.deepEqual(off, [], `${where}: device pixels on the row or column A's band covers in part not in the colour of the line under it`);
-      // What is laid again lies on that row or column alone, a device pixel thick, and between A's bands across its ends: at
-      // A's corners those bands cover the row or column whole, and nothing is laid again over them.
-      const A = by('/u'), lw = A.lw!, again = (A.bands || []).filter((b) => Math.abs(Math.min(b.w, b.h) * dpr - 1) < 1e-6);
-      const sides = new Set<string>(), past: string[] = [];
-      for (const b of again) {
-        const vertical = b.h > b.w, at = Math.round((vertical ? b.x : b.y) * dpr);
-        const side = vertical ? (at === u.k.left ? 'left' : at === u.k.right ? 'right' : '') : (at === u.k.top ? 'top' : at === u.k.bottom ? 'bottom' : '');
-        if (!side) { past.push(`${b.x * dpr},${b.y * dpr} ${b.w * dpr}×${b.h * dpr} off the part-covered rows and columns`); continue; }
-        sides.add(side);
-        const [lo, hi] = vertical ? [b.y, b.y + b.h] : [b.x, b.x + b.w];
-        if (lo < lw - 1e-6 || hi > u.W - lw + 1e-6) past.push(`${side}: ${(lo * dpr).toFixed(2)} to ${(hi * dpr).toFixed(2)} device px, past A's bands across its ends at ${(lw * dpr).toFixed(2)} and ${((u.W - lw) * dpr).toFixed(2)}`);
       }
-      assert.equal(sides.size, 4, `${where}: control — laid again along A's ${[...sides].join(', ')} sides`);
-      assert.deepEqual(past, [], `${where}: laid again over A's bands across its corners, or off the rows and columns it covers in part`);
+      assert.ok(looked > 2000 * dpr && (B.bands || []).length > 0, `${where}: control — ${looked} band pixels looked at, B's bands among them`);
+      assert.deepEqual(off, [], `${where}: band pixels not the band's own colour — covered in part, a blend`);
       assert.deepEqual(measureEdges(raster, px, dpr).under, [], `${where}: lines under ${EDGE_BAR}:1 against a tile beside them`);
+      assert.deepEqual(partings(raster, px, dpr).unparted, [], `${where}: files not parted by ${EDGE_BAR}:1 from what lies beside them`);
     }
   }
 });
@@ -3130,12 +3139,13 @@ test('owner\'s refinement: a 1 px band laid in two parts tones its inner part pi
       const where = `${theme}, dpr ${dpr}`;
       const { raster, px } = rasterPaint(m.tiles, palette, m.W, m.H, m.colour, undefined, false, dpr);
       const f = px.find((r) => r.n.path === '/T/F')!;
-      // Control: F's band is 1 px, and its bottom band is laid in two parts — its last row and the one above — over the strips.
-      const last = f.y + f.h - 1, bottom = (f.bands || []).filter((b) => b.w > b.h && b.y > f.y + f.h / 2);
-      assert.ok(f.lw === 1 && bottom.some((b) => Math.abs(b.y - last) < 1e-6) && bottom.some((b) => Math.abs(b.y - (last - 1)) < 1e-6),
+      // Control: F's band is 1 px — a line's width, a whole number of device pixels — and its bottom band is laid in two parts,
+      // its last row and the one above, over the strips.
+      const t = lineCss(dpr), last = f.y + f.h - t, bottom = (f.bands || []).filter((b) => b.w > b.h && b.y > f.y + f.h / 2);
+      assert.ok(Math.abs(f.lw! - t) < 1e-9 && bottom.some((b) => Math.abs(b.y - last) < 1e-6) && bottom.some((b) => Math.abs(b.y - (last - t)) < 1e-6),
         `${where}: control — F's 1 px bottom band laid in two parts (${bottom.map((b) => `${b.x},${b.y} ${b.w}×${b.h} ${b.rgb}`).join('; ')})`);
       const e = measureEdges(raster, px, dpr);
-      const inner = e.edges.filter((x) => x.kind === 'frame' && x.r === f && x.tile[1] < x.line[1] && x.line[1] >= Math.floor((last - 1) * dpr));
+      const inner = e.edges.filter((x) => x.kind === 'frame' && x.r === f && x.tile[1] < x.line[1] && x.line[1] >= Math.floor((last - t) * dpr + 1e-6));
       assert.ok(inner.length > 5 * dpr, `${where}: control — ${inner.length} places F's inner bottom row meets the tiles above it`);
       assert.deepEqual(e.under, [], `${where}: lines under ${EDGE_BAR}:1 against a tile beside them`);
     }
@@ -3648,15 +3658,15 @@ test('owner\'s refinement: where a file\'s corner meets another tile\'s edge, th
   // a ratio of 1 a line is one device pixel, on the map as many device pixels across as at 100 %.
   const m = tJunction();
   for (const dpr of [0.5, 0.667, 0.8, 0.9, 1, 1.5, 2]) {
-    // A line's width: 1 css px, or a device pixel under a ratio of 1.
-    const k = Math.max(1, 1 / dpr), lw = (v: number) => Math.abs(v - 1 / Math.min(1, dpr)) < 1e-6;
+    // A line's width: a whole number of device pixels (lineCss), one under a ratio of 1.
+    const k = Math.max(1, 1 / dpr), lw = (v: number) => Math.abs(v - lineCss(dpr)) < 1e-6;
     for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
       const where = `${theme}, dpr ${dpr}`;
       const { raster, px } = rasterPaint(m.tiles, palette, m.W * k, m.H * k, m.colour, undefined, false, dpr);
       const b = px.find((r) => r.n.path === '/P/B')!;
-      const left = (b.lines || []).filter((l) => l.h > 1 / Math.min(1, dpr) && lw(l.w) && l.y <= b.y + 1e-6);
+      const left = (b.lines || []).filter((l) => l.h > lineCss(dpr) && lw(l.w) && l.y <= b.y + 1e-6);
       const top = (b.lines || []).find((l) => lw(l.h) && Math.abs(l.y - b.y) < 1e-6 && l.x <= b.x + 1e-6 && l.x + l.w > b.x);
-      assert.ok(left.some((l) => Math.abs(l.x - b.x) < 1e-6) && left.some((l) => Math.abs(l.x - (b.x + 1 / Math.min(1, dpr))) < 1e-6) && top,
+      assert.ok(left.some((l) => Math.abs(l.x - b.x) < 1e-6) && left.some((l) => Math.abs(l.x - (b.x + lineCss(dpr))) < 1e-6) && top,
         `${where}: control — B's left line laid in two parts, and its top line across the corner (${(b.lines || []).map((l) => `${l.x},${l.y} ${l.w}×${l.h} ${l.rgb}`).join('; ')})`);
       const want = rgba(top!.rgb).slice(0, 3), got = raster.at(Math.round(b.x * dpr), Math.round(b.y * dpr));
       assert.ok(got.every((v, i) => Math.abs(v - want[i]) <= 1), `${where}: B's corner pixel is its top line's ${want} (it shows ${got.map(Math.round)})`);
@@ -3700,10 +3710,10 @@ function tBar(orient: TOrient) {
 }
 
 test('owner\'s refinement: at a T-junction the line that runs on past a file\'s corner keeps the corner\'s device pixels — where a file\'s two lines meet at its corner in opposite tones, the one that runs on as the edge of the file beside, above or below it is laid again over the corner, so that file stays parted there — in each of the eight ways a T stands at a corner: the bar down the file\'s left or right side with the line across at its top or bottom, or along its top or bottom with the line down its left or right side — at device pixel ratios 0.5, 0.667, 0.8, 0.9, 1, 1.25, 1.5, 1.75 and 2, in both themes (review F3.5; F1.1 and F1.6 of BQJ-2c-r)', () => {
-  // At 125, 150 and 175 % the line across covers the corner's last row of device pixels in part; laid over the side line
+  // At 125, 150 and 175 % the line across covered the corner's last row of device pixels in part; laid over the side line
   // there it blended dark and light to the file's own grey, 1.5:1 from the file beside it (2 places at 125 %, 8 at 150 %, 5
-  // at 175 % on the realistic map coloured by Reclaim). Under a ratio of 1 a line is one device pixel, so the line across
-  // lies on the bar's corner pixel whole. Of the four ways the painter keeps by laying the bar again, the bar down the right
+  // at 175 % on the realistic map coloured by Reclaim). Every line is now a whole number of device pixels (residual 4), and
+  // under a ratio of 1 one device pixel, so the line across lies on the bar's corner pixels whole. Of the four ways the painter keeps by laying the bar again, the bar down the right
   // with the line across at the bottom was not painted, and a painter that laid it again everywhere but there passed every
   // test; under a ratio of 1 none was painted.
   const along = (l: Band, b: Painted, side: string) => (side === 'left' ? l.h > l.w && Math.abs(l.x - b.x) < 1e-6
@@ -3784,15 +3794,15 @@ test('owner\'s refinement: at a T-junction where the tile that runs on past a fi
           const along = (k: number): [number, number] => (kind === 'side' ? [dev(b.x), k] : [k, dev(b.y)]);
           const out = (k: number): [number, number] => (kind === 'side' ? [dev(b.x) - 1, k] : [k, dev(b.y) - 1]);
           // The corner's end of the bar, the first device pixel of A, and how many device pixels before the corner the line
-          // across — 1 css px wide from 100 % up — reaches.
+          // across — a line's width, a whole number of device pixels (lineCss) — reaches.
           const end = kind === 'side' ? dev(b.y + b.h) : dev(b.x + b.w);
           const start = kind === 'side' ? dev(a.y) : dev(a.x);
-          const reach = end - Math.floor(((kind === 'side' ? b.y + b.h : b.x + b.w) - 1) * dpr + 1e-6);
+          const reach = end - Math.floor(((kind === 'side' ? b.y + b.h : b.x + b.w) - lineCss(dpr)) * dpr + 1e-6);
           assert.equal(end - start, sliver, `${where}: control — A starts ${end - start} device px before B's corner`);
           assert.ok(contrast(raster.at(...out(start - 1)), raster.at(...out(start))) > EDGE_BAR,
             `${where}: control — the tiles beside the bar, A0 (${raster.at(...out(start - 1)).map(Math.round)}) and A (${raster.at(...out(start)).map(Math.round)}), part themselves`);
-          // B's bar as laid: the rectangles one line wide (1 css px from 100 % up) along its left edge, or its top edge.
-          const bar = (b.lines || []).filter((l) => (kind === 'side' ? Math.abs(l.x - b.x) < 1e-6 && l.w <= 1 + 1e-6 : Math.abs(l.y - b.y) < 1e-6 && l.h <= 1 + 1e-6));
+          // B's bar as laid: the rectangles one line wide (lineCss) along its left edge, or its top edge.
+          const bar = (b.lines || []).filter((l) => (kind === 'side' ? Math.abs(l.x - b.x) < 1e-6 && l.w <= lineCss(dpr) + 1e-6 : Math.abs(l.y - b.y) < 1e-6 && l.h <= lineCss(dpr) + 1e-6));
           assert.ok(new Set(bar.map((l) => l.rgb)).size >= 2, `${where}: control — B's bar is laid in two stretches (${bar.map((l) => `${l.x},${l.y} ${l.w}×${l.h} ${l.rgb}`).join('; ')})`);
           const weak: string[] = [];
           for (let k = end - Math.max(reach, sliver) - 1; k < end; k++) {
@@ -3967,6 +3977,44 @@ test('owner\'s outlines on a page zoomed out (device pixel ratio under 1): every
         assert.ok(p.looked > (what === 'the colour blocks' ? 500 : 2000) * dpr, `${where}: control — ${p.looked} places along the sides of leaves of 8 px and up`);
         assert.deepEqual(p.unparted, [], `${where}: leaves of 8 px and up not parted from what lies beside them by a line`);
       }
+    }
+  }
+});
+
+/** Ratios from 100 to 300 %: Windows' display scalings, a Retina screen, and browser zoom on each. */
+const RATIOS_UP = [1, 1.1, 1.15, 1.2, 1.25, 1.4, 1.5, 1.6, 1.75, 1.9, 2, 2.2, 2.25, 2.5, 2.7, 3];
+
+test('owner\'s outlines at every ratio from 100 to 300 %: every leaf\'s line and every folder\'s band is a whole number of device pixels on whole device pixels — the most no wider than its css width, never none, never a device pixel and part of the next — so no line is ever a blend: at 125, 150 and 175 % a 1 px line was one device pixel and part of the next (residual 4)', () => {
+  // At 150 % a 1 css px line covered a device pixel and half the next, and the half-covered pixel was a blend of the line
+  // and its tile; laid two whole device pixels wide instead (the nearest above), the dense corner's pixels under luminance
+  // 0.08 rose from 22% to 25.1%, over the owner's budget, and at 175 % two (the nearest) put corpus/Mail at 42.5% band,
+  // over his 40%. The painter takes the most whole device pixels no wider than the css width, and at least one: no line
+  // takes more of the map at any ratio than at 100 %, where the owner's budgets hold (the thinner-frames test).
+  const b = colourBlocks(EVERY_COLOUR, 16, 16), real = realisticNodes(), dense = denseCornerNodes();
+  const onDevice = (v: number, dpr: number) => Math.abs(v * dpr - Math.round(v * dpr)) < 1e-6;
+  for (const dpr of RATIOS_UP) {
+    for (const [what, tiles, W, H, colour] of [['the colour blocks', b.tiles, b.W, b.H, b.colour], ['the realistic map', real, REAL_W, REAL_H, undefined],
+      ['the dense corner', dense, DENSE_PX, DENSE_PX, undefined]] as const) {
+      const where = `${what}, dpr ${dpr}`;
+      const { px } = rasterPaint(tiles as Tile[], DARK, W, H, colour as ((n: Tile) => RGB) | undefined, undefined, false, dpr);
+      const line = devicePx(1, dpr);
+      const laid = px.flatMap((r) => [...(r.lines || []).map((l) => ({ r, l, band: false })), ...(r.bands || []).map((l) => ({ r, l, band: true }))]);
+      assert.ok(laid.length > 1000, `${where}: control — ${laid.length} lines and bands laid`);
+      const off = laid.filter(({ l }) => ![l.x, l.y, l.x + l.w, l.y + l.h].every((v) => onDevice(v, dpr)) || Math.min(l.w, l.h) * dpr < 1 - 1e-6)
+        .map(({ r, l, band }) => `${r.n.path}'s ${band ? 'band' : 'line'} at ${(l.x * dpr).toFixed(2)},${(l.y * dpr).toFixed(2)}, ${(l.w * dpr).toFixed(2)}×${(l.h * dpr).toFixed(2)} device px`);
+      assert.deepEqual(off.slice(0, 6), [], `${where}: ${off.length} lines or bands off whole device pixels, or under one`);
+      // Each leaf's line: one painter's px, as many whole device pixels as fit in it (a corner kept by the line across it
+      // as long as it is wide, tmBarCorners).
+      const thick = laid.filter(({ l, band }) => !band && Math.abs(Math.min(l.w, l.h) * dpr - line) > 1e-6 && Math.abs(l.w * dpr - line) > 1e-6 && Math.abs(l.h * dpr - line) > 1e-6)
+        .map(({ r, l }) => `${r.n.path}'s line ${(l.w * dpr).toFixed(2)}×${(l.h * dpr).toFixed(2)} device px, where a line is ${line}`);
+      assert.deepEqual(thick.slice(0, 6), [], `${where}: ${thick.length} leaf lines not ${line} device px wide`);
+      // Each folder's band: by its size in painter's px, 1 to 3, as many whole device pixels as fit in that.
+      const misbanded = px.filter((r) => r.frame).map((r) => {
+        const m = Math.min(Math.round((r.x + r.w) * dpr) - Math.round(r.x * dpr), Math.round((r.y + r.h) * dpr) - Math.round(r.y * dpr)) / dpr;
+        const painter = m < OUTLINED_PX - 1e-6 ? 0 : (r.n.depth <= 1 ? (m >= 96 - 1e-6 ? 3 : m >= 32 - 1e-6 ? 2 : 1) : (m >= 48 - 1e-6 ? 2 : 1));
+        return { r, want: painter ? devicePx(painter, dpr) : 0, got: (r.lw || 0) * dpr };
+      }).filter(({ want, got }) => Math.abs(want - got) > 1e-6).map(({ r, want, got }) => `${r.n.path}: ${got.toFixed(2)} device px of band where ${want} is asked`);
+      assert.deepEqual(misbanded.slice(0, 6), [], `${where}: ${misbanded.length} folders banded off their size`);
     }
   }
 });

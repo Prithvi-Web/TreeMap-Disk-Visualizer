@@ -779,11 +779,12 @@ function tmSetEmpty(text) {
  * thinner frames on small and nested folders so dense corners and small
  * folders stay bright, a faint texture where tiles are too small for an
  * outline, and every line at 3:1 against the tile on each of its sides. So:
- *   - every rectangle is laid on whole device pixels (tmSnap), so a 1 px line
- *     is one crisp line, never two half-strength ones that miss the bar; under
- *     a device pixel ratio of 1 (a page zoomed out) the painter's px is a
- *     device pixel, so a line is still one (tmLinePx), and the 8 px step, the
- *     band steps and the texture's pitch are taken in device pixels (tmPxScale);
+ *   - every rectangle is laid on whole device pixels (tmSnap), and every line
+ *     and band is a whole number of them wide (tmLinePx), so a 1 px line is one
+ *     crisp line, never a device pixel and part of the next that blends into
+ *     its tile; under a device pixel ratio of 1 (a page zoomed out) the
+ *     painter's px is a device pixel, and the 8 px step, the band steps and the
+ *     texture's pitch are taken in device pixels (tmPxScale);
  *   - two leaves of TM_DENSE_PX and up meet at ONE 1 px line, the right or
  *     lower leaf's own left or top edge (tmLeafLines): each such leaf draws its
  *     top and left edges, and its right and bottom edges only where what lies
@@ -858,13 +859,34 @@ function tmPxScale(dpr) {
   return Math.max(1, 1 / dpr);
 }
 /**
- * `px` painter's px of line, band or texture seam, in css px: `px` device
- * pixels under a device pixel ratio of 1, where a 1 css px line was part of a
- * device pixel, which the canvas blends with the tile beside it — 2.47:1 at
- * worst at 80 %, 1.95:1 at 67 %, under the owner's 3:1 (review F3.6) — and
- * `px` css px from 1 up, which lies over a whole device pixel at least.
+ * `px` painter's px of a line or a band, in css px, always a whole number of
+ * device pixels: `px` device pixels under a device pixel ratio of 1, where a
+ * 1 css px line was part of a device pixel, which the canvas blends with the
+ * tile beside it — 2.47:1 at worst at 80 %, 1.95:1 at 67 %, under the owner's
+ * 3:1 (review F3.6) — and from 1 up the most whole device pixels no wider than
+ * `px` css px, and never none: at 125, 150 and 175 % a 1 css px line was a
+ * device pixel and part of the next, blended with its tile there (residual 4).
+ * No line or band is wider than its css width, so it takes no more of the map
+ * at any ratio than at 100 %, where the owner's budgets are set: at 150 % two
+ * device pixels for a 1 px line put the dense corner's pixels under luminance
+ * 0.08 at 25.1 %, over his 22 %, and at 175 % two (the nearest) put corpus/Mail
+ * at 42.5 % band, over his 40 %. At 150 % a 1 px line is one device pixel, a
+ * 2 px band three and a 3 px band four; at 175 % one, three and five.
  */
 function tmLinePx(px, dpr) {
+  if (dpr < 1) return px * tmPxScale(dpr);
+  return Math.max(1, Math.floor(px * dpr + 1e-9)) / dpr;
+}
+/**
+ * `px` painter's px of a texture's seam, in css px: `px` device pixels under a
+ * device pixel ratio of 1, as a line (tmLinePx), and `px` css px from 1 up —
+ * at 125, 150 and 175 % a device pixel and part of the next, a fainter seam
+ * there, so a texture covers as much of its tile at every ratio as at 100 %:
+ * laid one device pixel thick, a folder's seams covered 25.3 % of it at
+ * 150 % where they cover 33.9 % at 100 % (review F3.4). A texture is no line:
+ * nothing is asked of it against the tile beside it.
+ */
+function tmSeamPx(px, dpr) {
   return px * tmPxScale(dpr);
 }
 /**
@@ -1265,8 +1287,8 @@ function tmInside(f, side, inset, g) {
   const across = side === 'left' || side === 'right' ? ['x', 'w'] : ['y', 'h'];
   const far = side === 'bottom' || side === 'right';
   const edge = tmSideAt(f, side) + (far ? -inset : inset); // where the row starts, from the side
-  // The middle of the first row of device pixels wholly past `edge`: at 125, 150 or 175 % a band's inner edge can fall
-  // inside a device pixel, which then shows the band and the tile both.
+  // The middle of the first row of device pixels wholly past `edge` (a band's inner edge lies on a whole device pixel,
+  // tmLinePx; an edge inside one would show the band and the tile both).
   const mid = far ? (Math.floor(edge * g.dpr + 1e-6) - 0.5) / g.dpr : (Math.ceil(edge * g.dpr - 1e-6) + 0.5) / g.dpr;
   const near = (g.kids.get(f.n.path) || [])
     .filter((c) => c[across[0]] < mid && c[across[0]] + c[across[1]] > mid && c[p] < hi - 1e-6 && c[p] + c[s] > lo + 1e-6)
@@ -1429,12 +1451,13 @@ function tmLeafLines(r, g) {
  * it — the edge between the tiles beyond, a T's bar: across r's side, a tile
  * that runs past r's top or bottom edge; across its top or bottom, one that
  * runs past its side — laid again over the corner on the device pixels it
- * covers whole, so it keeps them, as rectangles to lay after r's lines. At
- * 125, 150 and 175 % the line across covers the corner's last row of device
- * pixels in part, and laid over a side line there it blended a dark side line
- * with a light bottom line to the tile's own tone: the side line no longer
- * parted r from the file beside it, which runs on past r's corner (review
- * F3.5). Each stretch of the bar is laid again in its own colour, on its own
+ * covers whole, so it keeps them, as rectangles to lay after r's lines. A
+ * line across laid after the side line — r's lines are laid top, left, right,
+ * bottom — took the corner's device pixels: a light bottom line over a dark
+ * side line left the side line short of r's corner, no longer parting r from
+ * the file beside it, which runs on past it (review F3.5; when lines were 1
+ * css px at 125, 150 and 175 % the line across also blended with the side line
+ * on the row it covered in part). Each stretch of the bar is laid again in its own colour, on its own
  * device pixels: where the tile that runs on past the corner starts a device
  * pixel or two before it, the stretch facing that tile is shorter than the
  * line across reaches, and laid over every pixel the line across reaches it
@@ -1510,60 +1533,6 @@ function tmFrameBands(r, g) {
   return tmMergeRuns(out);
 }
 /**
- * Where a folder's band ends inside a device pixel — from a ratio of 1 up a
- * band is a whole number of css px, at 160 % 3 css px is 4.8 device px — it
- * covers that pixel in part, and laid over a nested folder's band or a file's
- * line whose own edge lies under it (a sliver of a file between their edges,
- * under the band) it covered the one whole device pixel that line had left in
- * part too: the line showed only as blends, a nested band 2.58:1 from the file
- * inside it at 160 % (review F2.3 of BQJ-2c-r). That row (or column) of device
- * pixels of each such line is laid again after the band, in the line's own
- * colour, on the band's folder's r.bands — so the SVG export and the lens,
- * which lay r.bands, lay it again too. A line another band between the two
- * already covers whole there stays under that band. Where a band ends on a
- * whole device pixel — at 100 and 200 %, and under a ratio of 1, where every
- * band is whole device pixels (tmLinePx) — nothing is laid again. Each
- * rectangle with lines is walked up through its folders (`near`,
- * tmNeighbourhood), once for each side.
- */
-function tmKeepEdgesUnderBands(px, near) {
-  const dpr = near.dpr, eps = 1e-6, again = new Map();
-  for (const d of px) {
-    const lines = d.frame ? d.bands : d.lines;
-    if (!lines || !lines.length) continue;
-    for (const side of ['top', 'bottom', 'left', 'right']) {
-      const far = side === 'bottom' || side === 'right', vertical = side === 'left' || side === 'right';
-      const edge = tmSideAt(d, side);
-      // The device rows (columns) a band between d and the folder covers whole along this side: from `whole` on, or before it.
-      let whole = far ? Infinity : -Infinity;
-      for (let f = near.folderOf.get(d); f; f = near.folderOf.get(f)) {
-        if (!(f.lw > 0)) continue;
-        const outer = tmSideAt(f, side), inner = far ? outer - f.lw : outer + f.lw, at = inner * dpr;
-        // Only a band d's edge lies under (its outer edge included) bears on d's line along this side.
-        if (far ? !(edge > inner + eps && edge <= outer + eps) : !(edge < inner - eps && edge >= outer - eps)) continue;
-        const k = Math.floor(at + eps); // the device row (column) f's band covers in part
-        if (Math.abs(at - Math.round(at)) > eps && (far ? k < whole : k >= whole)) {
-          // Between f's bands across the ends of this side: at f's corners those cover the row (column) whole.
-          const [lo, hi] = vertical ? [f.y + f.lw, f.y + f.h - f.lw] : [f.x + f.lw, f.x + f.w - f.lw];
-          for (const l of lines) {
-            // A line along this side (as long as it is thick, or longer) that covers row k whole.
-            const [o0, o1] = vertical ? [l.x, l.x + l.w] : [l.y, l.y + l.h], [a0, a1] = vertical ? [l.y, l.y + l.h] : [l.x, l.x + l.w];
-            if (a1 - a0 < o1 - o0 - eps || o0 * dpr > k + eps || o1 * dpr < k + 1 - eps) continue;
-            const b0 = Math.max(a0, lo), b1 = Math.min(a1, hi);
-            if (b1 <= b0 + eps) continue;
-            if (!again.has(f)) again.set(f, []);
-            again.get(f).push(vertical ? { x: k / dpr, y: b0, w: 1 / dpr, h: b1 - b0, rgb: l.rgb } : { x: b0, y: k / dpr, w: b1 - b0, h: 1 / dpr, rgb: l.rgb });
-          }
-        }
-        whole = far ? Math.min(whole, Math.ceil(at - eps)) : Math.max(whole, Math.floor(at + eps));
-      }
-    }
-  }
-  // In the order each rectangle laid its own lines: a line inside a folder whose band is laid again over the same row
-  // lies under that band there (`whole`) and is not laid again itself.
-  for (const [f, list] of again) f.bands = [...f.bands, ...list];
-}
-/**
  * The device pixels a line or a band lies on, and every pixel beside one, as a
  * mask `w`×`h` device px: a texture keeps clear of them, so no line ever meets
  * a texture's darker or lighter shade, only the fill it lies on.
@@ -1620,7 +1589,7 @@ function tmUncovered(lo, hi, cover) {
 }
 /**
  * A folder's texture over its own fill (J51): a seam one painter's px wide
- * (tmLinePx) every TM_TEXTURE_PITCH painter's px (tmPxScale) down and across
+ * (tmSeamPx) every TM_TEXTURE_PITCH painter's px (tmPxScale) down and across
  * its box, from its top-left corner, in
  * the shade of its cushion tmTextureContrast puts at that pitch — the files in
  * it too small to draw. Only where its own fill shows: never under what is
@@ -1630,7 +1599,7 @@ function tmUncovered(lo, hi, cover) {
  */
 function tmFolderTexture(r, kids, mask, mw, mh, dpr) {
   const inside = kids.get(r.n.path) || [];
-  const rects = [], pitch = TM_TEXTURE_PITCH * tmPxScale(dpr), unit = tmLinePx(1, dpr);
+  const rects = [], pitch = TM_TEXTURE_PITCH * tmPxScale(dpr), unit = tmSeamPx(1, dpr);
   // Seam by seam across the folder, what crosses each: the rectangles in it, swept in order of where they start,
   // so a folder of thousands is not searched whole for every seam.
   const seams = (p, s, q, t, seam) => {
@@ -1648,9 +1617,9 @@ function tmFolderTexture(r, kids, mask, mw, mh, dpr) {
   seams('y', 'h', 'x', 'w', (y, a, b, thick) => [a, y, b - a, thick]);
   return { stops: r.texStops, rects };
 }
-/** A small leaf's texture (tmLeafKind 'textured'): its top row and its left column below that, one painter's px wide (tmLinePx), clear of every line (`mask`). */
+/** A small leaf's texture (tmLeafKind 'textured'): its top row and its left column below that, one painter's px wide (tmSeamPx), clear of every line (`mask`). */
 function tmLeafTexture(r, mask, mw, mh, dpr) {
-  const t = tmLinePx(1, dpr);
+  const t = tmSeamPx(1, dpr);
   return {
     stops: r.texStops,
     rects: [[r.x, r.y, r.w, t], [r.x, r.y + t, t, r.h - t]].flatMap((q) => tmClearRuns(q, mask, mw, mh, dpr)),
@@ -2073,7 +2042,6 @@ function drawTreemap() {
   const near = tmNeighbourhood(px, kids, dpr, pw / dpr, ph / dpr, ground);
   for (const r of px) if (!r.frame && tmLeafKind(r) === 'edged') r.lines = tmLeafLines(r, near);
   for (const r of px) if (r.frame) r.bands = tmFrameBands(r, near);
-  tmKeepEdgesUnderBands(px, near);
   // Pass 2.4: the texture of each folder's own fill (J51) and of each leaf too
   // small for lines, part of its tile — clear of every line (tmLineMask), and
   // a folder's only where its own fill shows.
