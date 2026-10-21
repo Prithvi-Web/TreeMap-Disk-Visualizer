@@ -1991,7 +1991,7 @@ test('the welcome tour\'s cleanup wins are asked of the scan the tree on screen 
   let cardHoldsFocus = true;
   let landed: () => void = noop;
   const { fns, asks } = page<{ wins: () => Promise<void>; started: () => void; failed: () => void }>(
-    ['async function tourLoadWins(', 'function tourRejudgeWins(', 'function tourScanStarted(', 'function tourScanFailed(', 'subscribe(TOPIC.scan, () => {\n  if (tour.deferred'], {
+    ['async function tourLoadWins(', 'function tourRejudgeWins(', 'function tourScanStarted(', 'function tourScanFailed(', 'subscribe(TOPIC.scan, () => {\n  const landed'], {
       state, tour, tourRender: (takeFocus?: boolean) => { renders.push(String(tour.step)); focused.push(takeFocus); }, refusedFolderWords: () => '',
       subscribe: (_topic: unknown, fn: () => void) => { landed = fn; }, TOPIC: { scan: 'scan' }, switchView: noop, queueMicrotask: noop,
       $: () => ({ contains: () => cardHoldsFocus }), document: { activeElement: null },

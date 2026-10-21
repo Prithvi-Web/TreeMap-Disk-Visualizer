@@ -200,7 +200,10 @@ async function stopScan() {
   // scan — a first run, or a tree the index painted — and then the views take
   // their existing "no scan yet" branch, which openFromIndex relies on too.
   // An index paint that stood over older results gives them back first, with
-  // their scan (seventh browser pass, J06).
+  // their scan (seventh browser pass, J06). The Stop is recorded before: what
+  // putBackHeldTree tells every view is a Stop's, not a scan landing, and the
+  // tour moves only with a landing (BQR-1 item 12a).
+  state.lastStop = { gen, noted: null };
   putBackHeldTree();
   state.scanId = state.settledScanId || null;
   // With no tree on screen the start screen comes back naming the folder that

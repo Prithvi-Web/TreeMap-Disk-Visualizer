@@ -488,8 +488,14 @@ function tourRejudgeWins() {
 // A scan landing while the welcome card is up means the user took the step —
 // move with them. Any later scans leave the tour where it is. A tour held
 // back for someone who has scanned before starts here, at the map.
+// Only a scan that lands (BQR-1 item 12a): not the saved index's tree painted
+// while its scan is still to come (indexScanDue) — the person's Stop is on the
+// Dashboard, and the map put up over it, its card focused, turned the next
+// Enter, meant for Stop, into "Show me what I could free" — nor a Stop putting
+// an older tree back (stopScan records the Stop first): nothing landed.
 subscribe(TOPIC.scan, () => {
-  if (tour.deferred && !tour.active) {
+  const landed = !state.indexScanDue && !(state.lastStop && state.lastStop.gen === state.scanGen);
+  if (tour.deferred && !tour.active && landed) {
     tour.deferred = false;
     tour.active = true;
     tour.added = [];
@@ -501,7 +507,7 @@ subscribe(TOPIC.scan, () => {
   }
   if (!tour.active) return;
   if (tour.winsAwaitScan) { tourRejudgeWins(); return; }
-  if (!(tour.step === 'welcome' || tour.step === 'scanning')) return;
+  if (!landed || !(tour.step === 'welcome' || tour.step === 'scanning')) return;
   tour.step = 'map';
   // After finishScan's own synchronous switchView(state.view): the first scan
   // lands on the dashboard, and the card would narrate a map the user is not

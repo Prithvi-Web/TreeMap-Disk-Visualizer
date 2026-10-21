@@ -1074,6 +1074,52 @@ test('a tour held back for someone who has scanned before starts at the map when
   assert.deepEqual([not.tour.active, not.renders], [false, []], 'control: a tour nobody held back stays down');
 });
 
+test('the tour moves with a scan that lands — never with the saved index\'s tree painted while its scan is still to come, nor with a Stop putting an older tree back, so it never takes the view and focus from the Stop the person is about to press (BQR-1 item 12a)', async () => {
+  // Eighth and ninth browser passes (25 trials): a Stop pressed at the paint left focus on the map card's "Show me what
+  // I could free" — the index paint (finishScan's TOPIC.scan with no scan behind it) started the held-back tour, which
+  // put the map up over the Dashboard's Stop and focused its card, so the next Enter, meant for Stop, pressed it.
+  const at = INDEX.indexOf('subscribe(TOPIC.scan, () => {', INDEX.indexOf('function tourScanFailed('));
+  let depth = 0; let end = -1;
+  for (let i = INDEX.indexOf('{', at); i < INDEX.length && end === -1; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) end = i + 1;
+  }
+  const subscriber = `${INDEX.slice(at, end)});`;
+  const run = async (tourAt: { deferred: boolean; step: string; active: boolean }, scan: Record<string, unknown>) => {
+    const tour = { wins: [], winIx: 0, added: [], unknownReason: '', winsAwaitScan: false, ...tourAt };
+    const state = { root: { name: 'Mail' }, view: 'dashboard', scanGen: 7, lastStop: null, indexScanDue: false, ...scan };
+    const views: string[] = []; const renders: string[] = []; const landed: Array<() => void> = [];
+    new Function('subscribe', 'TOPIC', 'tour', 'state', 'switchView', 'tourRender', 'tourRejudgeWins', `'use strict'; ${subscriber}`)(
+      (_topic: string, fn: () => void) => { landed.push(fn); }, { scan: 'scan' }, tour, state,
+      (v: string) => { views.push(v); state.view = v; }, () => { renders.push(tour.step); }, () => {});
+    landed[0]();
+    await new Promise((r) => setImmediate(r)); // the subscriber's microtask
+    return { active: tour.active, deferred: tour.deferred, step: tour.step, views, renders };
+  };
+  const heldBack = { deferred: true, step: 'welcome', active: false };
+  const scanning = { deferred: false, step: 'scanning', active: true };
+  const PAINT = { indexScanDue: true };
+  const STOP = { lastStop: { gen: 7, noted: null } };
+  const LANDING = { lastStop: { gen: 6, noted: null } }; // the last Stop was of an earlier scan
+  assert.deepEqual(await run(heldBack, PAINT), { active: false, deferred: true, step: 'welcome', views: [], renders: [] },
+    'the index paint: a held-back tour stays held back — no map put up, no card, no focus taken');
+  assert.deepEqual(await run(scanning, PAINT), { active: true, deferred: false, step: 'scanning', views: [], renders: [] },
+    'and a scanning card stays the scanning card, the Dashboard and its Stop on screen');
+  assert.deepEqual(await run(heldBack, STOP), { active: false, deferred: true, step: 'welcome', views: [], renders: [] },
+    'a Stop putting the older tree back: nothing landed, so the tour waits');
+  assert.deepEqual(await run(scanning, STOP), { active: true, deferred: false, step: 'scanning', views: [], renders: [] },
+    'nor does a scanning card move to the map on a Stop (tourScanFailed takes it back to the welcome)');
+  assert.deepEqual(await run(heldBack, LANDING), { active: true, deferred: false, step: 'map', views: ['treemap'], renders: ['map'] },
+    'control: the scan lands — the held-back tour starts at the map');
+  assert.deepEqual(await run(scanning, LANDING), { active: true, deferred: false, step: 'map', views: ['treemap'], renders: ['map'] },
+    'control: and the scanning card moves to the map');
+
+  // stopScan says it is a Stop before it puts the older tree back: putBackHeldTree tells every view, the tour among them.
+  const stop = pageFn('async function stopScan(');
+  const said = stop.indexOf('state.lastStop = { gen, noted: null };');
+  assert.ok(said !== -1 && said < stop.indexOf('putBackHeldTree();'), 'the Stop is recorded before the older tree is put back');
+});
+
 test('the map card, its quick wins asked for while the scan behind the saved index\'s tree runs, says they appear once the scan finishes — no button that would ask again, and focus on Skip, never <body> (review F1.4)', () => {
   const card = tourCard('map');
   assert.ok(card.found['data-tour-wins'], 'control: the map card offers the quick wins');
