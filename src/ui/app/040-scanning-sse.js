@@ -397,6 +397,43 @@ function skeletonRows(n, h = 38, label = '') {
   return label ? `<div role="status" aria-label="${escapeHtml(label)}">${rows}</div>` : rows;
 }
 
+/* ── What a part of the page is working on, said aloud (review F3.9; BQR-1 item 11) ──
+   Labelled working rows carry their sentence as the aria-label of a
+   role="status" element that one innerHTML write puts on screen already
+   filled: a screen reader announces a live region's text as it changes, not
+   its label, and seldom a region that appears filled. So once a part has
+   written its rows into `host`, sayWorking reads their sentence and puts it in
+   the text of that part's own live region (`liveId`), there from the start: a
+   frame later, the region emptied first, so the same sentence said again is a
+   change too. Once the rows are gone — the part answered, failed or says it
+   waits — the region is emptied, so it never says the part is working after it
+   stopped. Newer rows given the same region take it over (the Clean Up sheet's
+   panes share one); parts that can work at the same time each have their own,
+   so each is said. The rows keep their label, so a part says what it is doing
+   when it is reached by reading. */
+const workingSaid = new Map(); // region id → { rows, watch }: the working rows it speaks for, and what sees them go
+function sayWorking(host, liveId) {
+  const live = $(liveId);
+  const rows = host && host.firstElementChild;
+  const sentence = rows && rows.getAttribute('aria-label');
+  if (!live || !sentence) return;
+  const before = workingSaid.get(liveId);
+  if (before) before.watch.disconnect();
+  const watch = new MutationObserver(() => {
+    if (rows.isConnected) return;
+    watch.disconnect();
+    workingSaid.delete(liveId);
+    live.textContent = '';
+  });
+  watch.observe(host, { childList: true });
+  workingSaid.set(liveId, { rows, watch });
+  live.textContent = '';
+  requestAnimationFrame(() => {
+    const now = workingSaid.get(liveId);
+    if (now && now.rows === rows) live.textContent = sentence;
+  });
+}
+
 /**
  * How much tree the instant open asks the index for.
  *

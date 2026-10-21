@@ -161,6 +161,8 @@
                     title="Re-read the disk layout — after plugging in a drive, for example">Refresh</button>
           </h2>
           <div id="topologyBody"><div class="muted">Reading disk layout…</div></div>
+          <!-- What this part is working on, said aloud: its loader puts the sentence of the working rows it writes here (sayWorking), beside the card's body, whose every write would take it away. -->
+          <div id="topologyWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
 
         <!-- B5: space still occupied by files that were deleted while a
@@ -173,6 +175,7 @@
                     title="Look again for space held by programs that won’t let go">Refresh</button>
           </h2>
           <div id="zombieBody"><div class="muted">Checking for held-up space…</div></div>
+          <div id="zombieWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
       </div>
 
@@ -220,6 +223,7 @@
         <div class="card glass" id="driveHealthCard">
           <h2><span data-icon="gauge"></span>Drive Health</h2>
           <div id="driveHealthBody"><div class="muted">Run a scan to check this drive.</div></div>
+          <div id="driveHealthWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
 
         <!-- C1 · What this data would cost to keep in the cloud, against a
@@ -235,6 +239,7 @@
             </select>
           </h2>
           <div id="costBody"><div class="muted">Run a scan to see what this data would cost to keep online.</div></div>
+          <div id="costWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
         <div class="card glass" id="budgetCard" hidden>
           <h2><span data-icon="gauge"></span>Folder Budgets</h2>

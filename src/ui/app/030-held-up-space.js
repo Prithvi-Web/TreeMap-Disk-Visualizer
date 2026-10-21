@@ -29,6 +29,7 @@ async function loadZombies() {
   // every painter settles it.
   if (!body.querySelector('.zh-row') && !body.querySelector('.zh-total')) {
     body.innerHTML = skeletonRows(2, 26, 'Checking for held-up space…');
+    if (typeof sayWorking === 'function') sayWorking(body, 'zombieWorking'); // and said aloud (guarded, as the disk layout's)
   } else {
     body.classList.add('fx-chart-loading');
   }

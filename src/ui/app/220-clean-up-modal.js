@@ -104,35 +104,8 @@ function cleanAskAgain(load) {
   if (cleanOpen()) void load();
 }
 
-/* ── What a pane is working on, said aloud (review F3.9) ──
-   A pane's working rows (skeletonRows) carry their sentence as the aria-label
-   of a role="status" element that one innerHTML write puts on screen already
-   filled: a screen reader announces a live region's text as it changes, not
-   its label, and seldom a region that appears filled. So the sentence, read
-   from those rows, goes into the text of the sheet's own live region,
-   #cleanWorking, there from the start: a frame after the rows are written,
-   the region emptied first, so the same sentence said again is a change too.
-   Once the rows are gone — the pane answered, failed or says it waits — the
-   region is emptied, so it never says a pane is working after it stopped. A
-   newer pane's rows take the region over. */
-let cleanWorkingFor = null; // { rows, watch }: the working rows the region speaks for, and what sees them go
-function cleanSayWorking(host) {
-  const live = $('cleanWorking');
-  const rows = host.firstElementChild;
-  const sentence = rows && rows.getAttribute('aria-label');
-  if (!live || !sentence) return;
-  if (cleanWorkingFor) cleanWorkingFor.watch.disconnect();
-  const watch = new MutationObserver(() => {
-    if (rows.isConnected) return;
-    watch.disconnect();
-    cleanWorkingFor = null;
-    live.textContent = '';
-  });
-  watch.observe(host, { childList: true });
-  cleanWorkingFor = { rows, watch };
-  live.textContent = '';
-  requestAnimationFrame(() => { if (cleanWorkingFor && cleanWorkingFor.rows === rows) live.textContent = sentence; });
-}
+/* What a pane is working on is said aloud in the sheet's own live region,
+   #cleanWorking, which its panes share: sayWorking (review F3.9). */
 
 /**
  * The tree on screen changed, or whether a scan of it is coming (TOPIC.scan;
@@ -224,8 +197,8 @@ async function loadVideoCandidates() {
   if (!scanId) { videoCandidates = []; host.innerHTML = cleanNoScanHtml('video'); return; }
   // Labelled, so assistive technology hears that the pane is working, not bare shimmer rows (review F3.9).
   host.innerHTML = skeletonRows(4, 34, 'Finding videos worth re-encoding…');
-  // And said aloud (cleanSayWorking). Guarded: a page reader may lift this function without it.
-  if (typeof cleanSayWorking === 'function') cleanSayWorking(host);
+  // And said aloud (sayWorking). Guarded: a page reader may lift this function without it.
+  if (typeof sayWorking === 'function') sayWorking(host, 'cleanWorking');
   let data;
   try { data = await api('/api/compression/candidates?scanId=' + scanId); }
   catch (e) {
@@ -423,7 +396,7 @@ async function loadEmptyFolders() {
   const scanId = treeScanId();
   if (!scanId) { emptyFolders = []; host.innerHTML = cleanNoScanHtml('empty'); updateCleanSummary(); return; }
   host.innerHTML = skeletonRows(4, 30, 'Finding empty folders…'); // labelled for assistive technology (review F3.9)
-  if (typeof cleanSayWorking === 'function') cleanSayWorking(host); // and said aloud (guarded, as above)
+  if (typeof sayWorking === 'function') sayWorking(host, 'cleanWorking'); // and said aloud (guarded, as above)
   try {
     const data = await api(`/api/empty-folders?scanId=${scanId}&ignoreJunk=${$('emptyIgnoreJunk').checked}`);
     if (seq !== loadEmptyFoldersSeq) return; // a newer load owns the list
@@ -1014,7 +987,7 @@ async function loadSmartSuggestions() {
   // Working from here, while its sections are asked before it: a notice that it waits for the scan stood
   // through their requests once the scan had finished (review F2.9) — in words assistive technology reads (F3.9).
   host.innerHTML = skeletonRows(4, 34, 'Working out what Clean Up suggests…');
-  if (typeof cleanSayWorking === 'function') cleanSayWorking(host); // and said aloud (guarded, as above)
+  if (typeof sayWorking === 'function') sayWorking(host, 'cleanWorking'); // and said aloud (guarded, as above)
   void renderGitRepos();
   const hadPackages = await renderPackageOrphans();
   const hadBrowsers = await renderBrowserProfiles();
@@ -1305,7 +1278,7 @@ async function runCleanFind(fetcher) {
   if (working) {
     cleanFindNoList = false;
     $('cleanResults').innerHTML = skeletonRows(4, 30, 'Finding files that match…'); // labelled (review F3.9)
-    if (typeof cleanSayWorking === 'function') cleanSayWorking($('cleanResults')); // and said aloud (guarded, as above)
+    if (typeof sayWorking === 'function') sayWorking($('cleanResults'), 'cleanWorking'); // and said aloud (guarded, as above)
   }
   /** Matched again against the scan the tree now on screen came from, the list still holding none of its own. */
   const askAgain = () => { if (working) cleanFindNoList = true; cleanAskAgain(() => runCleanFind(fetcher)); };

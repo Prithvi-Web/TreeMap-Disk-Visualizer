@@ -47,6 +47,7 @@ async function loadTopology() {
   // the standing rows with the loading veil instead; every painter settles it.
   if (!body.querySelector('.topo-disk')) {
     body.innerHTML = skeletonRows(3, 30, 'Reading disk layout…');
+    if (typeof sayWorking === 'function') sayWorking(body, 'topologyWorking'); // and said aloud (guarded: a page reader may lift this function without it)
   } else {
     body.classList.add('fx-chart-loading');
   }

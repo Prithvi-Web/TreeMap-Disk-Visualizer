@@ -4227,6 +4227,8 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
                     title="Re-read the disk layout — after plugging in a drive, for example">Refresh</button>
           </h2>
           <div id="topologyBody"><div class="muted">Reading disk layout…</div></div>
+          <!-- What this part is working on, said aloud: its loader puts the sentence of the working rows it writes here (sayWorking), beside the card's body, whose every write would take it away. -->
+          <div id="topologyWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
 
         <!-- B5: space still occupied by files that were deleted while a
@@ -4239,6 +4241,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
                     title="Look again for space held by programs that won’t let go">Refresh</button>
           </h2>
           <div id="zombieBody"><div class="muted">Checking for held-up space…</div></div>
+          <div id="zombieWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
       </div>
 
@@ -4286,6 +4289,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <div class="card glass" id="driveHealthCard">
           <h2><span data-icon="gauge"></span>Drive Health</h2>
           <div id="driveHealthBody"><div class="muted">Run a scan to check this drive.</div></div>
+          <div id="driveHealthWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
 
         <!-- C1 · What this data would cost to keep in the cloud, against a
@@ -4301,6 +4305,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
             </select>
           </h2>
           <div id="costBody"><div class="muted">Run a scan to see what this data would cost to keep online.</div></div>
+          <div id="costWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
         <div class="card glass" id="budgetCard" hidden>
           <h2><span data-icon="gauge"></span>Folder Budgets</h2>
@@ -4587,6 +4592,8 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <h2><span data-icon="pie"></span>Where the space actually went</h2>
       <div class="apps-info muted" id="missingInfo"></div>
       <div id="missingBody" aria-live="polite"><div class="muted">Run a scan to reconcile this disk.</div></div>
+      <!-- What this part is working on, said aloud: its loader puts the sentence of the working rows it writes here (sayWorking), beside the card's body, whose every write would take it away. -->
+      <div id="missingWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
   </section>
 
@@ -4745,6 +4752,8 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <span class="muted" id="calHint">Click a day to see those files on the treemap · drag across days for a range</span>
       </div>
       <div id="calBody"></div>
+      <!-- What this part is working on, said aloud: its loader puts the sentence of the working rows it writes here (sayWorking), beside the card's body, whose every write would take it away. -->
+      <div id="calWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
       <div class="cal-legend muted num" id="calLegend" hidden>
         <span>less</span><span class="cal-cell" data-lv="1"></span><span class="cal-cell" data-lv="2"></span><span class="cal-cell" data-lv="3"></span><span class="cal-cell" data-lv="4"></span><span>more</span>
         <span id="calMax" style="margin-left:10px;"></span>
@@ -4758,6 +4767,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div class="muted" style="margin-bottom:10px;">A rolling narrative of significant changes, noticed by scheduled scans. Attribution is honest: an app named only when the path says so, <b>you</b> only when TreeMap's own audit log matches, and otherwise exactly “an unidentified process”.</div>
       <div class="muted" id="journalPortable" role="status" style="margin-bottom:8px;" hidden></div>
       <div id="journalBody"><div class="muted">Reading the journal…</div></div>
+      <div id="journalWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
   </div>
     <div id="histPanelCompare" class="pane-fade" hidden>
@@ -4796,6 +4806,8 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         </div>
       </div>
       <div id="capsuleBody"></div>
+      <!-- What this part is working on, said aloud: its loader puts the sentence of the working rows it writes here (sayWorking), beside the card's body, whose every write would take it away. -->
+      <div id="capsuleWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
       <div id="capsuleEvents"></div>
     </div>
   </section>
@@ -4970,7 +4982,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div class="muted" id="cleanWhereNote" style="margin-bottom:6px;"></div>
       <!-- What a pane is working on, said aloud (review F3.9): a pane's working
            rows carry their sentence as a label, which a screen reader does not
-           announce. This region is in the sheet from the start; cleanSayWorking
+           announce. This region is in the sheet from the start; sayWorking
            puts the sentence in its text once the rows are on screen, and takes
            it out once they are gone. -->
       <div id="cleanWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -8554,6 +8566,7 @@ async function loadTopology() {
   // the standing rows with the loading veil instead; every painter settles it.
   if (!body.querySelector('.topo-disk')) {
     body.innerHTML = skeletonRows(3, 30, 'Reading disk layout…');
+    if (typeof sayWorking === 'function') sayWorking(body, 'topologyWorking'); // and said aloud (guarded: a page reader may lift this function without it)
   } else {
     body.classList.add('fx-chart-loading');
   }
@@ -8849,6 +8862,7 @@ async function loadZombies() {
   // every painter settles it.
   if (!body.querySelector('.zh-row') && !body.querySelector('.zh-total')) {
     body.innerHTML = skeletonRows(2, 26, 'Checking for held-up space…');
+    if (typeof sayWorking === 'function') sayWorking(body, 'zombieWorking'); // and said aloud (guarded, as the disk layout's)
   } else {
     body.classList.add('fx-chart-loading');
   }
@@ -9964,6 +9978,43 @@ function skeletonRows(n, h = 38, label = '') {
   // A labelled skeleton keeps the §3.5 loading copy for screen readers —
   // the rows are decoration, the sentence is the state.
   return label ? `<div role="status" aria-label="${escapeHtml(label)}">${rows}</div>` : rows;
+}
+
+/* ── What a part of the page is working on, said aloud (review F3.9; BQR-1 item 11) ──
+   Labelled working rows carry their sentence as the aria-label of a
+   role="status" element that one innerHTML write puts on screen already
+   filled: a screen reader announces a live region's text as it changes, not
+   its label, and seldom a region that appears filled. So once a part has
+   written its rows into `host`, sayWorking reads their sentence and puts it in
+   the text of that part's own live region (`liveId`), there from the start: a
+   frame later, the region emptied first, so the same sentence said again is a
+   change too. Once the rows are gone — the part answered, failed or says it
+   waits — the region is emptied, so it never says the part is working after it
+   stopped. Newer rows given the same region take it over (the Clean Up sheet's
+   panes share one); parts that can work at the same time each have their own,
+   so each is said. The rows keep their label, so a part says what it is doing
+   when it is reached by reading. */
+const workingSaid = new Map(); // region id → { rows, watch }: the working rows it speaks for, and what sees them go
+function sayWorking(host, liveId) {
+  const live = $(liveId);
+  const rows = host && host.firstElementChild;
+  const sentence = rows && rows.getAttribute('aria-label');
+  if (!live || !sentence) return;
+  const before = workingSaid.get(liveId);
+  if (before) before.watch.disconnect();
+  const watch = new MutationObserver(() => {
+    if (rows.isConnected) return;
+    watch.disconnect();
+    workingSaid.delete(liveId);
+    live.textContent = '';
+  });
+  watch.observe(host, { childList: true });
+  workingSaid.set(liveId, { rows, watch });
+  live.textContent = '';
+  requestAnimationFrame(() => {
+    const now = workingSaid.get(liveId);
+    if (now && now.rows === rows) live.textContent = sentence;
+  });
 }
 
 /**
@@ -28251,6 +28302,7 @@ async function loadCapsule() {
   // swept by the veil instead of vanishing.
   if (!host.querySelector('.cap-item') && !state.capsule.index) {
     host.innerHTML = skeletonRows(4, 38, 'Reading the Undo Vault…');
+    if (typeof sayWorking === 'function') sayWorking(host, 'capsuleWorking'); // and said aloud (guarded: a page reader may lift this function without it)
   }
   if (!gaugeEl.hidden) gaugeEl.classList.add('fx-chart-loading');
   try {
@@ -28573,6 +28625,7 @@ async function loadCalendar() {
   // Counting can run seconds on a big root — the §3.5 skeleton treatment,
   // with the sentence kept as the status label for screen readers.
   body.innerHTML = skeletonRows(4, 30, 'Counting bytes per day…');
+  if (typeof sayWorking === 'function') sayWorking(body, 'calWorking'); // and said aloud (guarded: a page reader may lift this function without it)
   try {
     const url = `/api/scan/${encodeURIComponent(scanId)}/calendar` + (calChannel === 'created' ? '?channel=created' : '');
     const data = await api(url);
@@ -28790,6 +28843,7 @@ async function loadJournal() {
   const body = $('journalBody');
   const seq = ++journalSeq;
   body.innerHTML = skeletonRows(6, 30, 'Reading the journal…');
+  if (typeof sayWorking === 'function') sayWorking(body, 'journalWorking'); // and said aloud (guarded, as the calendar's)
   try {
     const [data, portable] = await Promise.all([
       api('/api/journal?limit=200'),
@@ -28977,6 +29031,7 @@ async function loadMissing() {
     missingData = null;
     body.classList.remove('fx-chart-loading'); // the last scan's receipt may have been veiled: skeleton or veil, never both
     body.innerHTML = skeletonRows(3, 30, 'Reconciling this disk…');
+    if (typeof sayWorking === 'function') sayWorking(body, 'missingWorking'); // and said aloud (guarded: a page reader may lift this function without it)
     $('missingInfo').textContent = ''; // nor its caption: it names that scan's volume and "every line below" (review F2.1)
   }
   try {
@@ -36107,7 +36162,10 @@ async function loadCostEstimate(after) {
   // rescan) sweeps the standing prices with the veil instead of blanking
   // them. Both painters below settle it.
   if (host.querySelector('.cost-row')) host.classList.add('fx-chart-loading');
-  else host.innerHTML = skeletonRows(4, 22, 'Working out what keeping this online would cost…');
+  else {
+    host.innerHTML = skeletonRows(4, 22, 'Working out what keeping this online would cost…');
+    if (typeof sayWorking === 'function') sayWorking(host, 'costWorking'); // and said aloud (guarded: a page reader may lift this function without it)
+  }
   // U-16: the suggestions below are a walk of the whole tree. After a scan,
   // finishScan hands over the dashboard lists' own walks, and the card asks
   // only once those have answered rather than competing with them. A newer
@@ -36279,7 +36337,10 @@ async function loadDriveHealth() {
   // First paint loads as labelled skeleton rows; a reload sweeps the standing
   // card with the veil instead of blanking it. Every painter settles it.
   if (host.querySelector('.dh-kv') || host.querySelector('.dh-unknown')) host.classList.add('fx-chart-loading');
-  else host.innerHTML = skeletonRows(2, 22, 'Reading the drive’s own report…');
+  else {
+    host.innerHTML = skeletonRows(2, 22, 'Reading the drive’s own report…');
+    if (typeof sayWorking === 'function') sayWorking(host, 'driveHealthWorking'); // and said aloud (guarded, as the cost card's)
+  }
   let device = null;
   try {
     // The topology map (A5) already knows which physical drive holds this root.
@@ -39346,35 +39407,8 @@ function cleanAskAgain(load) {
   if (cleanOpen()) void load();
 }
 
-/* ── What a pane is working on, said aloud (review F3.9) ──
-   A pane's working rows (skeletonRows) carry their sentence as the aria-label
-   of a role="status" element that one innerHTML write puts on screen already
-   filled: a screen reader announces a live region's text as it changes, not
-   its label, and seldom a region that appears filled. So the sentence, read
-   from those rows, goes into the text of the sheet's own live region,
-   #cleanWorking, there from the start: a frame after the rows are written,
-   the region emptied first, so the same sentence said again is a change too.
-   Once the rows are gone — the pane answered, failed or says it waits — the
-   region is emptied, so it never says a pane is working after it stopped. A
-   newer pane's rows take the region over. */
-let cleanWorkingFor = null; // { rows, watch }: the working rows the region speaks for, and what sees them go
-function cleanSayWorking(host) {
-  const live = $('cleanWorking');
-  const rows = host.firstElementChild;
-  const sentence = rows && rows.getAttribute('aria-label');
-  if (!live || !sentence) return;
-  if (cleanWorkingFor) cleanWorkingFor.watch.disconnect();
-  const watch = new MutationObserver(() => {
-    if (rows.isConnected) return;
-    watch.disconnect();
-    cleanWorkingFor = null;
-    live.textContent = '';
-  });
-  watch.observe(host, { childList: true });
-  cleanWorkingFor = { rows, watch };
-  live.textContent = '';
-  requestAnimationFrame(() => { if (cleanWorkingFor && cleanWorkingFor.rows === rows) live.textContent = sentence; });
-}
+/* What a pane is working on is said aloud in the sheet's own live region,
+   #cleanWorking, which its panes share: sayWorking (review F3.9). */
 
 /**
  * The tree on screen changed, or whether a scan of it is coming (TOPIC.scan;
@@ -39466,8 +39500,8 @@ async function loadVideoCandidates() {
   if (!scanId) { videoCandidates = []; host.innerHTML = cleanNoScanHtml('video'); return; }
   // Labelled, so assistive technology hears that the pane is working, not bare shimmer rows (review F3.9).
   host.innerHTML = skeletonRows(4, 34, 'Finding videos worth re-encoding…');
-  // And said aloud (cleanSayWorking). Guarded: a page reader may lift this function without it.
-  if (typeof cleanSayWorking === 'function') cleanSayWorking(host);
+  // And said aloud (sayWorking). Guarded: a page reader may lift this function without it.
+  if (typeof sayWorking === 'function') sayWorking(host, 'cleanWorking');
   let data;
   try { data = await api('/api/compression/candidates?scanId=' + scanId); }
   catch (e) {
@@ -39665,7 +39699,7 @@ async function loadEmptyFolders() {
   const scanId = treeScanId();
   if (!scanId) { emptyFolders = []; host.innerHTML = cleanNoScanHtml('empty'); updateCleanSummary(); return; }
   host.innerHTML = skeletonRows(4, 30, 'Finding empty folders…'); // labelled for assistive technology (review F3.9)
-  if (typeof cleanSayWorking === 'function') cleanSayWorking(host); // and said aloud (guarded, as above)
+  if (typeof sayWorking === 'function') sayWorking(host, 'cleanWorking'); // and said aloud (guarded, as above)
   try {
     const data = await api(`/api/empty-folders?scanId=${scanId}&ignoreJunk=${$('emptyIgnoreJunk').checked}`);
     if (seq !== loadEmptyFoldersSeq) return; // a newer load owns the list
@@ -40256,7 +40290,7 @@ async function loadSmartSuggestions() {
   // Working from here, while its sections are asked before it: a notice that it waits for the scan stood
   // through their requests once the scan had finished (review F2.9) — in words assistive technology reads (F3.9).
   host.innerHTML = skeletonRows(4, 34, 'Working out what Clean Up suggests…');
-  if (typeof cleanSayWorking === 'function') cleanSayWorking(host); // and said aloud (guarded, as above)
+  if (typeof sayWorking === 'function') sayWorking(host, 'cleanWorking'); // and said aloud (guarded, as above)
   void renderGitRepos();
   const hadPackages = await renderPackageOrphans();
   const hadBrowsers = await renderBrowserProfiles();
@@ -40547,7 +40581,7 @@ async function runCleanFind(fetcher) {
   if (working) {
     cleanFindNoList = false;
     $('cleanResults').innerHTML = skeletonRows(4, 30, 'Finding files that match…'); // labelled (review F3.9)
-    if (typeof cleanSayWorking === 'function') cleanSayWorking($('cleanResults')); // and said aloud (guarded, as above)
+    if (typeof sayWorking === 'function') sayWorking($('cleanResults'), 'cleanWorking'); // and said aloud (guarded, as above)
   }
   /** Matched again against the scan the tree now on screen came from, the list still holding none of its own. */
   const askAgain = () => { if (working) cleanFindNoList = true; cleanAskAgain(() => runCleanFind(fetcher)); };

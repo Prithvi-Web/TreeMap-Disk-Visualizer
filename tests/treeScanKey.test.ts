@@ -1590,7 +1590,7 @@ test('each Clean Up pane\'s working sentence reaches the text of a live region t
   const c = cleanUpPage({ root: TREE, notes: new Map(), ...LANDED }, (url) => {
     const prefix = HELD.find((p) => url.startsWith(p));
     return prefix ? new Promise((resolve) => { held.get(prefix)!.push(() => resolve(cleanUpAnswer(url))); }) : cleanUpAnswer(url);
-  }, { decls: ['function cleanSayWorking('], given: { requestAnimationFrame: (fn: () => void) => frames.push(fn), MutationObserver: FakeObserver, cleanWorkingFor: null } });
+  }, { decls: ['function sayWorking('], given: { requestAnimationFrame: (fn: () => void) => frames.push(fn), MutationObserver: FakeObserver, workingSaid: new Map() } });
   /** The pane's requests answer, and what they paint is painted. */
   const answer = async (prefix: string) => { for (const fn of held.get(prefix)!.splice(0)) fn(); await turns(); };
   for (const id of ['smartResults', 'emptyResults', 'videoBody', 'cleanResults']) liveHost(c.$(id));

@@ -32,6 +32,7 @@ async function loadCapsule() {
   // swept by the veil instead of vanishing.
   if (!host.querySelector('.cap-item') && !state.capsule.index) {
     host.innerHTML = skeletonRows(4, 38, 'Reading the Undo Vault…');
+    if (typeof sayWorking === 'function') sayWorking(host, 'capsuleWorking'); // and said aloud (guarded: a page reader may lift this function without it)
   }
   if (!gaugeEl.hidden) gaugeEl.classList.add('fx-chart-loading');
   try {

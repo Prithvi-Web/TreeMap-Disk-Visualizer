@@ -493,7 +493,10 @@ async function loadCostEstimate(after) {
   // rescan) sweeps the standing prices with the veil instead of blanking
   // them. Both painters below settle it.
   if (host.querySelector('.cost-row')) host.classList.add('fx-chart-loading');
-  else host.innerHTML = skeletonRows(4, 22, 'Working out what keeping this online would cost…');
+  else {
+    host.innerHTML = skeletonRows(4, 22, 'Working out what keeping this online would cost…');
+    if (typeof sayWorking === 'function') sayWorking(host, 'costWorking'); // and said aloud (guarded: a page reader may lift this function without it)
+  }
   // U-16: the suggestions below are a walk of the whole tree. After a scan,
   // finishScan hands over the dashboard lists' own walks, and the card asks
   // only once those have answered rather than competing with them. A newer
@@ -665,7 +668,10 @@ async function loadDriveHealth() {
   // First paint loads as labelled skeleton rows; a reload sweeps the standing
   // card with the veil instead of blanking it. Every painter settles it.
   if (host.querySelector('.dh-kv') || host.querySelector('.dh-unknown')) host.classList.add('fx-chart-loading');
-  else host.innerHTML = skeletonRows(2, 22, 'Reading the drive’s own report…');
+  else {
+    host.innerHTML = skeletonRows(2, 22, 'Reading the drive’s own report…');
+    if (typeof sayWorking === 'function') sayWorking(host, 'driveHealthWorking'); // and said aloud (guarded, as the cost card's)
+  }
   let device = null;
   try {
     // The topology map (A5) already knows which physical drive holds this root.

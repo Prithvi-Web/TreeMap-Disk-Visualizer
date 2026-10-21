@@ -18,6 +18,8 @@
         <span class="muted" id="calHint">Click a day to see those files on the treemap · drag across days for a range</span>
       </div>
       <div id="calBody"></div>
+      <!-- What this part is working on, said aloud: its loader puts the sentence of the working rows it writes here (sayWorking), beside the card's body, whose every write would take it away. -->
+      <div id="calWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
       <div class="cal-legend muted num" id="calLegend" hidden>
         <span>less</span><span class="cal-cell" data-lv="1"></span><span class="cal-cell" data-lv="2"></span><span class="cal-cell" data-lv="3"></span><span class="cal-cell" data-lv="4"></span><span>more</span>
         <span id="calMax" style="margin-left:10px;"></span>
@@ -31,6 +33,7 @@
       <div class="muted" style="margin-bottom:10px;">A rolling narrative of significant changes, noticed by scheduled scans. Attribution is honest: an app named only when the path says so, <b>you</b> only when TreeMap's own audit log matches, and otherwise exactly “an unidentified process”.</div>
       <div class="muted" id="journalPortable" role="status" style="margin-bottom:8px;" hidden></div>
       <div id="journalBody"><div class="muted">Reading the journal…</div></div>
+      <div id="journalWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
   </div>
     <div id="histPanelCompare" class="pane-fade" hidden>

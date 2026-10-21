@@ -97,6 +97,7 @@ async function loadMissing() {
     missingData = null;
     body.classList.remove('fx-chart-loading'); // the last scan's receipt may have been veiled: skeleton or veil, never both
     body.innerHTML = skeletonRows(3, 30, 'Reconciling this disk…');
+    if (typeof sayWorking === 'function') sayWorking(body, 'missingWorking'); // and said aloud (guarded: a page reader may lift this function without it)
     $('missingInfo').textContent = ''; // nor its caption: it names that scan's volume and "every line below" (review F2.1)
   }
   try {

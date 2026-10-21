@@ -62,6 +62,7 @@ async function loadCalendar() {
   // Counting can run seconds on a big root — the §3.5 skeleton treatment,
   // with the sentence kept as the status label for screen readers.
   body.innerHTML = skeletonRows(4, 30, 'Counting bytes per day…');
+  if (typeof sayWorking === 'function') sayWorking(body, 'calWorking'); // and said aloud (guarded: a page reader may lift this function without it)
   try {
     const url = `/api/scan/${encodeURIComponent(scanId)}/calendar` + (calChannel === 'created' ? '?channel=created' : '');
     const data = await api(url);
@@ -279,6 +280,7 @@ async function loadJournal() {
   const body = $('journalBody');
   const seq = ++journalSeq;
   body.innerHTML = skeletonRows(6, 30, 'Reading the journal…');
+  if (typeof sayWorking === 'function') sayWorking(body, 'journalWorking'); // and said aloud (guarded, as the calendar's)
   try {
     const [data, portable] = await Promise.all([
       api('/api/journal?limit=200'),
