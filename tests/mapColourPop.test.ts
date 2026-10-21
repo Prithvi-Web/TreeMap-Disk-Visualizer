@@ -3718,7 +3718,7 @@ function linesLaid(px: Painted[]) {
   ]);
 }
 
-test('owner\'s outlines on a page zoomed out (device pixel ratio under 1): every line, band and texture seam is a whole number of device pixels, never part of one — which blends into its tile — as at 100 % and 2×; so on a page zoomed out to 90, 80, 67 or 50 % (device pixel ratio 0.9, 0.8, 0.667, 0.5) every line still reaches 3:1 against the tile on each side and every two leaves of 8 px and up are parted, in both themes (review F3.6)', () => {
+test('owner\'s outlines on a page zoomed out (device pixel ratio under 1): every line, band and texture seam is a whole number of device pixels, never part of one — which blends into its tile — as at 100 % and 2×; so on a page zoomed out to 90, 80, 67 or 50 % (device pixel ratio 0.9, 0.8, 0.667, 0.5) every line still reaches 3:1 against the tile on each side, every two leaves of 8 px and up are parted, and a leaf under 8 device px takes no top highlight, in both themes (review F3.6; F2.4 of BQJ-2c-r)', () => {
   // A line was 1 css px wide at every ratio: under 1 that is part of a device pixel, which the canvas blends with the tile —
   // 2.47:1 at worst at 80 %, 1.95:1 at 67 %, under the owner's 3:1. Under a ratio of 1 the painter's px is now a device
   // pixel: a line is one, a band one to three, a seam one, and the 8 px step, the band steps and the texture's pitch are
@@ -3754,6 +3754,20 @@ test('owner\'s outlines on a page zoomed out (device pixel ratio under 1): every
         .filter(({ r, l }) => ![l.x0, l.x1, l.y - l.width / 2, l.y + l.width / 2].every((v) => onDevice(v, dpr)) || l.y - l.width / 2 < r.y + l.width - 1e-9)
         .map(({ r, l }) => `${r.n.path}: from ${(l.x0 * dpr).toFixed(2)} to ${(l.x1 * dpr).toFixed(2)}, ${((l.y - l.width / 2) * dpr).toFixed(2)} to ${((l.y + l.width / 2) * dpr).toFixed(2)} device px`);
       assert.deepEqual(litOff.slice(0, 6), [], `${what}, dpr ${dpr}: ${litOff.length} highlights off whole device pixels, or over the top line`);
+    }
+    if (dpr >= 1) continue;
+    // A leaf under 8 device px takes no top highlight, as one under 8 px takes none at 100 %: the step is taken in device
+    // pixels (tmLeafEdged), as the lines' is (tmLeafKind). Leaves 8 css px square in the layout are 4 to 7.2 device px at these
+    // ratios, laid 4 to 8 across on whole device pixels; a step taken in css px lit 1,125 of their 1,197 at 50 %, and leaves 7 device
+    // px across at 80 % and 6 at 67 % (review F2.4 of BQJ-2c-r). (At 90 % no leaf is 8 css px or more and under 8 device px.)
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      const e = colourBlocks(EVERY_COLOUR, 8, 8);
+      const { px } = rasterPaint(e.tiles, palette, e.W, e.H, e.colour, undefined, false, dpr);
+      const dev = (v: number) => Math.round(v * dpr);
+      const small = px.filter((r) => !r.frame && Math.min(dev(r.x + r.w) - dev(r.x), dev(r.y + r.h) - dev(r.y)) < OUTLINED_PX);
+      assert.ok(small.length > 1000, `8 px colour blocks, ${theme}, dpr ${dpr}: control — ${small.length} leaves under ${OUTLINED_PX} device px`);
+      const litSmall = small.filter((r) => r.lit || r.litSeen).map((r) => `${r.n.path} (${dev(r.x + r.w) - dev(r.x)}×${dev(r.y + r.h) - dev(r.y)} device px)`);
+      assert.deepEqual(litSmall.slice(0, 6), [], `8 px colour blocks, ${theme}, dpr ${dpr}: ${litSmall.length} leaves under ${OUTLINED_PX} device px with a top highlight`);
     }
   }
   for (const dpr of [0.5, 0.667, 0.8, 0.9]) {
