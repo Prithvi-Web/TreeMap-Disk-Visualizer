@@ -3458,6 +3458,73 @@ test('owner\'s refinement: at a T-junction the line that runs on past a file\'s 
   }
 });
 
+/**
+ * A T-junction whose tile that runs on past the corner starts only `sliver` device pixels before it (review F1.3 of
+ * BQJ-2c-r), on a 100 by 100 css px map at device pixel ratio `dpr`, every edge on a whole device pixel. `side`: a file E
+ * down the map's left; beside it two tiles 6 px wide, too narrow for lines — a dark grey A0 above and a light A below (or,
+ * `swapped`, a light A0 and a dark A), A's top `sliver` device pixels above B's bottom edge, and A running on to the map's
+ * foot; and B, a grey file 60 by 12 px, beside them, so B's left line is the bar in two stretches — light beside the dark
+ * tile, dark beside the light one; below B a dark file C too short for lines, so B's bottom line, the stem, is light, and D
+ * below C. `across`: the same turned — A0 and A 6 px tall across the top, A starting `sliver` device pixels before B's right
+ * edge and running on to the map's right edge; B 60 by 12 px below them, its top line the bar; a dark file C too narrow for
+ * lines at B's right, so B's right line, the stem, is light; D right of C and E below.
+ */
+function sliverBar(kind: 'side' | 'across', sliver: number, dpr: number, swapped = false) {
+  const q = (v: number) => Math.round(v * dpr) / dpr;
+  const dark: RGB = [60, 60, 60], light: RGB = [200, 200, 190];
+  const rgb: Record<string, RGB> = { A0: swapped ? light : dark, A: swapped ? dark : light, B: [103, 109, 106], C: [30, 32, 34], D: [200, 120, 60], E: [120, 160, 200] };
+  const t = (name: string, x: number, y: number, w: number, h: number): Tile => ({ name, path: `/t/${name}`, size: 1e9, type: 'file', depth: 1, expanded: false, x, y, w, h });
+  const six = q(6), b0 = q(34), bEnd = q(12), at = bEnd - sliver / dpr;
+  const tiles = kind === 'side'
+    ? [t('E', 0, 0, b0, 100), t('A0', b0, 0, six, at), t('A', b0, at, six, 100 - at), t('B', b0 + six, 0, 100 - b0 - six, bEnd), t('C', b0 + six, bEnd, 100 - b0 - six, q(5)), t('D', b0 + six, bEnd + q(5), 100 - b0 - six, 100 - bEnd - q(5))]
+    : [t('A0', 0, 0, q(60) - sliver / dpr, six), t('A', q(60) - sliver / dpr, 0, 100 - q(60) + sliver / dpr, six), t('B', 0, six, q(60), bEnd), t('C', q(60), six, q(5), bEnd), t('D', q(65), six, 100 - q(65), bEnd), t('E', 0, six + bEnd, 100, 100 - six - bEnd)];
+  return { tiles, colour: (n: Tile) => rgb[n.name] };
+}
+
+test('owner\'s refinement: at a T-junction where the tile that runs on past a file\'s corner starts only a device pixel or two before it, the line that runs on keeps the corner\'s device pixels in the colour of each of its own stretches — dark beside a light tile, light beside a dark one — so the file stays parted by 3:1 on every device pixel of its side the line across reaches, beside the tile that runs on and the tile before it, whichever of the two is the dark one, at device pixel ratios 1, 1.25, 1.5, 1.75, 2 and 2.2, in both themes (review F1.3 of BQJ-2c-r)', () => {
+  // tmBarCorners laid the stretch of the bar facing the tile that runs on past the corner over every device pixel the line
+  // across reaches, though that stretch was one device pixel long: beside the dark tile before it the bar was dark too,
+  // 1.67:1 at 125 % where its own stretch stands 7.75:1. Swapped, the stretch before the corner is the dark one, and the line
+  // across, light, covers it whole from 200 %: it is laid again too, in its own colour. partings and edgesOf leave out the
+  // pixels at each end of a line, where this lies, so the pixels are measured here one by one.
+  for (const [kind, swapped] of [['side', false], ['side', true], ['across', false], ['across', true]] as const) {
+    for (const sliver of [1, 2]) {
+      for (const dpr of [1, 1.25, 1.5, 1.75, 2, 2.2]) {
+        for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+          const where = `the ${kind} bar${swapped ? ', swapped' : ''}, ${sliver} device px of the tile that runs on, ${theme}, dpr ${dpr}`;
+          const m = sliverBar(kind, sliver, dpr, swapped);
+          const { raster, px } = rasterPaint(m.tiles, palette, 100, 100, m.colour, undefined, false, dpr);
+          const dev = (v: number) => Math.round(v * dpr);
+          const b = px.find((r) => r.n.name === 'B')!, a = px.find((r) => r.n.name === 'A')!;
+          // Along the bar: B's left column, from B's top down (side), or B's top row, from B's left across (across); and the
+          // tile beside each of its pixels, one pixel out.
+          const along = (k: number): [number, number] => (kind === 'side' ? [dev(b.x), k] : [k, dev(b.y)]);
+          const out = (k: number): [number, number] => (kind === 'side' ? [dev(b.x) - 1, k] : [k, dev(b.y) - 1]);
+          // The corner's end of the bar, the first device pixel of A, and how many device pixels before the corner the line
+          // across — 1 css px wide from 100 % up — reaches.
+          const end = kind === 'side' ? dev(b.y + b.h) : dev(b.x + b.w);
+          const start = kind === 'side' ? dev(a.y) : dev(a.x);
+          const reach = end - Math.floor(((kind === 'side' ? b.y + b.h : b.x + b.w) - 1) * dpr + 1e-6);
+          assert.equal(end - start, sliver, `${where}: control — A starts ${end - start} device px before B's corner`);
+          assert.ok(contrast(raster.at(...out(start - 1)), raster.at(...out(start))) > EDGE_BAR,
+            `${where}: control — the tiles beside the bar, A0 (${raster.at(...out(start - 1)).map(Math.round)}) and A (${raster.at(...out(start)).map(Math.round)}), part themselves`);
+          // B's bar as laid: the rectangles one line wide (1 css px from 100 % up) along its left edge, or its top edge.
+          const bar = (b.lines || []).filter((l) => (kind === 'side' ? Math.abs(l.x - b.x) < 1e-6 && l.w <= 1 + 1e-6 : Math.abs(l.y - b.y) < 1e-6 && l.h <= 1 + 1e-6));
+          assert.ok(new Set(bar.map((l) => l.rgb)).size >= 2, `${where}: control — B's bar is laid in two stretches (${bar.map((l) => `${l.x},${l.y} ${l.w}×${l.h} ${l.rgb}`).join('; ')})`);
+          const weak: string[] = [];
+          for (let k = end - Math.max(reach, sliver) - 1; k < end; k++) {
+            const c = contrast(raster.at(...along(k)), raster.at(...out(k)));
+            if (c < EDGE_BAR) weak.push(`${along(k)}: ${raster.at(...along(k)).map(Math.round)} beside ${k < start ? 'A0' : 'A'}'s ${raster.at(...out(k)).map(Math.round)}, ${fmt(c)}:1`);
+          }
+          assert.deepEqual(weak, [], `${where}: B's bar parts it from the tile beside it on every device pixel the line across reaches`);
+          assert.deepEqual(partings(raster, px, dpr).unparted, [], `${where}: files not parted by ${EDGE_BAR}:1 from what lies beside them`);
+          assert.deepEqual(measureEdges(raster, px, dpr).under, [], `${where}: lines under ${EDGE_BAR}:1 against a tile beside them`);
+        }
+      }
+    }
+  }
+});
+
 /* ── On the device's own pixels: Retina (2) and 150 % (1.5) ── */
 
 test('tmSnap lays a coordinate on the nearest whole device pixel — at device pixel ratios 1, 1.25, 1.5 and 2 (review F1.7)', () => {

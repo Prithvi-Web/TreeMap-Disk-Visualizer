@@ -1383,7 +1383,13 @@ function tmLeafLines(r, g) {
  * pixels in part, and laid over a side line there it blended a dark side line
  * with a light bottom line to the tile's own tone: the side line no longer
  * parted r from the file beside it, which runs on past r's corner (review
- * F3.5). `outer` holds each side's outer part as laid, `reach` how far in
+ * F3.5). Each stretch of the bar is laid again in its own colour, on its own
+ * device pixels: where the tile that runs on past the corner starts a device
+ * pixel or two before it, the stretch facing that tile is shorter than the
+ * line across reaches, and laid over every pixel the line across reaches it
+ * covered the next stretch too — dark beside a dark tile, 1.67:1 at 125 %
+ * where that stretch's own light shade stands 7.75:1 (review F1.3 of
+ * BQJ-2c-r). `outer` holds each side's outer part as laid, `reach` how far in
  * from its edge each side's line reaches.
  */
 function tmBarCorners(r, outer, reach, g) {
@@ -1405,16 +1411,21 @@ function tmBarCorners(r, outer, reach, g) {
         ? (across === 'top' ? Math.abs(q.y - end) < eps : Math.abs(q.y + q.h - end) < eps)
         : (side === 'left' ? Math.abs(q.x - end) < eps : Math.abs(q.x + q.w - end) < eps));
       if (!l) continue;
-      // Its whole device pixels across it, over every device pixel the stem's line reaches along it.
-      const [a0, a1] = vertical ? [l.x, l.x + l.w] : [l.y, l.y + l.h];
-      const lo = Math.ceil(a0 * dpr - eps), hi = Math.floor(a1 * dpr + eps);
+      // Every device pixel the stem's line reaches along the bar, [b0, b1).
       const edge = tmSideAt(r, stem), inward = stem === 'top' || stem === 'left' ? 1 : -1;
       const s0 = Math.round(edge * dpr), s1 = inward > 0 ? Math.ceil((edge + reach[stem]) * dpr - eps) : Math.floor((edge - reach[stem]) * dpr + eps);
       const [b0, b1] = inward > 0 ? [s0, s1] : [s1, s0];
-      if (hi <= lo || b1 <= b0) continue;
-      out.push(vertical
-        ? { x: lo / dpr, y: b0 / dpr, w: (hi - lo) / dpr, h: (b1 - b0) / dpr, rgb: l.rgb }
-        : { x: b0 / dpr, y: lo / dpr, w: (b1 - b0) / dpr, h: (hi - lo) / dpr, rgb: l.rgb });
+      // Each stretch of the bar there, on its whole device pixels across it and along it within [b0, b1).
+      for (const q of outer[bar]) {
+        const [a0, a1] = vertical ? [q.x, q.x + q.w] : [q.y, q.y + q.h];
+        const [c0, c1] = vertical ? [q.y, q.y + q.h] : [q.x, q.x + q.w];
+        const lo = Math.ceil(a0 * dpr - eps), hi = Math.floor(a1 * dpr + eps);
+        const from = Math.max(b0, Math.round(c0 * dpr)), to = Math.min(b1, Math.round(c1 * dpr));
+        if (hi <= lo || to <= from) continue;
+        out.push(vertical
+          ? { x: lo / dpr, y: from / dpr, w: (hi - lo) / dpr, h: (to - from) / dpr, rgb: q.rgb }
+          : { x: from / dpr, y: lo / dpr, w: (to - from) / dpr, h: (hi - lo) / dpr, rgb: q.rgb });
+      }
     }
   }
   return out;
