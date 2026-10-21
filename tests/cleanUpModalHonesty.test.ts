@@ -65,6 +65,19 @@ function runnable(body: string, deps: Record<string, unknown>, args = ''): (...a
   return new Function(...keys, `return async function (${args}) {${body}\n};`)(...keys.map((k) => deps[k]));
 }
 
+/**
+ * What a Clean Up pane reads since the eighth browser pass (K04), beside its own collaborators: the scan the
+ * tree on screen came from — here the scan `state` names, none running — and the sheet's bookkeeping for a tree
+ * no scan stands behind or another tree come on screen, which these tests do not reach (tests/treeScanKey.test.ts
+ * drives those).
+ */
+function sheet(scanId = 's1'): Record<string, unknown> {
+  return {
+    treeScanId: () => scanId, cleanWaiting: new Set(), cleanFindWaiting: null, loadVideoSeq: 0,
+    cleanAskAgain: () => assert.fail('no other tree came on screen'), cleanNoScanHtml: () => assert.fail('a scan stands behind the tree'),
+  };
+}
+
 interface El { innerHTML: string; textContent: string; checked: boolean; disabled: boolean; hidden: boolean; style: Record<string, string>; classList: { add(c: string): void; remove(c: string): void } }
 function makeDom() {
   const els: Record<string, El> = {};
@@ -83,6 +96,7 @@ const EMPTY_HEADER = 'async function loadEmptyFolders() {';
 async function renderEmptyPane(data: { folders: { name: string; path: string }[]; totalCount: number; truncated: boolean }) {
   const { els, $ } = makeDom();
   const fn = runnable(bodyOf(EMPTY_HEADER), {
+    ...sheet(),
     $,
     api: async () => data,
     state: { scanId: 's1' },
@@ -294,7 +308,7 @@ async function findWith(rejection: Error): Promise<{ msg: string; kind: string }
   // path rather than a test-local idea of what it does.
   const reportError = runnable(bodyOf('function reportError(err, context) {'), { toast }, 'err, context');
   const fn = runnable(bodyOf('async function runCleanFind(fetcher) {'), {
-    $, toast, reportError,
+    ...sheet(), $, toast, reportError,
     seedNodes: () => {},
     icon: () => '',
   }, 'fetcher');
@@ -687,6 +701,7 @@ function findHarness(facts: (paths: string[]) => Promise<unknown>, cloud = false
   const summaries: number[] = [];
   let measuredNow = (): number => 0;
   const deps: Record<string, unknown> = {
+    cleanAskAgain: () => assert.fail('no other tree came on screen'), cleanNoScanHtml: () => assert.fail('a scan stands behind the tree'),
     $, state: { scanId: 'scan-1' }, isCloudScan: () => cloud, toast: () => {}, reportError: () => assert.fail('nothing failed'), seedNodes: () => {}, icon: () => '',
     chipFor: () => '', formatDate: () => '', sizeInk: () => '', formatBytes: (n: number) => `${n} B`, formatCount: String, escapeHtml: String,
     cartButtonHtml: () => '', refreshCartButtons: () => {}, updateCleanSummary: () => { summaries.push(measuredNow()); },
@@ -699,7 +714,7 @@ function findHarness(facts: (paths: string[]) => Promise<unknown>, cloud = false
   };
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const page = new Function(...keys, `let cleanMatches = [], cleanOnDisk = new Map();
+  const page = new Function(...keys, `let cleanMatches = [], cleanOnDisk = new Map(), cleanFindWaiting = null;
     ${declOf('runCleanFind')}
     const CLEAN_ON_DISK_CHUNK = ${/const CLEAN_ON_DISK_CHUNK = (\d+);/.exec(INDEX)?.[1] ?? 'undefined'};
     ${declOf('treeScanId')}
@@ -959,7 +974,7 @@ async function videoPaneTicking(candidates: Array<{ name: string; path: string; 
     addEventListener(t: string, f: () => void) { if (t === 'click') this.clicked.push(f); },
   });
   await runnable(bodyOf('async function loadVideoCandidates() {'), {
-    $, state: { scanId: 's1' },
+    ...sheet(), $, state: { scanId: 's1' },
     api: async () => ({ available: true, candidates, shortlisted: candidates.length, unreadable: 0 }),
     skeletonRows: () => '', icon: () => '', escapeHtml: (s: string) => s, chipFor: () => '',
     formatBytes: (n: number) => `${n / 1e9} GB`, formatCount: String, sizeColor: () => '', sizeInk: () => '',
@@ -1016,6 +1031,7 @@ async function videoPane(data: Record<string, unknown>): Promise<string> {
     querySelectorAll: () => [], addEventListener: () => {},
   });
   const fn = runnable(bodyOf('async function loadVideoCandidates() {'), {
+    ...sheet(),
     $,
     state: { scanId: 's1' },
     api: async () => ({ available: true, candidates: [], ...data }),
@@ -1105,7 +1121,7 @@ function openCleanUp(opts: { cloud?: { name: string; trashLabel: string } } = {}
   if (id && !dom.els[id]) dom.$(id).textContent = markupText;
   const deps: Record<string, unknown> = {
     $: dom.$, state: { root: { path: opts.cloud ? 'cloud://drive' : '/r', name: 'r' } }, toast: () => assert.fail('the sheet opened on a scan'),
-    cleanMatches: [], emptyFolders: [], smartGroups: [],
+    cleanMatches: [], emptyFolders: [], smartGroups: [], cleanWaiting: new Set(), cleanFindWaiting: null, // opened afresh (K04)
     cleanFunnelDrop: () => {}, setCleanRuleSource: () => {}, setCleanPane: () => {}, renderCloudSafe: () => {},
     isCloudScan: () => Boolean(opts.cloud), cloudProviderOfScan: () => opts.cloud ?? assert.fail('a local scan has no provider'),
   };
@@ -1341,7 +1357,7 @@ async function renderPackages(data: unknown, dom: Record<string, { innerHTML: st
     querySelectorAll: () => [] as unknown[],
   }));
   const fn = runnable(bodyOf('async function renderPackageOrphans() {'), {
-    $, api: async () => data, state: { scanId: 's1' },
+    ...sheet(), $, api: async () => data, state: { scanId: 's1' },
     icon: () => '', escapeHtml: (s: string) => String(s),
     formatBytes: (n: number) => `${n} B`, formatCount: (n: number) => (n ?? 0).toLocaleString('en-US'),
     formatDate: () => 'Oct 2, 2026', sizeInk: () => 'inherit', ecosystemLabel: (id: string) => id,
@@ -1574,7 +1590,7 @@ async function loadSuggestions(orphans: unknown, suggestions: unknown, notes: Ar
   const api = async (url: string) => (url.startsWith('/api/packages/orphans?') ? orphans
     : url.startsWith('/api/cleanup/suggestions?') ? suggestions : assert.fail(`an unexpected request: ${url}`));
   const state = { scanId: 's1', notes: new Map(notes.map((n) => [n.path, n])) };
-  const page = { $, api, state, icon: () => '', escapeHtml: (s: string) => String(s) };
+  const page = { ...sheet(), $, api, state, icon: () => '', escapeHtml: (s: string) => String(s) };
   const renderPackageOrphans = runnable(bodyOf('async function renderPackageOrphans() {'), {
     ...page,
     formatBytes: (n: number) => `${n} B`, formatCount: (n: number) => (n ?? 0).toLocaleString('en-US'),
@@ -1585,7 +1601,7 @@ async function loadSuggestions(orphans: unknown, suggestions: unknown, notes: Ar
   const load = runnable(bodyOf('async function loadSmartSuggestions() {'), {
     ...page, renderPackageOrphans,
     renderGitRepos: () => {}, renderBrowserProfiles: async () => false, skeletonRows: () => '<skeleton>',
-    updateCleanSummary: () => {}, smartGroups: [] as unknown[], renderSmartGroups: () => assert.fail('no group to paint'),
+    updateCleanSummary: () => {}, smartGroups: [] as unknown[], renderSmartGroups: () => assert.fail('no group to paint'), loadSmartSeq: 0,
   });
   await load();
   const text = (id: string) => $(id).innerHTML.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();

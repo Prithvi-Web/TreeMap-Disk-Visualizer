@@ -3029,3 +3029,27 @@ test('the start screen\'s page-level bindings are declared before the boot paint
     assert.ok(at < boot, `${decl.trim()} is declared before the boot paints the first view`);
   }
 });
+
+test('K04: the Clean Up sheet\'s panes waiting on a scan hear of every change to it — a scan starting, a Stop, a failure, the quiet rescan behind an index paint failing — each once the scan state has settled', async () => {
+  const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
+  for (const end of ['Stop', 'failure once followed', 'quiet rescan failing'] as const) {
+    const h = page({ index: true, root: mail, settledScanId: 'scan-mail',
+      route: server({ roots: [], indexed: [CORPUS], indexTrees: { [CORPUS]: indexTreeOf(CORPUS, 9_500_000_000) },
+        scanAnswer: end === 'quiet rescan failing' ? () => ({ status: 500, body: { error: 'The drive stopped answering.', code: 'INTERNAL' } }) : undefined }) });
+    // What cleanScanChanged would read, each time it is told (the sheet's own behaviour is treeScanKey's).
+    const heard: Array<{ scanning: unknown; scanId: unknown; scanningPath: unknown }> = [];
+    h.given.cleanScanChanged = () => { heard.push({ scanning: h.state.scanning, scanId: h.state.scanId, scanningPath: h.state.scanningPath }); };
+    h.switchView('dashboard');
+    await h.startScan(CORPUS);
+    await turns();
+    assert.ok(heard.some((x) => x.scanning === true && x.scanningPath === CORPUS), `${end}: a scan of the folder starting is heard, its folder named (${JSON.stringify(heard)})`);
+    const before = heard.length;
+    if (end === 'Stop') await h.stopScan();
+    else if (end === 'failure once followed') h.streams[0].onmessage!({ data: JSON.stringify({ type: 'error', message: 'The drive stopped answering.' }) });
+    await turns();
+    if (end !== 'quiet rescan failing') assert.ok(heard.length > before, `${end}: the end is heard`);
+    // A Stop puts back the older tree the index paint stood over, with its scan (J06); a failure leaves the saved index's tree.
+    assert.deepEqual({ scanning: heard.at(-1)!.scanning, scanId: heard.at(-1)!.scanId }, { scanning: false, scanId: end === 'Stop' ? 'scan-mail' : null },
+      `${end}: heard once the scan has ended and the scan behind the tree on screen is settled — never with the ended scan's id on hand`);
+  }
+});

@@ -103,8 +103,8 @@ async function pressFind(boxes: Record<string, Box>) {
     toast: (msg: string, kind?: string) => { toasts.push({ msg, kind }); },
     // The fetcher `runCleanFind` is handed is where the URL is built, so the
     // stub has to actually invoke it rather than just record that it was
-    // passed one.
-    runCleanFind: async (fetcher: () => Promise<unknown>) => { await fetcher(); },
+    // passed one — with the scan runCleanFind names, the tree's (K04).
+    runCleanFind: async (fetcher: (scanId: string) => Promise<unknown>) => { await fetcher('s1'); },
     api: async (url: string) => { urls.push(url); return { files: [], matched: 0 }; },
     findBySavedView: async () => ({ files: [], matched: 0 }),
   });

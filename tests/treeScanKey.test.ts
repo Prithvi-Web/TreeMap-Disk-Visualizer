@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { INDEX } from './fixtures/liftFrontend';
+import { INDEX, lift as liftPage } from './fixtures/liftFrontend';
 
 /**
  * Every page request about the tree on screen names the scan that tree came
@@ -1010,6 +1010,137 @@ test('Clean Up: the cloud-safe list asked of the older scan during a rescan is n
   }
 });
 
+/* ── The Clean Up sheet's panes (eighth browser pass K04) ── */
+
+/** The Clean Up sheet's panes, lifted whole, over a stub DOM with the sheet open and a server answering each pane. */
+function cleanUpPage(state: Record<string, unknown>, answer: (url: string) => unknown = cleanUpAnswer) {
+  const $ = stubDom();
+  $('cleanModal').classList.add('open');
+  const handlers: Record<string, () => Promise<void>> = {};
+  ($('cleanFindBtn') as unknown as { addEventListener: (t: string, fn: () => Promise<void>) => void }).addEventListener =
+    (t, fn) => { handlers[t] = fn; };
+  // The Find knobs as a person leaves them: one rule ticked, "Larger than 100 MB".
+  Object.assign($('ruleSizeOn'), { checked: true }); $('ruleSizeMb').value = '100';
+  const cloud: unknown[] = [];
+  const toasts: string[] = [];
+  let answered = 0;
+  /** The page's TOPIC.scan subscribers the sheet registers. */
+  const subs: Array<(scanId: string | null) => void> = [];
+  const given: Record<string, unknown> = {
+    subscribe: (_topic: string, fn: (scanId: string | null) => void) => { subs.push(fn); }, TOPIC: { scan: 'scan' },
+    state, $, escapeHtml: esc, icon: () => '', skeletonRows: () => '<i>loading</i>', formatCount: String, formatBytes: String, formatDate: String,
+    chipFor: () => '', cartButtonHtml: () => '', refreshCartButtons: noop, updateCleanSummary: noop, seedNodes: noop, sizeInk: () => '',
+    renderSmartGroups: noop, ecosystemLabel: String, renderCloudSafe: async () => { cloud.push(1); }, toast: (m: string) => { toasts.push(m); },
+    reportError: (e: Error) => { toasts.push(e.message); }, selectedSavedView: () => ({ id: 'v', q: 'size>1gb' }), cleanOnDiskOf: async () => new Map(),
+    whyLeftOut: () => '', MB: 1e6, cleanWaiting: new Set(), cleanFindWaiting: null, CLEAN_NO_SCAN: liftPage<Record<string, [string, string]>>(['CLEAN_NO_SCAN'], 'CLEAN_NO_SCAN'),
+    emptyFolders: [], videoCandidates: [], smartGroups: [], packageOrphans: [], cleanMatches: [], cleanOnDisk: new Map(),
+    loadEmptyFoldersSeq: 0, loadVideoSeq: 0, loadSmartSeq: 0, cleanRuleSource: 'simple', smartSort: 'size',
+  };
+  const { fns, asks } = page<{ empty: () => Promise<void>; video: () => Promise<void>; smart: () => Promise<void>; byView: () => Promise<void>; changed: () => void }>([
+    'function cleanNoScanHtml(', 'function cleanOpen(', 'function cleanAskAgain(', 'function cleanScanChanged(',
+    'async function loadEmptyFolders(', 'async function loadVideoCandidates(', 'async function loadSmartSuggestions(',
+    'async function renderGitRepos(', 'async function renderPackageOrphans(', 'async function renderBrowserProfiles(',
+    'async function runCleanFind(', 'async function findBySavedView(', "$('cleanFindBtn').addEventListener('click', async () => {",
+    'subscribe(TOPIC.scan, (scanId) => {\n  cleanScanChanged();',
+  ], given, '{ empty: loadEmptyFolders, video: loadVideoCandidates, smart: loadSmartSuggestions, byView: () => runCleanFind(findBySavedView), changed: cleanScanChanged }',
+  // A pane that asks again without end — its answer never the tree's — is stopped: the sheet closes, and the
+  // assertions about what it asked say why (a hand mutant made one ask forever, and the run ran out of memory).
+  (url) => { if (++answered > 200) { $('cleanModal').classList.remove('open'); throw new Error('asked without end'); } return answer(url); });
+  /** TOPIC.scan, as finishScan emits it: a scan landed (its id), or the index painted a tree (null). */
+  const emitScan = (scanId: string | null) => { for (const fn of subs) fn(scanId); };
+  return { fns, asks, $, given, cloud, toasts, find: () => handlers.click(), emitScan };
+}
+function cleanUpAnswer(url: string): unknown {
+  if (url.startsWith('/api/compression/candidates')) return { available: false, reason: 'No ffmpeg here.' };
+  if (url.startsWith('/api/empty-folders')) return { folders: [], withheld: 0 };
+  if (url.startsWith('/api/git/repos')) return { repos: [] };
+  if (url.startsWith('/api/packages/orphans')) return { available: true, ecosystems: [] };
+  if (url.startsWith('/api/cleanup/browser-profiles')) return { profiles: [] };
+  if (url.startsWith('/api/cleanup/suggestions')) return { available: true, groups: [] };
+  if (url.startsWith('/api/cleanup/rules')) return { files: [], matched: 0 };
+  if (url === '/api/query') return { hits: [], total: 0 };
+  return assert.fail(`unexpected ask ${url}`);
+}
+/** Each pane: how it is asked, and the host it paints. */
+const CLEAN_PANES: Array<[string, (c: ReturnType<typeof cleanUpPage>) => Promise<void>, string]> = [
+  ['Smart suggestions', (c) => c.fns.smart(), 'smartResults'],
+  ['Empty folders', (c) => c.fns.empty(), 'emptyResults'],
+  ['Shrink video', (c) => c.fns.video(), 'videoBody'],
+  ['Custom rules › Find', (c) => c.find(), 'cleanResults'],
+  ['Custom rules › Find, by a saved view', (c) => c.fns.byView(), 'cleanResults'],
+];
+
+test('Clean Up (K04): Smart suggestions, Empty folders, Shrink video and Custom rules › Find ask the scan the tree on screen came from — never the running scan, which answered 409 or 202 "Still working on that…" over a finished tree', async () => {
+  for (const [label, load] of CLEAN_PANES) {
+    const state: Record<string, unknown> = { root: TREE, notes: new Map(), ...HELD };
+    const c = cleanUpPage(state);
+    await throughThePhases(`Clean Up's ${label}`, state, c.asks, () => load(c), noop);
+    assert.deepEqual(c.toasts, [], `${label}: nothing said as a failure`);
+  }
+});
+
+test('Clean Up (K04): over the saved index\'s tree each pane asks nothing — it says it fills in once the scan finishes, and does once the scan lands; once nothing will land, that the tree is the saved index', async () => {
+  for (const [label, load, host] of CLEAN_PANES) {
+    const state: Record<string, unknown> = { root: TREE, notes: new Map(), ...INDEX_RUNNING, scanningPath: TREE.path };
+    const c = cleanUpPage(state);
+    c.$(host).innerHTML = '<i>another tree\'s results</i>';
+    await load(c);
+    await turns();
+    assert.equal(c.asks.length, 0, `${label}: nothing is asked over the saved index's tree — not of the running scan (${c.asks.map((x) => x.url).join(', ')})`);
+    assert.match(c.$(host).innerHTML, COMING, `${label}: it says it fills in once the scan finishes (${c.$(host).innerHTML})`);
+    // The scan lands (TOPIC.scan): the pane is asked, of the scan that landed, and so is the cloud-safe list.
+    Object.assign(state, LANDED);
+    c.emitScan('scan-new');
+    await turns();
+    assert.equal(c.cloud.length, 1, `${label}: the cloud-safe list, whose tab the saved index's tree took down, is asked once a scan lands`);
+    assert.ok(c.asks.length > 0, `${label}: once the scan lands, the pane is asked`);
+    assert.deepEqual(c.asks.map((a) => a.scanId), c.asks.map(() => 'scan-new'), `${label}: of the scan that landed (${c.asks.map((a) => a.url).join(', ')})`);
+    assert.doesNotMatch(c.$(host).innerHTML, COMING, `${label}: and no longer says it waits`);
+    // Again over the saved index's tree, its scan Stopped: what it says changes, and nothing is asked.
+    Object.assign(state, INDEX_RUNNING, { scanningPath: TREE.path });
+    await load(c);
+    await turns();
+    const asked = c.asks.length;
+    assert.match(c.$(host).innerHTML, COMING, `${label}: control: waiting again`);
+    Object.assign(state, INDEX_STOPPED, { scanningPath: null });
+    c.fns.changed();
+    await turns();
+    assert.equal(c.asks.length, asked, `${label}: a Stop asks nothing`);
+    assert.match(c.$(host).innerHTML, /Opened from the saved index — scan this folder to /, `${label}: and says the tree is the saved index (${c.$(host).innerHTML})`);
+    // The sheet closed: nothing is asked when a scan lands; opening it starts afresh.
+    c.$('cleanModal').classList.remove('open');
+    Object.assign(state, LANDED);
+    c.fns.changed();
+    await turns();
+    assert.equal(c.asks.length, asked, `${label}: with the sheet closed nothing is asked`);
+  }
+});
+
+test('Clean Up (K04): a pane\'s answer the older scan gives once the rescan has landed is not painted over the new tree — nor its failure — the pane is asked again of the scan now on screen', async () => {
+  for (const fails of [false, true]) {
+    for (const [label, load, host] of CLEAN_PANES) {
+      const state: Record<string, unknown> = { root: TREE, notes: new Map(), ...HELD };
+      const held: Array<() => void> = [];
+      const c = cleanUpPage(state, (url) => new Promise((resolve, reject) => {
+        if ((state as { scanId: string }).scanId === 'scan-new' && !state.scanning) { resolve(cleanUpAnswer(url)); return; }
+        held.push(() => (fails ? reject(new Error('Scan is still running')) : resolve(url.startsWith('/api/empty-folders')
+          ? { folders: [{ name: 'old', path: '/r/old' }], withheld: 0, totalCount: 1 } : cleanUpAnswer(url))));
+      }));
+      const out = load(c);
+      await turns();
+      assert.ok(c.asks.length > 0 && c.asks.every((a) => a.scanId === 'scan-old'), `${label}: control: asked of the older scan`);
+      Object.assign(state, LANDED); // finishScan: the new tree is on screen before the answer
+      while (held.length) held.shift()!();
+      await out;
+      await turns();
+      const late = c.asks.filter((a) => a.scanId === 'scan-new');
+      assert.ok(late.length > 0, `${label}${fails ? ', failing' : ''}: asked again of the scan now on screen`);
+      assert.doesNotMatch(c.$(host).innerHTML, /\/r\/old|Scan is still running/, `${label}${fails ? ', failing' : ''}: the older scan's answer is not painted (${c.$(host).innerHTML})`);
+      assert.deepEqual(c.toasts, [], `${label}${fails ? ', failing' : ''}: nor its failure said`);
+    }
+  }
+});
+
 /* ───────────────────────────── the Dashboard's cards, the tour ───────────────────────────── */
 
 test('the Dashboard\'s folder budgets, cost to keep and drive health are asked of the scan the tree on screen came from — never the running scan — and over the saved index\'s tree ask nothing', async () => {
@@ -1544,21 +1675,34 @@ const SCAN_ON_HAND: Record<string, string> = {
   cloudTrashPaths: 'a destructive act the server refuses for a running scan, in words',
   confirmOffloadPlan: 'a destructive act the server refuses for a running scan, in words',
   runOffloadJob: 'a destructive act the server refuses for a running scan, in words',
-  // 220-clean-up-modal.js is BQL-b1's file in this batch: only cleanOnDiskOf's key was routed here.
-  loadVideoCandidates: 'Clean Up (220), left for after BQL-b1',
-  loadEmptyFolders: 'Clean Up (220), left for after BQL-b1',
-  renderGitRepos: 'Clean Up (220), left for after BQL-b1',
-  renderPackageOrphans: 'Clean Up (220), left for after BQL-b1',
-  renderBrowserProfiles: 'Clean Up (220), left for after BQL-b1',
-  loadSmartSuggestions: 'Clean Up (220), left for after BQL-b1',
-  findBySavedView: 'Clean Up (220), left for after BQL-b1',
-  // Top-level statements (review F1.8), named by their first line.
-  "$('cleanFindBtn').addEventListener('click', async () => {": 'Clean Up (220): its Find button, left for after BQL-b1',
+  // The Clean Up sheet's panes are not here: every one asks the tree's scan (eighth browser pass K04).
+  // Read beside a call to a page function that asks — the audit follows calls (K04: a read that only
+  // hands the scan on, or gates a call, asks as surely as one beside api()).
+  stopScan: 'the scan\'s own lifecycle: cancels the running scan by its id, then puts back the tree\'s',
+  failScan: 'the scan\'s own lifecycle: hands the scan on hand back to the tree\'s after a failure',
+  finishScan: 'sets the scan on hand for the tree it paints, in the same breath, then asks of it',
+  putBackHeldTree: 'puts the older tree back with its scan, then asks for its cards of that scan',
+  armScanExpiry: 'warns before the landed scan\'s results expire, and says nothing while a scan runs',
+  startOffloadFlow: 'a destructive act the server refuses for a running scan, in words',
+  dockDrop: 'a destructive act the server refuses for a running scan, in words',
+  "$('tmExportBtn').addEventListener('click', (e) => {": 'offers the report (downloadReport) only while no scan runs, when the scan on hand is the tree\'s',
 };
 
 test('no page function or top-level handler that asks the server reads the scan on hand, but those whose reason is stated — every other ask about the tree on screen goes through treeScanId', () => {
-  const asks = (body: string) => /\b(?:api|apiPaced|fetch)\(|new EventSource\(/.test(body);
   const fns = pageFunctions();
+  // Asks the server itself, or through any page function it calls that does (K04: a read of the scan on hand
+  // that only gates a call, or hands the id to a loader, asked as surely as one beside api()).
+  const code = (body: string) => body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/ .*$/gm, '');
+  const direct = (body: string) => /\b(?:api|apiPaced|fetch)\(|new EventSource\(/.test(code(body));
+  const asksServer = new Set(fns.filter((f) => direct(f.body)).map((f) => f.name));
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const f of fns) {
+      if (asksServer.has(f.name)) continue;
+      if ([...code(f.body).matchAll(/\b(\w+)\(/g)].some((m) => m[1] !== f.name && asksServer.has(m[1]))) { asksServer.add(f.name); grew = true; }
+    }
+  }
+  const asks = (body: string) => direct(body) || [...code(body).matchAll(/\b(\w+)\(/g)].some((m) => asksServer.has(m[1]));
   const asking = [
     ...fns.filter((f) => /state\.scanId\b/.test(f.body) && asks(f.body)).map((f) => f.name),
     // Event handlers and subscribers are no function declarations: seen too (review F1.8).

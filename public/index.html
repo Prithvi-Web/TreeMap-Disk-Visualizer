@@ -9776,6 +9776,7 @@ async function stopScan() {
   // now the start screen is on screen: nothing is being read (review F2.2).
   tourScanFailed();
   liveScanEnded(); // a Live wish waited for this scan to land; it will not (review F2.14)
+  if (typeof cleanScanChanged === 'function') cleanScanChanged(); // the Clean Up panes waiting on a scan say so again, or ask (K04)
   // Focus on "Scan … again", never <body>, however Stop was pressed.
   focusStartScreen();
   // And said aloud: the start screen's own line, or the status line's, in a
@@ -10084,6 +10085,7 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   $('progressTrack').setAttribute('aria-valuetext', 'Scanning');
   tourScanStarted(); // v4 §9.2 — the welcome card follows the user into the scan
   liveQueuedSync(); // the Live pill shows a wish this scan's landing keeps (review F2.14)
+  if (typeof cleanScanChanged === 'function') cleanScanChanged(); // the Clean Up panes waiting on a scan say so again, or ask (K04)
   if (quiet) {
     // `message` lets the caller say what is actually happening. A first scan
     // enters here too — startScan shows the chrome before it knows whether the
@@ -10583,6 +10585,7 @@ function quietRescanFailed(e) {
   withFocusKept(() => { switchView(state.view); });
   tourScanFailed(); // the tour's quick wins, waiting for this scan, say it will not land (review F1.4)
   liveScanEnded(); // and a Live wish waiting for it goes (review F2.14)
+  if (typeof cleanScanChanged === 'function') cleanScanChanged(); // the Clean Up panes waiting on a scan say so again, or ask (K04)
   drainScanQueue(); // a folder waiting behind this one still deserves its turn
 }
 
@@ -10925,6 +10928,7 @@ function failScan(message, err = null) {
   // screen is on screen when the card picks where focus goes (review F1.12).
   tourScanFailed();
   liveScanEnded(); // a Live wish waited for this scan to land; it will not (review F2.14)
+  if (typeof cleanScanChanged === 'function') cleanScanChanged(); // the Clean Up panes waiting on a scan say so again, or ask (K04)
   focusStartScreen(); // on "Scan … again", as after a Stop, or on "Choose a folder…"
   drainScanQueue(); // a folder waiting behind this one still gets its turn
 }
@@ -21569,7 +21573,8 @@ function tmScoreKey() {
 function fetchScoresForTreemap() {
   const key = tmScoreKey();
   if (tmScoreChain && tmScoreChain.key !== key) { tmScoreChain.ctrl.abort(); tmScoreChain = null; }
-  if (state.treemap.colorMode !== 'reclaim' || !state.scanId) return;
+  // Scores are asked of the scan the tree on screen came from (ensureScores, treeScanId): none, nothing to ask.
+  if (state.treemap.colorMode !== 'reclaim' || !treeScanId()) return;
   // Every renderer, because Reclaim is a colour mode and all four paint
   // through the same cellRgb. Their entries are shaped alike: `{ n, ... }`.
   const drawn = drawnCells();
@@ -39185,8 +39190,76 @@ function cleanUpWhereItGoes() {
     + 'so it can be put back only until the Trash is emptied. Shrink video’s re-encode loses a little quality for good, and the original then goes to the Trash too.';
 }
 
+/* ── The scan the panes ask (eighth browser pass K04) ──────────────────────
+   Every pane asks the scan the tree on screen came from (treeScanId), never a
+   scan still walking: asked of the running scan, Smart suggestions, Empty
+   folders, Shrink video and Find each answered 409 or 202 — "Still working on
+   that…", "Scan is still running" — over a finished tree they could describe.
+   Over the saved index's tree, which no scan stands behind, nothing is asked:
+   a pane says it fills in once the scan finishes while one is coming
+   (treeScanComing), and that the tree is the saved index once nothing will
+   land — and is asked again as that changes (cleanScanChanged). An answer the
+   older scan gives once another tree is on screen is not painted: the pane is
+   asked again of the scan that tree came from (cleanAskAgain). */
+
+/** The panes that said they wait for a scan (cleanNoScanHtml), asked again as that changes. */
+const cleanWaiting = new Set();
+/** The Find pressed over a tree no scan stands behind, run once a scan stands behind it. */
+let cleanFindWaiting = null;
+/** Each pane's words over the saved index's tree: what it is worked out from, and what a scan would let it do. */
+const CLEAN_NO_SCAN = {
+  smart: ['Smart suggestions are worked out from a finished scan', 'see what Clean Up suggests for it'],
+  empty: ['Empty folders are found in a finished scan', 'find its empty folders'],
+  video: ['Videos worth re-encoding are found in a finished scan', 'find videos in it worth re-encoding'],
+  rules: ['Custom rules are matched against a finished scan', 'match rules against it'],
+};
+
+/** What `pane` says over a tree no scan stands behind; the pane waits (cleanWaiting) until that changes. */
+function cleanNoScanHtml(pane) {
+  cleanWaiting.add(pane);
+  const [what, todo] = CLEAN_NO_SCAN[pane];
+  const said = treeScanComing() ? `${what} — this fills in once the scan finishes.` : `Opened from the saved index — scan this folder to ${todo}.`;
+  return `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon('alert', 15)} ${escapeHtml(said)}</div>`;
+}
+
+/** Whether the Clean Up sheet is open. */
+function cleanOpen() {
+  return $('cleanModal').classList.contains('open');
+}
+
+/** A pane's answer came from a scan whose tree is no longer on screen: asked again, while the sheet is open. */
+function cleanAskAgain(load) {
+  if (cleanOpen()) void load();
+}
+
+/**
+ * The tree on screen changed, or whether a scan of it is coming (TOPIC.scan;
+ * a scan starting, stopped or failing — beginScanChrome, stopScan, failScan,
+ * quietRescanFailed): each pane that said it waits is asked again, of the
+ * scan now behind the tree, or says again what it waits for. Only while the
+ * sheet is open: opening it starts every pane afresh.
+ */
+function cleanScanChanged() {
+  if (!cleanOpen()) return;
+  const waiting = [...cleanWaiting];
+  cleanWaiting.clear();
+  for (const pane of waiting) {
+    if (pane === 'empty') void loadEmptyFolders();
+    else if (pane === 'smart') void loadSmartSuggestions();
+    else if (pane === 'video') void loadVideoCandidates();
+    else if (pane === 'rules' && cleanFindWaiting) void runCleanFind(cleanFindWaiting);
+  }
+}
+// A scan that lands asks the cloud-safe list too: over the saved index's tree its tab was taken down.
+subscribe(TOPIC.scan, (scanId) => {
+  cleanScanChanged();
+  if (scanId && cleanOpen()) void renderCloudSafe();
+});
+
 $('cleanupBtn').addEventListener('click', () => {
   if (!state.root) { toast('Run a scan first', 'error'); return; }
+  cleanWaiting.clear();
+  cleanFindWaiting = null;
   $('cleanWhereNote').textContent = cleanUpWhereItGoes();
   $('cleanResults').innerHTML = '';
   $('smartResults').innerHTML = '';
@@ -39232,13 +39305,25 @@ function setCleanPane(pane, skipLoad = false) {
 let videoCandidates = [];
 let videoJobStream = null;
 
+/** Each load of the Shrink video list takes the next number, and only the latest paints. */
+let loadVideoSeq = 0;
 async function loadVideoCandidates() {
   const host = $('videoBody');
-  if (!host || !state.scanId) return;
+  if (!host) return;
+  const seq = ++loadVideoSeq;
+  // The scan the tree on screen came from (K04), or none: then nothing is asked.
+  const scanId = treeScanId();
+  if (!scanId) { videoCandidates = []; host.innerHTML = cleanNoScanHtml('video'); return; }
   host.innerHTML = skeletonRows(4, 34);
   let data;
-  try { data = await api('/api/compression/candidates?scanId=' + state.scanId); }
-  catch (e) { host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`; return; }
+  try { data = await api('/api/compression/candidates?scanId=' + scanId); }
+  catch (e) {
+    if (seq !== loadVideoSeq) return;
+    if (scanId !== treeScanId()) { cleanAskAgain(loadVideoCandidates); return; }
+    host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`; return;
+  }
+  if (seq !== loadVideoSeq) return; // a newer load owns the list
+  if (scanId !== treeScanId()) { cleanAskAgain(loadVideoCandidates); return; } // another tree is on screen
 
   if (!data.available) {
     // §3.5 state 5 — unavailable, with the reason and the way to fix it.
@@ -39422,11 +39507,15 @@ function whyLeftOut(by, withheld) {
 let loadEmptyFoldersSeq = 0;
 async function loadEmptyFolders() {
   const host = $('emptyResults');
-  host.innerHTML = skeletonRows(4, 30);
   const seq = ++loadEmptyFoldersSeq;
+  // The scan the tree on screen came from (K04), or none: then nothing is asked.
+  const scanId = treeScanId();
+  if (!scanId) { emptyFolders = []; host.innerHTML = cleanNoScanHtml('empty'); updateCleanSummary(); return; }
+  host.innerHTML = skeletonRows(4, 30);
   try {
-    const data = await api(`/api/empty-folders?scanId=${state.scanId}&ignoreJunk=${$('emptyIgnoreJunk').checked}`);
+    const data = await api(`/api/empty-folders?scanId=${scanId}&ignoreJunk=${$('emptyIgnoreJunk').checked}`);
     if (seq !== loadEmptyFoldersSeq) return; // a newer load owns the list
+    if (scanId !== treeScanId()) { cleanAskAgain(loadEmptyFolders); return; } // another tree is on screen
     emptyFolders = data.folders;
     // Track U, U-4: folders the scan saw empty that the server, looking again
     // on disk, did not find still empty — said, never dropped in silence. And a
@@ -39475,6 +39564,7 @@ async function loadEmptyFolders() {
     updateCleanSummary();
   } catch (e) {
     if (seq !== loadEmptyFoldersSeq) return; // a stale failure must not replace a newer list
+    if (scanId !== treeScanId()) { cleanAskAgain(loadEmptyFolders); return; } // the older scan's failure
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   }
 }
@@ -39520,9 +39610,13 @@ wireSelectAll($('emptyResults'), 'emptyAll', 'empty-ck', updateCleanSummary);
 /* Feature 13 — git repositories section + git gc. */
 async function renderGitRepos() {
   const host = $('gitRepos');
-  if (!host || !state.scanId) return;
+  if (!host) return;
+  // The scan the tree on screen came from (K04): none, and the section claims nothing.
+  const scanId = treeScanId();
+  if (!scanId) { host.innerHTML = ''; return; }
   let repos = [];
-  try { ({ repos } = await api('/api/git/repos?scanId=' + state.scanId)); } catch { return; }
+  try { ({ repos } = await api('/api/git/repos?scanId=' + scanId)); } catch { return; }
+  if (scanId !== treeScanId()) return; // another tree is on screen: its own load paints
   const notable = (repos || []).filter((r) => r.totalBytes > MB);
   if (!notable.length) { host.innerHTML = ''; return; }
   host.innerHTML = `<div style="margin-bottom:16px;">
@@ -39592,13 +39686,17 @@ let packageOrphans = [];
     pauses is still listed here (G05 review F2.3). */
 async function renderPackageOrphans() {
   const host = $('packageOrphans');
-  if (!host || !state.scanId) return false;
+  if (!host) return false;
   packageOrphans = [];
   // The fold belongs to the answer below: an earlier scan's goes now.
   const projectsHost = $('packageProjects');
   if (projectsHost) projectsHost.innerHTML = '';
+  // The scan the tree on screen came from (K04): none, and the panel claims nothing.
+  const scanId = treeScanId();
+  if (!scanId) { host.innerHTML = ''; return false; }
   let data;
-  try { data = await api('/api/packages/orphans?scanId=' + state.scanId); } catch { host.innerHTML = ''; return false; }
+  try { data = await api('/api/packages/orphans?scanId=' + scanId); } catch { host.innerHTML = ''; return false; }
+  if (scanId !== treeScanId()) { host.innerHTML = ''; return false; } // another tree is on screen: its own load paints
   if (data.available === false) {
     // Same honesty rule as Smart Suggestions: a broken catalog is "unknown",
     // never "you have no leftovers".
@@ -39727,10 +39825,14 @@ function browserFav(name) { return BROWSER_FAV[name] || BROWSER_FAV.Chromium; }
 /** Render the per-profile browser cache accordions; returns true if any were shown. */
 async function renderBrowserProfiles() {
   const host = $('browserProfiles');
-  if (!host || !state.scanId) return false;
+  if (!host) return false;
+  // The scan the tree on screen came from (K04): none, and the section claims nothing.
+  const scanId = treeScanId();
+  if (!scanId) { host.innerHTML = ''; return false; }
   let profiles = [];
-  try { ({ profiles } = await api('/api/cleanup/browser-profiles?scanId=' + state.scanId)); }
+  try { ({ profiles } = await api('/api/cleanup/browser-profiles?scanId=' + scanId)); }
   catch { host.innerHTML = ''; return false; }
+  if (scanId !== treeScanId()) { host.innerHTML = ''; return false; } // another tree is on screen: its own load paints
   if (!profiles.length) { host.innerHTML = ''; return false; }
   const total = profiles.reduce((s, p) => s + p.totalBytes, 0);
   host.innerHTML = `<div class="bp-section-h"><b>${icon('globe', 15)}Browser caches</b>` +
@@ -39975,14 +40077,33 @@ function renderSmartGroups(catalog) {
   updateCleanSummary();
 }
 
+/** Each load of Smart Suggestions takes the next number, and only the latest paints. */
+let loadSmartSeq = 0;
 async function loadSmartSuggestions() {
-  renderGitRepos();
+  const host = $('smartResults');
+  const seq = ++loadSmartSeq;
+  // The scan the tree on screen came from (K04), as each section asks it, or none: then nothing is asked,
+  // and the sections claim nothing.
+  const scanId = treeScanId();
+  if (!scanId) {
+    smartGroups = [];
+    void renderGitRepos();
+    void renderPackageOrphans();
+    void renderBrowserProfiles();
+    host.innerHTML = cleanNoScanHtml('smart');
+    updateCleanSummary();
+    return;
+  }
+  void renderGitRepos();
   const hadPackages = await renderPackageOrphans();
   const hadBrowsers = await renderBrowserProfiles();
-  const host = $('smartResults');
+  if (seq !== loadSmartSeq) return; // a newer load owns the pane
+  if (scanId !== treeScanId()) { cleanAskAgain(loadSmartSuggestions); return; } // another tree is on screen
   host.innerHTML = skeletonRows(4, 34);
   try {
-    const data = await api(`/api/cleanup/suggestions?scanId=${state.scanId}`);
+    const data = await api(`/api/cleanup/suggestions?scanId=${scanId}`);
+    if (seq !== loadSmartSeq) return;
+    if (scanId !== treeScanId()) { cleanAskAgain(loadSmartSuggestions); return; }
     // §C8/§6: a malformed rule pack breaks this panel only, and says why —
     // never a blank "nothing to clean up", which would read as good news.
     if (data.available === false) {
@@ -40011,6 +40132,8 @@ async function loadSmartSuggestions() {
     renderSmartGroups(data.catalog);
     if (noteHint) host.insertAdjacentHTML('beforeend', noteHint);
   } catch (e) {
+    if (seq !== loadSmartSeq) return;
+    if (scanId !== treeScanId()) { cleanAskAgain(loadSmartSuggestions); return; } // the older scan's failure
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   }
 }
@@ -40143,13 +40266,13 @@ function promoteRuleToPolicy() {
 $('cleanPromoteBtn').addEventListener('click', promoteRuleToPolicy);
 $('ruleDupOn').addEventListener('change', () => { $('cleanPromoteWhy').hidden = true; });
 
-/** Run a saved view as a Clean Up rule, through the one query engine (§4.5). */
-async function findBySavedView() {
+/** Run a saved view as a Clean Up rule, through the one query engine (§4.5), on `scanId` (runCleanFind's). */
+async function findBySavedView(scanId) {
   const view = selectedSavedView();
   if (!view) { toast('Pick a saved view first', 'error'); return; }
   const out = await api('/api/query', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ scanId: state.scanId, q: view.q, limit: 500, sort: 'size' }),
+    body: JSON.stringify({ scanId, q: view.q, limit: 500, sort: 'size' }),
   });
   // §2.2's degraded list is why this is not just a hit count: a query needing
   // a signal this machine cannot supply must not come back looking like
@@ -40167,7 +40290,8 @@ async function findBySavedView() {
 }
 
 $('cleanFindBtn').addEventListener('click', async () => {
-  if (!state.scanId) { toast('Run a scan first', 'error'); return; }
+  // The scan the rules are matched against is runCleanFind's to name: the
+  // tree's own (K04), or none, over the saved index's tree, which it says.
   if (cleanRuleSource === 'query') { void runCleanFind(findBySavedView); return; }
   const ageOn = $('ruleAgeOn').checked, sizeOn = $('ruleSizeOn').checked;
   const extOn = $('ruleExtOn').checked, dupOn = $('ruleDupOn').checked;
@@ -40188,7 +40312,6 @@ $('cleanFindBtn').addEventListener('click', async () => {
   const exts = $('ruleExts').value.split(',').map(s => s.trim().toLowerCase().replace(/^\./, '')).filter(Boolean);
   if (!ageOn && !sizeOn && !extOn && !dupOn) { toast('Enable at least one rule', 'error'); return; }
   if (extOn && !exts.length && !ageOn && !sizeOn && !dupOn) { toast('Add at least one extension', 'error'); return; }
-  if (!state.scanId) { toast('Run a scan first', 'error'); return; }
 
   // Every row that is ticked but carries nothing to match on. `exts` is parsed
   // whether or not its row is ticked, so both halves are tested here: a full
@@ -40209,11 +40332,14 @@ $('cleanFindBtn').addEventListener('click', async () => {
   // Matched server-side: the client tree is pruned, and the duplicate rule in
   // particular asks whether a name+size repeats across the WHOLE scan — a
   // question the part of the tree we hold cannot answer.
-  const q = new URLSearchParams({ scanId: state.scanId, limit: '500' });
-  if (maxAgeMs !== undefined) q.set('maxAgeMs', String(maxAgeMs));
-  if (minBytes !== undefined) q.set('minBytes', String(minBytes));
-  if (extOn && exts.length) q.set('exts', exts.join(','));
-  if (dupOn) q.set('dup', '1');
+  const query = (scanId) => {
+    const q = new URLSearchParams({ scanId, limit: '500' });
+    if (maxAgeMs !== undefined) q.set('maxAgeMs', String(maxAgeMs));
+    if (minBytes !== undefined) q.set('minBytes', String(minBytes));
+    if (extOn && exts.length) q.set('exts', exts.join(','));
+    if (dupOn) q.set('dup', '1');
+    return q;
+  };
 
   // A live rule remains, so the search runs — but on fewer rules than the panel
   // looks like it describes, and results the user reads as filtered by age
@@ -40227,7 +40353,7 @@ $('cleanFindBtn').addEventListener('click', async () => {
     toast(`${blank.join(' and ')} ${blank.length > 1 ? 'need' : 'needs'} a number above zero, so nothing is being filtered on ${blank.length > 1 ? 'them' : 'it'} — searching on the other rules.`, 'success', 7000);
   }
 
-  await runCleanFind(async () => api('/api/cleanup/rules?' + q.toString()));
+  await runCleanFind(async (scanId) => api('/api/cleanup/rules?' + query(scanId).toString()));
 });
 
 /**
@@ -40238,13 +40364,28 @@ $('cleanFindBtn').addEventListener('click', async () => {
  * engine" is about the backend, and this is its counterpart in the UI.
  */
 async function runCleanFind(fetcher) {
+  // Matched against the scan the tree on screen came from (K04) — `fetcher`
+  // is handed it — or, over the saved index's tree, not at all: the list says
+  // so, and the Find runs once a scan stands behind the tree (cleanScanChanged).
+  const scanId = treeScanId();
+  if (!scanId) {
+    cleanFindWaiting = fetcher;
+    cleanMatches = [];
+    cleanOnDisk = new Map();
+    $('cleanResults').innerHTML = cleanNoScanHtml('rules');
+    $('cleanConfirmBtn').disabled = true;
+    $('cleanSummary').textContent = '';
+    return;
+  }
+  cleanFindWaiting = null;
   const findBtn = $('cleanFindBtn');
   const findLabel = findBtn.innerHTML;
   findBtn.disabled = true;
   let data;
   try {
-    data = await fetcher();
+    data = await fetcher(scanId);
   } catch (e) {
+    if (scanId !== treeScanId()) { cleanAskAgain(() => runCleanFind(fetcher)); return; } // the older scan's failure
     // Through `reportError`, never a bare red toast. `GET /api/cleanup/rules`
     // answers 202 {status:'running'} while a scan is still going, and `api()`
     // turns exactly that into a throw carrying `stillWorking` — an ANSWER, not
@@ -40260,6 +40401,8 @@ async function runCleanFind(fetcher) {
     findBtn.innerHTML = findLabel;
   }
   if (!data) return; // the source reported its own problem
+  // Another tree is on screen since it was asked: matched again against the scan that tree came from.
+  if (scanId !== treeScanId()) { cleanAskAgain(() => runCleanFind(fetcher)); return; }
   cleanMatches = data.files;
   cleanOnDisk = new Map();
   seedNodes(cleanMatches); // staged from here, so their sizes must resolve later

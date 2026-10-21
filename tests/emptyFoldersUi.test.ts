@@ -63,6 +63,16 @@ function pageWhyLeftOut(formatCount: (n: number) => string): (by: unknown, withh
   return new Function('formatCount', `${INDEX.slice(tableAt, tableEnd)}\n${INDEX.slice(fnAt, fnEnd)}\nreturn whyLeftOut;`)(formatCount);
 }
 
+/**
+ * What the pane reads since the eighth browser pass (K04): the scan the tree on screen came from — the scan
+ * `state` names, none running — and the sheet's bookkeeping for a tree no scan stands behind or another tree
+ * come on screen, which these tests do not reach (tests/treeScanKey.test.ts drives those).
+ */
+const SHEET: Record<string, unknown> = {
+  treeScanId: () => 's1',
+  cleanAskAgain: () => assert.fail('no other tree came on screen'), cleanNoScanHtml: () => assert.fail('a scan stands behind the tree'),
+};
+
 async function renderPane(data: Record<string, unknown>): Promise<string> {
   const { els, $ } = makeDom();
   const fn = runnable(bodyOf('async function loadEmptyFolders() {'), {
@@ -78,6 +88,7 @@ async function renderPane(data: Record<string, unknown>): Promise<string> {
     refreshCartButtons: () => {}, cartButtonHtml: () => '',
     updateCleanSummary: () => {},
     loadEmptyFoldersSeq: 0, // the page's own counter of loads (final review F1.8)
+    ...SHEET,
   });
   await fn();
   return els.emptyResults.innerHTML;
@@ -156,6 +167,7 @@ function loadsByHand() {
     refreshCartButtons: () => {}, cartButtonHtml: () => '',
     updateCleanSummary: () => {},
     loadEmptyFoldersSeq: 0,
+    ...SHEET,
   };
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval

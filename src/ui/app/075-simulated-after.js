@@ -813,7 +813,8 @@ function tmScoreKey() {
 function fetchScoresForTreemap() {
   const key = tmScoreKey();
   if (tmScoreChain && tmScoreChain.key !== key) { tmScoreChain.ctrl.abort(); tmScoreChain = null; }
-  if (state.treemap.colorMode !== 'reclaim' || !state.scanId) return;
+  // Scores are asked of the scan the tree on screen came from (ensureScores, treeScanId): none, nothing to ask.
+  if (state.treemap.colorMode !== 'reclaim' || !treeScanId()) return;
   // Every renderer, because Reclaim is a colour mode and all four paint
   // through the same cellRgb. Their entries are shaped alike: `{ n, ... }`.
   const drawn = drawnCells();

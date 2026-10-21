@@ -438,6 +438,7 @@ function quietRescanFailed(e) {
   withFocusKept(() => { switchView(state.view); });
   tourScanFailed(); // the tour's quick wins, waiting for this scan, say it will not land (review F1.4)
   liveScanEnded(); // and a Live wish waiting for it goes (review F2.14)
+  if (typeof cleanScanChanged === 'function') cleanScanChanged(); // the Clean Up panes waiting on a scan say so again, or ask (K04)
   drainScanQueue(); // a folder waiting behind this one still deserves its turn
 }
 
@@ -780,6 +781,7 @@ function failScan(message, err = null) {
   // screen is on screen when the card picks where focus goes (review F1.12).
   tourScanFailed();
   liveScanEnded(); // a Live wish waited for this scan to land; it will not (review F2.14)
+  if (typeof cleanScanChanged === 'function') cleanScanChanged(); // the Clean Up panes waiting on a scan say so again, or ask (K04)
   focusStartScreen(); // on "Scan … again", as after a Stop, or on "Choose a folder…"
   drainScanQueue(); // a folder waiting behind this one still gets its turn
 }

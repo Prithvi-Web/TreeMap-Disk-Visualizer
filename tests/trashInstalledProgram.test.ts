@@ -276,10 +276,12 @@ async function reencodePane(answer: (paths: string[]) => Promise<{ parts: unknow
     skeletonRows: () => '', icon: () => '', escapeHtml: (x: unknown) => String(x), chipFor: () => '',
     formatBytes: (n: number) => `${n} B`, formatCount: String, sizeInk: () => '', sizeColor: () => '',
     confirmEncode: (chosen: Array<{ path: string }>, parts: unknown) => { opened.push({ chosen, parts }); },
+    // The scan the tree on screen came from (K04): the scan `state` names, none running; nor does another tree come on screen.
+    treeScanId: () => 's1', cleanAskAgain: () => assert.fail('no other tree came on screen'), cleanNoScanHtml: () => assert.fail('a scan stands behind the tree'),
   };
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const load = new Function(...keys, `let videoCandidates = []; const INSTALLED_PROGRAM_CHUNK = ${/const INSTALLED_PROGRAM_CHUNK = (\d+);/.exec(INDEX)?.[1] ?? 'undefined'};
+  const load = new Function(...keys, `let videoCandidates = [], loadVideoSeq = 0; const INSTALLED_PROGRAM_CHUNK = ${/const INSTALLED_PROGRAM_CHUNK = (\d+);/.exec(INDEX)?.[1] ?? 'undefined'};
     ${['installedProgramParts', 'loadVideoCandidates'].map(declOf).join('\n')}
     return loadVideoCandidates;`)(...keys.map((k) => deps[k])) as () => Promise<void>;
   await load();
