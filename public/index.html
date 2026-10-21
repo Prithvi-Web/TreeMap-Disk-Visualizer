@@ -31980,7 +31980,28 @@ function fxBudgetGaugesDrop() {
   for (const g of budgetGauges) g.destroy();
   budgetGauges.length = 0;
 }
+/**
+ * The budgets card, painted from state.budgets. A budget's Edit button with
+ * focus keeps it through the rewrite: the same folder's new button takes it,
+ * or — its row gone — the view's landing (focusLanding). loadBudgets paints
+ * after its awaits, outside any withFocusKept: after a save or a removal by
+ * keyboard, the dialog's close handed focus back to the Edit button, and the
+ * reload that followed dropped it on <body> (review F3.8).
+ */
 function renderBudgetWidget() {
+  const list = $('budgetList');
+  const had = document.activeElement;
+  const inList = !!(list && had && had !== document.body && list.contains(had));
+  const path = inList ? had.getAttribute('data-budget-edit') : null;
+  paintBudgetWidget();
+  if (!inList || had.getClientRects().length > 0) return;
+  const again = path === null ? null
+    : [...list.querySelectorAll('[data-budget-edit]')].find((b) => b.getAttribute('data-budget-edit') === path);
+  const to = again || focusLanding();
+  if (to) to.focus({ preventScroll: true });
+}
+
+function paintBudgetWidget() {
   const card = $('budgetCard'), list = $('budgetList');
   if (!card || !list) return;
   list.classList.remove('fx-chart-loading'); // every paint settles the veil

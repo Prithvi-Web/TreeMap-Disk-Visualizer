@@ -202,6 +202,14 @@ const LIFTED_CITY = ['async function loadCity(', 'function renderCityChrome('];
  */
 const LIFTED_LIVE = ['function enableLive(', 'function disableLive('];
 const LIVE_PRESS = "$('tmLiveToggle').addEventListener('click', () => {";
+/**
+ * The folder budgets card, lifted whole for the pages that ask for it
+ * (`realBudgets`): its loader and its rows, and the dialog's Save and Remove
+ * — which rewrite the rows after an await, outside any withFocusKept, under
+ * focus a keyboard user left on a budget's Edit button (review F3.8).
+ */
+const LIFTED_BUDGETS = ['async function loadBudgets(', 'function renderBudgetWidget(', 'function paintBudgetWidget(', 'function fxBudgetGaugesDrop(',
+  'async function currentSavedBudgets(', 'async function saveBudgetList(', 'async function commitBudget(', 'async function removeBudget('];
 
 /** A top-level statement of the page by its opening text (an event handler's), brace-matched through its closing `;`. */
 function pageStatement(head: string): string {
@@ -263,7 +271,7 @@ async function turns(n = 30): Promise<void> {
 type Draw = { path: string; root: string | null; scanId: unknown;
   at: { scanning: unknown; indexScanDue: unknown; scanId: unknown; settledScanId: unknown; root: { path: string } | null; scanningPath: unknown } };
 
-function page(o: { route: Route; system?: unknown; search?: string; root?: unknown; settledScanId?: string | null; index?: boolean; realTreemap?: boolean; realCity?: boolean; realLive?: boolean }) {
+function page(o: { route: Route; system?: unknown; search?: string; root?: unknown; settledScanId?: string | null; index?: boolean; realTreemap?: boolean; realCity?: boolean; realLive?: boolean; realBudgets?: boolean }) {
   const dom = new Dom();
   const $ = (id: string) => dom.get(id);
   const requests: string[] = [];
@@ -423,26 +431,38 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     state.live = { wanted: false, on: false, es: null, window: [], dirty: 0, pulses: new Set(), pulseRaf: 0, feedTimer: 0, relayoutTimer: 0 };
     (state.treemap as Record<string, unknown>).history = { active: false };
   }
+  if (o.realBudgets) {
+    // The page's own budgets card, on the Dashboard; the dialog's close is the test's (it hands focus back, as modalClosed does).
+    Object.assign(given, {
+      loadBudgetsSeq: 0, budgetTarget: null, budgetGauges: [], seedNodes: noop, isSun: () => false, presentView: noop,
+      FxCharts: { gauge: () => ({ destroy: noop }), ramp: () => [] }, budgetProjectionLine: () => '', nodeFor: () => null,
+      openBudgetDialog: noop, closeModal: noop,
+    });
+    state.budgets = { list: [], overPaths: new Set(), gauges: new Map(), saved: null };
+  }
   const own = new Set([...OWN, ...(o.index ? LIFTED_INDEX.map((d) => /function (\w+)\(/.exec(d)![1]) : []),
     ...(o.realTreemap ? LIFTED_MAP.map((d) => /function (\w+)\(/.exec(d)![1]) : []),
     ...(o.realCity ? LIFTED_CITY.map((d) => /function (\w+)\(/.exec(d)![1]) : []),
-    ...(o.realLive ? LIFTED_LIVE.map((d) => /function (\w+)\(/.exec(d)![1]) : [])]);
+    ...(o.realLive ? LIFTED_LIVE.map((d) => /function (\w+)\(/.exec(d)![1]) : []),
+    ...(o.realBudgets ? LIFTED_BUDGETS.map((d) => /function (\w+)\(/.exec(d)![1]) : [])]);
   const scope = new Proxy(given, {
     has: (t, k) => typeof k === 'string' && k in t && !own.has(k),
     get: (t, k) => (k === Symbol.unscopables ? undefined : t[k as string]),
     set: (t, k, v) => { t[k as string] = v; return true; },
   });
-  const src = [...LIFTED, ...(o.index ? LIFTED_INDEX : []), ...(o.realTreemap ? LIFTED_MAP : []), ...(o.realCity ? LIFTED_CITY : []), ...(o.realLive ? LIFTED_LIVE : [])].map(pageFn).join('\n')
+  const src = [...LIFTED, ...(o.index ? LIFTED_INDEX : []), ...(o.realTreemap ? LIFTED_MAP : []), ...(o.realCity ? LIFTED_CITY : []), ...(o.realLive ? LIFTED_LIVE : []), ...(o.realBudgets ? LIFTED_BUDGETS : [])].map(pageFn).join('\n')
     + (o.realLive ? `\n${pageStatement(LIVE_PRESS)}` : '');
   // The real treemap view — and Disk City's — their unmounts aside (they tear down canvas machinery this page has none of).
   const views = (o.index ? `VIEW_BY_ID.set('treemap', { ...(${pageView('treemap')}), unmount() {} });` : '')
     + (o.realCity ? `\nVIEW_BY_ID.set('city', { ...(${pageRegisteredView('city')}), unmount() {} });` : '');
-  const fns = new Function('scope', `with (scope) { ${src}\n${views}\n return { switchView, restoreLastSession, startScan, stopScan, failScan, renderStartChoices, startCloudScan, loadSystem, startRejudgeRefused${o.realLive ? ', enableLive' : ''} }; }`)(scope) as {
+  const fns = new Function('scope', `with (scope) { ${src}\n${views}\n return { switchView, restoreLastSession, startScan, stopScan, failScan, renderStartChoices, startCloudScan, loadSystem, startRejudgeRefused${o.realLive ? ', enableLive' : ''}${o.realBudgets ? ', loadBudgets, commitBudget, removeBudget' : ''} }; }`)(scope) as {
     switchView: (v: string) => void; restoreLastSession: () => Promise<void>; startScan: (p: string, o?: unknown) => Promise<void>;
     stopScan: () => Promise<void>; failScan: (m: string, e?: unknown) => void; renderStartChoices: () => void;
     startCloudScan: (id: string, name: string) => Promise<void>; loadSystem: () => Promise<unknown>; startRejudgeRefused: () => void;
     /** The page's own enableLive (`realLive` pages). */
     enableLive?: () => void;
+    /** The page's own budgets card and dialog (`realBudgets` pages). */
+    loadBudgets?: () => Promise<void>; commitBudget?: () => Promise<void>; removeBudget?: (p: string) => Promise<void>;
   };
   /** The start screen's choices as a person sees them: each button's words, in order. */
   const choices = () => $('startChoices').children.map((b) => b.textContent);
@@ -2220,6 +2240,69 @@ test('BQJ-1b review F3.1, F3.5: Live on before a rescan is kept by the page\'s o
     assert.deepEqual(watches(h), ['/api/watch/scan-mail', '/api/watch/scan-1'], `${label}: Live watches the scan that landed, once — finishScan starts it, or finds it started`);
     assert.deepEqual(livePill(h), { waiting: false, running: true, pressed: 'true' }, `${label}: and the pill shows Live running`);
   }
+});
+
+/* BQJ-1b review F3.8: the folder budgets card rewrites its rows after an
+   await — the scan's /budgets read, then its breach projections — outside
+   any withFocusKept. Saved or removed by keyboard, the dialog's close hands
+   focus back to the budget's Edit button (modalClosed), and the reload that
+   follows took that button away: focus fell to <body>. The rows keep focus
+   themselves now: the same folder's new Edit button takes it, or — its row
+   gone — a control on screen. */
+
+test('BQJ-1b review F3.8: a folder budget saved or removed by keyboard leaves focus on that folder\'s Edit button — or, its row gone, on a control on screen — never on <body>', async () => {
+  const MAIL_V10 = `${MAIL}/V10`;
+  const MAIL_V9 = `${MAIL}/V9`;
+  let saved = [{ path: MAIL_V10, maxBytes: 50_000_000_000 }, { path: MAIL_V9, maxBytes: 9_000_000_000 }];
+  const base = server({ roots: [] });
+  const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
+  const h = page({ index: true, realBudgets: true, root: mail, settledScanId: 'scan-mail', route: (m, url, b) => {
+    // The scan measures each saved budget's folder; the settings hold what the person saved.
+    if (m === 'GET' && url === '/api/scan/scan-mail/budgets') {
+      return { body: { budgets: saved.map((s) => ({ path: s.path, name: s.path.slice(s.path.lastIndexOf('/') + 1), actualBytes: 1_000_000, maxBytes: s.maxBytes, overBy: 0 })) } };
+    }
+    if (m === 'GET' && url === '/api/scan/scan-mail/budget-gauges') return { body: { gauges: [] } };
+    if (m === 'GET' && url === '/api/settings') return { body: { budgets: saved } };
+    if (m === 'PUT' && url === '/api/settings') { saved = (b as { budgets: typeof saved }).budgets; return { body: { budgets: saved } }; }
+    return base(m, url, b);
+  } });
+  h.switchView('dashboard');
+  h.$('budgetCard').parent = h.$('view-dashboard');
+  h.$('budgetList').parent = h.$('budgetCard');
+  const editFor = (p: string) => h.$('budgetList').children.find((c) => c.attrs['data-budget-edit'] === p);
+  await h.loadBudgets!();
+  assert.ok(editFor(MAIL_V10) && editFor(MAIL_V9), 'control: the card lists both budgets, each with its Edit button');
+  // Edit V10, then Save by keyboard: closing the dialog hands focus back to the button that opened it.
+  let opener = editFor(MAIL_V10)!;
+  h.given.closeModal = () => { opener.focus(); };
+  opener.focus();
+  h.given.budgetTarget = { path: MAIL_V10, name: 'V10', size: 1_000_000 };
+  h.$('budgetValue').value = '5';
+  h.$('budgetUnit').value = '1000000000';
+  await h.commitBudget!();
+  await turns();
+  assert.equal(opener.detached, true, 'control: the reload after the save rewrote the rows, the button focus was on among them');
+  assert.equal(h.dom.activeElement, editFor(MAIL_V10), 'after Save, focus is on that folder\'s Edit button the rewrite put there — not on <body>');
+  // Focus anywhere else is left where it is.
+  const row = editFor(MAIL_V9)!;
+  h.$('pathInput').focus();
+  await h.loadBudgets!();
+  assert.equal(row.detached, true, 'control: the reload rewrote the rows');
+  assert.equal(h.dom.activeElement, h.$('pathInput'), 'focus on a control outside the card is left where it is');
+  // Remove V10 by keyboard: its row goes.
+  opener = editFor(MAIL_V10)!;
+  opener.focus();
+  await h.removeBudget!(MAIL_V10);
+  await turns();
+  assert.equal(editFor(MAIL_V10), undefined, 'control: the removed budget\'s row is gone');
+  assert.ok(focusOnControl(h), `after Remove, focus moves on to a control on screen — not <body> (on #${h.dom.activeElement.id})`);
+  // The last one removed: the card goes with it.
+  opener = editFor(MAIL_V9)!;
+  opener.focus();
+  await h.removeBudget!(MAIL_V9);
+  await turns();
+  assert.equal(h.$('budgetCard').hidden, true, 'control: no budgets, no card');
+  assert.ok(focusOnControl(h), `the card gone, focus moves on to a control on screen — not <body> (on #${h.dom.activeElement.id})`);
 });
 
 /* BQJ-1b review F1.12: the Dashboard's Cost to keep, Drive health and folder

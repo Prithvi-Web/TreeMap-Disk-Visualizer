@@ -996,8 +996,8 @@ test('a folder budget the person saved stays known over the saved index\'s tree 
   // Saved in settings: 5 GB on /r/mail, and a budget elsewhere no scan of /r measures.
   const SAVED = [{ path: '/r/mail', maxBytes: 5_000_000_000 }, { path: '/elsewhere', maxBytes: 1_000_000 }];
   const { fns, asks } = page<{ load: () => Promise<void>; budgetFor: (p: string) => { maxBytes: number } | null; dialog: (n: unknown) => void }>(
-    ['function budgetFor(', 'async function loadBudgets(', 'async function currentSavedBudgets(', 'function renderBudgetWidget(', 'function fxBudgetGaugesDrop(', 'function openBudgetDialog('], {
-      state, $, loadBudgetsSeq: 0, budgetGauges: [], seedNodes: noop, isSun: () => false, presentView: noop, nodeFor: () => null,
+    ['function budgetFor(', 'async function loadBudgets(', 'async function currentSavedBudgets(', 'function renderBudgetWidget(', 'function paintBudgetWidget(', 'function fxBudgetGaugesDrop(', 'function openBudgetDialog('], {
+      state, $, document: { activeElement: null, body: null }, loadBudgetsSeq: 0, budgetGauges: [], seedNodes: noop, isSun: () => false, presentView: noop, nodeFor: () => null,
       formatBytes: (n: number) => `${n} B`, escapeHtml: esc, icon: () => '', budgetProjectionLine: () => '', budgetTarget: null,
       FxCharts: { gauge: () => ({ destroy: noop }), ramp: noop }, GB: 1e9, MB: 1e6, KB: 1e3, setTimeout: noop,
     }, '{ load: loadBudgets, budgetFor, dialog: openBudgetDialog }',
@@ -1029,8 +1029,8 @@ test('a folder budget the person saved stays known over the saved index\'s tree 
   // The settings read still out when a scan lands: its answer is not kept over the scanned tree.
   let release: (v: unknown) => void = noop;
   const slow = page<{ load: () => Promise<void>; budgetFor: (p: string) => unknown }>(
-    ['function budgetFor(', 'async function loadBudgets(', 'async function currentSavedBudgets(', 'function renderBudgetWidget(', 'function fxBudgetGaugesDrop('], {
-      state, $, loadBudgetsSeq: 0, budgetGauges: [], seedNodes: noop, isSun: () => false, presentView: noop,
+    ['function budgetFor(', 'async function loadBudgets(', 'async function currentSavedBudgets(', 'function renderBudgetWidget(', 'function paintBudgetWidget(', 'function fxBudgetGaugesDrop('], {
+      state, $, document: { activeElement: null, body: null }, loadBudgetsSeq: 0, budgetGauges: [], seedNodes: noop, isSun: () => false, presentView: noop,
       formatBytes: (n: number) => `${n} B`, escapeHtml: esc, icon: () => '', budgetProjectionLine: () => '', FxCharts: { gauge: () => ({ destroy: noop }), ramp: noop },
     }, '{ load: loadBudgets, budgetFor }',
     (url) => (url === '/api/settings' ? new Promise((resolve) => { release = resolve; }) : url.includes('budget-gauges') ? { gauges: [] } : { budgets: [measured] }));

@@ -666,9 +666,10 @@ test('a budget gauge over its budget reads its real share — "136%", never "100
   ] } };
   const FxCharts = { gauge: (_cv: unknown, spec: Record<string, unknown>) => { specs.push(spec); return { destroy() {} }; }, ramp: () => ['#000', '#fff'] };
   new Function('$', 'state', 'FxCharts', 'formatBytes', 'escapeHtml', 'icon', 'budgetProjectionLine', 'nodeFor', 'openBudgetDialog',
-    'fxBudgetGaugesDrop', 'budgetGauges',
+    'fxBudgetGaugesDrop', 'budgetGauges', 'document', 'focusLanding',
     `'use strict'; ${fn} renderBudgetWidget();`)(
     $, state, FxCharts, (n: number) => `${n} B`, (s: string) => s, () => '', () => '', () => null, () => {}, () => {}, [],
+    { activeElement: null, body: null }, () => null,
   );
   assert.equal(specs.length, 2);
   // What the ring prints: the caller's formatValue, or the kit's own default (FxCharts.gauge) when none is passed.
