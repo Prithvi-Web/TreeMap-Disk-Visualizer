@@ -1912,8 +1912,8 @@ test('BQJ-1b (2): a rescan pressed over a saved index\'s tree a Stop left on scr
     await h.startScan(MAIL);
     await turns();
     assert.equal(pending, 0, 'over a scanned tree the lists are not touched by the quiet chrome');
-    assert.ok(h.draws.slice(drawn).every((d) => d.at.scanning !== true || d.at.settledScanId === 'scan-mail'),
-      'and no draw of it speaks for a tree with no scan behind it');
+    // Counted (review F2.10): the predicate this replaced held of every draw this scenario can make.
+    assert.equal(h.draws.length, drawn, 'nor is its map drawn again: the view is not re-entered over a tree its scan stands behind');
   }
 });
 

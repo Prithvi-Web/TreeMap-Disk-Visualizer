@@ -322,16 +322,21 @@ test('Apps: what each application owns is asked of the scan the tree on screen c
   assert.deepEqual(asks.slice(asked).map((a) => a.scanId), ['scan-old'], 'the chart\'s file counts are asked of the scan the apps came from');
   // The saved index's tree: no scan behind it.
   const before = asks.length;
+  const LAST = 'Based on your scan of <b>/other</b> — 3 apps own 9.0 GB'; // the last tree's line, as renderApps wrote it
+  $('appsInfo').textContent = LAST;
   Object.assign(state, INDEX_RUNNING);
   fns.mount();
   await turns();
   assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked — not of the running scan');
   assert.match($('appsBody').innerHTML, COMING, 'it says it fills in once the scan finishes');
+  assert.equal($('appsInfo').textContent, '', 'and the last tree\'s "Based on your scan of…" line goes (review F2.9)');
+  $('appsInfo').textContent = LAST;
   Object.assign(state, INDEX_STOPPED);
   fns.mount();
   await turns();
   assert.equal(asks.length, before, 'nor once that scan is stopped');
   assert.match($('appsBody').innerHTML, OPENED, 'it says the tree is the saved index, and what would fill it');
+  assert.equal($('appsInfo').textContent, '', 'its line gone then too');
 });
 
 test('Libraries: the game and media libraries are asked of the scan the tree on screen came from — never the running scan — and over the saved index\'s tree nothing is asked, said as loading, then as the saved index', async () => {
@@ -343,18 +348,25 @@ test('Libraries: the game and media libraries are asked of the scan the tree on 
   const fresh = () => { (state.games as { loadedFor: unknown }).loadedFor = null; (state.media as { loadedFor: unknown }).loadedFor = null; };
   await throughThePhases('Libraries', state, asks, async () => fns.mount(), fresh);
   const before = asks.length;
+  // The last tree's lines, as renderGames and renderMedia wrote them.
+  const seed = () => { $('gamesInfo').textContent = '2 libraries in /other'; $('mediaInfo').textContent = '1 library in /other'; };
+  seed();
   Object.assign(state, INDEX_RUNNING);
   fns.mount();
   await turns();
   assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked');
   assert.match($('gamesBody').innerHTML, COMING, 'the game libraries say they fill in once the scan finishes');
   assert.match($('mediaBody').innerHTML, COMING, 'and so do the media libraries');
+  assert.equal($('gamesInfo').textContent, '', 'the last tree\'s game libraries line goes (review F2.9)');
+  assert.equal($('mediaInfo').textContent, '', 'and its media libraries line');
+  seed();
   Object.assign(state, INDEX_STOPPED);
   fns.mount();
   await turns();
   assert.equal(asks.length, before);
   assert.match($('gamesBody').innerHTML, OPENED, 'once nothing will land, the tree is said to be the saved index');
   assert.match($('mediaBody').innerHTML, OPENED);
+  assert.deepEqual([$('gamesInfo').textContent, $('mediaInfo').textContent], ['', ''], 'their lines gone then too');
 });
 
 test('Security: the findings, and the next page of them, are asked of the scan the tree on screen came from — never the running scan — and over the saved index\'s tree nothing is asked, said as loading, then as the saved index', async () => {
@@ -374,16 +386,21 @@ test('Security: the findings, and the next page of them, are asked of the scan t
   assert.deepEqual(asks.slice(before).map((a) => a.scanId), ['scan-old'], 'the next page of findings is asked of the scan they came from');
   assert.notEqual((state.security as { report: unknown }).report, report, 'and kept, the tree on screen being that scan\'s still');
   const quiet = asks.length;
+  const LAST = '2 findings in /other'; // the last tree's line, as renderSecurity wrote it
+  $('securityInfo').textContent = LAST;
   Object.assign(state, INDEX_RUNNING);
   fns.mount();
   await turns();
   assert.equal(asks.length, quiet, 'over the saved index\'s tree nothing is asked');
   assert.match($('securityBody').innerHTML, COMING, 'it says it fills in once the scan finishes');
+  assert.equal($('securityInfo').textContent, '', 'and the last tree\'s findings line goes (review F2.9)');
+  $('securityInfo').textContent = LAST;
   Object.assign(state, INDEX_STOPPED);
   fns.mount();
   await turns();
   assert.equal(asks.length, quiet);
   assert.match($('securityBody').innerHTML, OPENED, 'then that the tree is the saved index');
+  assert.equal($('securityInfo').textContent, '', 'its line gone then too');
 });
 
 test('Apps, Libraries and Security keep no answer that lands once another tree is on screen — asked of the older scan during a rescan, an answer landing after the rescan landed is not painted over the new tree', async () => {
@@ -608,16 +625,41 @@ test('Calendar: bytes per day are counted by the scan the tree on screen came fr
   }, '{ load: loadCalendar }', () => ({ modified: [], degraded: [] }));
   await throughThePhases('Calendar', state, asks, fns.load, noop);
   const before = asks.length;
+  // The last tree's legend and degraded note, as its calendar left them (review F2.8).
+  const seed = () => { $('calLegend').hidden = false; $('calDegraded').hidden = false; };
+  seed();
   Object.assign(state, INDEX_RUNNING);
   await fns.load();
   assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked — not of the running scan');
   assert.match($('calBody').innerHTML, COMING, 'it says it fills in once the scan finishes');
   assert.doesNotMatch($('calBody').innerHTML, /Choose a folder|Once a folder is scanned/, 'not the welcome\'s words, over a folder on screen');
   assert.equal($('calControls').hidden, true, 'with no days to pick from, no controls');
+  assert.deepEqual([$('calLegend').hidden, $('calDegraded').hidden], [true, true], 'nor the last tree\'s legend and degraded note');
+  seed();
   Object.assign(state, INDEX_STOPPED);
   await fns.load();
   assert.equal(asks.length, before);
   assert.match($('calBody').innerHTML, /Opened from the saved index — scan this folder to /, 'once nothing will land, the tree is said to be the saved index');
+  assert.deepEqual([$('calLegend').hidden, $('calDegraded').hidden], [true, true], 'its legend and note gone then too');
+  // A count asked of the older scan during a rescan, still out when another folder is opened from its saved index:
+  // its answer is not painted over that folder's words (review F2.8).
+  let release: (v: unknown) => void = noop;
+  let painted = 0;
+  const race = page<{ load: () => Promise<void> }>(['async function loadCalendar('], {
+    state, $, calChannel: 'modified', calSeq: 0, calData: null, skeletonRows: () => '<i>loading</i>',
+    renderCalendar: () => { painted++; $('calBody').innerHTML = '<i>the older tree\'s calendar</i>'; },
+    escapeHtml: esc, icon: () => '', openBrowse: noop,
+  }, '{ load: loadCalendar }', () => new Promise((resolve) => { release = resolve; }));
+  Object.assign(state, HELD, { root: TREE });
+  const out = race.fns.load();
+  await turns();
+  Object.assign(state, INDEX_RUNNING, { root: { path: '/other', name: 'other', size: 1 } }); // finishScan's index paint of another folder
+  await race.fns.load();
+  release({ modified: [{ date: '2026-10-01', bytes: 9, files: 1 }], degraded: [] });
+  await out;
+  await turns();
+  assert.equal(painted, 0, 'the older scan\'s calendar, answering late, is not painted over another folder\'s saved index');
+  assert.match($('calBody').innerHTML, COMING, 'whose words stand');
 });
 
 test('Missing GB: the statement is asked of the scan the tree on screen came from — never the running scan — an answer is kept only for that scan, and over the saved index\'s tree nothing is asked: loading, then the saved index', async () => {
