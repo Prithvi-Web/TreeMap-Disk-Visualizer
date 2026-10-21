@@ -3100,6 +3100,13 @@ test('K01: a relaunch with history puts focus on the start screen\'s "Scan <last
   await boot(refused);
   assert.ok(!refused.$('startChoices').children.some((b) => b.id === 'startAgainBtn'), 'control: the refused folder is not offered');
   assert.equal(refused.dom.activeElement, refused.$('emptyBrowseBtn'), 'focus is on "Choose a folder…"');
+  // The rules have answered: nothing more to wait for, so the wait ends — and a later repaint of the choices (the
+  // window back in front, the drives named) never pulls focus back from where the person left it (review F1.10).
+  assert.equal(refused.state.startFocusDue, false, 'with the rules answered, the focus wait ends');
+  refused.dom.active = null; // a click on an empty part of the page: focus on <body>
+  refused.renderStartChoices();
+  await turns();
+  assert.equal(refused.dom.activeElement, refused.dom.body, 'a later repaint of the choices leaves focus where the person left it');
   // Focus the person put elsewhere meanwhile is theirs.
   const own = page({ route: server({ roots: [ROOT_HISTORY] }) });
   own.switchView('dashboard');
