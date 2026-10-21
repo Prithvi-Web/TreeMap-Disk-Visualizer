@@ -13625,10 +13625,14 @@ function tmAcross(r, side, g) {
  * What lies inside the folder `f`, `inset` px in from its `side` — on the row
  * (or column) of device pixels there — stretch by stretch along it: each
  * rectangle that crosses that row (a nested folder's band, or what lies inside
- * it; a leaf's own top or left line where the row is its edge; else its tile),
- * and the folder's own fill between them. A sliver lying wholly under the
- * band does not cross the row past it, so a band is never toned against what
- * it covers (REPORT problem 6).
+ * it; a leaf's own top or left line where the row is its edge; else its tile,
+ * with the shades its texture lays along its edge, `grain`), and the folder's
+ * own fill between them. A sliver lying wholly under the band does not cross
+ * the row past it, so a band is never toned against what it covers (REPORT
+ * problem 6). A leaf's line beside a folder too small for a band looks in
+ * here too, and weighs the grain as beside the same file in the open: on its
+ * cushion alone a line was left out where the file's texture stood 2.68:1
+ * from it (review F2.2).
  */
 function tmInside(f, side, inset, g) {
   const [p, s] = TM_SIDES[side];
@@ -13653,7 +13657,7 @@ function tmInside(f, side, inset, g) {
     let segs;
     if (c.frame) segs = offMid < c.lw ? [{ lo: a, hi: b, line: true }] : tmInside(c, side, off, g);
     else if (offMid < 1 && (side === 'top' || side === 'left') && tmLeafKind(c) === 'edged') segs = [{ lo: a, hi: b, line: true }];
-    else segs = [{ lo: a, hi: b, line: false, base: tmBaseOf(c, f), beside: tmShown(c) }];
+    else segs = [{ lo: a, hi: b, line: false, base: tmBaseOf(c, f), beside: tmShown(c), grain: c.texSeen || [] }];
     out.push(...tmClip(segs, a, b));
     cur = b;
   }

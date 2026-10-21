@@ -2977,6 +2977,48 @@ test('owner\'s refinement: a leaf\'s line is left out only where the tiles part 
   }
 });
 
+/**
+ * A grey file L, 30×9 px, in a top-level folder P, with a 6 px file T of Reclaim's dark "not scored" grey just right of it
+ * (review F2.2): with `inFolder`, T is the only file in a folder F of its own size, too small for a band, so what lies
+ * beyond L's right side is found inside F. T's texture's left column runs along L's right side; L's cushion parts from T's
+ * by a little over 3.3:1 for the greys from about 150 to 170, and from T's lighter texture by less.
+ */
+function besideBandless(grey: number, inFolder: boolean) {
+  const W = 100, H = 100, dark = OTHER_COLOURS.find((c) => c.name === 'Reclaim not scored')!.rgb;
+  const node = (path: string, depth: number, x: number, y: number, w: number, h: number, dir = false): Tile =>
+    ({ name: path.slice(path.lastIndexOf('/') + 1), path, size: dir ? 1e9 : 1e6, type: dir ? 'dir' : 'file', depth, expanded: dir, x, y, w, h });
+  const tiles = [node('/r/P', 1, 0, 0, 60, 40, true), node('/r/P/L', 2, 10, 10, 30, 9)];
+  if (inFolder) tiles.push(node('/r/P/F', 2, 40, 12, 6, 6, true), node('/r/P/F/T', 3, 40, 12, 6, 6));
+  else tiles.push(node('/r/P/T', 2, 40, 12, 6, 6));
+  return { tiles, W, H, colour: (n: Tile) => (n.path === '/r/P/L' ? [grey, grey, grey] as RGB : n.path.endsWith('/T') ? dark : [70, 110, 160] as RGB) };
+}
+
+test('owner\'s refinement: beside a folder too small for a band, a leaf\'s line is left out only where it parts by 3.3:1 from what that folder shows along the edge — the texture of the file inside it counted, as beside the same file laid in the open — at device pixel ratios 1, 1.5 and 2, in both themes (review F2.2)', () => {
+  // Beyond a folder too small for a band the line looked inside the folder and weighed only the cushion of the file there,
+  // never its texture: L's line was left out, and T's lighter left column stood 2.68:1 from L's grey (154) with no line
+  // between them, where T laid in the open beside L kept the line.
+  for (const dpr of [1, 1.5, 2]) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      for (const inFolder of [false, true]) {
+        let looked = 0;
+        for (let grey = 150; grey <= 170; grey += 2) {
+          const m = besideBandless(grey, inFolder);
+          const where = `${theme}, dpr ${dpr}, grey ${grey}, T ${inFolder ? 'in a folder of its own' : 'in the open'}`;
+          const { raster, px } = rasterPaint(m.tiles, palette, m.W, m.H, m.colour, undefined, false, dpr);
+          const l = px.find((r) => r.n.path === '/r/P/L')!, t = px.find((r) => r.n.path.endsWith('/T'))!, f = px.find((r) => r.n.path === '/r/P/F');
+          assert.ok(l.lines && t.tex && t.tex.rects.length > 0 && (!inFolder || (f && f.lw === 0)),
+            `${where}: control — L has lines of its own, T a texture${inFolder ? ', and F no band' : ''}`);
+          const p = partings(raster, px, dpr, PAINTER_EDGE);
+          looked += p.looked;
+          assert.deepEqual(p.unparted, [], `${where}: L not parted by ${PAINTER_EDGE}:1 from what lies beside it`);
+          assert.deepEqual(measureEdges(raster, px, dpr).under, [], `${where}: lines under ${EDGE_BAR}:1 against a tile beside them`);
+        }
+        assert.ok(looked > 11 * 40 * dpr, `${theme}, dpr ${dpr}: control — ${looked} places along L's sides`);
+      }
+    }
+  }
+});
+
 /* ── On the device's own pixels: Retina (2) and 150 % (1.5) ── */
 
 test('tmSnap lays a coordinate on the nearest whole device pixel — at device pixel ratios 1, 1.25, 1.5 and 2 (review F1.7)', () => {
