@@ -51,6 +51,8 @@
 /* ── Live activity mode (Feature 22) ── */
 #tmLiveToggle .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 6px; opacity: 0.45; }
 #tmLiveToggle.active .dot { background: var(--danger); opacity: 1; animation: livePulse 1.2s ease-in-out infinite; }
+/* Waiting for the scan running to land (liveQueuedSync): the dot lit, steady — not Live's red pulse. */
+#tmLiveToggle.queued .dot { opacity: 1; }
 @keyframes livePulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.4); opacity: 0.5; } }
 @media (prefers-reduced-motion: reduce) { #tmLiveToggle.active .dot { animation: none; } }
 /* Fixed 252px is safe: the panel overlays the treemap canvas, which is never

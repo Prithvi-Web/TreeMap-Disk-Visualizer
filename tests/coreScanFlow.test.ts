@@ -170,6 +170,8 @@ const LIFTED = [
   'async function startCloudScan(', 'async function loadSystem(',
   // The app's one rule for the scan the tree on screen came from (015).
   'function treeScanId(', 'function treeScanComing(',
+  // The Live pill's wish while a scan runs, and its end with a scan that does not land (075, review F2.14).
+  'function liveQueuedSync(', 'function liveScanEnded(',
 ];
 const OWN = new Set(LIFTED.map((d) => /function (\w+)\(/.exec(d)![1]));
 /**
@@ -2036,6 +2038,102 @@ test('BQJ-1b: the scan the tree on screen came from, through a real rescan — t
   await pressStop(idx);
   assert.deepEqual(phaseOf(idx.state), { scanning: false, scanId: null, settledScanId: null }, 'Stopped (INDEX_STOPPED)');
   assert.deepEqual(ruleOver(idx.state), { id: null, coming: false }, 'none behind it, none coming');
+});
+
+/* BQJ-1b review F2.6, F2.14: the Live pill pressed while a scan runs says
+   "Live mode starts once the scan finishes" and keeps the wish
+   (state.live.wanted); finishScan keeps the promise. The pill shows the wish
+   while the scan runs, and a scan that ends without landing — stopped, or
+   failed — ends it: the next scan to land, of whatever folder, starts no
+   Live nobody asked for. */
+
+/** Every start of Live the page made (enableLive), with the scan state it was made in. */
+function liveStarts(h: ReturnType<typeof page>, turnsOn = false): Array<{ scanning: unknown; tree: string | null }> {
+  const calls: Array<{ scanning: unknown; tree: string | null }> = [];
+  h.given.enableLive = () => {
+    calls.push({ scanning: h.state.scanning, tree: ruleOver(h.state).id });
+    if (turnsOn) (h.state.live as { on: boolean }).on = true;
+  };
+  return calls;
+}
+const liveOf = (h: ReturnType<typeof page>) => h.state.live as { wanted: boolean; on: boolean };
+/** What the Live pill shows: waiting for a scan (its `queued` style), and its pressed state. */
+const pillOf = (h: ReturnType<typeof page>) => [h.$('tmLiveToggle').cls.has('queued'), h.$('tmLiveToggle').getAttribute('aria-pressed')];
+const complete = (h: ReturnType<typeof page>, root: unknown) =>
+  h.streams.at(-1)!.onmessage!({ data: JSON.stringify({ type: 'complete', root, stats: { fileCount: 1, dirCount: 1 } }) });
+
+test('BQJ-1b review F2.6, F2.14: Live wished for during a rescan is started by the page\'s own finishScan, on the scan that landed — the pill showing the wish while the scan runs — and a Stop or a failure ends the wish, so the next scan to land starts no Live unasked', async () => {
+  const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
+  const desk = { name: 'Desktop', path: '/Users/x/Desktop', size: 1, type: 'dir', children: [] };
+  // Landing: finishScan starts it.
+  {
+    const h = page({ index: true, root: mail, settledScanId: 'scan-mail', route: server({ roots: [] }) });
+    const calls = liveStarts(h);
+    await h.startScan(MAIL);
+    await turns();
+    assert.equal(h.state.scanning, true, 'control: the rescan runs');
+    assert.equal(pillOf(h)[0], false, 'control: nothing wished for, the pill shows nothing waiting');
+    liveOf(h).wanted = true; // the Live pill pressed during it ("Live mode starts once the scan finishes.")
+    complete(h, mail);
+    await turns();
+    assert.deepEqual(calls, [{ scanning: false, tree: 'scan-1' }], 'finishScan starts Live once, on the scan that landed, its chrome ended (review F2.6)');
+  }
+  // Live on before a rescan (startScan keeps the wish): the pill shows it waiting; a Stop ends it.
+  {
+    const h = page({ index: true, root: mail, settledScanId: 'scan-mail', route: server({ roots: [] }) });
+    liveOf(h).wanted = true;
+    await h.startScan(MAIL);
+    await turns();
+    assert.deepEqual(pillOf(h), [true, 'true'], 'while the rescan runs the pill shows Live waiting for it — pressed, its dot lit');
+    const calls = liveStarts(h);
+    await pressStop(h);
+    assert.equal(liveOf(h).wanted, false, 'a Stop ends the wish: the scan it waited for will not land');
+    assert.deepEqual(pillOf(h), [false, 'false'], 'and the pill shows nothing waiting');
+    await h.startScan(desk.path); // the next scan, of another folder
+    await turns();
+    complete(h, desk);
+    await turns();
+    assert.equal(pathOf(h.state.root), desk.path, 'control: the next scan landed');
+    assert.deepEqual(calls, [], 'and it starts no Live nobody asked for');
+  }
+  // A scan that fails once followed.
+  {
+    const h = page({ index: true, root: mail, settledScanId: 'scan-mail', route: server({ roots: [] }) });
+    await h.startScan(MAIL);
+    await turns();
+    liveOf(h).wanted = true;
+    h.streams.at(-1)!.onmessage!({ data: JSON.stringify({ type: 'error', message: 'The drive stopped answering.' }) });
+    await turns();
+    assert.equal(h.state.scanning, false, 'control: the scan failed');
+    assert.equal(liveOf(h).wanted, false, 'a failed scan ends the wish too');
+  }
+  // The quiet rescan behind an index paint failing (quietRescanFailed).
+  {
+    let answerScan: ((a: { status: number; body: unknown }) => void) | null = null;
+    const base = server({ roots: [], indexed: [MAIL], indexTrees: { [MAIL]: indexTreeOf(MAIL, 37_700_000) } });
+    const h = page({ index: true, root: indexTreeOf(MAIL, 37_700_000), route: (m, url, b) => (
+      m === 'POST' && url === '/api/scan' && !answerScan ? new Promise((r) => { answerScan = r; }) : base(m, url, b)) });
+    await h.startScan(MAIL);
+    await turns();
+    liveOf(h).wanted = true;
+    answerScan!({ status: 500, body: { error: 'The drive went away.', code: 'INTERNAL' } });
+    await turns();
+    assert.equal(h.state.scanning, false, 'control: its quiet rescan failed');
+    assert.equal(liveOf(h).wanted, false, 'a failed quiet rescan ends the wish too');
+  }
+  // A Stop that puts the older tree back with its scan (putBackHeldTree) starts Live again itself: the wish stays.
+  {
+    const h = page({ index: true, root: mail, settledScanId: 'scan-mail',
+      route: server({ roots: [], indexed: [CORPUS], indexTrees: { [CORPUS]: indexTreeOf(CORPUS, 9_500_000_000) } }) });
+    await h.startScan(CORPUS);
+    await turns();
+    assert.equal(pathOf(h.state.root), CORPUS, 'control: corpus painted from its saved index over Mail\'s scanned tree');
+    liveOf(h).wanted = true;
+    const calls = liveStarts(h, true);
+    await pressStop(h);
+    assert.deepEqual(calls, [{ scanning: false, tree: 'scan-mail' }], 'control: the older tree is back, and Live with it');
+    assert.equal(liveOf(h).wanted, true, 'Live put back on with the older tree keeps its wish');
+  }
 });
 
 /* BQJ-1b review F1.12: the Dashboard's Cost to keep, Drive health and folder

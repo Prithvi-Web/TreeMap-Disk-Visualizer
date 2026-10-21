@@ -891,11 +891,13 @@ test('a failed first scan paints the welcome card once, with the welcome\'s own 
   const start = ['function startLanding(', 'function focusStartScreen(', 'function noteLastFolder('].map(pageFn).join('\n');
   const run = new Function('$', 'tour', 'state', 'icon', 'escapeHtml', 'formatBytes', 'startScan', 'openBrowse', 'tourLoadWins', 'tourFinish', 'cartAddMany',
     'tourAdvanceWin', 'tourWinLine', 'document', 'endScanChrome', 'restoreDashboardPanels', 'toast', 'activeViewControl', 'switchView', 'drainScanQueue',
+    // A Live wish ending with the scan is tests/coreScanFlow.test.ts's (review F2.14).
+    'liveScanEnded',
     `'use strict'; ${card} ${failed} ${keep} ${start} ${fail} return { failScan, tourFollowView };`);
   const page = run($, tour, state, () => '', (s: string) => s, (n: number) => `${n} B`, () => {}, () => {}, () => {}, () => {}, () => 0, () => {}, () => '', doc,
     () => {}, () => {}, () => {}, () => null,
     // switchView puts the welcome back on screen and, as on the page, tells the card.
-    (name: string) => { order.push(`switch ${name}`); $('emptyBrowseBtn').rects = 1; page.tourFollowView(); }, () => {},
+    (name: string) => { order.push(`switch ${name}`); $('emptyBrowseBtn').rects = 1; page.tourFollowView(); }, () => {}, () => {},
   ) as { failScan: (m: string) => void; tourFollowView: () => void };
   page.failScan('Path does not exist');
   assert.deepEqual(order, ['switch dashboard'], 'control: the view the person was on is put back');

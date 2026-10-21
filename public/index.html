@@ -2720,6 +2720,8 @@ body.preview-open.cart-open:has(#sideNav.collapsed) { --tour-w: min(360px, calc(
 /* ── Live activity mode (Feature 22) ── */
 #tmLiveToggle .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 6px; opacity: 0.45; }
 #tmLiveToggle.active .dot { background: var(--danger); opacity: 1; animation: livePulse 1.2s ease-in-out infinite; }
+/* Waiting for the scan running to land (liveQueuedSync): the dot lit, steady — not Live's red pulse. */
+#tmLiveToggle.queued .dot { opacity: 1; }
 @keyframes livePulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.4); opacity: 0.5; } }
 @media (prefers-reduced-motion: reduce) { #tmLiveToggle.active .dot { animation: none; } }
 /* Fixed 252px is safe: the panel overlays the treemap canvas, which is never
@@ -9768,6 +9770,7 @@ async function stopScan() {
   // v4 §9.2 — the tour's "Reading your files…" card goes back to the welcome,
   // now the start screen is on screen: nothing is being read (review F2.2).
   tourScanFailed();
+  liveScanEnded(); // a Live wish waited for this scan to land; it will not (review F2.14)
   // Focus on "Scan … again", never <body>, however Stop was pressed.
   focusStartScreen();
   // And said aloud: the start screen's own line, or the status line's, in a
@@ -10075,6 +10078,7 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   $('stopAnnounce').textContent = ''; // so the next Stop's words are a change, and spoken (review F1.14)
   $('progressTrack').setAttribute('aria-valuetext', 'Scanning');
   tourScanStarted(); // v4 §9.2 — the welcome card follows the user into the scan
+  liveQueuedSync(); // the Live pill shows a wish this scan's landing keeps (review F2.14)
   if (quiet) {
     // `message` lets the caller say what is actually happening. A first scan
     // enters here too — startScan shows the chrome before it knows whether the
@@ -10573,6 +10577,7 @@ function quietRescanFailed(e) {
   // (review F3.4).
   withFocusKept(() => { switchView(state.view); });
   tourScanFailed(); // the tour's quick wins, waiting for this scan, say it will not land (review F1.4)
+  liveScanEnded(); // and a Live wish waiting for it goes (review F2.14)
   drainScanQueue(); // a folder waiting behind this one still deserves its turn
 }
 
@@ -10909,6 +10914,7 @@ function failScan(message, err = null) {
   // v4 §9.2 — the welcome card comes back: after the view, so the start
   // screen is on screen when the card picks where focus goes (review F1.12).
   tourScanFailed();
+  liveScanEnded(); // a Live wish waited for this scan to land; it will not (review F2.14)
   focusStartScreen(); // on "Scan … again", as after a Stop, or on "Choose a folder…"
   drainScanQueue(); // a folder waiting behind this one still gets its turn
 }
@@ -21562,6 +21568,7 @@ function enableLive() {
   live.feedTimer = setInterval(renderLiveFeed, 2000);
   live.relayoutTimer = setInterval(() => void liveRelayout(), LIVE_RELAYOUT_MS);
   renderLiveFeed();
+  liveQueuedSync(); // running now, no longer waiting
 }
 
 function disableLive({ keepWanted = false } = {}) {
@@ -21586,6 +21593,34 @@ function disableLive({ keepWanted = false } = {}) {
   if (state.view === 'treemap' && state.treemap.rootPath) presentView();
 }
 
+/**
+ * The Live pill while Live waits for the scan running to land — wished for
+ * (state.live.wanted), off, a scan running: pressed, its dot lit (`queued`).
+ * Pressed during a scan it said "Live mode starts once the scan finishes"
+ * in a toast and showed nothing, and a second press could not take it back
+ * (review F2.14). finishScan starts Live when the scan lands (enableLive).
+ */
+function liveQueuedSync() {
+  const live = state.live;
+  const pill = $('tmLiveToggle');
+  if (!pill) return;
+  const queued = !live.on && !!live.wanted && !!state.scanning;
+  pill.classList.toggle('queued', queued);
+  if (!live.on) pill.setAttribute('aria-pressed', queued ? 'true' : 'false');
+}
+
+/**
+ * A scan ended without landing — stopped, or failed (stopScan, failScan,
+ * quietRescanFailed). A Live wish waited for it to land, and it will not:
+ * the wish goes, so the next scan to land, of whatever folder, starts no Live
+ * nobody asked for (review F2.14). Live a Stop put back on with the older
+ * tree (putBackHeldTree) is on, and keeps it.
+ */
+function liveScanEnded() {
+  if (!state.live.on) state.live.wanted = false;
+  liveQueuedSync();
+}
+
 $('tmLiveToggle').addEventListener('click', () => {
   if (state.live.on) disableLive();
   else if (!state.scanning && treeScanId() && state.root) enableLive();
@@ -21593,9 +21628,11 @@ $('tmLiveToggle').addEventListener('click', () => {
     toast('Live mode watches your local disk — cloud accounts can’t stream changes', 'error'); // enableLive's own refusal, when it lands
   } else if (state.scanning) {
     // A scan is running: Live watches it once it lands — finishScan starts it,
-    // as it restarts Live after a rescan.
-    state.live.wanted = true;
-    toast('Live mode starts once the scan finishes.');
+    // as it restarts Live after a rescan. The pill shows the wish, and a
+    // second press takes it back (review F2.14).
+    state.live.wanted = !state.live.wanted;
+    toast(state.live.wanted ? 'Live mode starts once the scan finishes.' : 'Live mode will not start when the scan finishes.');
+    liveQueuedSync();
   } else if (state.root) toast('Opened from the saved index — scan this folder to watch it live.');
   else toast('Run a scan first — Live mode watches the scanned folder', 'error');
 });

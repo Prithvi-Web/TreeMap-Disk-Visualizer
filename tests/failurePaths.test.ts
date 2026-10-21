@@ -278,6 +278,8 @@ function stopHarness(cancel: () => Promise<unknown>, settledScanId: string | nul
     withFocusKept: (change: () => void) => { change(); },
     // Stop puts the tour's welcome card back; what that card does is tests/firstRun.test.ts's (review F2.2).
     tourScanFailed: () => {},
+    // A Live wish ending with the scan is tests/coreScanFlow.test.ts's (review F2.14).
+    liveScanEnded: () => {},
     // With nothing on screen Stop names the folder on the start screen and lands focus on "Scan … again":
     // tests/coreScanFlow.test.ts's (the owner, 17 Oct 2026).
     noteLastFolder: () => {},
@@ -402,6 +404,7 @@ function scanStartHarness(indexed: boolean) {
     state, $, api, log, performance, console,
     toast: noop, closeEventSource: noop, disableLive: noop, icon: () => '', REDUCED: true, escapeHtml: (s: string) => s,
     fxStateBeam: noop, fxOrbShow: noop, fxOrbHide: noop, fxScanHeroSync: noop, fxDonutLoadingSync: noop, tourScanStarted: noop, tourScanFailed: noop,
+    liveQueuedSync: noop, liveScanEnded: noop, // the Live pill's wish through a scan: tests/coreScanFlow.test.ts's (review F2.14)
     // The chrome takes the last folder's ring down while the lists load (B05);
     // like the donut's loading state beside it, a picture, not a step.
     clearDonut: noop,

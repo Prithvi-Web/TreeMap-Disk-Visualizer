@@ -1589,6 +1589,7 @@ function enableLive() {
   live.feedTimer = setInterval(renderLiveFeed, 2000);
   live.relayoutTimer = setInterval(() => void liveRelayout(), LIVE_RELAYOUT_MS);
   renderLiveFeed();
+  liveQueuedSync(); // running now, no longer waiting
 }
 
 function disableLive({ keepWanted = false } = {}) {
@@ -1613,6 +1614,34 @@ function disableLive({ keepWanted = false } = {}) {
   if (state.view === 'treemap' && state.treemap.rootPath) presentView();
 }
 
+/**
+ * The Live pill while Live waits for the scan running to land — wished for
+ * (state.live.wanted), off, a scan running: pressed, its dot lit (`queued`).
+ * Pressed during a scan it said "Live mode starts once the scan finishes"
+ * in a toast and showed nothing, and a second press could not take it back
+ * (review F2.14). finishScan starts Live when the scan lands (enableLive).
+ */
+function liveQueuedSync() {
+  const live = state.live;
+  const pill = $('tmLiveToggle');
+  if (!pill) return;
+  const queued = !live.on && !!live.wanted && !!state.scanning;
+  pill.classList.toggle('queued', queued);
+  if (!live.on) pill.setAttribute('aria-pressed', queued ? 'true' : 'false');
+}
+
+/**
+ * A scan ended without landing — stopped, or failed (stopScan, failScan,
+ * quietRescanFailed). A Live wish waited for it to land, and it will not:
+ * the wish goes, so the next scan to land, of whatever folder, starts no Live
+ * nobody asked for (review F2.14). Live a Stop put back on with the older
+ * tree (putBackHeldTree) is on, and keeps it.
+ */
+function liveScanEnded() {
+  if (!state.live.on) state.live.wanted = false;
+  liveQueuedSync();
+}
+
 $('tmLiveToggle').addEventListener('click', () => {
   if (state.live.on) disableLive();
   else if (!state.scanning && treeScanId() && state.root) enableLive();
@@ -1620,9 +1649,11 @@ $('tmLiveToggle').addEventListener('click', () => {
     toast('Live mode watches your local disk — cloud accounts can’t stream changes', 'error'); // enableLive's own refusal, when it lands
   } else if (state.scanning) {
     // A scan is running: Live watches it once it lands — finishScan starts it,
-    // as it restarts Live after a rescan.
-    state.live.wanted = true;
-    toast('Live mode starts once the scan finishes.');
+    // as it restarts Live after a rescan. The pill shows the wish, and a
+    // second press takes it back (review F2.14).
+    state.live.wanted = !state.live.wanted;
+    toast(state.live.wanted ? 'Live mode starts once the scan finishes.' : 'Live mode will not start when the scan finishes.');
+    liveQueuedSync();
   } else if (state.root) toast('Opened from the saved index — scan this folder to watch it live.');
   else toast('Run a scan first — Live mode watches the scanned folder', 'error');
 });

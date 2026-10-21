@@ -1288,7 +1288,7 @@ test('Live: the toggle watches the scan the tree on screen came from once it has
     live: { on: false, wanted: false, es: null, window: [], dirty: 0, pulses: new Set(), pulseRaf: 0, feedTimer: 0, relayoutTimer: 0 },
     treemap: { history: { active: false }, rootPath: '/r' },
   };
-  const { fns } = page<{ enable: () => void; disable: () => void }>(['function enableLive(', 'function disableLive(', "$('tmLiveToggle').addEventListener('click', () => {"], {
+  const { fns } = page<{ enable: () => void; disable: () => void }>(['function enableLive(', 'function disableLive(', 'function liveQueuedSync(', "$('tmLiveToggle').addEventListener('click', () => {"], {
     state, $, EventSource: Watch, isCloudScan: () => false, toast: (m: string, k?: string) => { toasts.push([m, k]); },
     fxTmPillBeamsSync: noop, fxLiveLineDrop: noop, setInterval: () => 0, clearInterval: noop, cancelAnimationFrame: noop,
     renderLiveFeed: noop, liveRelayout: noop, LIVE_RELAYOUT_MS: 1, setHistoryIndex: noop, presentView: noop,
@@ -1300,12 +1300,21 @@ test('Live: the toggle watches the scan the tree on screen came from once it has
   assert.deepEqual(watched, [], 'pressed during a rescan, no watch is opened on the scan still walking (it answers 409 SCAN_RUNNING)');
   assert.deepEqual(toasts.at(-1), ['Live mode starts once the scan finishes.', undefined], 'it says when Live starts — not an error');
   assert.equal(live.wanted, true, 'and keeps the wish, for finishScan');
+  const pill = $('tmLiveToggle');
+  assert.deepEqual([pill.cls.has('queued'), pill.attrs['aria-pressed']], [true, 'true'], 'the pill shows the wish — pressed, its dot lit — not a toast alone (review F2.14)');
+  assert.equal(pill.cls.has('active'), false, 'and not as Live running');
+  press(); // pressed again while the scan still runs
+  assert.equal(live.wanted, false, 'pressed again, the wish goes');
+  assert.deepEqual([pill.cls.has('queued'), pill.attrs['aria-pressed']], [false, 'false'], 'and the pill shows it gone');
+  assert.deepEqual(toasts.at(-1), ['Live mode will not start when the scan finishes.', undefined], 'said, as the first press was');
+  press(); // wished for again
   fns.enable(); // a stray caller while the scan runs
   assert.deepEqual(watched, [], 'Live opens no watch while a scan runs, whoever asks');
   Object.assign(state, LANDED); // finishScan: `if (state.live.wanted) enableLive()`
   fns.enable();
   assert.deepEqual(watched, ['/api/watch/scan-new'], 'once the rescan lands, Live watches the new scan');
   assert.equal(live.on, true);
+  assert.deepEqual([pill.cls.has('queued'), pill.cls.has('active'), pill.attrs['aria-pressed']], [false, true, 'true'], 'and the pill shows Live running, no longer waiting');
   press(); // off
   assert.equal(live.on, false, 'control: pressed again, Live is off');
 

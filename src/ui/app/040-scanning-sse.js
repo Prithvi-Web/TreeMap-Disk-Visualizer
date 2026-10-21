@@ -228,6 +228,7 @@ async function stopScan() {
   // v4 §9.2 — the tour's "Reading your files…" card goes back to the welcome,
   // now the start screen is on screen: nothing is being read (review F2.2).
   tourScanFailed();
+  liveScanEnded(); // a Live wish waited for this scan to land; it will not (review F2.14)
   // Focus on "Scan … again", never <body>, however Stop was pressed.
   focusStartScreen();
   // And said aloud: the start screen's own line, or the status line's, in a
@@ -535,6 +536,7 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   $('stopAnnounce').textContent = ''; // so the next Stop's words are a change, and spoken (review F1.14)
   $('progressTrack').setAttribute('aria-valuetext', 'Scanning');
   tourScanStarted(); // v4 §9.2 — the welcome card follows the user into the scan
+  liveQueuedSync(); // the Live pill shows a wish this scan's landing keeps (review F2.14)
   if (quiet) {
     // `message` lets the caller say what is actually happening. A first scan
     // enters here too — startScan shows the chrome before it knows whether the
