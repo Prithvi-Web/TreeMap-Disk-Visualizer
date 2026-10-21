@@ -747,8 +747,9 @@ const PREVIEWING = '#view-treemap:has(> #treemapWrap.previewing) > .tm-foot ';
 
 type KeyNode = { text: string } | { tag: string; cls: string[]; attrs: Record<string, string>; kids: KeyNode[] };
 
-/** The map key's markup in "Preview after", as the page writes it, in colour mode `mode` with every marking drawn. */
-function keyHtml(mode: 'size' | 'age' | 'reclaim' | 'diff'): string {
+/** The map key's markup in "Preview after" (or, with `preview` false, outside it), as the page writes it, in colour mode `mode` with every marking drawn (or `marks`). */
+function keyHtml(mode: 'size' | 'age' | 'reclaim' | 'diff', preview = true,
+  marks: { open: Set<string>; staged: boolean; cloud: boolean; git: boolean } = { open: new Set(['zip', 'photos']), staged: true, cloud: true, git: true }): string {
   const host = { innerHTML: '' };
   const C = [0, 0, 0];
   const ageLabels = [.../const AGE_BANDS = \[([\s\S]*?)\n\];/.exec(INDEX)![1].matchAll(/label: '([^']*)'/g)].map((m) => m[1]);
@@ -756,8 +757,8 @@ function keyHtml(mode: 'size' | 'age' | 'reclaim' | 'diff'): string {
   runPageDecls<() => void>(['TM_OPEN_NOUNS', 'tmMarksKey', 'renderTmLegend'], {
     $: (id: string) => (id === 'tmLegend' ? host : null),
     state: { treemap: { history: { active: mode === 'diff', diff: mode === 'diff' }, colorMode: mode === 'diff' ? 'size' : mode,
-      marks: { open: new Set(['zip', 'photos']), staged: true, cloud: true, git: true } } },
-    isRectMap: () => true, tmPreview: { on: true }, escapeHtml: (x: string) => x, sizeRampCss: () => 'none', reclaimCoverageNote: () => '',
+      marks } },
+    isRectMap: () => true, tmPreview: { on: preview }, escapeHtml: (x: string) => x, sizeRampCss: () => 'none', reclaimCoverageNote: () => '',
     AGE_BANDS: ageLabels.map((label) => ({ rgb: C, label })), C_TEAL: C, C_AMBER: C, C_ORANGE: C, C_RED: C, C_DIFF_SAME: C, C_RC_LOW: C, C_RC_UNSCORED: C,
   }, 'renderTmLegend')();
   return host.innerHTML;
@@ -850,6 +851,49 @@ test('in "Preview after" with the cart open, the key fits the footer held clear 
   // The size key's ends and its gradient stay whole: what wraps is the key's pieces and a marking's words.
   assert.equal(keyDecls(['tm-legend-end'], true).get('white-space'), 'nowrap', 'the size key\'s ends are still held to one line (H52)');
   assert.ok(legend(size.nodes, true) >= sheetPx(declsFor('.tm-legend .legend-grad').get('width'), 'the gradient\'s width'), 'and the gradient keeps its width');
+});
+
+/**
+ * The map's footer at 1440 outside "Preview after", as BQA's eighth pass shot it on /System/Library (review F1.8): with the
+ * size key's bar at 170 px, "9,445 items of 4.0 KB or more drawn · 44.9 GB in this folder" and the hint held one line
+ * (REL-79), and a count one digit longer, "10,106 items" (REL-82), wrapped the hint to a second line and took 21 px from
+ * the map. KEY_CHAR_EM is an upper bound on a character's width, too coarse to place the footer's own width within the
+ * 20 px that decide it, so the row is held to the one the shot held on one line: no wider, in the same model.
+ */
+const SHOT_1440_FOOT = {
+  bar: 170,
+  status: '9,445 items of 4.0 KB or more drawn · 44.9 GB in this folder',
+  hint: 'click to drill in · drag to lasso (⌥ freehand, ⌘ to unstage) · hold Z to magnify · Esc to go up',
+};
+
+test('outside "Preview after" the map\'s footer at 1440 keeps the size key, a five-digit count and the hint on one line — the row is no wider than the one BQA\'s eighth pass shot held on one line (9,445 items, the key\'s bar at 170 px), where 10,106 items with that bar wrapped (review F1.8)', () => {
+  // What the page writes: the size key outside the preview (no marking — one would add the same to both rows), the
+  // status line updateTmStatus writes for a map of `drawn` items, and the hint's words.
+  const none = { open: new Set<string>(), staged: false, cloud: false, git: false };
+  const key: KeyNode = { tag: 'div', cls: ['tm-legend'], attrs: {}, kids: parseKey(keyHtml('size', false, none)) };
+  const ends = (key.kids as KeyNode[]).filter((k) => 'tag' in k && k.cls.includes('tm-legend-end')).map((k) => ((k as { kids: KeyNode[] }).kids[0] as { text: string }).text);
+  assert.deepEqual(ends, ['1 MB', '10 GB+'], 'control: the size key\'s ends, as in the shot');
+  const statusFor = (drawn: number) => {
+    const el = { textContent: '' };
+    runPageDecls<() => void>(['UNITS', 'UI_LOCALE', 'formatBytes', 'formatCount', 'updateTmStatus'], {
+      $: () => el, tmPreview: { on: false }, isSun: () => false, isCells: () => false, formatWhen: () => '',
+      state: { treemap: { query: '', history: { active: false }, pxRects: Array.from({ length: drawn }, () => ({ n: {} })), minSize: 4000, rootSize: 44_891_274_023, nodes: [] } },
+    }, 'updateTmStatus')();
+    return el.textContent;
+  };
+  assert.match(statusFor(10106), /^10,106 items of 4\.0 KB or more drawn · 44\.9 GB in this folder/, 'control: the status line, as the page writes it');
+  const hint = /<span class="hint">([\s\S]*?)<\/span><\/span>/.exec(INDEX)![1].replace(/<[^>]+>/g, '');
+  const gap = sheetPx((declsFor('.tm-foot').get('gap') || '').split(/\s+/).pop(), "the footer's column gap");
+  const bar = sheetPx(declsFor('.tm-legend .legend-grad').get('width'), "the size key's bar");
+  const text = (t: string) => minContent({ text: t }, false, true);
+  // The key, the status and the hint, side by side, one line.
+  const row = (barPx: number, status: string, hintText: string) => minContent(key, false, true) - bar + barPx + gap + text(status) + gap + text(hintText);
+  const shot = row(SHOT_1440_FOOT.bar, SHOT_1440_FOOT.status, SHOT_1440_FOOT.hint);
+  assert.ok(row(SHOT_1440_FOOT.bar, statusFor(10106), hint) > shot, `control: with the shot's 170 px bar, 10,106 items need more of the footer than the shot's one line did (${row(SHOT_1440_FOOT.bar, statusFor(10106), hint).toFixed(1)} px in the model against ${shot.toFixed(1)}) — the wrap the shot showed`);
+  for (const drawn of [9445, 10106]) {
+    const need = row(bar, statusFor(drawn), hint);
+    assert.ok(need <= shot, `${drawn} items: the key (its bar ${bar} px), "${statusFor(drawn)}" and the hint need ${need.toFixed(1)} px in the model, no more than the ${shot.toFixed(1)} px it gives the row the shot held on one line`);
+  }
 });
 
 test('while the cart is open the welcome tour\'s card covers none of it — at every window size, the preview pane open or not, in both sidebar states (sixth browser pass H51)', () => {
