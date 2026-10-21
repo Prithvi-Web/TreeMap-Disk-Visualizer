@@ -895,7 +895,10 @@ export interface SimulationResult {
   skipped: { path: string; reason: string }[];
   /** The ceiling in force, or null when uncapped. */
   capBytes: number | null;
-  /** Set when a real run would refuse — the same reasons `runPolicy` gives. */
+  /**
+   * Set when a real run would refuse — the same reasons `runPolicy` gives — and, as a run's record
+   * says it, when the policy names kinds no rule on this computer has, which match nothing (BQL item 14).
+   */
   wouldBlockReason?: string;
 }
 
@@ -938,6 +941,13 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
       `${formatBytes(policy.requireConfirmationAbove ?? 0)} you asked to be consulted about.`;
   } else if (policy.dryRunFirst) {
     wouldBlockReason = 'This policy is set to preview every run, so it never deletes.';
+  }
+  // A policy an earlier build saved with kinds no rule here has: the preview says so as every run of
+  // it does (runPolicyNow's record), after whatever else it says (BQL item 14).
+  const unknown = unknownGroupIds(policy.match);
+  if (unknown.length > 0) {
+    const onlyUnknown = policy.match.kind === 'suggestion' && unknown.length === policy.match.groupIds.length;
+    wouldBlockReason = withSentence(wouldBlockReason, unknownKindsSentence(unknown, onlyUnknown));
   }
 
   return {

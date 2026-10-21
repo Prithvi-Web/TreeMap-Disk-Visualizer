@@ -147,7 +147,8 @@ OpenAPI 3 spec).
      the ids it may); `GET /api/autopilot/policies` lists them as
      `knownGroupIds`. A policy an earlier build saved with such an id is kept
      while unchanged and matches nothing of it, and each run's
-     `blockedReason` says so. If a pack is
+     `blockedReason` says so, as a preview's (`POST /api/autopilot/simulate`)
+     `wouldBlockReason` does. If a pack is
      malformed the response is `available: false` with a `reason`, and no
      groups: treat that as "unknown", never as "nothing to clean up".
    - `GET /api/packages/orphans` — package-manager artifacts split into

@@ -3056,7 +3056,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     destructive: false,
     requestBody: { required: true, content: { 'application/json': { schema: obj({ policyId: str('A saved policy'), policy: ref('AutopilotPolicy') }) } } },
     responses: {
-      '200': jsonResponse('The projection', opaque('items[], bytesMatched, bytesWouldDelete, skipped[], capBytes, wouldBlockReason?')),
+      '200': jsonResponse('The projection', opaque('items[], bytesMatched, bytesWouldDelete, skipped[], capBytes, wouldBlockReason? — why a real run would not delete (never approved, more than "Ask me first above", set to preview every run) and, as each run\'s blockedReason says it, that the policy names a kind no rule on this computer has, which matches nothing (a policy an earlier build saved; see knownGroupIds)')),
       '400': errorResponse('POLICY_REQUIRED (neither "policyId" nor "policy"); for a "policy", every refusal a save would give it, judged against the stored policy of the same id as a save judges it: POLICY_MATCH_EMPTY, POLICY_MATCH_INVALID, POLICY_PATH_TOO_BROAD, POLICY_PATH_REQUIRED, POLICY_PATH_IS_LINK, PATH_INVALID, PATH_BLOCKED, POLICY_QUERY_INVALID, POLICY_QUERY_UNANSWERABLE, POLICY_MATCH_ADVISORY, POLICY_MATCH_UNKNOWN'),
       '404': errorResponse('POLICY_NOT_FOUND'),
       '409': errorResponse('POLICY_RECORD_INVALID — the stored policy\'s folder is not one TreeMap saved (autopilot.json was changed outside TreeMap), so nothing was scanned; save the policy again'),

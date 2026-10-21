@@ -324,6 +324,42 @@ test('the editor\'s Preview judges a saved policy as Save does', async () => {
   }
 });
 
+test('a preview of a policy an earlier build saved with a kind no rule here has says so, as every run of it does - by id, as the policy is sent, and in the published description (BQL item 14)', async () => {
+  // BQL-b1 put the sentence on Save's refusal, the card, the editor and the
+  // run record; POST /api/autopilot/simulate still answered such a policy
+  // with nothing but its other reasons, or none, and "Nothing matches".
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-autopilot-unknown-preview-')));
+  fs.mkdirSync(path.join(dir, 'proj', 'node_modules', 'dep'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'proj', 'node_modules', 'dep', 'index.js'), Buffer.alloc(4096, 5));
+  fs.writeFileSync(path.join(dir, 'proj', 'package.json'), '{}');
+  const rest = { maxBytesPerRun: null, maxBytesPerWeek: null, cooldownDays: 7, dryRunFirst: false, requireConfirmationAbove: null, enabled: false };
+  // As an earlier build saved them (cache-general: a box no pack ever shipped): Save refuses one now, so they are planted.
+  const only: AutopilotPolicy = { id: 'old-only', name: 'Old boxes', path: dir, match: { kind: 'suggestion', groupIds: ['cache-general'] }, ...rest };
+  const mixed: AutopilotPolicy = { id: 'old-mixed', name: 'Old and new', path: dir, match: { kind: 'suggestion', groupIds: ['regen-node-modules', 'cache-general'] }, ...rest };
+  await writeJsonFile('autopilot.json', { version: 1, policies: [only, mixed], runs: [] });
+  const ONLY = 'This policy names only a kind of file TreeMap does not have (cache-general), so it matches nothing: edit the policy and pick again.';
+  const ALSO = 'This policy also names a kind of file TreeMap does not have (cache-general), which matches nothing: edit the policy and pick again.';
+  const NEVER = 'This policy has never run for real. Approving it is what lets it start deleting.';
+  type Preview = { status: number; body: { items: Array<{ path: string }>; wouldBlockReason?: string; error?: string } };
+  try {
+    for (const body of [{ policyId: 'old-only' }, { policy: only }]) {
+      const got = await call('POST', '/api/autopilot/simulate', body) as unknown as Preview;
+      assert.equal(got.status, 200, `${JSON.stringify(body).slice(0, 30)}: it previews (${got.body.error})`);
+      assert.deepEqual(got.body.items, [], 'control: it selects nothing');
+      assert.equal(got.body.wouldBlockReason, `${NEVER} ${ONLY}`, `${JSON.stringify(body).slice(0, 30)}: after its own reason, it says the policy names a kind TreeMap does not have`);
+    }
+    await approvePolicyForTests('old-mixed');
+    const both = await call('POST', '/api/autopilot/simulate', { policyId: 'old-mixed' }) as unknown as Preview;
+    assert.deepEqual(both.body.items.map((i) => i.path), [path.join(dir, 'proj', 'node_modules')], 'control: the kind it has would be cleaned up as before');
+    assert.equal(both.body.wouldBlockReason, ALSO, 'approved, with nothing else to say: it says what else the policy names');
+    const doc = buildOpenApiDocument() as { paths: Record<string, Record<string, { responses: Record<string, { content: { 'application/json': { schema: { description?: string } } } }> }>> };
+    const said = doc.paths['/api/autopilot/simulate'].post.responses['200'].content['application/json'].schema.description ?? '';
+    assert.match(said, /wouldBlockReason\b[^]*a kind no rule on this computer has, which matches nothing/, `the spec says the preview carries it: ${said}`);
+  } finally {
+    await savePolicies([]);
+  }
+});
+
 test('two policies in one list may not share an id', async () => {
   // The second would inherit the first one's approval and pass as unchanged.
   const tmp = os.tmpdir();
