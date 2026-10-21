@@ -3456,19 +3456,22 @@ function tJunction() {
   return { tiles, W, H, colour: (n: Tile) => rgb[n.path] };
 }
 
-test('owner\'s refinement: where a file\'s corner meets another tile\'s edge, the line across keeps its own pixel at the corner — it runs on past the corner as the edge of the tile above, and is laid again there over the side line laid in two parts (tmBarCorners) — so the file stays parted from the tile above it there, at device pixel ratios 1, 1.5 and 2, in both themes (review F2.7, F3.5)', () => {
+test('owner\'s refinement: where a file\'s corner meets another tile\'s edge, the line across keeps its own pixel at the corner — it runs on past the corner as the edge of the tile above, and is laid again there over the side line laid in two parts (tmBarCorners) — so the file stays parted from the tile above it there, at device pixel ratios 0.5, 0.667, 0.8, 0.9, 1, 1.5 and 2, in both themes (review F2.7, F3.5; F1.6 of BQJ-2c-r)', () => {
   // A two-part line's outer pixel is toned against the tile beyond it alone; laid over the corner, it broke the line
   // between the file and the tile above it. Only one place in the realistic map, under one colouring, held this. It was
-  // laid first, under the line along the top; the line that runs on past a corner is now laid again over the corner.
+  // laid first, under the line along the top; the line that runs on past a corner is now laid again over the corner. Under
+  // a ratio of 1 a line is one device pixel, on the map as many device pixels across as at 100 %.
   const m = tJunction();
-  for (const dpr of [1, 1.5, 2]) {
+  for (const dpr of [0.5, 0.667, 0.8, 0.9, 1, 1.5, 2]) {
+    // A line's width: 1 css px, or a device pixel under a ratio of 1.
+    const k = Math.max(1, 1 / dpr), lw = (v: number) => Math.abs(v - 1 / Math.min(1, dpr)) < 1e-6;
     for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
       const where = `${theme}, dpr ${dpr}`;
-      const { raster, px } = rasterPaint(m.tiles, palette, m.W, m.H, m.colour, undefined, false, dpr);
+      const { raster, px } = rasterPaint(m.tiles, palette, m.W * k, m.H * k, m.colour, undefined, false, dpr);
       const b = px.find((r) => r.n.path === '/P/B')!;
-      const left = (b.lines || []).filter((l) => l.h > 1 && l.w === 1 && l.y <= b.y + 1e-6);
-      const top = (b.lines || []).find((l) => l.h === 1 && Math.abs(l.y - b.y) < 1e-6 && l.x <= b.x + 1e-6 && l.x + l.w > b.x);
-      assert.ok(left.some((l) => Math.abs(l.x - b.x) < 1e-6) && left.some((l) => Math.abs(l.x - (b.x + 1)) < 1e-6) && top,
+      const left = (b.lines || []).filter((l) => l.h > 1 / Math.min(1, dpr) && lw(l.w) && l.y <= b.y + 1e-6);
+      const top = (b.lines || []).find((l) => lw(l.h) && Math.abs(l.y - b.y) < 1e-6 && l.x <= b.x + 1e-6 && l.x + l.w > b.x);
+      assert.ok(left.some((l) => Math.abs(l.x - b.x) < 1e-6) && left.some((l) => Math.abs(l.x - (b.x + 1 / Math.min(1, dpr))) < 1e-6) && top,
         `${where}: control — B's left line laid in two parts, and its top line across the corner (${(b.lines || []).map((l) => `${l.x},${l.y} ${l.w}×${l.h} ${l.rgb}`).join('; ')})`);
       const want = rgba(top!.rgb).slice(0, 3), got = raster.at(Math.round(b.x * dpr), Math.round(b.y * dpr));
       assert.ok(got.every((v, i) => Math.abs(v - want[i]) <= 1), `${where}: B's corner pixel is its top line's ${want} (it shows ${got.map(Math.round)})`);
@@ -3480,47 +3483,68 @@ test('owner\'s refinement: where a file\'s corner meets another tile\'s edge, th
 });
 
 /**
- * T-junctions where a file B's two lines meet at its corner in opposite tones (review F3.5), on a 100 by 100 css px map.
- * `side`: a file A down the map's left, past B's bottom; B 60 by 12 px beside it, its left line shared with A — dark, a
- * shade of B's grey that stands out from both — and below B a dark file C too short for lines, so B's bottom line is light.
- * The bar is B's left line: it runs on past B's corner as A's edge. `across`: the same turned: A across the top, past B's
- * right edge; B 60 by 12 px below it, its top line shared with A, dark; a dark file C too narrow for lines at B's right, so
- * B's right line is light. The bar is B's top line.
+ * T-junctions where a file B's two lines meet at its corner in opposite tones (review F3.5), on a 100 by 100 css px map, in
+ * each of the eight ways a T stands at a corner (review F1.1 of BQJ-2c-r), named by the bar — the line that runs on past the
+ * corner — and the stem across it. `left-bottom`: a file A down the map's left, past B's bottom; B 60 by 12 px beside it, its
+ * left line shared with A — dark, a shade of B's grey that stands out from both — and below B a dark file C too short for
+ * lines, so B's bottom line is light. `right-bottom`: the same with A a strip 6 px wide down the map's right, too narrow for
+ * lines, so B lays its own right line, dark, and a file E down the left. `top-right`: A across the top, past B's right edge;
+ * B 60 by 12 px below it, its top line shared with A, dark; a dark file C too narrow for lines at B's right, so B's right line
+ * is light. `bottom-right`: the same turned over, with A a strip 6 px tall across the foot, so B lays its own bottom line,
+ * dark. The other four are these mirrored: `left-top` and `right-top` top to bottom, `top-left` and `bottom-left` left to
+ * right. A leaf's lines are laid top, left, right, bottom, so a bar laid after its stem — down a side with the stem at the
+ * top, or along the bottom — keeps the corner as laid; the other four keep it because tmBarCorners lays the bar again.
  */
-function tBar(kind: 'side' | 'across') {
+type TOrient = 'left-bottom' | 'right-bottom' | 'top-right' | 'bottom-right' | 'left-top' | 'right-top' | 'top-left' | 'bottom-left';
+const T_ORIENTS: TOrient[] = ['left-bottom', 'right-bottom', 'top-right', 'bottom-right', 'left-top', 'right-top', 'top-left', 'bottom-left'];
+function tBar(orient: TOrient) {
   const rgb: Record<string, RGB> = { A: [156, 146, 72], B: [103, 109, 106], C: [30, 32, 34], D: [200, 120, 60], E: [120, 160, 200] };
   const t = (name: string, x: number, y: number, w: number, h: number): Tile => ({ name, path: `/t/${name}`, size: 1e9, type: 'file', depth: 1, expanded: false, x, y, w, h });
-  const tiles = kind === 'side'
-    ? [t('A', 0, 0, 40, 100), t('B', 40, 0, 60, 12), t('C', 40, 12, 60, 5), t('D', 40, 17, 60, 83)]
-    : [t('A', 0, 0, 100, 40), t('B', 0, 40, 60, 12), t('C', 60, 40, 5, 12), t('D', 65, 40, 35, 12), t('E', 0, 52, 100, 48)];
+  const base: Record<string, Tile[]> = {
+    'left-bottom': [t('A', 0, 0, 40, 100), t('B', 40, 0, 60, 12), t('C', 40, 12, 60, 5), t('D', 40, 17, 60, 83)],
+    'right-bottom': [t('E', 0, 0, 34, 100), t('A', 94, 0, 6, 100), t('B', 34, 0, 60, 12), t('C', 34, 12, 60, 5), t('D', 34, 17, 60, 83)],
+    'top-right': [t('A', 0, 0, 100, 40), t('B', 0, 40, 60, 12), t('C', 60, 40, 5, 12), t('D', 65, 40, 35, 12), t('E', 0, 52, 100, 48)],
+    'bottom-right': [t('E', 0, 0, 100, 82), t('B', 0, 82, 60, 12), t('C', 60, 82, 5, 12), t('D', 65, 82, 35, 12), t('A', 0, 94, 100, 6)],
+  };
+  const flipY = (n: Tile): Tile => ({ ...n, y: 100 - n.y - n.h }), flipX = (n: Tile): Tile => ({ ...n, x: 100 - n.x - n.w });
+  const tiles = base[orient] ?? ({
+    'left-top': base['left-bottom'].map(flipY), 'right-top': base['right-bottom'].map(flipY),
+    'top-left': base['top-right'].map(flipX), 'bottom-left': base['bottom-right'].map(flipX),
+  } as Record<string, Tile[]>)[orient];
   return { tiles, colour: (n: Tile) => rgb[n.name] };
 }
 
-test('owner\'s refinement: at a T-junction the line that runs on past a file\'s corner keeps the corner\'s device pixels — where a file\'s dark side line and its light line across meet, the side line runs on as the edge of the file beside it, or the line across as the edge of the file above, and that one is laid again over the corner, so the file beside or above stays parted there — at device pixel ratios 1, 1.25, 1.5, 1.75 and 2, in both themes (review F3.5)', () => {
+test('owner\'s refinement: at a T-junction the line that runs on past a file\'s corner keeps the corner\'s device pixels — where a file\'s two lines meet at its corner in opposite tones, the one that runs on as the edge of the file beside, above or below it is laid again over the corner, so that file stays parted there — in each of the eight ways a T stands at a corner: the bar down the file\'s left or right side with the line across at its top or bottom, or along its top or bottom with the line down its left or right side — at device pixel ratios 0.5, 0.667, 0.8, 0.9, 1, 1.25, 1.5, 1.75 and 2, in both themes (review F3.5; F1.1 and F1.6 of BQJ-2c-r)', () => {
   // At 125, 150 and 175 % the line across covers the corner's last row of device pixels in part; laid over the side line
   // there it blended dark and light to the file's own grey, 1.5:1 from the file beside it (2 places at 125 %, 8 at 150 %, 5
-  // at 175 % on the realistic map coloured by Reclaim).
-  for (const kind of ['side', 'across'] as const) {
-    const m = tBar(kind);
-    for (const dpr of [1, 1.25, 1.5, 1.75, 2]) {
+  // at 175 % on the realistic map coloured by Reclaim). Under a ratio of 1 a line is one device pixel, so the line across
+  // lies on the bar's corner pixel whole. Of the four ways the painter keeps by laying the bar again, the bar down the right
+  // with the line across at the bottom was not painted, and a painter that laid it again everywhere but there passed every
+  // test; under a ratio of 1 none was painted.
+  const along = (l: Band, b: Painted, side: string) => (side === 'left' ? l.h > l.w && Math.abs(l.x - b.x) < 1e-6
+    : side === 'right' ? l.h > l.w && Math.abs(l.x + l.w - b.x - b.w) < 1e-6
+      : side === 'top' ? l.w > l.h && Math.abs(l.y - b.y) < 1e-6 : l.w > l.h && Math.abs(l.y + l.h - b.y - b.h) < 1e-6);
+  for (const orient of T_ORIENTS) {
+    const m = tBar(orient), [barSide, stemSide] = orient.split('-');
+    for (const dpr of [0.5, 0.667, 0.8, 0.9, 1, 1.25, 1.5, 1.75, 2]) {
+      // Under a ratio of 1, the map that many device pixels across, as at 100 %.
+      const k = Math.max(1, 1 / dpr);
       for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
-        const where = `the ${kind} bar, ${theme}, dpr ${dpr}`;
-        const { raster, px } = rasterPaint(m.tiles, palette, 100, 100, m.colour, undefined, false, dpr);
+        const where = `the bar ${barSide} and the line across ${stemSide}, ${theme}, dpr ${dpr}`;
+        const { raster, px } = rasterPaint(m.tiles, palette, 100 * k, 100 * k, m.colour, undefined, false, dpr);
         const b = px.find((r) => r.n.name === 'B')!;
         const dev = (v: number) => Math.round(v * dpr);
-        // B's bar and its stem: a vertical line at B's left edge and a horizontal one at its bottom, or a horizontal line at
-        // its top and a vertical one at its right edge.
         const lines = b.lines || [];
-        const [bar, stem] = kind === 'side'
-          ? [lines.find((l) => l.h > l.w && Math.abs(l.x - b.x) < 1e-6), lines.find((l) => l.w > l.h && Math.abs(l.y + l.h - b.y - b.h) < 1e-6)]
-          : [lines.find((l) => l.w > l.h && Math.abs(l.y - b.y) < 1e-6), lines.find((l) => l.h > l.w && Math.abs(l.x + l.w - b.x - b.w) < 1e-6)];
+        const [bar, stem] = [lines.find((l) => along(l, b, barSide)), lines.find((l) => along(l, b, stemSide))];
         assert.ok(bar && stem && contrast(rgba(bar.rgb).slice(0, 3) as RGB, rgba(stem.rgb).slice(0, 3) as RGB) > 3,
           `${where}: control — B's bar and stem are laid, one dark and one light (${lines.map((l) => `${l.x},${l.y} ${l.w}×${l.h} ${l.rgb}`).join('; ')})`);
-        // The corner's device pixels on the bar's whole line of pixels, over all the stem's rows (columns): the bar's colour.
+        // The corner's device pixels on the bar's outermost line of pixels, over all the stem's rows (columns): the bar's colour.
         const want = rgba(bar!.rgb).slice(0, 3);
-        const corner: Array<[number, number]> = kind === 'side'
-          ? Array.from({ length: Math.ceil(dpr) }, (_, k) => [dev(b.x), dev(b.y + b.h) - 1 - k])
-          : Array.from({ length: Math.ceil(dpr) }, (_, k) => [dev(b.x + b.w) - 1 - k, dev(b.y)]);
+        const vertical = barSide === 'left' || barSide === 'right';
+        const line = barSide === 'left' ? dev(b.x) : barSide === 'right' ? dev(b.x + b.w) - 1 : barSide === 'top' ? dev(b.y) : dev(b.y + b.h) - 1;
+        const from = stemSide === 'top' ? dev(b.y) : stemSide === 'bottom' ? dev(b.y + b.h) - 1 : stemSide === 'left' ? dev(b.x) : dev(b.x + b.w) - 1;
+        const inward = stemSide === 'top' || stemSide === 'left' ? 1 : -1;
+        const corner: Array<[number, number]> = Array.from({ length: Math.ceil(dpr) }, (_, j) => (vertical ? [line, from + inward * j] : [from + inward * j, line]));
         const off = corner.map((at) => ({ at, got: raster.at(...at) })).filter(({ got }) => got.some((v, i) => Math.abs(v - want[i]) > 1));
         assert.deepEqual(off.map(({ at, got }) => `${at}: ${got.map(Math.round)}`), [], `${where}: B's corner pixels on its bar show the bar's ${want}`);
         const p = partings(raster, px, dpr);
