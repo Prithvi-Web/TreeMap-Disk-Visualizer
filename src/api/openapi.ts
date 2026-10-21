@@ -919,7 +919,7 @@ const schemas: Json = {
           + 'Send null to restore the defaults.',
       ),
       cleanupGoalBytes: nullable(int(
-        'Optional target for the cleanup cart, in bytes ("free 50 GB"). '
+        'Optional target for the Clean Up cart, in bytes ("free 50 GB"). '
           + 'null means no target is set, which is the default — the meter simply does not appear. '
           + 'Send null to clear one.',
       )),
@@ -2914,7 +2914,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/timecapsule',
-    summary: 'The Undo Vault (API: timecapsule): what the cleanup cart and Autopilot copied aside before trashing it, with capacity and history',
+    summary: 'The Undo Vault (API: timecapsule): what the Clean Up cart and Autopilot copied aside before trashing it, with capacity and history',
     tag: 'timecapsule',
     destructive: false,
     responses: {
@@ -3232,7 +3232,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'post',
     path: '/api/cart/commit',
-    summary: 'Commit the cleanup cart: protect in the Undo Vault, verify, then Trash — as one undoable run',
+    summary: 'Commit the Clean Up cart: protect in the Undo Vault, verify, then Trash — as one undoable run',
     tag: 'cart',
     destructive: true,
     parameters: [idempotencyHeader],
@@ -3417,7 +3417,7 @@ export function buildOpenApiDocument(): Json {
       { name: 'cloud', description: "The user's own cloud accounts" },
       { name: 'facts', description: 'Per-path derived facts, delivered as a sidecar to the scan tree' },
       { name: 'query', description: 'The query grammar, and the views saved from it' },
-      { name: 'cart', description: 'Committing the cleanup cart through the Undo Vault, and undoing it' },
+      { name: 'cart', description: 'Committing the Clean Up cart through the Undo Vault, and undoing it' },
       { name: 'notes', description: 'Notes pinned to folders — words for the human, and a matching pause for the machine (v4 §9.5)' },
     ],
     paths,

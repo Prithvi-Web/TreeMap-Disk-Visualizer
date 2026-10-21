@@ -110,13 +110,14 @@ function pageText(page: string): string {
  */
 const LEFT_TO_THE_MAP = 'In the cleanup cart — nothing is deleted until you move it to the Trash';
 
-/** Each place `text` names the feature as "Cleanup" or "the cleanup cart", with a little around it. */
+/** Each place `text` names the feature as "Cleanup", "the cleanup cart" or "the cleanup target", with a little around it. */
 function cleanupNamings(text: string): string[] {
   const hits: string[] = [];
   const said = text.split(LEFT_TO_THE_MAP).join(' ');
-  // "Cleanup" as one capitalised word ("Cleanup cart", "Cleanup target"), and "the cleanup cart";
-  // the plain noun in lower case ("a cleanup rule pack") is not the feature's name.
-  for (const m of said.matchAll(/\bCleanup\b|\bcleanup cart\b/g)) {
+  // "Cleanup" as one capitalised word ("Cleanup cart", "Cleanup target"), "the cleanup cart" and
+  // "the cleanup target" (Settings' "Clean Up target"); the plain noun in lower case ("a cleanup
+  // rule pack") is not the feature's name.
+  for (const m of said.matchAll(/\bCleanup\b|\bcleanup cart\b|\bcleanup target\b/g)) {
     const at = m.index ?? 0;
     hits.push(JSON.stringify(said.slice(Math.max(0, at - 40), at + m[0].length + 30)));
   }
@@ -210,6 +211,7 @@ test('the readers find what a person reads, and leave out comments, ids and rout
   ].join('\n');
   assert.equal(cleanupNamings(pageText(page)).length, 3, 'the title, the text and the script\'s string — not the comments, the id or the route');
   assert.deepEqual(cleanupNamings('a cleanup rule pack could not be loaded'), [], 'the plain noun in lower case is not the name');
+  assert.equal(cleanupNamings('An optional **cleanup target** in Settings').length, 1, 'Settings\' target is the feature\'s too');
   assert.deepEqual(cleanupNamings(LEFT_TO_THE_MAP), [], 'the map\'s own sentence is left to its batch');
   assert.equal(cleanupNamings(`${LEFT_TO_THE_MAP} Cleanup target`).length, 1, 'and nothing else beside it is');
 });
@@ -256,14 +258,30 @@ test('the Clean Up cart, its Settings target and the Clean Up tabs say it in the
 
 /* ══════════════ What the server writes for the page ══════════════ */
 
-test('every sentence the server writes names the feature "Clean Up" — never "Cleanup", never "the cleanup cart" (G18 review F1.1)', () => {
+test('every sentence the server writes names the feature "Clean Up" — never "Cleanup", never "the cleanup cart" — and so does the API description it serves (G18 review F1.1, F1.2)', () => {
   // The page prints some of the server's sentences as they come: the Undo
   // Vault tab's "Deleted because it …" is the reason the cart stamped on the
-  // copy (cartCommit.ts), which read "staged in the cleanup cart".
-  const strings = sourceStrings(['src/services']);
-  assert.ok(strings.length > 5000, `control: the services' strings are read (${strings.length})`);
-  assert.ok(strings.some((s) => s.at.startsWith('src/services/cartCommit.ts:')), 'control: the cart\'s commit is among them');
+  // copy (cartCommit.ts), which read "staged in the cleanup cart". And
+  // GET /api/openapi.json serves openapi.ts's summaries, which said "the
+  // cleanup cart" too. Every TypeScript file of the server is read: the page's
+  // own scripts are JavaScript, read above from the built page.
+  const strings = sourceStrings(['src']);
+  assert.ok(strings.length > 15000, `control: the server's strings are read (${strings.length})`);
+  for (const file of ['src/services/cartCommit.ts', 'src/api/openapi.ts', 'src/mcp/server.ts']) {
+    assert.ok(strings.some((s) => s.at.startsWith(`${file}:`)), `control: ${file} is among them`);
+  }
   assert.deepEqual(strings.flatMap((s) => cleanupNamings(s.text).map((hit) => `${s.at}: ${hit}`)), []);
+});
+
+/** The documents a person reads beside the app. */
+const DOCS = ['README.md', 'SECURITY.md', 'AGENTS.md'];
+
+test('README, SECURITY and AGENTS name the feature "Clean Up" as the page does: "the Clean Up cart", "the Clean Up target" (G18 review F1.2)', () => {
+  for (const doc of DOCS) {
+    const text = fs.readFileSync(path.join(ROOT, doc), 'utf8');
+    assert.ok(text.includes('Clean Up'), `control: ${doc} is read, and names the feature`);
+    assert.deepEqual(cleanupNamings(text), [], doc);
+  }
 });
 
 test('the Undo Vault tab prints a copy\'s reason in the cart\'s words, and an older copy\'s "staged in the cleanup cart" as the cart says it now (G18 review F1.1)', () => {
