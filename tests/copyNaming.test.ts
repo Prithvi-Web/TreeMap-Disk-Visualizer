@@ -166,21 +166,13 @@ function oneLine(text: string): string {
 }
 
 /**
- * The one sentence left to the map's own batch (BQJ-2c is reworking the map
- * and its key, and the key's tooltip is its words): tmMarksKey's "In the
- * cleanup cart". Allowed while it stands, and not required: once that batch
- * says "the Clean Up cart" there, nothing here needs changing.
- */
-const LEFT_TO_THE_MAP = 'In the cleanup cart — nothing is deleted until you move it to the Trash';
-
-/**
  * Each place `text` names the feature as "Cleanup", "the cleanup cart" or
  * "the cleanup target", with a little around it — wherever a line break
  * falls in the name.
  */
 function cleanupNamings(text: string): string[] {
   const hits: string[] = [];
-  const said = oneLine(text).split(LEFT_TO_THE_MAP).join(' ');
+  const said = oneLine(text);
   // "Cleanup" as one capitalised word ("Cleanup cart", "Cleanup target"), "the cleanup cart" and
   // "the cleanup target" (Settings' "Clean Up target"); the plain noun in lower case ("a cleanup
   // rule pack") is not the feature's name.
@@ -554,8 +546,6 @@ test('the readers find what a person reads, and leave out comments, ids and rout
   assert.equal(cleanupNamings(pageText(page)).length, 3, 'the title, the text and the script\'s string — not the comments, the id or the route');
   assert.deepEqual(cleanupNamings('a cleanup rule pack could not be loaded'), [], 'the plain noun in lower case is not the name');
   assert.equal(cleanupNamings('An optional **cleanup target** in Settings').length, 1, 'Settings\' target is the feature\'s too');
-  assert.deepEqual(cleanupNamings(LEFT_TO_THE_MAP), [], 'the map\'s own sentence is left to its batch');
-  assert.equal(cleanupNamings(`${LEFT_TO_THE_MAP} Cleanup target`).length, 1, 'and nothing else beside it is');
 });
 
 test('the readers read a name wrapped across lines as the name, and two strings of a script as two, but for the strings a + joins into one (G18 review F2.3, F3.4)', () => {
