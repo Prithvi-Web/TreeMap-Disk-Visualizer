@@ -806,9 +806,19 @@ const TM_TEXTURE_PITCH = 4; // px: the cells of the texture over a folder's own 
 const TM_EDGE_MIN = 3.3;    // a leaf's line against the tile on each of its sides
 const TM_FRAME_MIN = 4.5;   // a folder's band against what lies inside it
 const TM_LIT = 0.18;        // the white of a leaf's top highlight, on a tile tall enough for its whole cushion
-/** `v` css px on the nearest whole device pixel. */
+/**
+ * `v` css px on the nearest whole device pixel; a half device pixel rounds up,
+ * and so does one that float noise puts a hair under it. A layout's far edge
+ * is spelled 100 % or 99.99999999999999 %, which on a map 241 css px tall at
+ * 150 % is 361.5 or 361.49999999999994 device px: a bare round put a file a
+ * device pixel past the folder it ends with — out of the box the History
+ * diff's wash over the folder is counted in, and beside the folder's band,
+ * toned against the map's ground beyond the folder, at 1.02:1 (review F3.1).
+ * Two spellings of one edge differ by far less than a millionth of a device
+ * pixel.
+ */
 function tmSnap(v, dpr) {
-  return Math.round(v * dpr) / dpr;
+  return Math.round(v * dpr + 1e-6) / dpr;
 }
 /**
  * Whether a size of `m` css px reaches `px`. A rectangle's width and height are

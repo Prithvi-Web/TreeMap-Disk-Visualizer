@@ -3260,6 +3260,71 @@ test('tmSnap lays a coordinate on the nearest whole device pixel — at device p
   }
 });
 
+/**
+ * The review's map (F3.1): a folder F that grew, laid to 99.99999999999999 % of the map's width and height, holding a file A
+ * that grew and a file B that is new, and along its bottom two files too short for lines, C (a 2 MB file's light green) and
+ * D (a 6 GB file's red) — B and D laid to 100 % across, C and D to 100 % down: the float noise a layout carries at its far
+ * edge (buildTreemap rounds nothing). On a map 333 by 241 css px at 150 % F's right and bottom edges are 499.49999999999994
+ * and 361.49999999999994 device px, its files' 499.5 and 361.5 (and on one 334 by 242 css px, at 125 and 175 %, half a
+ * device pixel too): a bare Math.round put B, C and D a device pixel past their folder, beside its band, which was toned
+ * against the map's ground beyond it.
+ */
+function farEdgeNoise(): Tile[] {
+  const near = 99.99999999999999;
+  return [
+    { name: 'F', path: '/r/F', size: 8e9, prevSize: 2e9, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: near, h: near },
+    { name: 'A', path: '/r/F/A', size: 4e9, prevSize: 1e9, type: 'file', depth: 2, expanded: false, x: 0, y: 0, w: 50, h: 97.5 },
+    { name: 'B', path: '/r/F/B', size: 3e9, type: 'file', depth: 2, expanded: false, x: 50, y: 0, w: 50, h: 97.5 },
+    { name: 'C', path: '/r/F/C', size: 2e6, prevSize: 2e6, type: 'file', depth: 2, expanded: false, x: 0, y: 97.5, w: 50, h: 2.5 },
+    { name: 'D', path: '/r/F/D', size: 6e9, prevSize: 6e9, type: 'file', depth: 2, expanded: false, x: 50, y: 97.5, w: 50, h: 2.5 },
+  ] as Tile[];
+}
+
+test('owner\'s refinement at 125, 150 and 175 %: a file and its folder that end together in the layout end on the same device pixel — the float noise at a layout\'s far edge (100 against 99.99999999999999 %) never snaps them a device pixel apart, where a file then lay past its folder, beside the folder\'s band toned against the map\'s ground beyond it, at 1.02:1 — on the review\'s map, 333 by 241 and 334 by 242 css px, by size and in the History diff, in both themes, and on a realistic map 1043 by 741 css px (review F3.1)', () => {
+  const snap = load<(v: number, dpr: number) => number>(['tmSnap'], {}, 'tmSnap');
+  // 241 × 1.5 is 361.5, and 241 × 0.9999999999999999 × 1.5 is 361.49999999999994.
+  assert.equal(snap((99.99999999999999 / 100) * 241, 1.5), snap((100 / 100) * 241, 1.5), 'the two spellings of one far edge snap to one device pixel');
+  const colourings: Array<[string, ((n: Tile) => RGB) | undefined, { active: boolean; diff: boolean }]> = [
+    ['size', undefined, { active: false, diff: false }], ['the History diff', (n: Tile) => DIFF_PAGE.diffRgb(n), { active: true, diff: true }]];
+  for (const [dpr, W, H] of [[1.25, 334, 242], [1.5, 333, 241], [1.75, 334, 242]]) for (const [colouring, colour, history] of colourings) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      const where = `the review's map, ${W} by ${H} css px, by ${colouring}, ${theme}, dpr ${dpr}`;
+      const { raster, px } = rasterPaint(farEdgeNoise(), palette, W, H, colour, history, false, dpr);
+      const dev = (v: number) => Math.round(v * dpr);
+      const [F, B, C, D] = ['/r/F', '/r/F/B', '/r/F/C', '/r/F/D'].map((p) => px.find((r) => r.n.path === p)!);
+      const m = measureEdges(raster, px, dpr);
+      assert.ok(m.edges.length > 1000 * dpr, `${where}: control — ${m.edges.length} places measured`);
+      assert.deepEqual(m.under, [], `${where}: lines under ${EDGE_BAR}:1 against a tile beside them`);
+      assert.deepEqual(partings(raster, px, dpr).unparted, [], `${where}: files not parted by ${EDGE_BAR}:1 from what lies beside them`);
+      assert.deepEqual([[B, D].map((r) => dev(r.x + r.w)), [C, D].map((r) => dev(r.y + r.h))], [[dev(F.x + F.w), dev(F.x + F.w)], [dev(F.y + F.h), dev(F.y + F.h)]],
+        `${where}: B and D end on F's last device column, C and D on its last device row, as the layout ends them`);
+    }
+  }
+  // A realistic map: every rectangle whose right or bottom edge is its folder's in the layout ends on its folder's device pixel.
+  const real = realisticNodes(), W = 1043, H = 741;
+  const layout = new Map(real.map((n) => [n.path, n]));
+  for (const dpr of [1.25, 1.5, 1.75]) {
+    const { px } = rasterPaint(real, DARK, W, H, undefined, undefined, false, dpr);
+    const folders = new Map(px.filter((r) => r.frame).map((r) => [r.n.path, r]));
+    const dev = (v: number) => Math.round(v * dpr);
+    let together = 0, noisy = 0;
+    const apart: string[] = [];
+    for (const r of px) {
+      const f = folders.get(r.n.path.slice(0, r.n.path.lastIndexOf('/')));
+      if (!f) continue;
+      const n = layout.get(r.n.path)!, fn = layout.get(f.n.path)!;
+      for (const [end, fend, size, a, b] of [[n.x + n.w, fn.x + fn.w, W, r.x + r.w, f.x + f.w], [n.y + n.h, fn.y + fn.h, H, r.y + r.h, f.y + f.h]]) {
+        if (Math.abs(end - fend) > 1e-9) continue;
+        together++;
+        if (Math.round((end / 100) * size * dpr) !== Math.round((fend / 100) * size * dpr)) noisy++;
+        if (dev(a) !== dev(b) && apart.length < 6) apart.push(`${r.n.path}: ends at ${dev(a)} device px, its folder at ${dev(b)}`);
+      }
+    }
+    assert.ok(together > 1000 && (dpr !== 1.5 || noisy > 0), `the realistic map, dpr ${dpr}: control — ${together} edges a rectangle shares with its folder, ${noisy} of them a bare rounding snaps apart`);
+    assert.deepEqual(apart, [], `the realistic map, dpr ${dpr}: rectangles ending a device pixel off their folder's edge`);
+  }
+});
+
 test('owner\'s outlines on a Retina screen and at 150 %: every rectangle lies on whole device pixels where its percentages put it, every line reaches 3:1 on the device\'s pixels, and the dense map is no black mesh — at device pixel ratios 2 and 1.5, in both themes (review F1.7)', () => {
   const b = colourBlocks(EVERY_COLOUR, 16, 16);
   const nodes = realisticNodes();
