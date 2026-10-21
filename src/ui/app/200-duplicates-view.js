@@ -77,6 +77,10 @@ async function loadDuplicates(force = false) {
       // the wrapper's own poll can wait, but it cannot draw a progress bar.
       const data = await api(`/api/duplicates?scanId=${scanId}&minSize=${$('dupMinSize').value}`,
         undefined, { pending: 'return' });
+      // A poll out when the rescan landed answers for the older scan:
+      // finishScan reset the finder, and the new tree's own search paints
+      // it — Auto-select and Compare are not offered over the older groups (review F2.3).
+      if (state.dup.loadedFor !== key) return;
       if (data.status === 'running') {
         const t = $('dupProgText'), f = $('dupProgFill');
         if (t) t.textContent = dupProgressText(data);
@@ -97,6 +101,7 @@ async function loadDuplicates(force = false) {
       for (const g of data.groups) seedNodes(g.files.map((f) => ({ ...f, size: g.size, type: 'file' })));
       renderDuplicates();
     } catch (e) {
+      if (state.dup.loadedFor !== key) return; // the older scan's failure, said over no tree of its own
       fxOrbHide('dup');
       fxHuntBeamSync('dupBody', false); // the error rewrite below destroys the card
       state.dup.status = 'error';
@@ -447,6 +452,7 @@ async function loadNearDupes(force = false) {
       // Same reason as the exact finder: the 202 body IS this loop's progress.
       const data = await api(`/api/near-duplicates?scanId=${scanId}&threshold=${$('ndThreshold').value}`,
         undefined, { pending: 'return' });
+      if (state.near.loadedFor !== key) return; // as the exact finder: the older scan's answer (review F2.3)
       if (data.status === 'running') {
         const t = $('ndProgText'), f = $('ndProgFill');
         if (t) t.textContent = data.toHash
@@ -469,6 +475,7 @@ async function loadNearDupes(force = false) {
       state.near.unreadableTypes = data.unreadableTypes;
       renderNearDupes();
     } catch (e) {
+      if (state.near.loadedFor !== key) return;
       state.near.status = 'error';
       $('ndSummary').textContent = '';
       $('ndBody').innerHTML = `<div class="card glass"><div class="muted">Image scan failed: ${escapeHtml(e.message)}</div></div>`;

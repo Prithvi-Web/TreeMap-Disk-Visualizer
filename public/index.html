@@ -36049,6 +36049,10 @@ async function loadDuplicates(force = false) {
       // the wrapper's own poll can wait, but it cannot draw a progress bar.
       const data = await api(`/api/duplicates?scanId=${scanId}&minSize=${$('dupMinSize').value}`,
         undefined, { pending: 'return' });
+      // A poll out when the rescan landed answers for the older scan:
+      // finishScan reset the finder, and the new tree's own search paints
+      // it — Auto-select and Compare are not offered over the older groups (review F2.3).
+      if (state.dup.loadedFor !== key) return;
       if (data.status === 'running') {
         const t = $('dupProgText'), f = $('dupProgFill');
         if (t) t.textContent = dupProgressText(data);
@@ -36069,6 +36073,7 @@ async function loadDuplicates(force = false) {
       for (const g of data.groups) seedNodes(g.files.map((f) => ({ ...f, size: g.size, type: 'file' })));
       renderDuplicates();
     } catch (e) {
+      if (state.dup.loadedFor !== key) return; // the older scan's failure, said over no tree of its own
       fxOrbHide('dup');
       fxHuntBeamSync('dupBody', false); // the error rewrite below destroys the card
       state.dup.status = 'error';
@@ -36419,6 +36424,7 @@ async function loadNearDupes(force = false) {
       // Same reason as the exact finder: the 202 body IS this loop's progress.
       const data = await api(`/api/near-duplicates?scanId=${scanId}&threshold=${$('ndThreshold').value}`,
         undefined, { pending: 'return' });
+      if (state.near.loadedFor !== key) return; // as the exact finder: the older scan's answer (review F2.3)
       if (data.status === 'running') {
         const t = $('ndProgText'), f = $('ndProgFill');
         if (t) t.textContent = data.toHash
@@ -36441,6 +36447,7 @@ async function loadNearDupes(force = false) {
       state.near.unreadableTypes = data.unreadableTypes;
       renderNearDupes();
     } catch (e) {
+      if (state.near.loadedFor !== key) return;
       state.near.status = 'error';
       $('ndSummary').textContent = '';
       $('ndBody').innerHTML = `<div class="card glass"><div class="muted">Image scan failed: ${escapeHtml(e.message)}</div></div>`;
@@ -36622,14 +36629,19 @@ async function openDupeViewer(kind, idx) {
   // would re-open the group and Tab would reach controls beneath the backdrop.
   const dlg = $('dupeViewerModal').querySelector('.modal');
   if (dlg) { dlg.setAttribute('tabindex', '-1'); dlg.focus(); }
+  const treeChanged = 'The tree on screen changed while these copies were read — compare them again from its own results.';
   try {
     const data = await api(`/api/duplicates/detail?scanId=${encodeURIComponent(scanId)}&paths=${paths.map(encodeURIComponent).join(',')}`);
     if (seq !== dupeViewer.seq) return; // superseded by another open or a close
+    // Read for the tree before — the rescan landed, or another tree is on
+    // screen — so not shown over this one, whose groups are its own (review F2.3).
+    if (scanId !== treeScanId()) { $('dupeViewerSummary').textContent = treeChanged; return; }
     dupeViewer.data = data;
     dupeViewer.keeper = data.recommendedKeep ? data.recommendedKeep.index : 0;
     renderDupeViewer();
   } catch (e) {
     if (seq !== dupeViewer.seq) return;
+    if (scanId !== treeScanId()) { $('dupeViewerSummary').textContent = treeChanged; return; }
     $('dupeViewerSummary').textContent = 'Could not read the copies: ' + e.message;
   }
 }

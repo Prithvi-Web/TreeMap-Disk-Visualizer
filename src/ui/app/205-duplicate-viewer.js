@@ -36,14 +36,19 @@ async function openDupeViewer(kind, idx) {
   // would re-open the group and Tab would reach controls beneath the backdrop.
   const dlg = $('dupeViewerModal').querySelector('.modal');
   if (dlg) { dlg.setAttribute('tabindex', '-1'); dlg.focus(); }
+  const treeChanged = 'The tree on screen changed while these copies were read — compare them again from its own results.';
   try {
     const data = await api(`/api/duplicates/detail?scanId=${encodeURIComponent(scanId)}&paths=${paths.map(encodeURIComponent).join(',')}`);
     if (seq !== dupeViewer.seq) return; // superseded by another open or a close
+    // Read for the tree before — the rescan landed, or another tree is on
+    // screen — so not shown over this one, whose groups are its own (review F2.3).
+    if (scanId !== treeScanId()) { $('dupeViewerSummary').textContent = treeChanged; return; }
     dupeViewer.data = data;
     dupeViewer.keeper = data.recommendedKeep ? data.recommendedKeep.index : 0;
     renderDupeViewer();
   } catch (e) {
     if (seq !== dupeViewer.seq) return;
+    if (scanId !== treeScanId()) { $('dupeViewerSummary').textContent = treeChanged; return; }
     $('dupeViewerSummary').textContent = 'Could not read the copies: ' + e.message;
   }
 }

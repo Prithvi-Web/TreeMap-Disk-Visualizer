@@ -442,7 +442,7 @@ test('Apps, Libraries and Security keep no answer that lands once another tree i
 const DUP_COMING = /it starts once the scan finishes/;
 
 /** The duplicate finders' page: both loaders, the view's mount, and the toolbar's rule. */
-function dupPage(state: Record<string, unknown>, answer: (url: string) => unknown) {
+function dupPage(state: Record<string, unknown>, answer: (url: string) => unknown, extra: Record<string, unknown> = {}) {
   const $ = stubDom();
   const out = page<{ mount: () => void; exact: () => Promise<void>; near: () => Promise<void>; toolbar: () => void; open: (k: string, i: number) => Promise<void> }>(
     ['function dupNeedsScan(', 'function ndNeedsScan(', 'async function loadDuplicates(', 'async function loadNearDupes(',
@@ -452,7 +452,7 @@ function dupPage(state: Record<string, unknown>, answer: (url: string) => unknow
       fxOrbHide: noop, fxOrbShow: noop, fxHuntBeamSync: noop, updateDupToolbar: noop, renderDupNote: noop, dupProgressText: () => '',
       seedNodes: noop, renderDuplicates: noop, renderNearDupes: noop, isCloudScan: () => false, nodeFor: () => null,
       dupeViewer: { kind: null, at: 0, keeper: 0, data: null, seq: 0, totalCopies: 0 }, dupeViewerKeys: noop, renderDupeViewer: noop,
-      document: { addEventListener: noop },
+      document: { addEventListener: noop }, ...extra,
     }, `{ mount: () => (${pageView('duplicates')}).mount(), exact: loadDuplicates, near: loadNearDupes, toolbar: updateNdToolbar, open: openDupeViewer }`, answer);
   return { ...out, $ };
 }
@@ -518,6 +518,83 @@ test('Duplicates: the side-by-side viewer asks the scan the tree on screen came 
   assert.equal($('ndTrashBtn').disabled, true, 'and nothing they hold is offered to the Trash');
   await fns.open('exact', 0);
   assert.equal(asks.length, 1, 'nor does the viewer ask anything — not of the running scan');
+});
+
+test('Duplicates: an answer either finder\'s search gets from the older scan once the rescan has landed is not installed over the new tree — nor its failure — and neither is the side-by-side viewer\'s', async () => {
+  for (const finder of ['exact', 'near'] as const) {
+    for (const fails of [false, true]) {
+      const state: Record<string, unknown> = { root: TREE, dupMode: finder, dup: freshDup(), near: freshNear(), ...HELD };
+      const held: Array<() => void> = [];
+      let painted = 0;
+      const { fns, $ } = dupPage(state, () => new Promise((resolve, reject) => {
+        held.push(() => (fails ? reject(new Error('Could not reach the server'))
+          : resolve({ status: 'complete', available: true, groups: [{ size: 1, files: [{ path: '/r/a' }, { path: '/r/b' }] }],
+            clusters: [{ files: [{ path: '/r/x' }, { path: '/r/y' }] }] })));
+      }), { renderDuplicates: () => { painted++; }, renderNearDupes: () => { painted++; } });
+      const label = `${finder}${fails ? ', failing' : ''}`;
+      await fns[finder]();
+      await turns();
+      assert.equal(held.length, 1, `${label}: control: a poll is out to the older scan`);
+      // finishScan: the new tree on screen, the finders' state reset, while the poll is out.
+      Object.assign(state, LANDED, { dup: freshDup(), near: freshNear() });
+      const body = finder === 'exact' ? 'dupBody' : 'ndBody';
+      $(body).innerHTML = '<i>the new tree\'s pane</i>';
+      held[0]();
+      await turns();
+      const pane = (finder === 'exact' ? state.dup : state.near) as { status: string; groups?: unknown[]; clusters?: unknown[] };
+      assert.equal(painted, 0, `${label}: the older scan's groups are not painted over the new tree`);
+      assert.deepEqual([pane.status, (pane.groups ?? pane.clusters)!.length], ['idle', 0], `${label}: nor kept — Auto-select and Compare are not offered over them`);
+      assert.equal($(body).innerHTML, '<i>the new tree\'s pane</i>', `${label}: nor its failure said there`);
+    }
+  }
+  // The viewer, opened during the rescan, answering — or failing — once it landed.
+  for (const fails of [false, true]) {
+    const state: Record<string, unknown> = { root: TREE, dupMode: 'exact', ...HELD, near: freshNear(),
+      dup: { ...freshDup(), groups: [{ files: [{ path: '/r/a' }, { path: '/r/b' }] }] } };
+    let settle: () => void = noop;
+    let shown = 0;
+    const viewer = { kind: null, at: 0, keeper: 0, data: null, seq: 0, totalCopies: 0 };
+    const { fns, $ } = dupPage(state, () => new Promise((resolve, reject) => {
+      settle = () => (fails ? reject(new Error('Could not reach the server')) : resolve({ files: [{ path: '/r/a' }], recommendedKeep: { index: 0 } }));
+    }), { renderDupeViewer: () => { shown++; }, dupeViewer: viewer });
+    const out = fns.open('exact', 0);
+    await turns();
+    Object.assign(state, LANDED);
+    settle();
+    await out;
+    const label = fails ? 'the viewer, failing' : 'the viewer';
+    assert.deepEqual([shown, viewer.data], [0, null], `${label}: the older scan's copies are not shown once the new tree is on screen`);
+    assert.match($('dupeViewerSummary').textContent, /^The tree on screen changed while these copies were read/, `${label}: it says why — not "Reading the copies…" for good, nor the older scan's failure`);
+  }
+});
+
+test('Duplicates: the similar-image Auto-select and Trash buttons act on nothing over the saved index\'s tree — the groups are an earlier scan\'s — even pressed past the toolbar', () => {
+  const clicks: Record<string, () => void> = {};
+  const els = stubDom();
+  const $ = (id: string) => {
+    const e = els(id);
+    if (id === 'ndAutoBtn' || id === 'ndTrashBtn') e.addEventListener = ((_t: string, fn: () => void) => { clicks[id] = fn; }) as El['addEventListener'];
+    return e;
+  };
+  const trashed: string[][] = [];
+  const near = { ...freshNear(), status: 'complete', available: true, compared: 4,
+    clusters: [{ files: [{ path: '/r/x' }, { path: '/r/y' }] }], selection: new Set<string>() };
+  const state: Record<string, unknown> = { root: TREE, ...HELD, near };
+  page<Record<string, never>>(['function ndAutoSelectBlocked(', "$('ndAutoBtn').addEventListener('click', () => {", "$('ndTrashBtn').addEventListener('click', () => {"], {
+    state, $, updateNdToolbar: noop, toast: noop, confirmTrash: (paths: string[]) => { trashed.push(paths); },
+  }, '{}');
+  // Control: over the older scan's tree, its own groups.
+  clicks.ndAutoBtn();
+  assert.deepEqual([...near.selection], ['/r/y'], 'control: over the older scan\'s tree Auto-select selects in its own groups');
+  clicks.ndTrashBtn();
+  assert.deepEqual(trashed, [['/r/y']], 'control: and Trash offers what is selected');
+  // The saved index's tree: the groups are an earlier scan's.
+  Object.assign(state, INDEX_RUNNING);
+  near.selection = new Set(['/r/x']);
+  clicks.ndAutoBtn();
+  assert.deepEqual([...near.selection], ['/r/x'], 'over the saved index\'s tree Auto-select selects nothing in an earlier scan\'s groups');
+  clicks.ndTrashBtn();
+  assert.equal(trashed.length, 1, 'and Trash offers nothing of them');
 });
 
 /* ───────────────────────────── Calendar, Missing GB ───────────────────────────── */
