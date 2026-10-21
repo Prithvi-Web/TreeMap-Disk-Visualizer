@@ -2951,6 +2951,133 @@ test('owner\'s refinement: every line stands out from the tile on EACH of its si
   }
 });
 
+test('owner\'s refinement at every ratio from 105 to 300 %: where a folder\'s band ends inside a device pixel, over a nested folder\'s band or a file\'s line whose own edge lies under that band, the line keeps that device pixel — so every leaf\'s line and every folder\'s band reaches 3:1 against the tile beside it on the device\'s pixels, on the dense corner at every 0.05 from 1.05 to 3, coloured by size, Age and Reclaim, and on the realistic map at every 0.1 from 1.1 to 3 and at 1.55, 1.65 and 2.65, coloured by Age and Reclaim (review F2.3 of BQJ-2c-r)', () => {
+  // From a ratio of 1 up a band is a whole number of css px, so at a ratio that does not make it a whole number of device
+  // pixels its inner edge falls inside one, which it covers in part. Laid over a nested folder's band whose edge lies under
+  // it — a sliver of a file between their edges, under the band — it covered that band's one whole device pixel in part
+  // too, and the nested band showed only as two blends: at 160 % /L/a5's 3 css px bottom band, device rows 262.2 to 267,
+  // over /L/a5/b1/c2's 1 css px band, 261.4 to 263, left c2's band 2.58:1 from the red file inside it (review F2.3 of
+  // BQJ-2c-r). The test above paints these maps at 1, 1.25, 1.5, 1.75 and 2 alone. The dense corner is swept at every
+  // 0.05, and the realistic map, over three times its area, at every 0.1 and at the three further ratios where it showed,
+  // by Age, where it showed, and by Reclaim (by size none of its lines fell under 3:1 at any 0.05 from 1.05 to 3 in a sweep
+  // made while fixing this, before the fix or after it). The theme does not move a line (the same places failed in both),
+  // so the dark one is painted. (The partings oracle is not run here: where a file meets a sliver that a folder's band
+  // covers, the band's part-covered device pixel can lie on the file's own edge, and partings, which steps over no such
+  // pixel, reads that blend as the file's edge; measureEdges steps over one, as for every band.)
+  const dense = denseCornerNodes(), real = realisticNodes();
+  const colourings: Array<[string, ((n: Tile) => RGB) | undefined]> = [['size', undefined], ['Age', hashColouring('age')], ['Reclaim', hashColouring('reclaim')]];
+  const maps: Array<[string, Tile[], number, number, number[], typeof colourings]> = [
+    ['the dense corner', dense, DENSE_PX, DENSE_PX, Array.from({ length: 40 }, (_, i) => +(1.05 + i * 0.05).toFixed(2)), colourings],
+    ['the realistic map', real, REAL_W, REAL_H, [...Array.from({ length: 20 }, (_, i) => +(1.1 + i * 0.1).toFixed(1)), 1.55, 1.65, 2.65], colourings.slice(1)],
+  ];
+  for (const [what, tiles, W, H, ratios, cols] of maps) {
+    for (const dpr of ratios) {
+      for (const [colouring, colour] of cols) {
+        const where = `${what}, dark, dpr ${dpr}, by ${colouring}`;
+        const { raster, px } = rasterPaint(tiles, DARK, W, H, colour, undefined, false, dpr);
+        const m = measureEdges(raster, px, dpr);
+        assert.ok(m.edges.length > (what === 'the dense corner' ? 5000 : 20000) * dpr, `${where}: control — ${m.edges.length} places a line meets a tile`);
+        assert.deepEqual(m.under, [], `${where}: lines under ${EDGE_BAR}:1 against a tile beside them`);
+      }
+    }
+  }
+});
+
+/**
+ * A folder A filling a map 400 css px square, whose 3 css px band ends inside a device pixel at `dpr`, and along each of its
+ * sides a nested folder (one file filling it) and a file, each 50 device px across, whose edge lies under A's band on the
+ * device pixel A's band covers in part, with a sliver of a file beyond it, under A's band (review F2.3 of BQJ-2c-r). Along
+ * its bottom also a folder B, with a 2 css px band, whose edge lies under A's band too, holding a file G whose edge lies under
+ * B's band, on a device row B's band covers whole; and in A's top-left corner a file C whose left edge lies under A's left
+ * band and whose top edge a device pixel above A's top band's part-covered row, and in its bottom-left corner a file C2 whose
+ * bottom edge lies under A's bottom band and whose left edge a device pixel left of A's left band's part-covered column —
+ * each with slivers beyond. Every edge on a whole device pixel. Returns the tiles, in the server's breadth-first order, and
+ * `k`, the device row or column A's band covers in part along each side, and each tile's device box.
+ */
+function underBandEdges(dpr: number) {
+  const E = 400 * dpr, a = 3 * dpr, s = 50;
+  const k = { top: Math.floor(a), left: Math.floor(a), bottom: Math.floor(E - a), right: Math.floor(E - a) };
+  const EB = k.bottom + Math.floor(2 * dpr); // B's bottom edge: its band, 2 * dpr device px, reaches over row k.bottom whole
+  const pct = (v: number) => (v / E) * 100;
+  const box = new Map<string, number[]>();
+  const tiles: Tile[] = [];
+  const add = (path: string, depth: number, dir: boolean, x0: number, y0: number, x1: number, y1: number) => {
+    box.set(path, [x0, y0, x1, y1]);
+    tiles.push({ name: path.slice(path.lastIndexOf('/') + 1), path, size: dir ? 1e11 : 1e9, type: dir ? 'dir' : 'file', depth, expanded: dir, x: pct(x0), y: pct(y0), w: pct(x1 - x0), h: pct(y1 - y0) });
+  };
+  const b1 = k.bottom + 1, r1 = k.right + 1;
+  add('/u', 1, true, 0, 0, E, E);
+  add('/u/Db', 2, true, 100, b1 - s, 150, b1); add('/u/Dt', 2, true, 100, k.top, 150, k.top + s);
+  add('/u/Dl', 2, true, k.left, 100, k.left + s, 150); add('/u/Dr', 2, true, r1 - s, 100, r1, 150);
+  add('/u/B', 2, true, 260, EB - 100, 360, EB);
+  add('/u/Lb', 2, false, 180, b1 - s, 230, b1); add('/u/Lt', 2, false, 180, k.top, 230, k.top + s);
+  add('/u/Ll', 2, false, k.left, 180, k.left + s, 230); add('/u/Lr', 2, false, r1 - s, 180, r1, 230);
+  add('/u/C', 2, false, k.left, k.top - 1, k.left + s, k.top - 1 + s); add('/u/C2', 2, false, k.left - 1, b1 - s, k.left - 1 + s, b1);
+  // The slivers beyond each edge, under A's band.
+  add('/u/sDb', 2, false, 100, b1, 150, E); add('/u/sDt', 2, false, 100, 0, 150, k.top);
+  add('/u/sDl', 2, false, 0, 100, k.left, 150); add('/u/sDr', 2, false, r1, 100, E, 150);
+  add('/u/sB', 2, false, 260, EB, 360, E);
+  add('/u/sLb', 2, false, 180, b1, 230, E); add('/u/sLt', 2, false, 180, 0, 230, k.top);
+  add('/u/sLl', 2, false, 0, 180, k.left, 230); add('/u/sLr', 2, false, r1, 180, E, 230);
+  add('/u/sCt', 2, false, k.left, 0, k.left + s, k.top - 1); add('/u/sCl', 2, false, 0, k.top - 1, k.left, k.top - 1 + s);
+  add('/u/sC2b', 2, false, k.left - 1, b1, k.left - 1 + s, E); add('/u/sC2l', 2, false, 0, b1 - s, k.left - 1, b1);
+  for (const d of ['Db', 'Dt', 'Dl', 'Dr']) { const [x0, y0, x1, y1] = box.get(`/u/${d}`)!; add(`/u/${d}/f`, 3, false, x0, y0, x1, y1); }
+  add('/u/B/G', 3, false, 280, b1 - s, 330, b1); add('/u/B/sG', 3, false, 280, b1, 330, EB);
+  const colours: Array<[RegExp, RGB]> = [[/^\/u\/s/, [60, 180, 90]], [/^\/u\/B\/G$/, [240, 200, 60]], [/^\/u\/B\/sG$/, [60, 180, 90]], [/^\/u\/B$/, [150, 90, 200]],
+    [/^\/u\/D/, [230, 70, 60]], [/^\/u\/(L|C)/, [70, 120, 220]], [/^\/u$/, [200, 160, 20]]];
+  return { tiles, W: 400, H: 400, k, box, colour: (n: Tile) => colours.find(([re]) => re.test(n.path))![1] };
+}
+
+test('owner\'s refinement at 125, 160 and 175 %: where a folder\'s band ends inside a device pixel, a nested folder\'s band or a file\'s line whose own edge lies under that band keeps that device pixel in its own colour, along each of the folder\'s four sides — unless a band between them covers it whole there, which keeps it — and nothing is laid again over the folder\'s band across a corner, in both themes (review F2.3 of BQJ-2c-r)', () => {
+  for (const dpr of [1.25, 1.6, 1.75]) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      const where = `${theme}, dpr ${dpr}`;
+      const u = underBandEdges(dpr);
+      const { raster, px } = rasterPaint(u.tiles, palette, u.W, u.H, u.colour, undefined, false, dpr);
+      const by = (path: string) => px.find((r) => r.n.path === path)!;
+      // The rectangle of `rects` laid last over the device pixel (x, y), whole.
+      const lastOver = (rects: Band[], x: number, y: number) => [...rects].reverse()
+        .find((l) => l.x * dpr <= x + 1e-6 && (l.x + l.w) * dpr >= x + 1 - 1e-6 && l.y * dpr <= y + 1e-6 && (l.y + l.h) * dpr >= y + 1 - 1e-6);
+      const off: string[] = [];
+      let looked = 0;
+      // Along `side` of each tile, on the device row or column A's band covers in part: its own line's colour, in full.
+      const keeps = (path: string, side: 'top' | 'bottom' | 'left' | 'right', owner = path) => {
+        const [x0, y0, x1, y1] = u.box.get(path)!, vertical = side === 'left' || side === 'right', o = by(owner);
+        for (let t = (vertical ? y0 : x0) + 4; t < (vertical ? y1 : x1) - 4; t++) {
+          const [x, y] = vertical ? [u.k[side], t] : [t, u.k[side]];
+          const l = lastOver((o.frame ? o.bands : o.lines) || [], x, y);
+          looked++;
+          const got = raster.at(x, y);
+          if (!l) { off.push(`${path} ${side}: no line of ${owner} covers ${x},${y} whole`); continue; }
+          const want = rgba(l.rgb).slice(0, 3);
+          if (got.some((v, i) => Math.abs(v - want[i]) > 0.5) && off.length < 12) off.push(`${path} ${side} at ${x},${y}: ${got.map(Math.round)} where ${owner}'s line there is ${l.rgb}`);
+        }
+      };
+      for (const [path, side] of [['/u/Db', 'bottom'], ['/u/Lb', 'bottom'], ['/u/Dt', 'top'], ['/u/Lt', 'top'], ['/u/Dl', 'left'], ['/u/Ll', 'left'],
+        ['/u/Dr', 'right'], ['/u/Lr', 'right'], ['/u/C', 'left'], ['/u/C2', 'bottom']] as const) keeps(path, side);
+      // G's line lies under B's band there, which covers that row whole: B's band keeps it, laid again itself.
+      keeps('/u/B/G', 'bottom', '/u/B');
+      assert.ok(looked > 400, `${where}: control — ${looked} device pixels looked at`);
+      assert.deepEqual(off, [], `${where}: device pixels on the row or column A's band covers in part not in the colour of the line under it`);
+      // What is laid again lies on that row or column alone, a device pixel thick, and between A's bands across its ends: at
+      // A's corners those bands cover the row or column whole, and nothing is laid again over them.
+      const A = by('/u'), lw = A.lw!, again = (A.bands || []).filter((b) => Math.abs(Math.min(b.w, b.h) * dpr - 1) < 1e-6);
+      const sides = new Set<string>(), past: string[] = [];
+      for (const b of again) {
+        const vertical = b.h > b.w, at = Math.round((vertical ? b.x : b.y) * dpr);
+        const side = vertical ? (at === u.k.left ? 'left' : at === u.k.right ? 'right' : '') : (at === u.k.top ? 'top' : at === u.k.bottom ? 'bottom' : '');
+        if (!side) { past.push(`${b.x * dpr},${b.y * dpr} ${b.w * dpr}×${b.h * dpr} off the part-covered rows and columns`); continue; }
+        sides.add(side);
+        const [lo, hi] = vertical ? [b.y, b.y + b.h] : [b.x, b.x + b.w];
+        if (lo < lw - 1e-6 || hi > u.W - lw + 1e-6) past.push(`${side}: ${(lo * dpr).toFixed(2)} to ${(hi * dpr).toFixed(2)} device px, past A's bands across its ends at ${(lw * dpr).toFixed(2)} and ${((u.W - lw) * dpr).toFixed(2)}`);
+      }
+      assert.equal(sides.size, 4, `${where}: control — laid again along A's ${[...sides].join(', ')} sides`);
+      assert.deepEqual(past, [], `${where}: laid again over A's bands across its corners, or off the rows and columns it covers in part`);
+      assert.deepEqual(measureEdges(raster, px, dpr).under, [], `${where}: lines under ${EDGE_BAR}:1 against a tile beside them`);
+    }
+  }
+});
+
 test('owner\'s refinement: a band is toned against what a person sees beside it, never against a sliver it covers — a 2 px leaf along a folder\'s edge, under its 3 px band, leaves the band toned against the tile past it (REPORT problem 6), at 4.5:1, in both themes', () => {
   const tiles: Tile[] = [
     { name: 'F', path: '/f', size: 5e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 100, h: 100 },
