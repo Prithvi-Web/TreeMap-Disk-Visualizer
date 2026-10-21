@@ -822,21 +822,32 @@ function queryPage(state: Record<string, unknown>, answer: (url: string, signal:
   const given: Record<string, unknown> = {
     state, $, tmQuerySeq: 0, tmQueryAbort: null, tmQueryDeb: 0, tmLastHits: null, AbortController, clearTimeout: (t: unknown) => { cleared.push(t); },
     api: async (url: string, init: { body: string; signal: AbortSignal }) => { asks.push({ url, scanId: scanOf(url, init.body) }); return answer(url, init.signal); },
-    tmSetQueryMessage: (m: string) => { messages.push(m); }, tmStageable: () => ({ paths: [] }), seedNodes: noop, tmSyncStageButton: noop,
-    renderSearchOverlay: noop, presentView: noop, formatCount: String, tmUndrawnMessage: () => '', tmClearHits: noop,
+    tmSetQueryMessage: (m: string) => { messages.push(m); }, tmStageable: () => ({ paths: [] }), seedNodes: noop, tmSyncQueryBar: noop,
+    renderSearchOverlay: noop, presentView: noop, formatCount: String, tmUndrawnMessage: () => '',
     tmApplyQuery: (q: string) => { reasked.push(q); },
     fxTmPillBeamsSync: noop, loadTreemap: noop, loadSavedViews: noop, refreshDock: noop,
   };
+  // The page's own tmClearHits and Stage button: what a cleared query takes down — the footer's total, the Stage offer —
+  // is theirs, never a stand-in that does nothing (review F1.8).
   const { fns } = page<{ run: (q: string) => Promise<void>; mount: () => void; changed: () => void }>(
-    ['async function tmRunGrammarQuery(', 'function tmRejudgeQuery(', 'function tmRejudgeQueryWait(', 'function tmNoScanQueryWords(', 'function tmQueryScanChanged(', 'function tmCancelQueries('],
+    ['async function tmRunGrammarQuery(', 'function tmRejudgeQuery(', 'function tmRejudgeQueryWait(', 'function tmNoScanQueryWords(', 'function tmQueryScanChanged(', 'function tmCancelQueries(',
+      'function tmClearHits(', 'function tmSyncStageButton('],
     given, `{ run: tmRunGrammarQuery, mount: () => (${pageView('treemap')}).mount(), changed: tmQueryScanChanged }`);
-  return { fns, messages, reasked, asks, given, cleared };
+  /** The Stage offer as the map's bar shows it: its button, and the hits it would stage. */
+  const stage = () => ({ shown: !$('tmStageMatches').hidden, hits: (given.tmLastHits as { paths: string[] } | null)?.paths ?? null });
+  /** An older scan's answer standing over the map: its matches, the footer's total, and "Stage 1 file". */
+  const paintOlderMatches = (t: Record<string, unknown>) => {
+    Object.assign(t, { matchedPaths: new Set(['/r/big']), matchTotal: 6 });
+    given.tmLastHits = { q: String(t.query), paths: ['/r/big'], total: 6, truncated: false, stage: { paths: ['/r/big'], noun: 'file' } };
+    $('tmStageMatches').hidden = false;
+  };
+  return { fns, messages, reasked, asks, given, cleared, stage, paintOlderMatches };
 }
 
 test('the highlight box\'s query typed over the saved index\'s tree is said again as that changes — "it runs once the scan finishes" once a scan of the folder starts, the saved index again after a Stop — and is asked of the scan that lands, never left saying "scan this folder" over a scanned one', async () => {
   const state: Record<string, unknown> = { root: TREE, ...INDEX_STOPPED, scanningPath: null, view: 'treemap',
     treemap: { rootPath: '/r', query: 'size>1gb', queryRoot: '/r', queryMode: 'bare', queryScanId: null, matches: 0, matchedPaths: null } };
-  const { fns, messages, reasked, asks } = queryPage(state, () => ({ hits: [], total: 0 }));
+  const { fns, messages, reasked, asks, stage, paintOlderMatches } = queryPage(state, () => ({ hits: [], total: 0 }));
   await fns.run('size>1gb');
   assert.equal(messages.at(-1), 'Opened from the saved index — scan this folder to search it.', 'control: a Stop left the saved index\'s tree');
   // The scan chrome begins for this folder: beginScanChrome re-enters the view (BQJ-1b (2)).
@@ -865,10 +876,13 @@ test('the highlight box\'s query typed over the saved index\'s tree is said agai
   for (const after of ['lands', 'is stopped, the older tree back'] as const) {
     Object.assign(state, INDEX_RUNNING, { scanningPath: '/r' });
     const t = state.treemap as Record<string, unknown>;
-    Object.assign(t, { query: 'size>1gb', queryRoot: '/r', queryMode: 'grammar', queryScanId: 'scan-old', matchedPaths: new Set(['/r/big']), matchTotal: 6 });
+    Object.assign(t, { query: 'size>1gb', queryRoot: '/r', queryMode: 'grammar', queryScanId: 'scan-old' });
+    paintOlderMatches(t);
     const before: number = reasked.length;
     fns.changed();
     assert.deepEqual([t.queryScanId, t.matchedPaths], [null, null], `${after}: the older scan's matches go when the saved index's tree is painted`);
+    assert.equal(t.matchTotal, null, `${after}: and the footer's total of them ("5 of 6 matches")`);
+    assert.deepEqual(stage(), { shown: false, hits: [] }, `${after}: and the Stage offer`);
     assert.equal(messages.at(-1), 'The search runs on a finished scan — it runs once the scan finishes.', `${after}: and the box says the search waits for the scan`);
     assert.deepEqual(reasked.slice(before), [], `${after}: nothing is asked of the running scan`);
     Object.assign(state, after === 'lands' ? LANDED : STOPPED);
@@ -878,9 +892,50 @@ test('the highlight box\'s query typed over the saved index\'s tree is said agai
   // A scan of the same folder over its older scan's tree, with no index paint: those matches are the tree's still.
   Object.assign(state, HELD);
   const t = state.treemap as Record<string, unknown>;
-  Object.assign(t, { queryMode: 'grammar', queryScanId: 'scan-old', matchedPaths: new Set(['/r/big']) });
+  Object.assign(t, { queryMode: 'grammar', queryScanId: 'scan-old' });
+  paintOlderMatches(t);
   fns.changed();
   assert.equal(t.queryScanId, 'scan-old', 'control: over the older scan\'s own tree its answer stands');
+  assert.deepEqual([t.matchTotal, stage()], [6, { shown: true, hits: ['/r/big'] }], 'control: with its total and its Stage offer');
+});
+
+test('the older scan\'s matches go when a rescan paints the saved index\'s tree though the box holds a query that did not parse, or one still being asked — each left the last answer painted with no scan named, and K03\'s clear passed them by (review F1.3)', async () => {
+  const PARSE = Object.assign(new Error('Expected a size after "size>"'), { offset: 5 });
+  let respond: (url: string, signal: AbortSignal) => unknown = () => ({ hits: [{ path: '/r/big', name: 'big', size: 9 }], total: 6 });
+  const signals: AbortSignal[] = [];
+  for (const left of ['a query that does not parse', 'a query still being asked'] as const) {
+    const state: Record<string, unknown> = { root: TREE, ...STOPPED, scanningPath: null, view: 'treemap',
+      treemap: { rootPath: '/r', query: 'size>1gb', queryRoot: '/r', queryMode: 'bare', queryScanId: null, matches: 0, matchedPaths: null } };
+    const { fns, messages, reasked, stage } = queryPage(state, (url, signal) => { signals.push(signal); return respond(url, signal); });
+    const t = state.treemap as Record<string, unknown>;
+    respond = () => ({ hits: [{ path: '/r/big', name: 'big', size: 9 }], total: 6 });
+    await fns.run('size>1gb');
+    assert.deepEqual([t.queryScanId, [...(t.matchedPaths as Set<string>)], t.matchTotal], ['scan-old', ['/r/big'], 6], `${left}: control: an answer of the scan behind the tree is painted`);
+    // The box is edited: the new text does not parse (its answer keeps the last highlights), or its answer is still out.
+    t.query = 'size>';
+    if (left === 'a query that does not parse') {
+      respond = () => { throw PARSE; };
+      await fns.run('size>');
+      assert.match(messages.at(-1)!, /at character 6/, `${left}: control: the box says where the query stops parsing`);
+    } else {
+      respond = () => new Promise(noop);
+      void fns.run('size>');
+      await turns();
+    }
+    assert.deepEqual([t.queryScanId, [...(t.matchedPaths as Set<string>)]], [null, ['/r/big']], `${left}: control: the last answer is painted, no scan named`);
+    // A rescan of the folder paints it from its saved index (TOPIC.scan, null).
+    Object.assign(state, INDEX_RUNNING, { scanningPath: '/r' });
+    fns.changed();
+    assert.equal(t.matchedPaths, null, `${left}: the older scan's highlights go`);
+    assert.equal(t.matchTotal, null, `${left}: and the footer's total of them`);
+    assert.deepEqual(stage(), { shown: false, hits: [] }, `${left}: and the Stage offer`);
+    assert.equal(messages.at(-1), 'The search runs on a finished scan — it runs once the scan finishes.', `${left}: and the box says the search waits for the scan`);
+    if (left === 'a query still being asked') assert.equal(signals.at(-1)!.aborted, true, `${left}: its request stops`);
+    // The scan lands: the box's query is asked of it, once.
+    Object.assign(state, LANDED);
+    fns.mount();
+    assert.deepEqual(reasked, ['size>'], `${left}: the scan that lands asks the box's query`);
+  }
 });
 
 test('the highlight box\'s query asked of the older scan during a rescan is not installed over the new tree when it answers after the rescan landed — the new scan is asked — and a scan of the same folder landing stops it on the server', async () => {

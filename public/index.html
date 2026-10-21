@@ -25872,8 +25872,11 @@ function tmQueryScanChanged() {
     // rescan — highlights, "N matches", the Stage offer — with no query sent
     // (eighth browser pass K03). They go, the box says the search waits for
     // the scan, and the scan that lands asks again (tmRejudgeQuery), as a Stop
-    // that puts the older tree back does.
-    if (!treeScanId() && state.treemap.queryMode === 'grammar' && state.treemap.queryScanId !== null) {
+    // that puts the older tree back does. Judged by what is painted, not by
+    // the scan named: a query that does not parse keeps the last answer's
+    // highlights, and one still out keeps them until it answers, each with no
+    // scan named (review F1.3).
+    if (!treeScanId() && state.treemap.queryMode === 'grammar' && (state.treemap.queryScanId !== null || state.treemap.matchedPaths)) {
       state.treemap.queryScanId = null;
       state.treemap.matchedPaths = null;
       tmClearHits();
