@@ -112,13 +112,16 @@ function pageBeforeAnyScan() {
   // What the welcome card was shown each time switchView told it the view
   // changed (review F1.2): whether the empty state was up by then.
   const followed: string[] = [];
+  // How often switchView asked for the toasts to be placed again (BQR-1 item 14).
+  const toastPlacings = { count: 0 };
   const switchView = new Function('$', 'state', 'VIEW_BY_ID', 'tabs', 'document', 'icon', 'hideTooltip', 'hideCtxMenu', 'selectionBarFollowView',
-    'fxEmptyCtaSync', 'fxScanHeroSync', 'renderCapabilityNotice', 'fxViewEnter', 'toast', 'tourFollowView',
+    'fxEmptyCtaSync', 'fxScanHeroSync', 'renderCapabilityNotice', 'fxViewEnter', 'toast', 'tourFollowView', 'toastPlaceSoon',
     `'use strict'; let mountedView = null; ${src} return switchView;`)(
     $, state, viewById, tabs, { querySelectorAll: () => [] }, (name: string, size: number) => `<svg data-i="${name}" data-s="${size}"></svg>`,
     () => {}, () => {}, () => {}, () => {}, () => {}, () => {}, () => {}, () => {}, () => { followed.push($('emptyState').style.display); },
+    () => { toastPlacings.count++; },
   ) as (id: string) => void;
-  return { switchView, $, followed };
+  return { switchView, $, followed, toastPlacings };
 }
 
 test('control: the sidebar and the registrations this test reads are the page\'s own', () => {
@@ -129,6 +132,12 @@ test('control: the sidebar and the registrations this test reads are the page\'s
     assert.equal(v!.label, s.label, `${s.id}: the registry's label is the sidebar's`);
   }
   assert.equal([...REGISTERED.values()].filter((v) => v.needsScan).length, 9, 'nine views need a scan');
+});
+
+test('every change of view asks for the toasts to be placed again: the map\'s footer, which they stand clear of, comes and goes with its view (BQR-1 item 14)', () => {
+  const { switchView, toastPlacings } = pageBeforeAnyScan();
+  for (const s of SIDEBAR) switchView(s.id);
+  assert.equal(toastPlacings.count, SIDEBAR.length, `each of the ${SIDEBAR.length} changes of view asked once`);
 });
 
 test('before any scan, every view that needs one opens on its own empty state: its sidebar name, what it will show, and the one action (G02)', () => {

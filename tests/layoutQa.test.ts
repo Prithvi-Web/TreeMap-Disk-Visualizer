@@ -1160,6 +1160,155 @@ test('the match bar coming, going or changing its words asks for the coach card 
   assert.equal(asked, 2, 'and the card is placed again as it goes');
 });
 
+/* ══════════════ BQR-1 item 14 — a toast leaves the map's footer and match bar readable ══════════════ */
+
+/**
+ * The page's toastPlace in a window `H` px tall: the stack x `left`–`right`, `height` px tall, resting with its
+ * bottom edge `restUp` px above the window's bottom (where the stylesheet's slot puts it), and `lines` on screen.
+ * `lift` is a lift already set on the stack, which raises its box but not its offsetTop. Returns the lift it left
+ * (--toast-lift, 0 with none) and the stack's box raised by it.
+ */
+function placeToasts(H: number, stack: { left: number; right: number; height: number; restUp: number }, lines: Box[],
+  opts: { toasts?: number; dialog?: boolean; lift?: number } = {}) {
+  const props: Record<string, string> = opts.lift ? { '--toast-lift': `${opts.lift}px` } : {};
+  const lift = () => (props['--toast-lift'] ? sheetPx(props['--toast-lift'], 'the --toast-lift set') : 0);
+  const offsetTop = H - stack.restUp - stack.height; // offsetTop leaves transforms out: the stack's rest
+  const box = () => ({ left: stack.left, right: stack.right, top: offsetTop - lift(), bottom: offsetTop + stack.height - lift() });
+  const els = lines.map((c) => ({ tagName: c.tag ?? 'DIV', is: c.is, getClientRects: () => [c], getBoundingClientRect: () => c }));
+  let asked = '';
+  const fns = runPageDecls<{ toastPlace(): void }>(['TOAST_GAP', 'TOAST_EDGE', 'TOAST_KEEP_CLEAR', 'toastPlace'], {
+    $: (id: string) => (id === 'toasts' ? {
+      childElementCount: opts.toasts ?? 1, offsetTop, offsetHeight: stack.height, getBoundingClientRect: box,
+      style: { setProperty: (k: string, v: string) => { props[k] = v; }, removeProperty: (k: string) => { delete props[k]; }, getPropertyValue: (k: string) => props[k] ?? '' },
+    } : null),
+    document: {
+      querySelector: (sel: string) => (sel === '.modal-backdrop.open' && opts.dialog ? {} : null),
+      querySelectorAll: (sel: string) => { asked = sel; return els.filter((e) => !e.is || selectorMatches(e.is, sel)); },
+    },
+  }, '{ toastPlace }');
+  fns.toastPlace();
+  return { lift: lift(), box: box(), set: '--toast-lift' in props, asked };
+}
+
+test('a toast leaves the map\'s footer and its match bar readable — at 1024 × 700 a long error covered the hint line for as long as it was up — standing at the lowest place above its rest that covers neither (BQR-1 item 14)', () => {
+  // The stylesheet's half: the stack is raised by the lift set on it, a translate, so each state's slot stays its rest;
+  // and at the top of the scrim, while a dialog is open, it is not raised.
+  assert.equal(declsAt('#toasts', 1440).get('translate'), '0 calc(-1 * var(--toast-lift, 0px))', 'the stack stands --toast-lift above its slot');
+  assert.equal(declsAt('#toasts', 1440).get('bottom'), '22px', 'control: resting 22 px up');
+  assert.equal(declsFor('body:has(.modal-backdrop.open) #toasts').get('translate'), 'none', 'at the top of the scrim it is not raised');
+  // BQA's ninth-pass geometry (M02): at 1024 × 700 the footer's three lines y 590–655 (x 268–1004), the match bar
+  // y 475–562 (x 288–966). The stack is centred on the strip right of the sidebar (x 634); a long error is 380 px
+  // wide and three lines, 83 px tall, x 444–824, y 595–678 at rest — over the footer's last line, the hint.
+  const long1024 = { left: 444, right: 824, height: 83, restUp: 22 };
+  const foot1024 = mapFoot({ left: 268, top: 590, right: 1004, bottom: 655 });
+  const bar1024 = matchBar({ left: 288, top: 475, right: 966, bottom: 562 });
+  const quiet = placeToasts(700, long1024, [foot1024]);
+  assert.match(quiet.asked, /\.view\.active \.tm-foot/, 'control: it asks for the footer of the view that is up');
+  assert.ok(!overlaps(quiet.box, foot1024), `the footer is readable (the stack y ${quiet.box.top}–${quiet.box.bottom})`);
+  assert.equal(quiet.lift, 678 - 590 + 12, 'as little as it can: 12 px above the footer');
+  const said = placeToasts(700, long1024, [bar1024, foot1024]);
+  assert.ok(!overlaps(said.box, foot1024) && !overlaps(said.box, bar1024), `with the bar saying something, both are readable (the stack y ${said.box.top}–${said.box.bottom})`);
+  assert.equal(said.lift, 678 - 475 + 12, '12 px above the bar, the lowest place clear of both');
+  // The lowest clear place, not any clear place: with room between the footer and a line high above it, the stack
+  // stands in that room, 12 px above the footer, rather than above the higher line.
+  const high = matchBar({ left: 288, top: 300, right: 966, bottom: 350 });
+  assert.equal(placeToasts(700, long1024, [high, foot1024]).lift, 678 - 590 + 12, 'room between them: 12 px above the footer, not above the line up the map');
+  // 1440 × 900 (BQA's shot): the footer y 812–856, the bar y 739–784 (x 590–1183); a one-line toast, 45 px, centred at x 842.
+  const one1440 = { left: 692, right: 992, height: 45, restUp: 22 };
+  const foot1440 = mapFoot({ left: 268, top: 812, right: 1404, bottom: 856 });
+  assert.equal(placeToasts(900, one1440, [foot1440]).lift, 878 - 812 + 12, '1440 × 900: 12 px above the footer');
+  assert.equal(placeToasts(900, one1440, [matchBar({ left: 590, top: 739, right: 1183, bottom: 784 }), foot1440]).lift, 878 - 739 + 12, 'and above the bar while it says something');
+  // The idle bar is its saved chips, and the rest of its row is the map's: not a line to stand clear of.
+  assert.equal(placeToasts(900, one1440, [matchBar({ left: 590, top: 820, right: 1183, bottom: 870 }, true)]).set, false, 'over the idle bar alone it rests');
+  // Another view, or the map's lines beside the stack rather than under it: nothing in the way, it rests.
+  assert.equal(placeToasts(700, long1024, []).set, false, 'with nothing the map says on screen it rests');
+  assert.equal(placeToasts(700, long1024, [mapFoot({ left: 840, top: 590, right: 1004, bottom: 655 })]).set, false, 'a line beside it is not under it');
+  // A placement asked for while the stack stands raised reads its rest, not its raised box: the lift stays.
+  assert.equal(placeToasts(700, long1024, [foot1024], { lift: 100 }).lift, 100, 'placed again where it stands, its lift is the same');
+  // Nowhere clear — the window too short to stand it above the footer — it rests, never off the top.
+  assert.equal(placeToasts(200, long1024, [mapFoot({ left: 268, top: 100, right: 1004, bottom: 190 })]).set, false, 'nowhere clear: it rests');
+  // While a dialog is open the stack is at the top of the scrim: its lift is left for when the dialog goes.
+  assert.equal(placeToasts(700, long1024, [], { dialog: true, lift: 100 }).lift, 100, 'a dialog open: the lift is left as it is');
+  // With no toast up a lift left behind goes.
+  assert.equal(placeToasts(700, long1024, [foot1024], { toasts: 0, lift: 100 }).set, false, 'no toast up: no lift');
+});
+
+test('the toasts are placed at the next frame, once however often that is asked for in one, and again when a toast comes or goes, the footer or the match bar changes size, a dialog opens or closes, the window resizes or any part of the page scrolls — the page\'s own toastPlaceSoon and the observers and listeners it registers, run (BQR-1 item 14)', () => {
+  const frames: Array<() => void> = [];
+  const listeners: Record<string, Array<() => void>> = {};
+  let scrollOptions: unknown = null;
+  const observed: string[] = [];
+  const watched: Array<{ el: string; opts: unknown }> = [];
+  const stack = { childElementCount: 0, style: { lift: '', getPropertyValue: () => stack.style.lift } };
+  const marker = (name: string) => ({ name });
+  let roFn: (() => void) | null = null, moFn: (() => void) | null = null;
+  class FakeRO { constructor(fn: () => void) { roFn = fn; } observe(el: { name: string }) { observed.push(el.name); } }
+  class FakeMO { constructor(fn: () => void) { moFn = fn; } observe(el: { name: string }, o: unknown) { watched.push({ el: el.name, opts: o }); } }
+  let placed = 0;
+  const fns = runPageDecls<{ toastPlaceSoon(): void }>([], {
+    $: (id: string) => (id === 'toasts' ? stack : null),
+    toastPlace: () => { placed++; },
+    requestAnimationFrame: (fn: () => void) => { frames.push(fn); return frames.length; },
+    window: { addEventListener: (n: string, fn: () => void) => { (listeners[`window:${n}`] ??= []).push(fn); } },
+    document: {
+      addEventListener: (n: string, fn: () => void, o: unknown) => { (listeners[n] ??= []).push(fn); if (n === 'scroll') scrollOptions = o; },
+      querySelector: (sel: string) => marker(sel),
+      querySelectorAll: (sel: string) => (sel === '.modal-backdrop' ? [marker('settingsModal'), marker('confirmModal')] : []),
+    },
+    ResizeObserver: FakeRO, MutationObserver: FakeMO,
+  }, '{ toastPlaceSoon }', pageBetween('let toastPlaceRaf = 0;', '/* ───────────────────────────── Size → color scale'));
+
+  // No toast up and no lift: nothing is asked for — a scroll of the Grid costs no frame.
+  fns.toastPlaceSoon();
+  assert.equal(frames.length, 0, 'with no toast up and no lift, no frame is asked for');
+  stack.childElementCount = 1;
+  fns.toastPlaceSoon(); fns.toastPlaceSoon(); fns.toastPlaceSoon();
+  assert.equal(frames.length, 1, 'a toast up: one frame, however often a placement is asked for before it comes');
+  assert.equal(placed, 0, 'and nothing is placed until it comes');
+  frames.shift()!();
+  assert.equal(placed, 1, 'the frame places the stack, once');
+  // The last toast gone with a lift still set: one more placement takes the lift away.
+  stack.childElementCount = 0; stack.style.lift = '100px';
+  fns.toastPlaceSoon();
+  assert.equal(frames.length, 1, 'no toast, a lift left: a frame, to take it away');
+  frames.shift()!();
+  stack.childElementCount = 1; stack.style.lift = '';
+
+  // What asks for a placement: the observers and listeners the page registered.
+  assert.deepEqual(observed, ['#toasts', '#view-treemap .tm-foot', '#tmQueryBar'], 'sizes watched: the stack (a toast comes or goes), the footer, the match bar');
+  assert.deepEqual(watched, [{ el: 'settingsModal', opts: { attributes: true, attributeFilter: ['class'] } }, { el: 'confirmModal', opts: { attributes: true, attributeFilter: ['class'] } }],
+    'every dialog\'s class is watched: it opens and closes by its class');
+  const asks: Array<[string, () => void]> = [
+    ['a size watched', roFn!], ['a dialog opening or closing', moFn!],
+    ...(listeners['window:resize'] ?? []).map((fn) => ['a resize', fn] as [string, () => void]),
+    ...(listeners.scroll ?? []).map((fn) => ['a scroll', fn] as [string, () => void]),
+  ];
+  assert.deepEqual(asks.map(([what]) => what), ['a size watched', 'a dialog opening or closing', 'a resize', 'a scroll'], 'control: each is registered once');
+  placed = 0;
+  for (const [what, fn] of asks) {
+    fn();
+    assert.equal(frames.length, 1, `${what} asks for a placement`);
+    frames.shift()!();
+  }
+  assert.equal(placed, asks.length, 'and each gets one');
+  assert.deepEqual(scrollOptions, { capture: true, passive: true }, 'heard from any part of the page that scrolls, and never held up');
+});
+
+test('the match bar coming, going or changing its words asks for the toasts to be placed again (BQR-1 item 14)', () => {
+  let asked = 0;
+  const el = (o: Record<string, unknown> = {}) => ({ hidden: true, value: '', childElementCount: 0, classList: { toggle: () => {} }, ...o });
+  const els: Record<string, ReturnType<typeof el>> = { tmQueryBar: el(), tmSavedViews: el(), tmQueryErr: el({ hidden: false }), tmStageMatches: el(), tmSearch: el({ value: 'size>1gb' }), tmSaveView: el() };
+  const sync = runPageDecls<() => void>(['tmSyncQueryBar'], { $: (id: string) => els[id], state: { view: 'treemap' }, toastPlaceSoon: () => { asked++; } }, 'tmSyncQueryBar');
+  sync();
+  assert.equal(els.tmQueryBar.hidden, false, 'control: the bar is up, saying something');
+  assert.equal(asked, 1, 'and the toasts are placed again');
+  els.tmQueryErr.hidden = true;
+  els.tmSearch.value = '';
+  sync();
+  assert.equal(els.tmQueryBar.hidden, true, 'control: with nothing to say, the bar goes');
+  assert.equal(asked, 2, 'and the toasts are placed again as it goes');
+});
+
 /* ══════════════ B26 — the map refits when a row around it changes height ══════════════ */
 
 /** The treemap's measured height, with a row of `above` px pushing it down, and whether it redrew. */
@@ -2295,6 +2444,42 @@ test('a label in a toolbar that wraps travels with its control — "Sort", "Afte
   }
   for (const id of ['gridSort', 'cmpA', 'cmpB', 'trendRoot', 'dupMinSize', 'ndThreshold']) {
     assert.ok(shrinks.includes(id), `#${id} sits in a label pair that was held to giving up the select's width (held: ${shrinks.join(', ')})`);
+  }
+});
+
+test('a label naming the number box beside it keeps its words on one line, so a long note after the box never squeezes it — Settings\' "Never use more than" read "Never use more / than" at 1440 (BQR-1 item 14)', () => {
+  // A flex row shrinks every item it holds, and the Undo Vault's size cap is followed by a whole sentence ("% of
+  // this disk — oldest copies go first, …"): in the 660-px sheet the label gave way beside it and took two lines.
+  // The sheet holds a label followed by a number box to one line by `:has(+ input[type="number"])`, which the fake
+  // selector does not read: such a rule is matched here as the browser matches it — the label's row is what comes
+  // before " > ", and the next element after the label is a number box.
+  const root = markupTree();
+  const nextNumber = RULES.flatMap((r) => r.selectors.map((sel) => ({ sel, body: r.body })))
+    .map(({ sel, body }) => ({ m: /^(.+?) > label:has\(\+ input\[type="number"\]\)$/.exec(sel), body }))
+    .filter((x) => x.m);
+  const held: string[] = [], loose: string[] = [];
+  for (const row of selectAll(root, '.rule-row')) {
+    row.children.forEach((label, i) => {
+      const next = row.children[i + 1];
+      if (label.tagName !== 'label' || !next || next.tagName !== 'input' || next.attrs.type !== 'number') return;
+      const ws = new Map(sheetFor(root, label));
+      for (const { m, body } of nextNumber) {
+        if (!readableSelector(m![1]) || !selectAll(root, m![1]).includes(row)) continue;
+        for (const d of body.split(';')) { const k = d.indexOf(':'); if (k !== -1) ws.set(d.slice(0, k).trim(), d.slice(k + 1).trim()); }
+      }
+      (ws.get('white-space') === 'nowrap' ? held : loose).push(label.attrs.for);
+    });
+  }
+  for (const id of ['capsuleMaxPercent', 'capsuleRetentionDays', 'forecastDays', 'watchIdleMin', 'cleanupGoalValue', 'apMaxRun', 'apConfirmAbove', 'apCooldown', 'ruleAgeOn']) {
+    assert.ok(held.includes(id) || loose.includes(id), `control: the label for #${id} was found beside its number box`);
+  }
+  assert.deepEqual(loose, [], `every label beside a number box keeps its words on one line (held: ${held.join(', ')})`);
+  // A long label that names a checkbox, with no number box after it, still wraps in its row.
+  for (const id of ['ruleDupOn', 'emptyIgnoreJunk', 'apDryRunFirst']) {
+    const [label] = selectAll(root, `label[for="${id}"]`);
+    assert.ok(label, `control: the label for #${id} is in the page`);
+    assert.notEqual(sheetFor(root, label).get('white-space'), 'nowrap', `the label for #${id}, a sentence, still wraps`);
+    assert.ok(!held.includes(id), `and no number box follows it (#${id})`);
   }
 });
 

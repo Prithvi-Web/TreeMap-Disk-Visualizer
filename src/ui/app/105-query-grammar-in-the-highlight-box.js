@@ -227,6 +227,8 @@ function tmSyncQueryBar() {
   // and the bar has just come, gone or changed its words under it. Guarded: a
   // page reader may lift this function without the placement.
   if (typeof tourPlaceSoon === 'function') tourPlaceSoon();
+  // And the toasts stand clear of it while it says something (BQR-1 item 14).
+  if (typeof toastPlaceSoon === 'function') toastPlaceSoon();
 }
 
 /**

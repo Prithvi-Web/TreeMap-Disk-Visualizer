@@ -393,6 +393,9 @@ function switchView(name) {
   // change of view. Guarded like indexTree's renderCart: a page reader may
   // lift this function without the tour.
   if (typeof tourFollowView === 'function') tourFollowView();
+  // The toasts stand clear of the map's footer, which comes and goes with
+  // its view (BQR-1 item 14). Guarded the same way.
+  if (typeof toastPlaceSoon === 'function') toastPlaceSoon();
 
   if (empty || blocked) { mountedView = view; return; }
 

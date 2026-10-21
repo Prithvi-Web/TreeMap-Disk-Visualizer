@@ -462,6 +462,68 @@ function toast(msg, kind = 'success', ms = Math.max(TOAST_MIN_MS, String(msg).le
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 320); }, ms);
 }
 
+/* ── Where the toasts stand (BQR-1 item 14) ──
+   The stack rests at the bottom of the window (095-timeslider-floating.css),
+   and the Treemap is fitted to the window: its footer — the size key, the
+   counts and the hint, the only mention of the lasso, the magnifier and Esc —
+   always stands in that lane, and a toast lay over it for as long as it was
+   up (at 1024 × 700 a long error covered the hint line). While a toast is up
+   the stack stands clear of the two lines the map says there, as the tour
+   card does (ninth browser pass M02): the footer, and the match bar while it
+   says something — at the lowest place above its rest that covers neither,
+   raised by --toast-lift, which the stylesheet reads. The map itself is the
+   view's surface, and the stack may stand over it as over any view's
+   content. Where nothing is under it, or nowhere is clear, it rests. Its
+   rest is read from its own box less any lift (offsetTop ignores
+   transforms), so a placement asked for while it glides to the last one
+   reads where it rests. While a dialog is open the stack stands at the top
+   of the scrim and the stylesheet drops the lift: the lift is left as it is
+   then, and placed again when the dialog goes. */
+const TOAST_GAP = 12; // between the stack and the line it stands clear of
+const TOAST_EDGE = 8; // the least room kept between it and the window's top
+const TOAST_KEEP_CLEAR = '.view.active .tm-querybar:not(.idle), .view.active .tm-foot';
+function toastPlace() {
+  const stack = $('toasts');
+  if (!stack.childElementCount) { stack.style.removeProperty('--toast-lift'); return; }
+  if (document.querySelector('.modal-backdrop.open')) return;
+  const box = stack.getBoundingClientRect(); // its sides: the lift moves it up and down only
+  const h = stack.offsetHeight;
+  const rest = stack.offsetTop + h; // its bottom edge, unraised
+  const inWay = [...document.querySelectorAll(TOAST_KEEP_CLEAR)]
+    .filter((el) => el.getClientRects().length > 0)
+    .map((el) => el.getBoundingClientRect())
+    .filter((r) => r.right > box.left && r.left < box.right && r.bottom > r.top);
+  const clear = (lift) => rest - lift - h >= TOAST_EDGE && !inWay.some((r) => r.top < rest - lift && r.bottom > rest - lift - h);
+  const lift = [0, ...inWay.map((r) => Math.round(rest - r.top + TOAST_GAP))].filter((l) => l >= 0).sort((a, b) => a - b).find(clear);
+  if (!lift) stack.style.removeProperty('--toast-lift');
+  else stack.style.setProperty('--toast-lift', lift + 'px');
+}
+
+/** toastPlace at the next frame, once however often it is asked for in one — and not at all with no toast up and no lift to take away. */
+let toastPlaceRaf = 0;
+function toastPlaceSoon() {
+  const stack = $('toasts');
+  if (toastPlaceRaf || (!stack.childElementCount && !stack.style.getPropertyValue('--toast-lift'))) return;
+  toastPlaceRaf = requestAnimationFrame(() => { toastPlaceRaf = 0; toastPlace(); });
+}
+window.addEventListener('resize', toastPlaceSoon);
+document.addEventListener('scroll', toastPlaceSoon, { capture: true, passive: true });
+// A toast comes or goes (the stack changes size), the footer wraps anew or
+// comes with its view, the match bar grows or shrinks, a dialog opens or
+// closes. switchView and tmSyncQueryBar ask as well: a change of view, or of
+// the bar's words, need not change any size.
+if (typeof ResizeObserver !== 'undefined') {
+  const toastRo = new ResizeObserver(toastPlaceSoon);
+  for (const sel of ['#toasts', '#view-treemap .tm-foot', '#tmQueryBar']) {
+    const el = document.querySelector(sel);
+    if (el) toastRo.observe(el);
+  }
+}
+if (typeof MutationObserver !== 'undefined') {
+  const toastMo = new MutationObserver(toastPlaceSoon);
+  document.querySelectorAll('.modal-backdrop').forEach((m) => toastMo.observe(m, { attributes: true, attributeFilter: ['class'] }));
+}
+
 /* ───────────────────────────── Size → color scale ─────────────────────────────
    The ramp anchors (teal → amber → red) are tuned for DARK surfaces; pure
    #FFD60A text is ~1.4:1 against the light theme's chips. Text uses of the

@@ -62,6 +62,12 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .rule-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; font-size: 13.5px; }
 .rule-row .ic { color: var(--text-3); }
 .rule-row input[type="number"] { width: 88px; }
+/* A label naming the number box beside it keeps its words on one line. A
+   flex row shrinks every item it holds, and beside a long note the label gave
+   way too: Settings' "Never use more than", whose box is followed by a whole
+   sentence, read "Never use more / than" (BQR-1 item 14). The note wraps
+   instead. A label that is a sentence, before a checkbox, still wraps. */
+.rule-row > label:has(+ input[type="number"]) { white-space: nowrap; }
 /* A box that opens a stored size shows its exact figure (QA D09 review F1.1,
    F1.5) — up to 14 characters for any size under 10 TB: 5.36870912 GB is a
    5 GiB cap an earlier TreeMap stored, 2199.023255552 GB is 2 TiB. Room for 14

@@ -136,7 +136,11 @@ body.cart-open #treemapWrap > .tm-querybar { left: 18px; transform: none;
    would otherwise pin the stack top and bottom at once. The stack itself
    lets clicks through; only the toasts on it take them. New toasts join the
    bottom and push older ones up. tests/floatingSurfaces.test.ts evaluates the
-   slot at the desktop window's minimum size and up. */
+   slot at the desktop window's minimum size and up. On the Treemap, whose
+   footer always stands in this lane, the stack is raised clear of the
+   footer and the match bar by --toast-lift, which toastPlace sets on it
+   (010-fx-rolling-numerals.js; BQR-1 item 14) — a translate, so the slot
+   each state sets stays the stack's rest, and none at the top of the scrim. */
 body { --toast-l: calc(var(--side-w) + 12px); --tr-pane: 0px; --tr-cart: 0px; --tr-tour: 0px; }
 body:has(#sideNav.collapsed) { --toast-l: calc(var(--side-w-rail) + 12px); }
 body.preview-open { --tr-pane: 330px; }
@@ -148,6 +152,7 @@ body:has(#tourOverlay:not([hidden])) { --tr-tour: calc(var(--tour-r) + var(--tou
   --toast-room: max(240px, calc(100vw - var(--toast-l) - var(--toast-r) - 24px));
   left: max(calc(var(--toast-l) + (100vw - var(--toast-l) - var(--toast-r)) / 2), calc(var(--toast-l) + 132px));
   transform: translateX(-50%);
+  translate: 0 calc(-1 * var(--toast-lift, 0px)); transition: translate var(--dur-2) var(--ease);
   display: flex; flex-direction: column; align-items: center; gap: 10px;
   width: max-content; max-width: var(--toast-room); pointer-events: none; }
 /* Above the selection bar's tallest form: it wraps to two rows beside an open
@@ -179,7 +184,7 @@ body:has(#selectionBar.visible) #toasts { bottom: 124px; }
   body:where(.preview-open:not(.cart-open):has(#cartDock.show)):has(#selectionBar.visible) #toasts { bottom: 178px; }
 }
 body:has(.modal-backdrop.open) #toasts,
-body:has(.modal-backdrop.open):has(#selectionBar.visible) #toasts { top: 8px; bottom: auto; }
+body:has(.modal-backdrop.open):has(#selectionBar.visible) #toasts { top: 8px; bottom: auto; translate: none; }
 .toast { display: flex; gap: 10px; align-items: flex-start; padding: 12px 16px; font-size: 13px;
   max-width: min(380px, var(--toast-room, 380px)); pointer-events: auto;
   --lg-tint: var(--lg-tint-strong); --lg-blur: 22px;
