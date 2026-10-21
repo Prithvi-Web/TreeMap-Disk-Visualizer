@@ -1095,7 +1095,8 @@ test('G09/G27: the SVG export draws a cloud placeholder hollow and a staged bloc
  * claimed 1.4%). Everything below is measured on rendered pixels — the real drawTreemap rasterized — in
  * both themes:
  *   - every leaf outline and every folder band at EDGE_BAR (WCAG's 3:1 for a non-text edge) or better
- *     against the tile beside it, across the whole size ramp and every other colour the map paints;
+ *     against the tile on each side of it (the owner's refinement, below), across the whole size ramp and
+ *     every other colour the map paints;
  *   - folder bands heavier and higher-contrast than leaf outlines;
  *   - the colour still popping inside every tile;
  *   - a realistic dense map (the server's own layout of a /System/Library-like tree) not a black mesh;
@@ -2420,7 +2421,7 @@ const TAPER_COLOURS: Array<{ name: string; rgb: RGB; ramp: boolean }> = [
   ...OTHER_COLOURS.filter((c) => c.name === 'Reclaim not scored' || c.name === 'Age band C_ORANGE').map((c) => ({ ...c, ramp: false })),
 ];
 
-test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 to 18 px, the share of pixels a line or a texture takes, and the mean lightness, change smoothly from one size to the next, in both themes, on the size ramp, Reclaim\'s "not scored" grey and an Age band', () => {
+test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 to 18 px, the share of pixels a line or a texture takes, and the mean lightness, change smoothly from one size to the next, in both themes, on the size ramp, Reclaim\'s "not scored" grey and an Age band, at device pixel ratios 1 and 2', () => {
   // 7 px tiles were one flat block and 8 px tiles a heavy 2 px grid (each leaf drew its own outline, so neighbours met at
   // 2 px): 0% to 43.8% of the pixels, and 15 L* darker, in one step. Now two leaves with lines meet at one 1 px line, and
   // a smaller leaf draws a 1 px texture where they would meet: a 1 px seam per tile at every size, whose share falls as
@@ -2428,17 +2429,20 @@ test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 
   // bound: no step bigger than the one before it, by more than half a point. The seam is the owner's faint texture
   // (1.4:1 at 7 px) below 8 px and his 3:1 line from 8 px, so the mean lightness steps most at 7→8 px: no more than
   // 7 L* there — half the old step — and under 2 L* at every other size.
+  // At 2× a 1 px seam is two device pixels of a tile's 2s: the same share. (At 150 % it covers one and a half, and
+  // the share it touches is not the formula's.)
+  const runs = [...TAPER_COLOURS.map((c) => ({ c, dpr: 1 })), { c: TAPER_COLOURS[1], dpr: 2 }];
   for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
-    for (const c of TAPER_COLOURS) {
+    for (const { c, dpr } of runs) {
       const looks: Array<ReturnType<typeof tileLook> & { s: number }> = [];
       for (let s = 5; s <= 18; s++) {
         const n = 9, g = uniformGrid(s, n, 4e8);
-        const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, () => c.rgb);
+        const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, () => c.rgb, undefined, false, dpr);
         // The middle tiles: the outer ring meets the map's edge.
         const inner = (r: Painted) => { const [i, j] = /g(\d+)\.(\d+)$/.exec(r.n.path)!.slice(1).map(Number); return i > 0 && j > 0 && i < n - 1 && j < n - 1; };
-        looks.push({ s, ...tileLook(raster, px, inner) });
+        looks.push({ s, ...tileLook(raster, px, inner, dpr) });
       }
-      const where = `${theme}, ${c.name}`;
+      const where = `${theme}, ${c.name}, dpr ${dpr}`;
       const table = looks.map((l) => `${l.s}px ${(l.apart * 100).toFixed(1)}% ${l.dL.toFixed(1)}L*`).join(', ');
       for (const l of looks) assert.ok(Math.abs(l.apart - (1 - ((l.s - 1) / l.s) ** 2)) < 0.02, `${where}: ${l.s} px tiles — one 1 px seam each, ${(l.apart * 100).toFixed(1)}% of their pixels (${table})`);
       for (let k = 1; k < looks.length; k++) {
@@ -2465,15 +2469,16 @@ function subFloorFolder(w: number, h: number): { tiles: Tile[]; W: number; H: nu
   };
 }
 
-test('owner\'s refinement: where tiles are too small for lines, a faint texture — a folder of tiny files reads as many files, never one flat slab and never a mesh: texture over a fifth of its pixels, no pixel past 1.6:1 from its own fill, none near-black, and its mean luminance within a tenth of the solid fill — for leaves 2 to 7 px and for a folder\'s own fill (J51), in both themes', () => {
+test('owner\'s refinement: where tiles are too small for lines, a faint texture — a folder of tiny files reads as many files, never one flat slab and never a mesh: texture over a fifth of its pixels, no pixel past 1.6:1 from its own fill, none near-black, and its mean luminance within a tenth of the solid fill — for leaves 2 to 7 px and for a folder\'s own fill (J51), in both themes, at device pixel ratios 1 and 2', () => {
+  const runs = [...TAPER_COLOURS.map((c) => ({ c, dpr: 1 })), { c: TAPER_COLOURS[1], dpr: 2 }];
   for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
-    for (const c of TAPER_COLOURS) {
+    for (const { c, dpr } of runs) {
       for (let s = 2; s < OUTLINED_PX; s++) {
         const n = Math.ceil(60 / s), g = uniformGrid(s, n, 4e8);
-        const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, () => c.rgb);
+        const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, () => c.rgb, undefined, false, dpr);
         const inner = (r: Painted) => { const [i, j] = /g(\d+)\.(\d+)$/.exec(r.n.path)!.slice(1).map(Number); return i > 0 && j > 0 && i < n - 1 && j < n - 1; };
-        const t = tileLook(raster, px, inner);
-        const where = `${theme}, ${c.name}, ${s} px tiles`;
+        const t = tileLook(raster, px, inner, dpr);
+        const where = `${theme}, ${c.name}, ${s} px tiles, dpr ${dpr}`;
         assert.ok(t.apart > 0.2, `${where}: a texture shows — ${(t.apart * 100).toFixed(1)}% of the pixels stand apart from the fill`);
         assert.ok(t.strongest <= 1.6, `${where}: a texture, not a line — at most ${fmt(t.strongest)}:1 from the fill`);
         assert.equal(t.black, 0, `${where}: nothing near-black`);
@@ -2585,31 +2590,39 @@ function darkShare(raster: ReturnType<typeof rasterCtx>, box: { x: number; y: nu
   return n / (box.w * box.h);
 }
 
-test('owner\'s refinement: thinner frames — a corner as dense as /System/Library\'s is at most 25% folder band with at most 22% of its pixels under luminance 0.08, and a folder like corpus/Mail (58×52 px of 24 mailboxes of tiny files) at most 40% band, reading as the colour of what it holds — in both themes', () => {
+test('owner\'s refinement: thinner frames — a corner as dense as /System/Library\'s is at most 25% folder band with at most 22% of its pixels under luminance 0.08, and a folder like corpus/Mail (58×52 px of 24 mailboxes of tiny files) at most 40% band, reading as the colour of what it holds — in both themes, at device pixel ratios 1, 1.5 and 2', () => {
   const dense = denseCornerNodes();
   const mail = mailNodes();
-  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
-    const d = rasterPaint(dense, palette, DENSE_PX, DENSE_PX);
+  for (const dpr of [1, 1.5, 2]) for (const [theme0, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const theme = `${theme0}, dpr ${dpr}`;
+    const d = rasterPaint(dense, palette, DENSE_PX, DENSE_PX, undefined, undefined, false, dpr);
     const all = { x: 0, y: 0, w: DENSE_PX, h: DENSE_PX };
+    const dev = (b: { x: number; y: number; w: number; h: number }) => ({ x: Math.round(b.x * dpr), y: Math.round(b.y * dpr), w: Math.round(b.w * dpr), h: Math.round(b.h * dpr) });
     const frames = d.px.filter((r) => r.frame), leaves = d.px.filter((r) => !r.frame);
-    assert.ok(frames.length > 1500 && leaves.length > 3000 && leaves.filter((r) => Math.min(r.w, r.h) < 8).length > leaves.length * 0.9,
+    assert.ok(frames.length > 1500 && leaves.length > 2500 && leaves.filter((r) => Math.min(r.w, r.h) < 8).length > leaves.length * 0.9,
       `${theme}: control — a corner like the real one: ${frames.length} folders, ${leaves.length} leaves, most under 8 px`);
-    const band = bandShare(d.px, all), dark = darkShare(d.raster, all, 0.08);
+    const band = bandShare(d.px, all), dark = darkShare(d.raster, dev(all), 0.08);
     assert.ok(band <= 0.25, `${theme}: the dense corner is ${(band * 100).toFixed(1)}% folder band`);
     assert.ok(dark <= 0.22, `${theme}: ${(dark * 100).toFixed(1)}% of the dense corner is under luminance 0.08`);
     assert.ok(d.raster.nearBlack(NEAR_BLACK) < 0.02, `${theme}: near-black ${(d.raster.nearBlack(NEAR_BLACK) * 100).toFixed(2)}% of the dense corner`);
     // corpus/Mail.
-    const m = rasterPaint(mail.tiles, palette, mail.W, mail.H);
+    const m = rasterPaint(mail.tiles, palette, mail.W, mail.H, undefined, undefined, false, dpr);
     const inMail = m.px.filter((r) => r.n.path.startsWith('/c/Mail/'));
-    assert.ok(inMail.filter((r) => r.frame && r.n.depth === 2).length === 24 && inMail.filter((r) => !r.frame).length > 500, `${theme}: control — Mail's 24 mailboxes and their tiny files are drawn`);
+    const boxes = inMail.filter((r) => r.frame && r.n.depth === 2).length, files = inMail.filter((r) => !r.frame).length;
+    // (At 150 % a file of 1 css px covers under one css px² once laid on whole device pixels, and is not drawn: its
+    // folder's own fill stands for it.)
+    assert.ok(boxes === 24 && (dpr === 1.5 || files > 300), `${theme}: control — Mail's 24 mailboxes (${boxes}) and their tiny files (${files}) are drawn`);
     const mb = bandShare(m.px, mail.mail);
     assert.ok(mb <= 0.4, `${theme}: corpus/Mail is ${(mb * 100).toFixed(1)}% band`);
     // It reads as what it holds: most of its pixels show the tiles — within 1.5:1 of the map with no line or band laid.
-    const bare = rasterPaint(mail.tiles, palette, mail.W, mail.H, undefined, undefined, false, 1, lineCalls(m.px)).raster;
+    const bare = rasterPaint(mail.tiles, palette, mail.W, mail.H, undefined, undefined, false, dpr, lineCalls(m.px)).raster;
+    const mb2 = dev(mail.mail);
     let same = 0;
-    for (let y = mail.mail.y; y < mail.mail.y + mail.mail.h; y++) for (let x = mail.mail.x; x < mail.mail.x + mail.mail.w; x++) if (contrast(m.raster.at(x, y), bare.at(x, y)) < 1.5) same++;
-    const shows = same / (mail.mail.w * mail.mail.h);
-    assert.ok(shows >= 0.6, `${theme}: ${(shows * 100).toFixed(1)}% of corpus/Mail shows the colour of what it holds`);
+    for (let y = mb2.y; y < mb2.y + mb2.h; y++) for (let x = mb2.x; x < mb2.x + mb2.w; x++) if (contrast(m.raster.at(x, y), bare.at(x, y)) < 1.5) same++;
+    const shows = same / (mb2.w * mb2.h);
+    // At 150 % a 1 px band spans a device pixel and a half: the half it covers is a blend, neither band nor tile.
+    const bar = dpr === 1.5 ? 0.5 : 0.6;
+    assert.ok(shows >= bar, `${theme}: ${(shows * 100).toFixed(1)}% of corpus/Mail shows the colour of what it holds (${bar * 100}% asked)`);
   }
 });
 

@@ -13841,14 +13841,20 @@ function tmUncovered(lo, hi, cover) {
 function tmFolderTexture(r, kids, mask, mw, mh, dpr) {
   const inside = kids.get(r.n.path) || [];
   const rects = [];
-  for (let x = r.x; x < r.x + r.w - 1e-6; x += TM_TEXTURE_PITCH) {
-    const cover = inside.filter((c) => c.x < x + 1 - 1e-6 && c.x + c.w > x + 1e-6).map((c) => [c.y, c.y + c.h]);
-    for (const [a, b] of tmUncovered(r.y, r.y + r.h, cover)) rects.push(...tmClearRuns([x, a, 1, b - a], mask, mw, mh, dpr));
-  }
-  for (let y = r.y; y < r.y + r.h - 1e-6; y += TM_TEXTURE_PITCH) {
-    const cover = inside.filter((c) => c.y < y + 1 - 1e-6 && c.y + c.h > y + 1e-6).map((c) => [c.x, c.x + c.w]);
-    for (const [a, b] of tmUncovered(r.x, r.x + r.w, cover)) rects.push(...tmClearRuns([a, y, b - a, 1], mask, mw, mh, dpr));
-  }
+  // Seam by seam across the folder, what crosses each: the rectangles in it, swept in order of where they start,
+  // so a folder of thousands is not searched whole for every seam.
+  const seams = (p, s, q, t, seam) => {
+    const byStart = [...inside].sort((a, b) => a[p] - b[p]);
+    let next = 0, open = [];
+    for (let v = r[p]; v < r[p] + r[s] - 1e-6; v += TM_TEXTURE_PITCH) {
+      while (next < byStart.length && byStart[next][p] < v + 1 - 1e-6) open.push(byStart[next++]);
+      open = open.filter((c) => c[p] + c[s] > v + 1e-6);
+      const cover = open.map((c) => [c[q], c[q] + c[t]]);
+      for (const [a, b] of tmUncovered(r[q], r[q] + r[t], cover)) rects.push(...tmClearRuns(seam(v, a, b), mask, mw, mh, dpr));
+    }
+  };
+  seams('x', 'w', 'y', 'h', (x, a, b) => [x, a, 1, b - a]);
+  seams('y', 'h', 'x', 'w', (y, a, b) => [a, y, b - a, 1]);
   return { stops: tmTextureStops(r.bg, r.bgBase, tmTextureContrast(TM_TEXTURE_PITCH)), rects };
 }
 /** A small leaf's texture (tmLeafKind 'textured'): its top row and its left column below that, clear of every line (`mask`). */
