@@ -21,6 +21,12 @@
 const LENS_SCALE = 4;
 const LENS_RADIUS = 108;
 
+/** A tile's texture as the map lays it (r.tex): its seams in the shade of its cushion, over the tile's height. */
+function lensTexture(ctx, s) {
+  ctx.fillStyle = tmLeafFill(ctx, s.tex.stops, s.y, s.h);
+  for (const [x, y, w, h] of s.tex.rects) ctx.fillRect(x, y, w, h);
+}
+
 /** Is the lens up? Either held with Z or pinned with the toolbar button. */
 function lensActive() {
   return (state.lens.held || state.lens.pinned) && state.lens.at !== null;
@@ -114,6 +120,7 @@ function lensPaint(ctx, cssW, cssH) {
         ctx.fill();
       }
       if (s.bg) { ctx.fillStyle = tmLeafFill(ctx, s.bg, b.y0, b.y1 - b.y0); ctx.fill(); }
+      if (s.tex) lensTexture(ctx, s);
       if (s.bands) framed.push(s);
       continue;
     }
@@ -136,25 +143,29 @@ function lensPaint(ctx, cssW, cssH) {
       : s.shows ? `rgba(${base[0]},${base[1]},${base[2]},0.16)`
       : tmLeafFill(ctx, s.stops || tmLeafStops(base, h), b.y0, h);
     ctx.fill();
-    if (!s.kind && s.edge) {
-      // Its outline as the map draws it (pass 2.6): the shade of its own
-      // colour the map picked, one of the map's pixels inside its box, and
-      // the highlight along its top under a dark one.
-      ctx.strokeStyle = s.edge;
+    // A small leaf's texture as the map lays it (pass 2.4).
+    if (!s.kind && s.tex) lensTexture(ctx, s);
+    if (!s.kind && s.lines) {
+      // Its lines as the map draws them (pass 2.6, tmLeafLines): each stretch
+      // in the shade the map picked, inside its box, and the highlight along
+      // its top under a dark one.
+      for (const l of s.lines) {
+        ctx.fillStyle = l.rgb;
+        ctx.fillRect(l.x, l.y, l.w, l.h);
+      }
       ctx.lineWidth = 1;
-      ctx.strokeRect(b.x0 + 0.5, b.y0 + 0.5, w - 1, h - 1);
       if (s.lit) {
-        ctx.strokeStyle = `rgba(255,255,255,${TM_LIT})`;
+        ctx.strokeStyle = `rgba(255,255,255,${tmLitAlpha(s)})`;
         ctx.beginPath();
         ctx.moveTo(b.x0 + 1, b.y0 + 1.5); ctx.lineTo(b.x1 - 1, b.y0 + 1.5);
         ctx.stroke();
       }
     } else {
-      // A tile the map leaves without an outline (too small for one, or a
-      // cell) keeps a hairline of the glass, so the tiles it magnifies stay
-      // apart: on the rectangle map in a shade of its own colour that reaches
-      // TM_EDGE_MIN against it, as the map's outlines do (the owner's outline
-      // decision); a black hairline at 0.45 was lost on a dark tile.
+      // A tile the map leaves without lines of its own (too small for them,
+      // or a cell) keeps a hairline of the glass, so the tiles it magnifies
+      // stay apart: on the rectangle map in a shade of its own colour that
+      // reaches TM_EDGE_MIN against it, as the map's lines do (the owner's
+      // outline decision); a black hairline at 0.45 was lost on a dark tile.
       const tone = s.kind ? null : tmTone(base, s.seen || s.shows || [base], TM_EDGE_MIN).rgb;
       ctx.strokeStyle = tone ? `rgb(${tone[0]},${tone[1]},${tone[2]})` : 'rgba(0,0,0,0.45)';
       ctx.lineWidth = 1 / LENS_SCALE;

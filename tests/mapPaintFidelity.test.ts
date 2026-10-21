@@ -140,9 +140,13 @@ const GREEN = [48, 209, 88];
 
 /** What the real drawTreemap needs from the page. */
 const MAP_NAMES = ['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'tmDiffWashes', 'tmWashesOver', 'tmSeenThrough', 'TM_DIFF_WASH', 'mix', 'containerListable',
-  // The outline rules the passes read (the owner's outline decision, 20 Oct 2026; J51).
+  // The outline rules the passes read (the owner's outline decision, 20 Oct 2026, and its refinement; J51).
   'tmLeafEdged', 'TM_DENSE_PX', 'tmSnap', 'tmTone', 'TM_EDGE_MIN', 'TM_LIT', 'tmKidsOf', 'tmParentPath', 'tmFramesDeepestFirst',
-  'tmFrameBands', 'tmEdgeContent', 'tmTouches', 'TM_SIDES', 'TM_FRAME_MIN', 'TM_FRAME_W_TOP', 'TM_FRAME_W',
+  'tmFrameBands', 'tmTouches', 'TM_SIDES', 'TM_FRAME_MIN',
+  'tmToneFor', 'tmLumCache', 'tmLitAlpha', 'tmLeafKind', 'tmBandWidth', 'TM_TEXTURE_PX', 'TM_TEXTURE_PITCH', 'tmTextureContrast', 'tmTextureStops',
+  'tmFolderPathOf', 'TM_OPPOSITE', 'tmSideAt', 'tmNeighbourhood', 'tmShown', 'tmBaseOf', 'tmFillShown', 'tmUnderBand', 'tmShareOk', 'tmClip',
+  'tmEdgeOf', 'tmAcross', 'tmInside', 'tmBandAsks', 'tmMeets', 'tmOverlay', 'tmSeamParts', 'tmPartRect', 'tmMergeRuns', 'tmLeafLines',
+  'tmLineMask', 'tmClearRuns', 'tmUncovered', 'tmFolderTexture', 'tmLeafTexture',
   // The map's ground, which a band beside a hollow or staged cell is toned against (review F1.5).
   'tmGroundRgb', 'tmCssRgba', 'tmOver',
   // The name tags the outlines and bands stop at (review F3.1).
@@ -150,7 +154,7 @@ const MAP_NAMES = ['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT
 
 /** What the real lensPaint needs from the page — the map's outline rules among them (review F1.2). */
 const LENS_NAMES = ['lensPaint', 'lensActive', 'lensShapes', 'LENS_SCALE', 'LENS_RADIUS', 'Canvas2D', 'mix', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'tmSeenThrough', 'TM_DIFF_WASH',
-  'tmTone', 'TM_EDGE_MIN', 'TM_LIT', 'tmFramesDeepestFirst'];
+  'tmTone', 'tmToneFor', 'tmLumCache', 'TM_EDGE_MIN', 'TM_LIT', 'tmLitAlpha', 'tmFramesDeepestFirst', 'lensTexture'];
 
 /** The fillStyle the real drawTreemap gives `tile`'s rectangle, and the pixel rect it drew. */
 function mapFill(tile: typeof TILE = TILE, colour: number[] = GREEN) {
@@ -286,7 +290,7 @@ const ratio = (a: number[], b: number[]) => (Math.max(lum(a), lum(b)) + 0.05) / 
 const rgbOf = (c: string) => (/rgba?\(([^)]*)\)/.exec(c)![1].split(',').slice(0, 3).map(Number));
 const near = (a: number[] | null, b: number[]) => !!a && a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 0.011);
 
-test('the lens redraws what the map now paints — a folder\'s own fill (J51), each leaf\'s toned outline and highlight, each folder\'s bands after its leaves — and a leaf too small for an outline keeps a hairline that reaches 3:1 against it (review F1.2)', () => {
+test('the lens redraws what the map now paints — a folder\'s own fill (J51) and its texture, each leaf\'s toned lines and highlight, a small leaf\'s texture, each folder\'s bands after its leaves — and a leaf too small for lines keeps a hairline that reaches 3:1 against it (review F1.2; the owner\'s refinement)', () => {
   // On a 100×100 map, all within the glass about the cursor at (25, 25): Mail, a folder with nothing over the
   // floor; big.bin, a file with room for an outline; d, a folder tiled by two files too narrow for one (one a dark grey).
   const nodes = [
@@ -301,14 +305,24 @@ test('the lens redraws what the map now paints — a folder\'s own fill (J51), e
   const px = mapRects(nodes, colourOf);
   const r = (path: string) => px.find((p: any) => p.n.path === path);
   const mail = r('/r/Mail'), big = r('/r/big.bin'), d = r('/r/d'), t1 = r('/r/d/t1'), t2 = r('/r/d/t2');
-  assert.ok(mail.bg && big.edge && d.bands?.length && !t1.edge && !t2.edge, 'control: the map filled Mail, outlined big.bin, framed d, and left t1 and t2 without an outline of their own');
+  assert.ok(mail.bg && mail.tex && big.lines?.length && d.bands?.length && !t1.lines && !t2.lines && t1.tex && t2.tex,
+    'control: the map filled Mail and textured it, lined big.bin, framed d, and left t1 and t2 without lines of their own, textured');
   const ops = lensOps(px, colourOf);
   // Mail: its own fill, the map's cushion, over its box — where the glass showed the ground.
   const mailFill = ops.findIndex((op) => op.kind === 'fill' && near(op.box, [mail.x, mail.y, mail.w, mail.h]) && typeof op.style === 'object');
   assert.notEqual(mailFill, -1, 'the glass fills Mail, a folder with nothing drawn in it, as the map does');
   assert.deepEqual((ops[mailFill].style as Grad).stops.map(([, c]) => c), mail.bg.map((c: number[]) => `rgb(${c.join(',')})`), 'with the cushion the map recorded for it');
-  // big.bin: the map's outline, in its tone, 1 px of the map's (4 on the glass), inside its box; its highlight with it.
-  assert.ok(ops.some((op) => op.kind === 'strokeRect' && op.style === big.edge && op.lineWidth === 1 && near(op.box, [big.x + 0.5, big.y + 0.5, big.w - 1, big.h - 1])), `big.bin is outlined in the map's ${big.edge}`);
+  // big.bin: the map's lines, each in its tone, 1 px of the map's (4 on the glass), inside its box; its highlight with it.
+  for (const l of big.lines) {
+    assert.ok(ops.some((op) => op.kind === 'fillRect' && op.style === l.rgb && near(op.box, [l.x, l.y, l.w, l.h])), `big.bin's line at ${l.x},${l.y} ${l.w}×${l.h} is laid in the map's ${l.rgb}`);
+  }
+  // Each texture the map laid, its seams in the map's shade: Mail's over its fill, and t1's and t2's.
+  for (const r of [mail, t1, t2]) {
+    for (const box of r.tex.rects) {
+      const op = ops.find((o) => o.kind === 'fillRect' && near(o.box, box) && typeof o.style === 'object');
+      assert.ok(op && (op.style as Grad).stops.map(([, c]) => c).join() === r.tex.stops.map((c: number[]) => `rgb(${c.join(',')})`).join(), `${r.n.path}: its texture at ${box} is on the glass, in the map's shade`);
+    }
+  }
   assert.equal(ops.some((op) => op.kind === 'line' && near(op.seg!, [big.x + 1, big.y + 1.5, big.x + big.w - 1, big.y + 1.5])), !!big.lit, `big.bin's highlight ${big.lit ? 'is' : 'is not'} drawn, as on the map`);
   // Every band of every folder on the glass, in the map's colours, after every leaf.
   const lastLeaf = Math.max(...[big, t1, t2].map((leaf) => ops.findIndex((op) => op.kind === 'fill' && near(op.box, [leaf.x, leaf.y, leaf.w, leaf.h]))));

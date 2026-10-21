@@ -52,7 +52,7 @@ function declSource(name: string): string {
 function load<T>(names: string[], deps: Record<string, unknown>, returns: string, run: (fn: T) => void): T {
   const keys = Object.keys(deps);
   const pulled = [...names];
-  for (let attempt = 0; attempt < 64; attempt++) {
+  for (let attempt = 0; attempt < 128; attempt++) {
     const src = `'use strict'; ${pulled.map(declSource).join('\n')}\nreturn ${returns};`;
     try {
       // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -68,7 +68,7 @@ function load<T>(names: string[], deps: Record<string, unknown>, returns: string
       pulled.push(missing);
     }
   }
-  throw new Error(`${names.join(', ')} would not run after pulling in 64 helpers`);
+  throw new Error(`${names.join(', ')} would not run after pulling in 128 helpers`);
 }
 
 /** A 2D context that does nothing but answer measureText and make gradients. */

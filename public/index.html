@@ -13231,77 +13231,184 @@ function tmSetEmpty(text) {
  * (tmDiffWashes): the label is read through them, so it is judged there.
  */
 /**
- * The map's outlines — the owner's decision of 20 Oct 2026: "the maps
+ * The map's outlines — the owner's decisions of 20 Oct 2026. First "the maps
  * outlines should be contrasting and easy to see", in both themes, while the
- * colour still pops and a dense corner does not turn into a black mesh. It
- * replaces BQG-5 item 14's fading, which left a nested folder's outline at a
- * quarter of black and a small leaf's at 0.35 over a gap of the map's ground:
- * too faint to see on a tile, and a near-black grid between small tiles. So:
+ * colour still pops; then, from before and after screenshots, "Refine it":
+ * keep the outlines at 3:1, taper them so there is no hard step at 8 px,
+ * thinner frames on small and nested folders so dense corners and small
+ * folders stay bright, a faint texture where tiles are too small for an
+ * outline, and every line at 3:1 against the tile on each of its sides. So:
  *   - every rectangle is laid on whole device pixels (tmSnap), so a 1 px line
  *     is one crisp line, never two half-strength ones that miss the bar;
- *   - a leaf under TM_DENSE_PX on a side is filled edge to edge, with no
- *     outline or highlight: its folder's frame carries the structure;
- *   - a leaf of TM_DENSE_PX and up is outlined inside its own box in a shade
- *     of its own colour — darker on a light tile, lighter on a dark one — the
- *     shade nearest the tile that reaches TM_EDGE_MIN against every pixel of
- *     the tile beside it (tmTone): over WCAG's 3:1 for a non-text edge, a
- *     toned line rather than a black grid, and no harder a step at 8 px than
- *     the bar needs. A top highlight is drawn only under a dark outline, where
- *     it can only add to it;
- *   - a folder is framed inside its own box by a band TM_FRAME_W_TOP px wide
- *     at the top level and TM_FRAME_W px inside it — heavier than a leaf's 1 px
- *     outline at every depth (review F1.3), never over a third of the
- *     folder's thinner side — toned the same way against whatever lies inside
- *     it along each stretch of its edge, to TM_FRAME_MIN: never weaker than a
- *     leaf's outline beside the same colour, and on the size ramp always the
- *     stronger line (tmFrameBands);
+ *   - two leaves of TM_DENSE_PX and up meet at ONE 1 px line, the right or
+ *     lower leaf's own left or top edge (tmLeafLines): each such leaf draws its
+ *     top and left edges, and its right and bottom edges only where what lies
+ *     beyond is not such a leaf. A grid of 8 px tiles is a 1 px grid, as a grid
+ *     of 7 px tiles is a 1 px texture: nothing doubles at 8 px. Each stretch of
+ *     a line is a shade of its leaf's own colour toned against the tiles on
+ *     BOTH its sides (tmToneFor) — its own leaf, and whatever lies beyond: a
+ *     neighbour, a smaller leaf, a folder's fill, the ground of a hollow or
+ *     staged cell. Where no one shade reaches TM_EDGE_MIN
+ *     against both, either the two tiles already differ by that much — a light
+ *     tile beside the dark theme's ground, or beside Reclaim's dark "not
+ *     scored" grey — and the stretch needs no line, or it is two lines, each
+ *     toned against the tile on its own side (tmSeamParts). Under a dark top
+ *     line a highlight runs, part of the cushion and as deep as it is
+ *     (tmLitAlpha);
+ *   - a leaf thinner than TM_DENSE_PX has no outline: its top and left pixel
+ *     are a texture, a slightly darker shade of its own colour on a light tile
+ *     and a lighter one on a dark tile (tmTextureStops), at tmTextureContrast —
+ *     1.1:1 on a 2 px leaf up to 1.375:1 on a 7 px one, so a folder of tiny
+ *     files reads as many files while its mean brightness stays within a tenth
+ *     of the solid fill: never near-black, never a mesh. A folder's own fill
+ *     (J51) carries the same texture every TM_TEXTURE_PITCH px, for its files
+ *     too small to draw. A texture keeps a pixel clear of every line
+ *     (tmLineMask), so a line only ever meets a tile's fill;
+ *   - a folder is framed inside its own box by a band tmBandWidth px wide, by
+ *     its size and depth: 3 px for a top-level folder 96 px or more across its
+ *     thinner side, 2 px from 32 px (from 48 px for a nested one), 1 px from
+ *     TM_DENSE_PX, and none under it — a folder that small reads by texture,
+ *     its own fill's (seamed from its corner) and its contents', as a small
+ *     leaf does. Each stretch of a band is toned
+ *     against what a person sees beside it (tmFrameBands): inside, what lies
+ *     just past the band — never a sliver the band itself covers — to
+ *     TM_FRAME_MIN; outside, a tile beside it, to TM_EDGE_MIN. Beside a leaf's
+ *     line or another band, lines meet lines;
  *   - a folder's area that no rectangle covers (its files under the map's
  *     size floor, or past the server's cap) is filled with the folder's own
- *     colour and cushion (seventh browser pass J51), where it showed the
- *     map's ground — a near-black slab in dark, a white grid in light. A
- *     folder an online-only file is hidden in keeps the ground.
- * The SVG export paints from what the canvas recorded on each rectangle
- * (r.edge, r.lit, r.bg, r.bands), so it paints what the canvas paints;
- * tests/mapColourPop.test.ts rasterizes a realistic dense map in both themes
- * and measures every line on its pixels.
+ *     colour and cushion (seventh browser pass J51), and its texture. A folder
+ *     an online-only file is hidden in keeps the ground.
+ * The SVG export and the lens paint from what the canvas recorded on each
+ * rectangle (r.bg, r.tex, r.lit, r.lines, r.bands), so they paint what the
+ * canvas paints; tests/mapColourPop.test.ts rasterizes realistic dense maps in
+ * both themes and measures every line on its pixels.
  */
-const TM_DENSE_PX = 8;
-const TM_EDGE_MIN = 3.3;    // a leaf's outline against its own tile
+const TM_DENSE_PX = 8;      // px: a leaf this thick has lines of its own; a folder this thick, a band
+const TM_TEXTURE_PX = 2;    // px: the thinnest leaf with a texture
+const TM_TEXTURE_PITCH = 4; // px: the cells of the texture over a folder's own fill (J51)
+const TM_EDGE_MIN = 3.3;    // a leaf's line against the tile on each of its sides
 const TM_FRAME_MIN = 4.5;   // a folder's band against what lies inside it
-const TM_FRAME_W_TOP = 3;   // px: a top-level folder's band
-const TM_FRAME_W = 2;       // px: a nested folder's band — twice a leaf's outline (review F1.3)
-const TM_LIT = 0.18;        // the white of a leaf's top highlight
+const TM_LIT = 0.18;        // the white of a leaf's top highlight, on a tile tall enough for its whole cushion
 /** `v` css px on the nearest whole device pixel. */
 function tmSnap(v, dpr) {
   return Math.round(v * dpr) / dpr;
 }
-/** Whether a leaf gets its own outline (and, under a dark one, a top highlight): only one with room for them. */
+/** Whether a leaf gets lines of its own (and, under a dark one, a top highlight): only one with room for them. */
 function tmLeafEdged(r) {
   return Math.min(r.w, r.h) >= TM_DENSE_PX;
 }
 /**
- * The shade of `base` nearest to it that reaches `target` contrast against
- * each of `beside` — the colours the screen shows next to the line, through
- * any History diff wash — as { rgb, light }: toward black on a light tile,
- * toward white on a dark one, whichever needs the smaller step (black on a
- * tie), in 32 steps. Every line is laid after the washes, so it is seen as
- * toned. Where no shade reaches the target, the stronger of black and white.
+ * The white of a leaf's top highlight, a share of TM_LIT as its cushion is of
+ * the whole (TM_CUSHION_FULL_H): on a short tile, whose cushion is shallow, a
+ * full-strength highlight would be a light line of its own, stepping in at
+ * TM_DENSE_PX with the lines.
  */
-function tmTone(base, beside, target) {
-  const worst = (c) => Math.min(...beside.map((b) => tmContrast(c, b)));
-  const steps = (toward) => {
-    if (worst(toward) < target) return null;
-    let lo = 0, hi = 32;
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1;
-      if (worst(mix(base, toward, mid / 32)) >= target) hi = mid; else lo = mid;
+function tmLitAlpha(r) {
+  return TM_LIT * Math.max(0, Math.min(1, r.h / TM_CUSHION_FULL_H));
+}
+/**
+ * What a leaf shows at its edges, by its thinner side: lines of its own
+ * ('edged'), a texture ('textured') or neither ('solid'); a staged block or a
+ * hollow online-only file shows the map's ground ('cell').
+ */
+function tmLeafKind(r) {
+  if (r.shows) return 'cell';
+  const m = Math.min(r.w, r.h);
+  return m >= TM_DENSE_PX ? 'edged' : m >= TM_TEXTURE_PX ? 'textured' : 'solid';
+}
+/** Folder `r`'s band, px wide: by its thinner side and its depth, and none when it is thinner than TM_DENSE_PX. */
+function tmBandWidth(r) {
+  const m = Math.min(r.w, r.h);
+  if (m < TM_DENSE_PX) return 0;
+  if (r.n.depth <= 1) return m >= 96 ? 3 : m >= 32 ? 2 : 1;
+  return m >= 48 ? 2 : 1;
+}
+/** A texture's contrast against the tile it lies on, by the tile's thinner side `s` px: 1.1:1 at 2 px, rising to 1.375:1 at 7. */
+function tmTextureContrast(s) {
+  return 1.1 + 0.055 * (Math.max(TM_TEXTURE_PX, Math.min(TM_DENSE_PX - 1, s)) - TM_TEXTURE_PX);
+}
+/**
+ * A cushion's texture, stop by stop: the shade of each stop nearest it that
+ * reaches `target` against it, in 256 steps — toward black when the tile's own
+ * colour `base` is light, toward white when it is dark.
+ */
+function tmTextureStops(stops, base, target) {
+  const toward = tmLuminance(base) >= 0.18 ? [0, 0, 0] : [255, 255, 255];
+  return stops.map((c) => {
+    for (let k = 1; k <= 256; k++) {
+      const m = mix(c, toward, k / 256);
+      if (tmContrast(m, c) >= target) return m;
     }
-    return hi;
+    return toward;
+  });
+}
+/**
+ * The shade of `base` nearest to it that reaches, against every colour of each
+ * group in `groups` — [[colours, target], …], what the screen shows beside the
+ * line, through any History diff wash — that group's target, as { rgb, light,
+ * ok }: toward black or toward white, whichever needs the smaller step (black
+ * on a tie), in 32 steps. Every line is laid after the washes, so it is seen
+ * as toned. Each step is tried, since a shade between a light colour and a
+ * dark one can stand out from both. Where none reaches every target, `ok` is
+ * false and `rgb` is the shade that comes nearest.
+ */
+function tmToneFor(base, groups) {
+  // Each colour's luminance once; and the luminances a shade may not take against it — between (b + 0.05) / t − 0.05
+  // and t (b + 0.05) − 0.05 it stands under the target — so the nearest shade is found by search, not by trying all 64.
+  const lums = groups.filter(([cols]) => cols.length).map(([cols, target]) => [cols.map(tmLuminance), target]);
+  const score = (c) => {
+    const l = tmLuminance(c);
+    let worst = Infinity;
+    for (const [ls, target] of lums) {
+      for (const b of ls) worst = Math.min(worst, ((l > b ? l : b) + 0.05) / ((l > b ? b : l) + 0.05) / target);
+    }
+    return worst;
   };
-  const dark = steps([0, 0, 0]), light = steps([255, 255, 255]);
-  if (dark !== null && (light === null || dark <= light)) return { rgb: mix(base, [0, 0, 0], dark / 32), light: false };
-  if (light !== null) return { rgb: mix(base, [255, 255, 255], light / 32), light: true };
-  return worst([0, 0, 0]) >= worst([255, 255, 255]) ? { rgb: [0, 0, 0], light: false } : { rgb: [255, 255, 255], light: true };
+  const barred = [];
+  for (const [ls, target] of lums) for (const b of ls) barred.push([(b + 0.05) / target - 0.05, target * (b + 0.05) - 0.05]);
+  barred.sort((p, q) => p[0] - q[0]);
+  const spans = [];
+  for (const [lo, hi] of barred) {
+    const last = spans[spans.length - 1];
+    if (last && lo < last[1]) last[1] = Math.max(last[1], hi); else spans.push([lo, hi]);
+  }
+  // The first step toward `toward` whose shade reaches every target, or 0: the shades' luminance only ever moves one
+  // way, so past a barred span is a search.
+  const first = (toward, down) => {
+    const lumAt = (k) => tmLuminance(mix(base, toward, k / 32));
+    let k = 1;
+    while (k <= 32) {
+      const l = lumAt(k), span = spans.find(([lo, hi]) => l > lo && l < hi);
+      if (!span) {
+        if (score(mix(base, toward, k / 32)) >= 1) return k;
+        k++;
+        continue;
+      }
+      // The first step past the span's far end.
+      let lo = k + 1, hi = 33;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (down ? lumAt(mid) <= span[0] : lumAt(mid) >= span[1]) hi = mid; else lo = mid + 1;
+      }
+      k = lo;
+    }
+    return 0;
+  };
+  const dark = first([0, 0, 0], true), light = first([255, 255, 255], false);
+  if (dark && (!light || dark <= light)) return { rgb: mix(base, [0, 0, 0], dark / 32), light: false, ok: true };
+  if (light) return { rgb: mix(base, [255, 255, 255], light / 32), light: true, ok: true };
+  let best = null;
+  for (let k = 1; k <= 32; k++) {
+    for (const [toward, isLight] of [[[0, 0, 0], false], [[255, 255, 255], true]]) {
+      const c = mix(base, toward, k / 32), sc = score(c);
+      if (!best || sc > best.s) best = { rgb: c, light: isLight, s: sc };
+    }
+  }
+  return { rgb: best.rgb, light: best.light, ok: false };
+}
+/** tmToneFor with one group: the shade of `base` that reaches `target` against each of `beside`. */
+function tmTone(base, beside, target) {
+  return tmToneFor(base, [[beside, target]]);
 }
 /** A CSS colour — #rgb, #rrggbb, rgb() or rgba() — as [r, g, b, a]; null when it is none of those. */
 function tmCssRgba(v) {
@@ -13322,12 +13429,16 @@ function tmOver(fg, bg) {
  * The map's ground as the screen shows it, [r, g, b]: --tm-canvas-bg over the
  * map's glass card over the page. A cell the painter clears to the ground — a
  * hollow cloud cell, a staged block — and the part of a folder an online-only
- * file is hidden in show it, so a folder's band beside one is toned against
- * it; it was black there, unseen on the dark theme's ground (review F1.5).
+ * file is hidden in show it, so a line beside one is toned against it; it was
+ * black there, unseen on the dark theme's ground (review F1.5).
  */
 function tmGroundRgb() {
   const page = tmCssRgba(cssVar('--bg-1'));
   return tmOver(tmCssRgba(cssVar('--tm-canvas-bg')), tmOver(tmCssRgba(cssVar('--glass')), page ? page.slice(0, 3) : [12, 13, 20]));
+}
+/** The path of the folder `r` is filed under: its parent's, or for a staged block (the cart preview's) the folder it lies in. */
+function tmFolderPathOf(r) {
+  return r.n.freed && typeof r.n.parentPath === 'string' ? r.n.parentPath : tmParentPath(r.n.path);
 }
 /**
  * Each folder's drawn rectangles, by the folder's path. A staged block (the
@@ -13339,7 +13450,7 @@ function tmGroundRgb() {
 function tmKidsOf(px) {
   const kids = new Map();
   for (const r of px) {
-    const parent = r.n.freed && typeof r.n.parentPath === 'string' ? r.n.parentPath : tmParentPath(r.n.path);
+    const parent = tmFolderPathOf(r);
     if (!kids.has(parent)) kids.set(parent, []);
     kids.get(parent).push(r);
   }
@@ -13351,6 +13462,7 @@ function tmFramesDeepestFirst(px) {
 }
 /** Which coordinate runs along each side of a box, and which measure. */
 const TM_SIDES = { top: ['x', 'w'], bottom: ['x', 'w'], left: ['y', 'h'], right: ['y', 'h'] };
+const TM_OPPOSITE = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' };
 /** Whether the rectangle `c` lies along `side` of the folder `r`. */
 function tmTouches(c, r, side) {
   if (side === 'top') return Math.abs(c.y - r.y) < 1e-6;
@@ -13358,69 +13470,389 @@ function tmTouches(c, r, side) {
   if (side === 'left') return Math.abs(c.x - r.x) < 1e-6;
   return Math.abs(c.x + c.w - r.x - r.w) < 1e-6;
 }
+/** The line `side` of the box `r` runs along. */
+function tmSideAt(r, side) {
+  return side === 'top' ? r.y : side === 'bottom' ? r.y + r.h : side === 'left' ? r.x : r.x + r.w;
+}
 /**
- * What lies just inside `side` of the folder `r`, stretch by stretch along
- * it, as { lo, hi, base, beside }: each leaf along that edge (its colour, and
- * its cushion's ends as shown, its highlight with them), each nested folder's
- * own edge in turn, and the folder's own fill between them. Where a cell
- * shows the map's ground — a hollow or staged cell (r.shows), or a folder
- * left unfilled (r.groundSeen) — `beside` is what it shows there, and `base`
- * the cell's own colour, or the folder's where it has none (review F1.5).
+ * What passes 2.6 and 2.7 look at around each rectangle: its folder (null at
+ * the top level), and the rectangles of each folder by the device pixel each
+ * of their sides lies on — so the neighbour beyond a side is found by one
+ * lookup — with the map's size and its ground.
  */
-function tmEdgeContent(r, side, kids) {
-  const [p, s] = TM_SIDES[side];
-  const lo = r[p], hi = r[p] + r[s];
-  const own = { base: r.bgBase || r.ownRgb || null, beside: r.bgSeen || r.groundSeen || null };
-  const out = [];
-  let at = lo;
-  const along = (kids.get(r.n.path) || []).filter((c) => tmTouches(c, r, side)).sort((a, b) => a[p] - b[p]);
-  for (const c of along) {
-    const a = Math.max(at, c[p]), b = Math.min(hi, c[p] + c[s]);
-    if (b <= a) continue;
-    if (a > at) out.push({ lo: at, hi: a, ...own });
-    if (c.frame) {
-      for (const seg of tmEdgeContent(c, side, kids)) {
-        const sa = Math.max(a, seg.lo), sb = Math.min(b, seg.hi);
-        if (sb > sa) out.push({ ...seg, lo: sa, hi: sb });
+function tmNeighbourhood(px, kids, dpr, w, h, ground) {
+  const folders = new Map();
+  for (const r of px) if (r.frame) folders.set(r.n.path, r);
+  const folderOf = new Map(), keyOf = new Map(), sides = new Map();
+  for (const [parent, list] of kids) {
+    const at = { top: new Map(), bottom: new Map(), left: new Map(), right: new Map() };
+    for (const c of list) {
+      folderOf.set(c, folders.get(parent) || null);
+      keyOf.set(c, parent);
+      for (const side of Object.keys(at)) {
+        const k = Math.round(tmSideAt(c, side) * dpr);
+        if (!at[side].has(k)) at[side].set(k, []);
+        at[side].get(k).push(c);
       }
-    } else {
-      out.push({ lo: a, hi: b, base: c.fillRgb || c.showsRgb || own.base, beside: c.seen ? (c.litSeen ? [...c.seen, c.litSeen] : c.seen) : (c.shows || null) });
     }
-    at = b;
+    sides.set(parent, at);
   }
-  if (at < hi) out.push({ lo: at, hi, ...own });
+  return { dpr, w, h, ground, kids, folderOf, keyOf, sides, shared: new Map() };
+}
+/** The colours a tile shows the screen beside a line: its cushion and highlight, or the ground a hollow or staged cell shows. Its texture keeps clear of every line (tmLineMask). */
+function tmShown(c) {
+  if (c.shows) return c.shows;
+  return c.litSeen ? [...(c.seen || []), c.litSeen] : [...(c.seen || [])];
+}
+/** A tile's own colour, which a line in it or a band beside it is a shade of; a cell with none takes its folder's. */
+function tmBaseOf(c, folder) {
+  return c.fillRgb || c.showsRgb || (folder && (folder.bgBase || folder.ownRgb)) || null;
+}
+/**
+ * What the folder `f` shows where nothing is drawn in it: its own fill, or the
+ * ground (the top level's too, and a folder's an online-only file is hidden
+ * in). A folder its contents tile shows nothing between them but a sliver of
+ * a device pixel, which asks nothing of a line.
+ */
+function tmFillShown(f, g) {
+  if (!f) return { line: false, base: null, beside: [g.ground] };
+  if (f.showsGround) return { line: false, base: f.ownRgb || null, beside: f.groundSeen || [g.ground] };
+  if (f.bgSeen) return { line: false, base: f.bgBase, beside: f.bgSeen };
+  return { line: true };
+}
+/** Whether the rectangle `c` lies wholly under its folder `f`'s band, along one of its sides: unseen, the band seen in its place. */
+function tmUnderBand(c, f) {
+  if (!f || !(f.lw > 0)) return false;
+  return c.y + c.h <= f.y + f.lw + 1e-6 || c.y >= f.y + f.h - f.lw - 1e-6 || c.x + c.w <= f.x + f.lw + 1e-6 || c.x >= f.x + f.w - f.lw - 1e-6;
+}
+/**
+ * Whether two leaves with lines of their own, `a` before `b` (left of it or
+ * above it), meet at one line — b's own left or top edge, in one shade of b's
+ * colour that reaches TM_EDGE_MIN against both. Where none does, each draws
+ * its own line there, toned against its own tile.
+ */
+function tmShareOk(a, b, g) {
+  const key = `${a.n.path}\n${b.n.path}`;
+  if (!g.shared.has(key)) g.shared.set(key, tmToneFor(b.fillRgb, [[tmShown(b), TM_EDGE_MIN], [tmShown(a), TM_EDGE_MIN]]).ok);
+  return g.shared.get(key);
+}
+/** `segs` (stretches along a side, { lo, hi, … }) cut to [lo, hi). */
+function tmClip(segs, lo, hi) {
+  return segs.map((s) => ({ ...s, lo: Math.max(lo, s.lo), hi: Math.min(hi, s.hi) })).filter((s) => s.hi > s.lo + 1e-6);
+}
+/**
+ * What the rectangle `c` shows on its own `side`, one pixel in, along the
+ * stretch that faces `facing`: a line ({ line: true }) — a folder's band, a
+ * leaf's own top or left line, or its right or bottom line where it draws one
+ * — or a tile ({ line: false, base, beside }). A leaf with lines shares its
+ * right or bottom edge with a leaf with lines beyond it (tmShareOk), whose own
+ * line lies there; its top and left lines are `shared` by it with whatever
+ * faces them. A folder too small for a band shows what lies inside its edge;
+ * a rectangle wholly under its folder's band is the band, as a person sees it.
+ */
+function tmEdgeOf(c, side, facing, g) {
+  const all = { lo: -Infinity, hi: Infinity };
+  if (tmUnderBand(c, g.folderOf.get(c))) return [{ ...all, line: true }];
+  if (c.frame) return c.lw > 0 ? [{ ...all, line: true }] : tmInside(c, side, 0, g);
+  if (tmLeafKind(c) === 'edged') {
+    if (side === 'top' || side === 'left') return [{ ...all, line: true, shared: c }];
+    const drawn = !(facing && !facing.frame && tmLeafKind(facing) === 'edged' && tmShareOk(c, facing, g));
+    return [drawn ? { ...all, line: true } : { ...all, line: false, base: c.fillRgb, beside: tmShown(c) }];
+  }
+  return [{ ...all, line: false, base: tmBaseOf(c, g.folderOf.get(c)), beside: tmShown(c) }];
+}
+/**
+ * What lies just beyond `side` of the rectangle `r`, stretch by stretch along
+ * it ({ lo, hi, line, covered, shared, base, beside }): nothing past the map's
+ * own edge; along its folder's edge, the folder's band, laid over it
+ * (`covered`) — or, where the folder is too small for a band, what lies beyond
+ * the folder; else each neighbour's own edge (tmEdgeOf), and the folder's own
+ * fill between them (tmFillShown).
+ */
+function tmAcross(r, side, g) {
+  const [p, s] = TM_SIDES[side];
+  const lo = r[p], hi = r[p] + r[s], at = tmSideAt(r, side);
+  if (at < 1e-6 || (side === 'right' && at > g.w - 0.5 / g.dpr) || (side === 'bottom' && at > g.h - 0.5 / g.dpr)) return [{ lo, hi, line: true }];
+  const folder = g.folderOf.get(r) || null;
+  if (folder && tmTouches(r, folder, side)) {
+    if (folder.lw > 0) return [{ lo, hi, line: true, covered: true }];
+    return tmClip(tmAcross(folder, side, g), lo, hi);
+  }
+  const opposite = TM_OPPOSITE[side];
+  const index = g.sides.get(g.keyOf.get(r));
+  const near = ((index && index[opposite].get(Math.round(at * g.dpr))) || [])
+    .filter((c) => c !== r && c[p] < hi - 1e-6 && c[p] + c[s] > lo + 1e-6)
+    .sort((a, b) => a[p] - b[p]);
+  const out = [];
+  let cur = lo;
+  for (const c of near) {
+    const a = Math.max(cur, c[p]), b = Math.min(hi, c[p] + c[s]);
+    if (b <= a + 1e-6) continue;
+    if (a > cur + 1e-6) out.push({ lo: cur, hi: a, ...tmFillShown(folder, g) });
+    out.push(...tmClip(tmEdgeOf(c, opposite, r, g), a, b));
+    cur = b;
+  }
+  if (cur < hi - 1e-6) out.push({ lo: cur, hi, ...tmFillShown(folder, g) });
   return out;
 }
 /**
- * The folder `r`'s frame as the filled bands that draw it, { x, y, w, h, rgb }:
- * TM_FRAME_W_TOP px at the top level, TM_FRAME_W inside it (at most a third of
- * its thinner side, at least 1 px), inside its own box,
- * each stretch toned against what lies inside it there (tmTone, TM_FRAME_MIN).
- * The top and bottom bands run the whole width; the sides run between them.
+ * What lies inside the folder `f`, `inset` px in from its `side` — on the row
+ * (or column) of device pixels there — stretch by stretch along it: each
+ * rectangle that crosses that row (a nested folder's band, or what lies inside
+ * it; a leaf's own top or left line where the row is its edge; else its tile),
+ * and the folder's own fill between them. A sliver lying wholly under the
+ * band does not cross the row past it, so a band is never toned against what
+ * it covers (REPORT problem 6).
  */
-function tmFrameBands(r, kids) {
-  const lw = Math.max(1, Math.min(r.n.depth <= 1 ? TM_FRAME_W_TOP : TM_FRAME_W, Math.floor(Math.min(r.w, r.h) / 3)));
-  const bands = [];
-  const lay = (side, from, to, rect) => {
-    let last = null;
-    for (const seg of tmEdgeContent(r, side, kids)) {
+function tmInside(f, side, inset, g) {
+  const [p, s] = TM_SIDES[side];
+  const lo = f[p], hi = f[p] + f[s];
+  const across = side === 'left' || side === 'right' ? ['x', 'w'] : ['y', 'h'];
+  const far = side === 'bottom' || side === 'right';
+  const edge = tmSideAt(f, side) + (far ? -inset : inset); // where the row starts, from the side
+  // The middle of the first row of device pixels wholly past `edge`: at 125, 150 or 175 % a band's inner edge can fall
+  // inside a device pixel, which then shows the band and the tile both.
+  const mid = far ? (Math.floor(edge * g.dpr + 1e-6) - 0.5) / g.dpr : (Math.ceil(edge * g.dpr - 1e-6) + 0.5) / g.dpr;
+  const near = (g.kids.get(f.n.path) || [])
+    .filter((c) => c[across[0]] < mid && c[across[0]] + c[across[1]] > mid && c[p] < hi - 1e-6 && c[p] + c[s] > lo + 1e-6)
+    .sort((a, b) => a[p] - b[p]);
+  const out = [];
+  let cur = lo;
+  for (const c of near) {
+    const a = Math.max(cur, c[p]), b = Math.min(hi, c[p] + c[s]);
+    if (b <= a + 1e-6) continue;
+    if (a > cur + 1e-6) out.push({ lo: cur, hi: a, ...tmFillShown(f, g) });
+    const off = far ? tmSideAt(c, side) - edge : edge - tmSideAt(c, side); // how far in from c's own side the row starts
+    const offMid = far ? tmSideAt(c, side) - mid : mid - tmSideAt(c, side); // and its device pixels' middle
+    let segs;
+    if (c.frame) segs = offMid < c.lw ? [{ lo: a, hi: b, line: true }] : tmInside(c, side, off, g);
+    else if (offMid < 1 && (side === 'top' || side === 'left') && tmLeafKind(c) === 'edged') segs = [{ lo: a, hi: b, line: true }];
+    else segs = [{ lo: a, hi: b, line: false, base: tmBaseOf(c, f), beside: tmShown(c) }];
+    out.push(...tmClip(segs, a, b));
+    cur = b;
+  }
+  if (cur < hi - 1e-6) out.push({ lo: cur, hi, ...tmFillShown(f, g) });
+  return out;
+}
+/** The tiles along [a, b) of `segs`, as a band asks of them: to TM_FRAME_MIN. */
+function tmBandAsks(segs, a, b) {
+  return [[segs.filter((s) => !s.line && s.lo < b - 1e-6 && s.hi > a + 1e-6).flatMap((s) => s.beside || []), TM_FRAME_MIN]];
+}
+/** Whether `rgb` reaches each group's target against every colour in it. */
+function tmMeets(rgb, groups) {
+  return groups.every(([cols, target]) => cols.every((c) => tmContrast(rgb, c) >= target - 1e-9));
+}
+/** Two partitions of [from, to) laid over each other: each piece, with the stretch of each that holds it. */
+function tmOverlay(one, two, from, to) {
+  const cuts = [...new Set([from, to, ...one.flatMap((s) => [s.lo, s.hi]), ...two.flatMap((s) => [s.lo, s.hi])])]
+    .filter((v) => v >= from - 1e-6 && v <= to + 1e-6).sort((a, b) => a - b);
+  const out = [];
+  for (let i = 0; i + 1 < cuts.length; i++) {
+    const a = cuts[i], b = cuts[i + 1];
+    if (b <= a + 1e-6) continue;
+    const m = (a + b) / 2;
+    out.push([a, b, one.find((s) => s.lo <= m && s.hi > m) || null, two.find((s) => s.lo <= m && s.hi > m) || null]);
+  }
+  return out;
+}
+/**
+ * One stretch of a line `width` px wide, as its parts { inset, width, rgb },
+ * inset from its outer edge. `inside` is what lies within it, as groups
+ * [[colours, target], …]; `outside` the colours of a tile beyond it, asked
+ * for TM_EDGE_MIN. One part, in the shade of `base` nearest it that reaches
+ * every target. Where none does:
+ *   - when what lies within is out of reach even alone (no shade of the size
+ *     ramp's red takes a band to 4.5:1, nor of a mid grey's whole cushion to
+ *     3.3:1), its strongest shade, where that stands out from what lies
+ *     beyond;
+ *   - a leaf's line (`optional`) whose tiles on its two sides already differ
+ *     by TM_EDGE_MIN — a light tile beside the dark theme's ground, or beside
+ *     Reclaim's dark "not scored" grey — is left out: the tiles part
+ *     themselves, and no shade stands out from both;
+ *   - a 1 px line takes the nearest shade that reaches TM_EDGE_MIN on both
+ *     sides, if one does;
+ *   - else two parts: the outer pixel toned against what lies beyond, the
+ *     rest against what lies within (`deeper(k)`: the groups k px in, where
+ *     the inner part then ends) — so a band keeps its 4.5:1 within.
+ * An empty side asks nothing; a line with neither side stands out from its
+ * own colour.
+ */
+function tmSeamParts(base, inside, outside, width, deeper, optional = false) {
+  if (!base) return [{ inset: 0, width, rgb: [0, 0, 0] }];
+  const single = (rgb) => [{ inset: 0, width, rgb }];
+  const asked = (groups) => groups.filter(([cols]) => cols.length);
+  const within = asked(inside);
+  const alone = within.length ? within : [[[base], inside.length ? inside[0][1] : TM_EDGE_MIN]];
+  if (!outside.length) return single(tmToneFor(base, alone).rgb);
+  const all = [...within, [outside, TM_EDGE_MIN]];
+  const one = tmToneFor(base, all);
+  if (one.ok) return single(one.rgb);
+  const best = tmToneFor(base, alone);
+  if (!best.ok && tmMeets(best.rgb, [[outside, TM_EDGE_MIN]])) return single(best.rgb);
+  if (optional && within.every(([cols]) => cols.every((c) => outside.every((o) => tmContrast(c, o) >= TM_EDGE_MIN)))) return [];
+  if (width === 1) {
+    const eased = tmToneFor(base, all.map(([cols]) => [cols, TM_EDGE_MIN]));
+    if (eased.ok) return single(eased.rgb);
+  }
+  const inner = Math.max(1, width - 1);
+  const deep = deeper ? asked(deeper(1 + inner)) : within;
+  return [
+    { inset: 0, width: 1, rgb: tmToneFor(base, [[outside, TM_EDGE_MIN]]).rgb },
+    { inset: 1, width: inner, rgb: tmToneFor(base, deep.length ? deep : alone).rgb },
+  ];
+}
+/** A part of a line along `side` of the box `r`, from a to b, as the rectangle { x, y, w, h, rgb } it fills. */
+function tmPartRect(r, side, a, b, part) {
+  const rgb = `rgb(${part.rgb[0]},${part.rgb[1]},${part.rgb[2]})`;
+  if (side === 'top') return { x: a, y: r.y + part.inset, w: b - a, h: part.width, rgb };
+  if (side === 'bottom') return { x: a, y: r.y + r.h - part.inset - part.width, w: b - a, h: part.width, rgb };
+  if (side === 'left') return { x: r.x + part.inset, y: a, w: part.width, h: b - a, rgb };
+  return { x: r.x + r.w - part.inset - part.width, y: a, w: part.width, h: b - a, rgb };
+}
+/** `rects` with each run of touching rectangles of one paint along one line merged into one. */
+function tmMergeRuns(rects) {
+  const out = [];
+  for (const q of rects) {
+    const last = out[out.length - 1];
+    if (last && last.rgb === q.rgb && last.w === q.w && last.x === q.x && Math.abs(last.y + last.h - q.y) < 1e-6) { last.h += q.h; continue; }
+    if (last && last.rgb === q.rgb && last.h === q.h && last.y === q.y && Math.abs(last.x + last.w - q.x) < 1e-6) { last.w += q.w; continue; }
+    out.push({ ...q });
+  }
+  return out;
+}
+/**
+ * The 1 px lines the leaf `r` (one with lines, tmLeafKind 'edged') draws inside
+ * its own box, as { x, y, w, h, rgb }: its top and left edges, and its right
+ * and bottom edges where what lies beyond is not a leaf with lines whose own
+ * left or top edge it shares (tmShareOk) — nothing along its folder's own
+ * edge, which the folder's band covers. Each stretch is toned against r's own
+ * tile and the tile beyond it, and left out where those two already part
+ * themselves and no shade stands out from both (tmSeamParts).
+ */
+function tmLeafLines(r, g) {
+  const own = tmShown(r), out = [];
+  for (const side of ['top', 'left', 'right', 'bottom']) {
+    const [p, s] = TM_SIDES[side];
+    // Each runs its side's whole length: where the top line is left out, the side line still closes the corner.
+    const from = r[p], to = r[p] + r[s];
+    for (const seg of tmAcross(r, side, g)) {
+      if (seg.covered) continue;
+      if ((side === 'right' || side === 'bottom') && seg.shared && tmShareOk(r, seg.shared, g)) continue;
       const a = Math.max(from, seg.lo), b = Math.min(to, seg.hi);
-      if (b <= a) continue;
-      const rgb = seg.beside && seg.base ? tmTone(seg.base, seg.beside, TM_FRAME_MIN).rgb : [0, 0, 0];
-      const tone = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
-      if (last && last.tone === tone && Math.abs(last.b - a) < 1e-6) { last.b = b; continue; }
-      last = { a, b, tone };
-      bands.push(Object.assign(last, { rect }));
+      if (b <= a + 1e-6) continue;
+      const beyond = seg.line ? [] : seg.beside;
+      for (const part of tmSeamParts(r.fillRgb, [[own, TM_EDGE_MIN]], beyond, 1, null, true)) out.push(tmPartRect(r, side, a, b, part));
     }
+  }
+  return tmMergeRuns(out);
+}
+/**
+ * The folder `r`'s frame as the filled bands that draw it, { x, y, w, h, rgb }:
+ * r.lw px (tmBandWidth) inside its own box, the top and bottom bands across its
+ * whole width and the sides between them; each stretch a shade of the colour
+ * inside it, toned against what lies just past the band inside (tmInside, to
+ * TM_FRAME_MIN) and against a tile just beyond it (tmAcross, to TM_EDGE_MIN).
+ */
+function tmFrameBands(r, g) {
+  const lw = r.lw;
+  if (!lw) return [];
+  const out = [];
+  for (const side of ['top', 'bottom', 'left', 'right']) {
+    const vertical = side === 'left' || side === 'right';
+    const from = vertical ? r.y + lw : r.x, to = vertical ? r.y + r.h - lw : r.x + r.w;
+    if (to <= from + 1e-6) continue;
+    const inside = tmInside(r, side, lw, g), outside = tmAcross(r, side, g);
+    for (const [a, b, inn, beyond] of tmOverlay(inside, outside, from, to)) {
+      const base = (inn && inn.base) || r.bgBase || r.ownRgb;
+      const within = [[inn && !inn.line ? inn.beside : [], TM_FRAME_MIN]];
+      const deeper = (k) => tmBandAsks(tmInside(r, side, k, g), a, b);
+      const parts = tmSeamParts(base, within, beyond && !beyond.line ? beyond.beside : [], lw, deeper);
+      for (const part of parts) out.push(tmPartRect(r, side, a, b, part));
+    }
+  }
+  return tmMergeRuns(out);
+}
+/**
+ * The device pixels a line or a band lies on, and every pixel beside one, as a
+ * mask `w`×`h` device px: a texture keeps clear of them, so no line ever meets
+ * a texture's darker or lighter shade, only the fill it lies on.
+ */
+function tmLineMask(px, w, h, dpr) {
+  const mask = new Uint8Array(w * h);
+  const mark = (x0, y0, x1, y1) => {
+    for (let y = Math.max(0, y0); y < Math.min(h, y1); y++) mask.fill(1, y * w + Math.max(0, x0), y * w + Math.min(w, x1));
   };
-  lay('top', r.x, r.x + r.w, (a, b) => [a, r.y, b - a, lw]);
-  lay('bottom', r.x, r.x + r.w, (a, b) => [a, r.y + r.h - lw, b - a, lw]);
-  lay('left', r.y + lw, r.y + r.h - lw, (a, b) => [r.x, a, lw, b - a]);
-  lay('right', r.y + lw, r.y + r.h - lw, (a, b) => [r.x + r.w - lw, a, lw, b - a]);
-  return bands.map(({ a, b, tone, rect }) => {
-    const [x, y, w, h] = rect(a, b);
-    return { x, y, w, h, rgb: tone };
-  });
+  for (const r of px) {
+    for (const l of [...(r.lines || []), ...(r.bands || [])]) {
+      const x0 = Math.floor(l.x * dpr + 1e-6), y0 = Math.floor(l.y * dpr + 1e-6);
+      const x1 = Math.ceil((l.x + l.w) * dpr - 1e-6), y1 = Math.ceil((l.y + l.h) * dpr - 1e-6);
+      mark(x0 - 1, y0, x1 + 1, y1);
+      mark(x0, y0 - 1, x1, y1 + 1);
+    }
+  }
+  return mask;
+}
+/** The 1 px seam `rect` ([x, y, w, h]) as the runs of it clear of `mask` (tmLineMask), each [x, y, w, h]. */
+function tmClearRuns(rect, mask, w, h, dpr) {
+  const [x, y, rw, rh] = rect;
+  const across = rw >= rh;
+  const x0 = Math.floor(x * dpr + 1e-6), y0 = Math.floor(y * dpr + 1e-6);
+  const x1 = Math.ceil((x + rw) * dpr - 1e-6), y1 = Math.ceil((y + rh) * dpr - 1e-6);
+  const clear = across
+    ? (k) => { for (let yy = Math.max(0, y0); yy < Math.min(h, y1); yy++) if (mask[yy * w + k]) return false; return true; }
+    : (k) => { for (let xx = Math.max(0, x0); xx < Math.min(w, x1); xx++) if (mask[k * w + xx]) return false; return true; };
+  const [lo, hi] = across ? [Math.max(0, x0), Math.min(w, x1)] : [Math.max(0, y0), Math.min(h, y1)];
+  const out = [];
+  let start = -1;
+  for (let k = lo; k <= hi; k++) {
+    const ok = k < hi && clear(k);
+    if (ok && start < 0) start = k;
+    if (!ok && start >= 0) {
+      const a = Math.max(across ? x : y, start / dpr), b = Math.min(across ? x + rw : y + rh, k / dpr);
+      if (b > a + 1e-6) out.push(across ? [a, y, b - a, rh] : [x, a, rw, b - a]);
+      start = -1;
+    }
+  }
+  return out;
+}
+/** The stretches of [lo, hi) that no interval [a, b) of `cover` takes. */
+function tmUncovered(lo, hi, cover) {
+  const out = [];
+  let at = lo;
+  for (const [a, b] of [...cover].sort((p, q) => p[0] - q[0])) {
+    if (a > at + 1e-6) out.push([at, Math.min(a, hi)]);
+    at = Math.max(at, b);
+    if (at >= hi - 1e-6) break;
+  }
+  if (at < hi - 1e-6) out.push([at, hi]);
+  return out.filter(([a, b]) => b > a + 1e-6);
+}
+/**
+ * A folder's texture over its own fill (J51): a 1 px seam every
+ * TM_TEXTURE_PITCH px down and across its box, from its top-left corner, in
+ * the shade of its cushion tmTextureContrast puts at that pitch — the files in
+ * it too small to draw. Only where its own fill shows: never under what is
+ * drawn in it, and clear of every line (`mask`, tmLineMask).
+ */
+function tmFolderTexture(r, kids, mask, mw, mh, dpr) {
+  const inside = kids.get(r.n.path) || [];
+  const rects = [];
+  for (let x = r.x; x < r.x + r.w - 1e-6; x += TM_TEXTURE_PITCH) {
+    const cover = inside.filter((c) => c.x < x + 1 - 1e-6 && c.x + c.w > x + 1e-6).map((c) => [c.y, c.y + c.h]);
+    for (const [a, b] of tmUncovered(r.y, r.y + r.h, cover)) rects.push(...tmClearRuns([x, a, 1, b - a], mask, mw, mh, dpr));
+  }
+  for (let y = r.y; y < r.y + r.h - 1e-6; y += TM_TEXTURE_PITCH) {
+    const cover = inside.filter((c) => c.y < y + 1 - 1e-6 && c.y + c.h > y + 1e-6).map((c) => [c.x, c.x + c.w]);
+    for (const [a, b] of tmUncovered(r.x, r.x + r.w, cover)) rects.push(...tmClearRuns([a, y, b - a, 1], mask, mw, mh, dpr));
+  }
+  return { stops: tmTextureStops(r.bg, r.bgBase, tmTextureContrast(TM_TEXTURE_PITCH)), rects };
+}
+/** A small leaf's texture (tmLeafKind 'textured'): its top row and its left column below that, clear of every line (`mask`). */
+function tmLeafTexture(r, mask, mw, mh, dpr) {
+  return {
+    stops: tmTextureStops(r.stops, r.fillRgb, tmTextureContrast(Math.min(r.w, r.h))),
+    rects: [[r.x, r.y, r.w, 1], [r.x, r.y + 1, 1, r.h - 1]].flatMap((q) => tmClearRuns(q, mask, mw, mh, dpr)),
+  };
 }
 
 const TM_CUSHION_LIGHT = 0.16;   // the white mixed into the top edge
@@ -13497,9 +13929,15 @@ function tmLeafFill(ctx, stops, y, h) {
 const TM_LABEL_LEADING = 1.2;    // a line of text's height, as a share of its font size
 const TM_LABEL_FLOOR = 4.5;      // WCAG AA for the 10–11px label
 const TM_SIZE_INK_ALPHA = 0.9;   // the size line, a step quieter than the name
+/** Relative luminances already worked out, by whole-number colour: passes 2.6 and 2.7 try many shades against many tiles. */
+const tmLumCache = new Map();
 function tmLuminance(c) {
+  const key = Number.isInteger(c[0]) && Number.isInteger(c[1]) && Number.isInteger(c[2]) ? (c[0] << 16) | (c[1] << 8) | c[2] : -1;
+  if (key >= 0 && tmLumCache.has(key)) return tmLumCache.get(key);
   const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
-  return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+  const lum = 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+  if (key >= 0 && tmLumCache.size < 1 << 17) tmLumCache.set(key, lum);
+  return lum;
 }
 function tmContrast(a, b) {
   const la = tmLuminance(a), lb = tmLuminance(b);
@@ -13677,6 +14115,9 @@ function drawTreemap() {
   const ground = tmGroundRgb();
   for (const r of px) {
     if (!r.frame) continue;
+    // Its band's width, by its size and depth (tmBandWidth): passes 2.6 and
+    // 2.7 read every folder's before any line is laid.
+    r.lw = tmBandWidth(r);
     // The folder's colour, and the ground as it shows in it (through any
     // History diff wash): its band is toned from the one against the other
     // where the ground shows (review F1.5).
@@ -13691,7 +14132,11 @@ function drawTreemap() {
     }
     let covered = 0;
     for (const c of kids.get(r.n.path) || []) covered += c.w * c.h;
-    if (covered >= r.w * r.h - 0.5) continue; // its contents tile it: none of it shows
+    // Its contents tile it: none of it shows. On whole device pixels their
+    // areas sum to its own exactly when they do; a sliver left over — a
+    // device pixel or two at 150 or 200 % — shows the folder's fill, not the
+    // map's ground.
+    if (covered >= r.w * r.h - 1e-6) continue;
     r.bgBase = r.ownRgb;
     r.bg = tmLeafStops(r.bgBase, r.h, null);
     r.bgSeen = tmSeenThrough(r.bg, tmWashesOver(r, washes));
@@ -13773,21 +14218,34 @@ function drawTreemap() {
     r.fillRgb = base; // the colour itself; r.stops is the cushion painted here
     r.seen = tmSeenThrough(r.stops, washedBy); // and as pass 4 writes the label on it, through pass 2.5 (G09, F2.1)
     if (tmLeafEdged(r)) {
-      // Its outline (pass 2.6), in the shade of its own colour that stands
-      // out from it as the screen shows it (tmTone), and under a dark one a
-      // highlight along its top row, part of its cushion.
-      const edge = tmTone(base, r.seen, TM_EDGE_MIN);
-      r.edge = `rgb(${edge.rgb[0]},${edge.rgb[1]},${edge.rgb[2]})`;
-      r.lit = !edge.light;
+      // Lines of its own (pass 2.6, tmLeafLines). Where the shade of its own
+      // colour that stands out from it is a dark one (tmTone), a highlight
+      // runs along its top row under its top line, part of its cushion.
+      r.lit = !tmTone(base, r.seen, TM_EDGE_MIN).light;
       if (r.lit) {
-        r.litSeen = tmSeenThrough([mix(r.stops[0], [255, 255, 255], TM_LIT)], washedBy)[0];
-        ctx.strokeStyle = `rgba(255,255,255,${TM_LIT})`;
+        r.litSeen = tmSeenThrough([mix(r.stops[0], [255, 255, 255], tmLitAlpha(r))], washedBy)[0];
+        ctx.strokeStyle = `rgba(255,255,255,${tmLitAlpha(r)})`;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(r.x + 1, r.y + 1.5); ctx.lineTo(r.x + r.w - 1, r.y + 1.5);
         ctx.stroke();
       }
     }
+  }
+  // Where passes 2.6 and 2.7 will lay their lines, each stretch toned against
+  // what a person sees on each side of it (tmLeafLines, tmFrameBands).
+  const near = tmNeighbourhood(px, kids, dpr, pw / dpr, ph / dpr, ground);
+  for (const r of px) if (!r.frame && tmLeafKind(r) === 'edged') r.lines = tmLeafLines(r, near);
+  for (const r of px) if (r.frame) r.bands = tmFrameBands(r, near);
+  // Pass 2.4: the texture of each folder's own fill (J51) and of each leaf too
+  // small for lines, part of its tile — clear of every line (tmLineMask), and
+  // a folder's only where its own fill shows.
+  const lineMask = tmLineMask(px, pw, ph, dpr);
+  for (const r of px) {
+    if (r.frame ? !r.bg || r.showsGround : tmLeafKind(r) !== 'textured') continue;
+    r.tex = r.frame ? tmFolderTexture(r, kids, lineMask, pw, ph, dpr) : tmLeafTexture(r, lineMask, pw, ph, dpr);
+    ctx.fillStyle = tmLeafFill(ctx, r.tex.stops, r.y, r.h);
+    for (const [x, y, w, h] of r.tex.rects) ctx.fillRect(x, y, w, h);
   }
   // Pass 2.5: diff wash over expanded directories (history diff mode only).
   // A folder's own growth/shrinkage must show even when its visible children
@@ -13799,22 +14257,21 @@ function drawTreemap() {
   // Passes 2.6 and 2.7 stop at the top-level folders' name tags (tmClipOutTags).
   ctx.save();
   if (tagRects.length) tmClipOutTags(ctx, tagRects, pw / dpr, ph / dpr);
-  // Pass 2.6: leaf outlines, inside each leaf's own box, laid after the
-  // washes so a line is seen in the tone it was picked in — under two washes
-  // even black reached only 2.3:1 on a grey tile.
-  ctx.lineWidth = 1;
+  // Pass 2.6: leaf lines, inside each leaf's own box (tmLeafLines), laid
+  // after the washes so a line is seen in the tone it was picked in — under
+  // two washes even black reached only 2.3:1 on a grey tile.
   for (const r of px) {
-    if (!r.edge) continue;
-    ctx.strokeStyle = r.edge;
-    ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+    for (const l of r.lines || []) {
+      ctx.fillStyle = l.rgb;
+      ctx.fillRect(l.x, l.y, l.w, l.h);
+    }
   }
   // Pass 2.7: folder frames. Every leaf is painted at full strength, so
   // nesting is read from the edges, as on a desktop treemap: each folder's
-  // band, toned stretch by stretch against what lies inside it (tmFrameBands),
-  // after the washes, and deepest first, so a folder's band lies over a
-  // nested one's on an edge they share and is toned against what lies inside both.
+  // band, toned stretch by stretch against what a person sees beside it
+  // (tmFrameBands), after the washes, and deepest first, so a folder's band
+  // lies over a nested one's on an edge they share.
   for (const r of tmFramesDeepestFirst(px)) {
-    r.bands = tmFrameBands(r, kids);
     for (const b of r.bands) {
       ctx.fillStyle = b.rgb;
       ctx.fillRect(b.x, b.y, b.w, b.h);
@@ -24149,6 +24606,12 @@ function lassoPaint(ctx) {
 const LENS_SCALE = 4;
 const LENS_RADIUS = 108;
 
+/** A tile's texture as the map lays it (r.tex): its seams in the shade of its cushion, over the tile's height. */
+function lensTexture(ctx, s) {
+  ctx.fillStyle = tmLeafFill(ctx, s.tex.stops, s.y, s.h);
+  for (const [x, y, w, h] of s.tex.rects) ctx.fillRect(x, y, w, h);
+}
+
 /** Is the lens up? Either held with Z or pinned with the toolbar button. */
 function lensActive() {
   return (state.lens.held || state.lens.pinned) && state.lens.at !== null;
@@ -24242,6 +24705,7 @@ function lensPaint(ctx, cssW, cssH) {
         ctx.fill();
       }
       if (s.bg) { ctx.fillStyle = tmLeafFill(ctx, s.bg, b.y0, b.y1 - b.y0); ctx.fill(); }
+      if (s.tex) lensTexture(ctx, s);
       if (s.bands) framed.push(s);
       continue;
     }
@@ -24264,25 +24728,29 @@ function lensPaint(ctx, cssW, cssH) {
       : s.shows ? `rgba(${base[0]},${base[1]},${base[2]},0.16)`
       : tmLeafFill(ctx, s.stops || tmLeafStops(base, h), b.y0, h);
     ctx.fill();
-    if (!s.kind && s.edge) {
-      // Its outline as the map draws it (pass 2.6): the shade of its own
-      // colour the map picked, one of the map's pixels inside its box, and
-      // the highlight along its top under a dark one.
-      ctx.strokeStyle = s.edge;
+    // A small leaf's texture as the map lays it (pass 2.4).
+    if (!s.kind && s.tex) lensTexture(ctx, s);
+    if (!s.kind && s.lines) {
+      // Its lines as the map draws them (pass 2.6, tmLeafLines): each stretch
+      // in the shade the map picked, inside its box, and the highlight along
+      // its top under a dark one.
+      for (const l of s.lines) {
+        ctx.fillStyle = l.rgb;
+        ctx.fillRect(l.x, l.y, l.w, l.h);
+      }
       ctx.lineWidth = 1;
-      ctx.strokeRect(b.x0 + 0.5, b.y0 + 0.5, w - 1, h - 1);
       if (s.lit) {
-        ctx.strokeStyle = `rgba(255,255,255,${TM_LIT})`;
+        ctx.strokeStyle = `rgba(255,255,255,${tmLitAlpha(s)})`;
         ctx.beginPath();
         ctx.moveTo(b.x0 + 1, b.y0 + 1.5); ctx.lineTo(b.x1 - 1, b.y0 + 1.5);
         ctx.stroke();
       }
     } else {
-      // A tile the map leaves without an outline (too small for one, or a
-      // cell) keeps a hairline of the glass, so the tiles it magnifies stay
-      // apart: on the rectangle map in a shade of its own colour that reaches
-      // TM_EDGE_MIN against it, as the map's outlines do (the owner's outline
-      // decision); a black hairline at 0.45 was lost on a dark tile.
+      // A tile the map leaves without lines of its own (too small for them,
+      // or a cell) keeps a hairline of the glass, so the tiles it magnifies
+      // stay apart: on the rectangle map in a shade of its own colour that
+      // reaches TM_EDGE_MIN against it, as the map's lines do (the owner's
+      // outline decision); a black hairline at 0.45 was lost on a dark tile.
       const tone = s.kind ? null : tmTone(base, s.seen || s.shows || [base], TM_EDGE_MIN).rgb;
       ctx.strokeStyle = tone ? `rgb(${tone[0]},${tone[1]},${tone[2]})` : 'rgba(0,0,0,0.45)';
       ctx.lineWidth = 1 / LENS_SCALE;
@@ -25763,12 +26231,13 @@ function exportTreemapPNG() {
 /**
  * The map as an SVG, drawn with the canvas's own recipe (review F1.3, F1.9),
  * from what the canvas recorded on each rectangle as it painted it: each
- * folder's own fill where nothing covers it (pass 0, r.bg), each leaf the
- * cushion pass 1 painted it with (r.stops — opaque, in the colour mode on
- * screen, eased under its label where it had to be) with its highlight
- * (r.lit), the History diff pass 2.5's wash over each folder that changed,
- * each leaf's toned outline (pass 2.6, r.edge), each folder's toned bands in
- * the order pass 2.7 laid them (r.bands) — both stopping at the top-level
+ * folder's own fill where nothing covers it (pass 0, r.bg) and its texture
+ * (r.tex), each leaf the cushion pass 1 painted it with (r.stops — opaque, in
+ * the colour mode on screen, eased under its label where it had to be) with
+ * its highlight (r.lit) or its texture (r.tex), the History diff pass 2.5's
+ * wash over each folder that changed, each leaf's toned lines (pass 2.6,
+ * r.lines), each folder's toned bands in the order pass 2.7 laid them
+ * (r.bands) — both stopping at the top-level
  * folders' name tags, as on the canvas — and each label at the lines and in
  * the ink pass 4 chose (r.label, tmLabelInk). It once redrew the map with the
  * recipe G01 and G09 retired — every leaf faded by depth over the page, in
@@ -25785,6 +26254,11 @@ function exportTreemapSVG() {
   const at = (x, y, bw, bh) => `x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${Math.max(0, bw).toFixed(2)}" height="${Math.max(0, bh).toFixed(2)}"`;
   const cushion = (id, stops, r) => defs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="0" y1="${r.y}" x2="0" y2="${r.y + r.h}">` +
     `<stop offset="0" stop-color="${rgb(stops[0])}"/><stop offset="1" stop-color="${rgb(stops[1])}"/></linearGradient>`);
+  // A texture (r.tex): its seams, in the shade of the cushion it lies on, over the tile's height as on the canvas.
+  const texture = (id, r) => {
+    cushion(id, r.tex.stops, r);
+    for (const [x, y, tw, th] of r.tex.rects) parts.push(`<rect ${at(x, y, tw, th)} fill="url(#${id})"/>`);
+  };
   const parts = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" font-family="-apple-system, 'Segoe UI', Helvetica, sans-serif">`,
     `<rect width="${w}" height="${h}" fill="${ground}"/>`,
@@ -25797,6 +26271,7 @@ function exportTreemapSVG() {
     if (!r.frame || !r.bg) continue;
     cushion(`tm-f${i}`, r.bg, r);
     parts.push(`<rect ${at(r.x, r.y, r.w, r.h)} fill="url(#tm-f${i})"/>`);
+    if (r.tex) texture(`tm-t${i}`, r);
   }
   // Leaf fills (with native tooltips via <title>).
   for (const [i, r] of state.treemap.pxRects.entries()) {
@@ -25808,8 +26283,9 @@ function exportTreemapSVG() {
       cushion(`tm-c${i}`, r.stops, r);
       parts.push(`<rect ${at(r.x, r.y, r.w, r.h)} fill="url(#tm-c${i})">${title}</rect>`);
       if (r.lit) {
-        parts.push(`<line x1="${(r.x + 1).toFixed(2)}" y1="${(r.y + 1.5).toFixed(2)}" x2="${(r.x + r.w - 1).toFixed(2)}" y2="${(r.y + 1.5).toFixed(2)}" stroke="rgba(255,255,255,${TM_LIT})" stroke-width="1"/>`);
+        parts.push(`<line x1="${(r.x + 1).toFixed(2)}" y1="${(r.y + 1.5).toFixed(2)}" x2="${(r.x + r.w - 1).toFixed(2)}" y2="${(r.y + 1.5).toFixed(2)}" stroke="rgba(255,255,255,${tmLitAlpha(r)})" stroke-width="1"/>`);
       }
+      if (r.tex) texture(`tm-t${i}`, r);
     } else if (r.n.freed) {
       // Staged in the cart preview: an outline of what is not freed yet, on
       // the ground — a folder's fill does not show through it.
@@ -25851,9 +26327,9 @@ function exportTreemapSVG() {
     defs.push(`<clipPath id="tm-untagged"><path clip-rule="evenodd" d="M0 0H${w}V${h}H0Z${cut.join('')}"/></clipPath>`);
     parts.push('<g clip-path="url(#tm-untagged)">');
   }
-  // Each leaf's toned outline (pass 2.6), after the washes as on the canvas.
+  // Each leaf's toned lines (pass 2.6), after the washes as on the canvas.
   for (const r of state.treemap.pxRects) {
-    if (r.edge) parts.push(`<rect ${at(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1)} fill="none" stroke="${r.edge}" stroke-width="1"/>`);
+    for (const l of r.lines || []) parts.push(`<rect ${at(l.x, l.y, l.w, l.h)} fill="${l.rgb}"/>`);
   }
   // Each folder's frame, as pass 2.7 laid it: its toned bands, deepest folder
   // first, so a folder's band lies over a nested one's where they share an edge.

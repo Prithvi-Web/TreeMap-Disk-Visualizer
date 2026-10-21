@@ -1205,12 +1205,13 @@ function exportTreemapPNG() {
 /**
  * The map as an SVG, drawn with the canvas's own recipe (review F1.3, F1.9),
  * from what the canvas recorded on each rectangle as it painted it: each
- * folder's own fill where nothing covers it (pass 0, r.bg), each leaf the
- * cushion pass 1 painted it with (r.stops — opaque, in the colour mode on
- * screen, eased under its label where it had to be) with its highlight
- * (r.lit), the History diff pass 2.5's wash over each folder that changed,
- * each leaf's toned outline (pass 2.6, r.edge), each folder's toned bands in
- * the order pass 2.7 laid them (r.bands) — both stopping at the top-level
+ * folder's own fill where nothing covers it (pass 0, r.bg) and its texture
+ * (r.tex), each leaf the cushion pass 1 painted it with (r.stops — opaque, in
+ * the colour mode on screen, eased under its label where it had to be) with
+ * its highlight (r.lit) or its texture (r.tex), the History diff pass 2.5's
+ * wash over each folder that changed, each leaf's toned lines (pass 2.6,
+ * r.lines), each folder's toned bands in the order pass 2.7 laid them
+ * (r.bands) — both stopping at the top-level
  * folders' name tags, as on the canvas — and each label at the lines and in
  * the ink pass 4 chose (r.label, tmLabelInk). It once redrew the map with the
  * recipe G01 and G09 retired — every leaf faded by depth over the page, in
@@ -1227,6 +1228,11 @@ function exportTreemapSVG() {
   const at = (x, y, bw, bh) => `x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${Math.max(0, bw).toFixed(2)}" height="${Math.max(0, bh).toFixed(2)}"`;
   const cushion = (id, stops, r) => defs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="0" y1="${r.y}" x2="0" y2="${r.y + r.h}">` +
     `<stop offset="0" stop-color="${rgb(stops[0])}"/><stop offset="1" stop-color="${rgb(stops[1])}"/></linearGradient>`);
+  // A texture (r.tex): its seams, in the shade of the cushion it lies on, over the tile's height as on the canvas.
+  const texture = (id, r) => {
+    cushion(id, r.tex.stops, r);
+    for (const [x, y, tw, th] of r.tex.rects) parts.push(`<rect ${at(x, y, tw, th)} fill="url(#${id})"/>`);
+  };
   const parts = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" font-family="-apple-system, 'Segoe UI', Helvetica, sans-serif">`,
     `<rect width="${w}" height="${h}" fill="${ground}"/>`,
@@ -1239,6 +1245,7 @@ function exportTreemapSVG() {
     if (!r.frame || !r.bg) continue;
     cushion(`tm-f${i}`, r.bg, r);
     parts.push(`<rect ${at(r.x, r.y, r.w, r.h)} fill="url(#tm-f${i})"/>`);
+    if (r.tex) texture(`tm-t${i}`, r);
   }
   // Leaf fills (with native tooltips via <title>).
   for (const [i, r] of state.treemap.pxRects.entries()) {
@@ -1250,8 +1257,9 @@ function exportTreemapSVG() {
       cushion(`tm-c${i}`, r.stops, r);
       parts.push(`<rect ${at(r.x, r.y, r.w, r.h)} fill="url(#tm-c${i})">${title}</rect>`);
       if (r.lit) {
-        parts.push(`<line x1="${(r.x + 1).toFixed(2)}" y1="${(r.y + 1.5).toFixed(2)}" x2="${(r.x + r.w - 1).toFixed(2)}" y2="${(r.y + 1.5).toFixed(2)}" stroke="rgba(255,255,255,${TM_LIT})" stroke-width="1"/>`);
+        parts.push(`<line x1="${(r.x + 1).toFixed(2)}" y1="${(r.y + 1.5).toFixed(2)}" x2="${(r.x + r.w - 1).toFixed(2)}" y2="${(r.y + 1.5).toFixed(2)}" stroke="rgba(255,255,255,${tmLitAlpha(r)})" stroke-width="1"/>`);
       }
+      if (r.tex) texture(`tm-t${i}`, r);
     } else if (r.n.freed) {
       // Staged in the cart preview: an outline of what is not freed yet, on
       // the ground — a folder's fill does not show through it.
@@ -1293,9 +1301,9 @@ function exportTreemapSVG() {
     defs.push(`<clipPath id="tm-untagged"><path clip-rule="evenodd" d="M0 0H${w}V${h}H0Z${cut.join('')}"/></clipPath>`);
     parts.push('<g clip-path="url(#tm-untagged)">');
   }
-  // Each leaf's toned outline (pass 2.6), after the washes as on the canvas.
+  // Each leaf's toned lines (pass 2.6), after the washes as on the canvas.
   for (const r of state.treemap.pxRects) {
-    if (r.edge) parts.push(`<rect ${at(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1)} fill="none" stroke="${r.edge}" stroke-width="1"/>`);
+    for (const l of r.lines || []) parts.push(`<rect ${at(l.x, l.y, l.w, l.h)} fill="${l.rgb}"/>`);
   }
   // Each folder's frame, as pass 2.7 laid it: its toned bands, deepest folder
   // first, so a folder's band lies over a nested one's where they share an edge.
