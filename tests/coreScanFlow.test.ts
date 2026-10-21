@@ -2311,6 +2311,45 @@ test('BQJ-1b review F3.8: a folder budget saved or removed by keyboard leaves fo
   assert.ok(DASHBOARD_CONTROLS.includes(h.dom.activeElement.id), `onto one of the Dashboard's own controls — never the tour card's "Add to cart" (on #${h.dom.activeElement.id}; K06)`);
 });
 
+test('K06, review F3.6: a budget removed by keyboard from among several leaves focus on the budget now in its place — the one that followed it — or, the last removed, on the one before it; never the first of the list', async () => {
+  // With two budgets the budget now in the removed one's place was also the first: the test above could not tell
+  // the rule from "always the first Edit button", which jumps a keyboard user to the top of the list.
+  const at = (n: number) => `${MAIL}/V${n}`;
+  let saved = [1, 2, 3, 4].map((n) => ({ path: at(n), maxBytes: n * 1_000_000_000 }));
+  const base = server({ roots: [] });
+  const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
+  const h = page({ index: true, realBudgets: true, root: mail, settledScanId: 'scan-mail', route: (m, url, b) => {
+    if (m === 'GET' && url === '/api/scan/scan-mail/budgets') {
+      return { body: { budgets: saved.map((s) => ({ path: s.path, name: s.path.slice(s.path.lastIndexOf('/') + 1), actualBytes: 1_000_000, maxBytes: s.maxBytes, overBy: 0 })) } };
+    }
+    if (m === 'GET' && url === '/api/scan/scan-mail/budget-gauges') return { body: { gauges: [] } };
+    if (m === 'GET' && url === '/api/settings') return { body: { budgets: saved } };
+    if (m === 'PUT' && url === '/api/settings') { saved = (b as { budgets: typeof saved }).budgets; return { body: { budgets: saved } }; }
+    return base(m, url, b);
+  } });
+  h.switchView('dashboard');
+  h.$('budgetCard').parent = h.$('view-dashboard');
+  h.$('budgetList').parent = h.$('budgetCard');
+  const edits = () => h.$('budgetList').children.filter((c) => c.attrs['data-budget-edit']).map((c) => c.attrs['data-budget-edit']);
+  const editFor = (p: string) => h.$('budgetList').children.find((c) => c.attrs['data-budget-edit'] === p);
+  await h.loadBudgets!();
+  assert.deepEqual(edits(), [at(1), at(2), at(3), at(4)], 'control: the card lists the four budgets in order');
+  const removeByKeyboard = async (p: string) => {
+    const opener = editFor(p)!;
+    h.given.closeModal = () => { opener.focus(); };
+    opener.focus();
+    await h.removeBudget!(p);
+    await turns();
+    assert.equal(editFor(p), undefined, `control: ${p}'s row is gone`);
+  };
+  await removeByKeyboard(at(2));
+  assert.equal(h.dom.activeElement, editFor(at(3)), 'a middle one removed: focus is on the budget that followed it, now in its place — not the first');
+  await removeByKeyboard(at(4));
+  assert.equal(h.dom.activeElement, editFor(at(3)), 'the last one removed: focus is on the one before it');
+  await removeByKeyboard(at(1));
+  assert.equal(h.dom.activeElement, editFor(at(3)), 'the first one removed: focus is on the one that followed it');
+});
+
 /* BQJ-1b review F1.12: the Dashboard's Cost to keep, Drive health and folder
    budgets are each worked out from a scan. Over a tree no scan stands behind
    they returned early, keeping the last folder's figures beside this one's
