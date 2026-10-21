@@ -850,14 +850,15 @@ test('G09: the History diff\'s wash is laid only while the diff is on — Histor
  * 1 − 0.08·depth) of sizeRgb over the page, its labels fixed black at
  * 0.78/0.55 — a depth-4 9.1 GB tile came out the pastel/maroon wash at
  * 2.87:1 (review F1.3, F1.9). The real exportTreemapSVG runs here over the
- * pxRects the real drawTreemap left, and its SVG is read back.
+ * pxRects the real drawTreemap left, and its SVG is read back. At device pixel
+ * ratio `dpr`, as the page zoomed in or out (review F1.2 of BQJ-2c-r).
  */
-function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string, history = { active: false, diff: false }, palette?: Record<string, string>, hideCloud = false) {
+function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string, history = { active: false, diff: false }, palette?: Record<string, string>, hideCloud = false, dpr = 1) {
   const state = { treemap: { nodes: tiles, hideCloud, rootSize: 1e12, history, pxRects: [] as any[],
     colorMode: 'size', mode: 'treemap', query: '', rootName: 'r' } };
   const rec = recordingCtx();
   const common = {
-    $: () => ({ clientWidth: MAP_W + 20 }), treemapCanvasHeight: () => MAP_H, window: { devicePixelRatio: 1 },
+    $: () => ({ clientWidth: MAP_W + 20 }), treemapCanvasHeight: () => MAP_H, window: { devicePixelRatio: dpr },
     tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: MAP_W, height: MAP_H }, tmBufCtx: rec.ctx,
     cssVar: (name: string) => (palette ? palette[name] ?? '' : name === '--bg-1' ? ground : 'rgba(0,0,0,0.3)'),
     state,
@@ -870,6 +871,7 @@ function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string, hist
   rec.texts.length = 0;
   rec.ops.length = 0;
   rec.strokes.length = 0; // one clean paint's strokes, as its fills (the outline tests compare them with the SVG's)
+  rec.lines.length = 0; // and its stroked lines (the highlight, review F1.2 of BQJ-2c-r)
   draw();
   let svg = '';
   const exp = load<() => void>(['exportTreemapSVG'], {
@@ -3740,8 +3742,8 @@ test('owner\'s outlines on a page zoomed out (device pixel ratio under 1): every
       if (what === 'the realistic map') assert.ok(banded.some(({ m }) => m >= 4 && m < 8) && banded.some(({ m }) => m >= 8 && m < 32), `${what}, dpr ${dpr}: control — folders 4 to 7 px across, and 8 to 31`);
       const misbanded = banded.filter(({ want, got }) => want !== got).map(({ r, m, want, got }) => `${r.n.path} (${m} px across): ${got} device px of band where ${want} is asked`);
       assert.deepEqual(misbanded.slice(0, 6), [], `${what}, dpr ${dpr}: ${misbanded.length} folders banded off their size`);
-      // The top highlight under a dark top line (pass 1, the lens and the SVG export lay it by tmLitLine): a line's width on
-      // whole device pixels, below the top line.
+      // The top highlight under a dark top line, where tmLitLine puts it: a line's width on whole device pixels, below the top
+      // line. That pass 1, the SVG export and the lens lay it there is held by the two tests after this one and mapPaintFidelity.
       const lit = px.filter((r) => r.lit);
       if (what === 'the colour blocks') assert.ok(lit.length > 50, `${what}, dpr ${dpr}: control — ${lit.length} leaves with a highlight`);
       const litOff = lit.map((r) => ({ r, l: LIT_LINE(r) }))
@@ -3765,6 +3767,38 @@ test('owner\'s outlines on a page zoomed out (device pixel ratio under 1): every
         assert.deepEqual(p.unparted, [], `${where}: leaves of 8 px and up not parted from what lies beside them by a line`);
       }
     }
+  }
+});
+
+test('owner\'s outlines on a page zoomed out: pass 1 strokes a leaf\'s top highlight one line\'s width wide — 1 css px, a device pixel under a ratio of 1 — on whole device pixels just under its top line, from a line\'s width in at each end, and the SVG export writes the very line the canvas stroked, its ends, its row and its width, at device pixel ratios 0.5, 0.667, 0.8, 0.9, 1 and 2 (review F1.2, F1.5 of BQJ-2c-r)', () => {
+  // Pass 1, the SVG export and the lens lay the highlight by tmLitLine (73234dd1), but no test painted any of them under a
+  // ratio of 1, where it differs from the old 1 css px line at x + 1 and y + 1.5: reverted to that, each passed every test.
+  // At 80 % the canvas strokes it 1.25 css px wide, centred 1.875 css px down; the old line was 1 css px, 0.8 of a device
+  // pixel, which the canvas blends into the two rows it crosses.
+  const z = colourBlocks(EVERY_COLOUR, 24, 24);
+  for (const dpr of [0.5, 0.667, 0.8, 0.9, 1, 2]) {
+    const where = `dpr ${dpr}`, t = 1 / Math.min(1, dpr);
+    const onDevice = (v: number) => Math.abs(v * dpr - Math.round(v * dpr)) < 1e-6;
+    const { svg, rec, px } = exportSvg(z.tiles, z.colour, '#0e0e13', undefined, undefined, false, dpr);
+    const lit = (px as Painted[]).filter((r) => r.lit);
+    assert.ok(lit.length > 50, `${where}: control — ${lit.length} leaves with a highlight`);
+    const inBox = (r: Painted, x: number, y: number) => x >= r.x - 1e-6 && x < r.x + r.w && y >= r.y - 1e-6 && y < r.y + r.h;
+    const svgLines = [...svg.matchAll(/<line ([^>]*?)\/?>/g)].map((m) => attrs(m[1])).filter((a) => /^rgba\(255,255,255,/.test(a.stroke ?? ''));
+    const off: string[] = [];
+    for (const r of lit) {
+      const drawn = rec.lines.filter((l) => /^rgba\(255,255,255,/.test(l.style) && inBox(r, l.seg[0], l.seg[1]));
+      const written = svgLines.filter((a) => inBox(r, Number(a.x1), Number(a.y1)));
+      if (drawn.length !== 1 || written.length !== 1) { off.push(`${r.n.path}: ${drawn.length} highlights stroked, ${written.length} written`); continue; }
+      const [{ seg: [x0, y0, x1, y1], width }] = drawn, a = written[0];
+      // On the canvas: a line's width wide, its top edge on the top line's bottom edge, a line's width in from each end.
+      const asked = Math.abs(width - t) < 1e-9 && Math.abs(y0 - width / 2 - (r.y + t)) < 1e-9 && y1 === y0 && Math.abs(x0 - (r.x + t)) < 1e-9 && Math.abs(x1 - (r.x + r.w - t)) < 1e-9;
+      const whole = dpr > 1 && dpr < 2 ? true : [x0, x1, y0 - width / 2, y0 + width / 2].every(onDevice);
+      if (!asked || !whole) off.push(`${r.n.path} (at ${r.x},${r.y}): the canvas strokes ${x0},${y0} to ${x1},${y1}, ${width} css px wide`);
+      // In the SVG: the same line, to the 2 decimals it writes a coordinate in and the 4 it writes a width in.
+      const same = [[a.x1, x0], [a.y1, y0], [a.x2, x1], [a.y2, y1]].every(([v, c]) => Math.abs(Number(v) - Number(c)) <= 0.005 + 1e-9) && Math.abs(Number(a['stroke-width']) - width) <= 5e-5 + 1e-9;
+      if (!same) off.push(`${r.n.path}: the SVG writes ${a.x1},${a.y1} to ${a.x2},${a.y2}, stroke-width ${a['stroke-width']}, where the canvas strokes ${x0},${y0} to ${x1},${y1}, ${width} wide`);
+    }
+    assert.deepEqual(off.slice(0, 6), [], `${where}: ${off.length} highlights not stroked as asked, or not written as stroked`);
   }
 });
 

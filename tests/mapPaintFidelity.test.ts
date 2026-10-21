@@ -229,12 +229,15 @@ test('D39: a tile whose cushion eased for its label shows the same eased cushion
   assert.deepEqual((glass as any).stops, (fill as any).stops, 'the glass paints the cushion the map painted');
 });
 
-/** The real drawTreemap's rectangles for `nodes`, each in its own colour, on a 100×100 map — what the lens redraws. */
-function mapRects(nodes: any[], colourOf: (n: any) => number[], hideCloud = false) {
+/**
+ * The real drawTreemap's rectangles for `nodes`, each in its own colour, on a 100×100 map — what the lens redraws — at device
+ * pixel ratio `dpr`, on a map `size` css px square, painted onto `ctx` (review F1.2 of BQJ-2c-r).
+ */
+function mapRects(nodes: any[], colourOf: (n: any) => number[], hideCloud = false, dpr = 1, size = 100, ctx: unknown = recordingCtx().ctx) {
   const state = { treemap: { nodes, hideCloud, rootSize: 1e9, history: { active: false }, pxRects: [] as any[] } };
   load<() => void>(MAP_NAMES, {
-    $: () => ({ clientWidth: 120 }), treemapCanvasHeight: () => 100, window: { devicePixelRatio: 1 },
-    tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: recordingCtx().ctx,
+    $: () => ({ clientWidth: size + 20 }), treemapCanvasHeight: () => size, window: { devicePixelRatio: dpr },
+    tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: ctx,
     cssVar: () => '#0b0b0f', state, tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {},
     renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {}, cellRgb: colourOf, tmHatchPattern: () => null,
     tmPreview: { on: false }, roundRect() {}, formatBytes: (n: number) => `${n} B`,
@@ -249,7 +252,7 @@ type LensOp = { kind: string; style?: unknown; lineWidth?: number; box: number[]
  * LENS_GROUND knows the glass read the ground's variable and not another.
  */
 const LENS_GROUND = '#0b0b0f';
-function lensOps(pxRects: any[], colourOf: (n: any) => number[], at = { x: 25, y: 25 }): LensOp[] {
+function lensOps(pxRects: any[], colourOf: (n: any) => number[], at = { x: 25, y: 25 }, size = [120, 100]): LensOp[] {
   const ops: LensOp[] = [];
   const st: Record<string, any> = { fillStyle: '', strokeStyle: '', lineWidth: 1 };
   let box: number[] | null = null;
@@ -281,7 +284,7 @@ function lensOps(pxRects: any[], colourOf: (n: any) => number[], at = { x: 25, y
   load<(ctx: unknown, w: number, h: number) => void>(LENS_NAMES, {
     state: { lens: { held: true, pinned: false, at }, treemap: { pxRects, cells: [] } },
     isCells: () => false, cssVar: (name: string) => (name === '--tm-canvas-bg' ? LENS_GROUND : '#ff00ff'), cellRgb: colourOf, altCellPath() {}, window: { devicePixelRatio: 1 },
-  }, 'lensPaint')(ctx, 120, 100);
+  }, 'lensPaint')(ctx, size[0], size[1]);
   return ops;
 }
 
@@ -399,4 +402,49 @@ test('the lens lays the map\'s ground over a folder an online-only file is hidde
   // And the glass itself is laid with the map's ground first, under everything it magnifies (review F3.2).
   const glass = ops.findIndex((op) => op.kind === 'fillRect');
   assert.ok(glass >= 0 && glass < fFill && ops[glass].style === LENS_GROUND, `the glass is first laid with the map's ground, --tm-canvas-bg (${String(ops[glass]?.style)})`);
+});
+
+/** A 2D context that keeps each straight segment stroked, with the paint and the width it was stroked in. */
+function segmentCtx() {
+  const lines: Array<{ style: string; width: number; seg: number[] }> = [];
+  const st: Record<string, any> = { strokeStyle: '', lineWidth: 1 };
+  let pen: number[] | null = null;
+  let segs: number[][] = [];
+  const props: Record<string, unknown> = {
+    measureText: (t: string) => ({ width: String(t).length * 6 }),
+    createLinearGradient: (...args: number[]) => {
+      const g: Grad = { kind: 'linear', args, stops: [] };
+      return Object.assign(g, { addColorStop: (o: number, c: string) => { g.stops.push([o, c]); } });
+    },
+    beginPath: () => { segs = []; pen = null; },
+    moveTo: (x: number, y: number) => { pen = [x, y]; },
+    lineTo: (x: number, y: number) => { if (pen) segs.push([pen[0], pen[1], x, y]); pen = [x, y]; },
+    stroke: () => { for (const seg of segs) lines.push({ style: String(st.strokeStyle), width: Number(st.lineWidth), seg }); },
+  };
+  const ctx: any = new Proxy(props, {
+    get(t, k: string) { return k in t ? t[k] : k in st ? st[k] : () => {}; },
+    set(_t, k: string, v) { st[k] = v; return true; },
+  });
+  return { ctx, lines };
+}
+
+test('the lens strokes a leaf\'s top highlight where the map stroked it — its ends, its row and its width — on a page zoomed out as at 100 % and on a Retina screen, at device pixel ratios 0.5, 0.667, 0.8, 0.9, 1 and 2 (review F1.2, F1.5 of BQJ-2c-r)', () => {
+  // Pass 1 and the lens lay the highlight by tmLitLine (73234dd1): under a ratio of 1 one device pixel wide, on whole device
+  // pixels under the top line. Every lens test ran at a ratio of 1, where that is the old 1 css px line at x + 1 and y + 1.5,
+  // so a lens laying the old line passed every test: at 80 % 1 css px at y + 1.5, where the map lays 1.25 at y + 1.875.
+  for (const dpr of [0.5, 0.667, 0.8, 0.9, 1, 2]) {
+    // The map as many device pixels across as 100 css px at 100 %, so big.bin is lined at every ratio.
+    const k = Math.max(1, 1 / dpr), size = 100 * k;
+    const nodes = [{ name: 'big.bin', path: '/r/big.bin', size: 5e9, type: 'file', depth: 1, expanded: false, x: 10, y: 10, w: 30, h: 30 }];
+    const map = segmentCtx();
+    const px = mapRects(nodes, () => GREEN, false, dpr, size, map.ctx);
+    const big = px.find((p: any) => p.n.path === '/r/big.bin');
+    const drawn = map.lines.filter((l) => /^rgba\(255,255,255,/.test(l.style));
+    assert.ok(big && big.lit && drawn.length === 1, `dpr ${dpr}: control — the map lines big.bin, under a dark top line, and strokes one highlight (${drawn.length})`);
+    const ops = lensOps(px, () => GREEN, { x: 25 * k, y: 25 * k }, [120 * k, 100 * k]);
+    const glass = ops.filter((op) => op.kind === 'line' && /^rgba\(255,255,255,/.test(String(op.style)));
+    assert.equal(glass.length, 1, `dpr ${dpr}: control — the lens strokes one highlight`);
+    assert.ok(near(glass[0].seg!, drawn[0].seg), `dpr ${dpr}: the lens strokes the highlight from ${glass[0].seg} where the map strokes it from ${drawn[0].seg}`);
+    assert.ok(Math.abs(glass[0].lineWidth! - drawn[0].width) < 1e-9, `dpr ${dpr}: the lens strokes it ${glass[0].lineWidth} css px of the map wide, the map ${drawn[0].width}`);
+  }
 });
