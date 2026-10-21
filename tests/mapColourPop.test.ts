@@ -2428,16 +2428,22 @@ function uniformGrid(s: number, n: number, bytes: number) {
  * a line or a texture takes on that tile (darker on a light tile, lighter on a dark one) by more than 1.05:1 — `apart`,
  * the line pixels and texture together, not the highlight — the strongest contrast, the share under luminance 0.03, the
  * mean relative luminance against the solid fill's (`mean`, 1 when equal), the mean CIE L* less the solid fill's (`dL`),
- * and the solid fill's own mean L* (`L`).
+ * and the solid fill's own mean L* (`L`). And `ink`: the share of their area a line or a texture covers as the raster shows
+ * it — each pixel counted by how far it lies from the fill toward the shade the tile's lines (r.lines) or texture (r.tex)
+ * were laid in on its row, 0 to 1 — so a device pixel a 1 px line covers by half, at 150 %, counts a half: the same share at
+ * every device pixel ratio, where `apart` counts that pixel whole.
  */
 function tileLook(raster: ReturnType<typeof rasterCtx>, px: Painted[], inBox: (r: Painted) => boolean, dpr = 1) {
-  let total = 0, apart = 0, black = 0, sum = 0, solid = 0, dL = 0, L = 0, strongest = 1;
+  let total = 0, apart = 0, black = 0, sum = 0, solid = 0, dL = 0, L = 0, strongest = 1, ink = 0;
   for (const r of px) {
     if (r.frame || !r.stops || !inBox(r)) continue;
     const darker = luminance(r.fillRgb!) >= 0.18;
+    const lineShades = [...new Set((r.lines || []).map((l) => l.rgb))].map((c) => rgba(c).slice(0, 3) as RGB);
     const x0 = Math.round(r.x * dpr), y0 = Math.round(r.y * dpr), x1 = Math.round((r.x + r.w) * dpr), y1 = Math.round((r.y + r.h) * dpr);
     for (let y = y0; y < y1; y++) {
-      const fill = lerp(r.stops[0], r.stops[1], Math.max(0, Math.min(1, ((y + 0.5) / dpr - r.y) / r.h)));
+      const t = Math.max(0, Math.min(1, ((y + 0.5) / dpr - r.y) / r.h));
+      const fill = lerp(r.stops[0], r.stops[1], t);
+      const shades = r.tex ? [...lineShades, lerp(r.tex.stops[0] as RGB, r.tex.stops[1] as RGB, t)] : lineShades;
       for (let x = x0; x < x1; x++) {
         const p = raster.at(x, y), c = contrast(p, fill);
         total++;
@@ -2445,10 +2451,17 @@ function tileLook(raster: ReturnType<typeof rasterCtx>, px: Painted[], inBox: (r
         strongest = Math.max(strongest, c);
         if (luminance(p) < 0.03) black++;
         sum += luminance(p); solid += luminance(fill); dL += lab(p).L - lab(fill).L; L += lab(fill).L;
+        // How far p lies from the fill toward a shade, along the line between them: the share of the pixel that shade covers.
+        let k = 0;
+        for (const sh of shades) {
+          const d = sh.map((v, i) => v - fill[i]), n = d.reduce((a, v) => a + v * v, 0);
+          if (n > 0) k = Math.max(k, Math.min(1, d.reduce((a, v, i) => a + v * (p[i] - fill[i]), 0) / n));
+        }
+        ink += k;
       }
     }
   }
-  return { total, apart: apart / total, strongest, black: black / total, mean: sum / solid, dL: dL / total, L: L / total };
+  return { total, apart: apart / total, strongest, black: black / total, mean: sum / solid, dL: dL / total, L: L / total, ink: ink / total };
 }
 
 /** Three colours of the size ramp — a 2 MB file's green, a 400 MB file's amber, a 6 GB file's red — and two of the other colourings. */
@@ -2459,7 +2472,7 @@ const TAPER_COLOURS: Array<{ name: string; rgb: RGB }> = [
   ...OTHER_COLOURS.filter((c) => c.name === 'Reclaim not scored' || c.name === 'Age band C_ORANGE'),
 ];
 
-test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 to 18 px, the share of pixels a line or a texture takes, and the mean lightness, change smoothly from one size to the next, in both themes, on the size ramp, Reclaim\'s "not scored" grey and an Age band, at device pixel ratios 1 and 2', () => {
+test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 to 18 px, the share of pixels a line or a texture takes, and the mean lightness, change smoothly from one size to the next, in both themes, on the size ramp, Reclaim\'s "not scored" grey and an Age band, at device pixel ratios 1, 1.25, 1.5, 1.75 and 2 (review F3.2)', () => {
   // 7 px tiles were one flat block and 8 px tiles a heavy 2 px grid (each leaf drew its own outline, so neighbours met at
   // 2 px): 0% to 43.8% of the pixels, and 15 L* darker, in one step. Now two leaves with lines meet at one 1 px line, and
   // a smaller leaf draws a 1 px texture where they would meet: a 1 px seam per tile at every size, whose share falls as
@@ -2467,9 +2480,14 @@ test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 
   // bound: no step bigger than the one before it, by more than half a point. The seam is the owner's faint texture
   // (1.4:1 at 7 px) below 8 px and his 3:1 line from 8 px, so the mean lightness steps most at 7→8 px: no more than
   // 7 L* there — half the old step — and under 2 L* at every other size.
-  // At 2× a 1 px seam is two device pixels of a tile's 2s: the same share. (At 150 % it covers one and a half, and
-  // the share it touches is not the formula's.)
-  const runs = [...TAPER_COLOURS.map((c) => ({ c, dpr: 1 })), { c: TAPER_COLOURS[1], dpr: 2 }];
+  // At 2× a 1 px seam is two device pixels of a tile's 2s: the same share. At 125, 150 and 175 % it covers a device pixel
+  // and part of the next, which `apart` counts whole: there the share is held as the seams' `ink` (tileLook), each pixel
+  // counted by how much of it a seam covers — the formula's share at every ratio, within a point and a half. A painter that
+  // laid each 8 px tile its own right and bottom line at those ratios put a 2 px grid back: 43.7% of the 8 px tiles' area
+  // at 150 %, against 26.4% for 7 px (review F3.2).
+  const grey = TAPER_COLOURS.find((c) => c.name === 'Reclaim not scored')!;
+  const runs = [...TAPER_COLOURS.map((c) => ({ c, dpr: 1 })), { c: TAPER_COLOURS[1], dpr: 2 },
+    ...[1.25, 1.5, 1.75].map((dpr) => ({ c: TAPER_COLOURS[1], dpr })), { c: grey, dpr: 1.5 }];
   for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
     for (const { c, dpr } of runs) {
       const looks: Array<ReturnType<typeof tileLook> & { s: number }> = [];
@@ -2481,10 +2499,14 @@ test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 
         looks.push({ s, ...tileLook(raster, px, inner, dpr) });
       }
       const where = `${theme}, ${c.name}, dpr ${dpr}`;
-      const table = looks.map((l) => `${l.s}px ${(l.apart * 100).toFixed(1)}% ${l.dL.toFixed(1)}L*`).join(', ');
-      for (const l of looks) assert.ok(Math.abs(l.apart - (1 - ((l.s - 1) / l.s) ** 2)) < 0.02, `${where}: ${l.s} px tiles — one 1 px seam each, ${(l.apart * 100).toFixed(1)}% of their pixels (${table})`);
+      const table = looks.map((l) => `${l.s}px ${(l.apart * 100).toFixed(1)}% (ink ${(l.ink * 100).toFixed(1)}%) ${l.dL.toFixed(1)}L*`).join(', ');
+      for (const l of looks) {
+        const want = 1 - ((l.s - 1) / l.s) ** 2;
+        if (Number.isInteger(dpr)) assert.ok(Math.abs(l.apart - want) < 0.02, `${where}: ${l.s} px tiles — one 1 px seam each, ${(l.apart * 100).toFixed(1)}% of their pixels (${table})`);
+        assert.ok(Math.abs(l.ink - want) < 0.015, `${where}: ${l.s} px tiles — one 1 px seam each, covering ${(l.ink * 100).toFixed(1)}% of their area, where one covers ${(want * 100).toFixed(1)}% (${table})`);
+      }
       for (let k = 1; k < looks.length; k++) {
-        const step = Math.abs(looks[k].apart - looks[k - 1].apart), before = k > 1 ? Math.abs(looks[k - 1].apart - looks[k - 2].apart) : Infinity;
+        const step = Math.abs(looks[k].ink - looks[k - 1].ink), before = k > 1 ? Math.abs(looks[k - 1].ink - looks[k - 2].ink) : Infinity;
         assert.ok(step <= before + 0.005, `${where}: from ${looks[k - 1].s} to ${looks[k].s} px the seams' share steps ${(step * 100).toFixed(1)} points, more than the step before it (${(before * 100).toFixed(1)}) — ${table}`);
         const dL = Math.abs(looks[k].dL - looks[k - 1].dL), bound = looks[k].s === OUTLINED_PX ? 7 : 2;
         assert.ok(dL <= bound, `${where}: from ${looks[k - 1].s} to ${looks[k].s} px the mean lightness steps ${dL.toFixed(1)} L*, over ${bound} — ${table}`);
