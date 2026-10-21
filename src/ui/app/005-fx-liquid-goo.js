@@ -1037,5 +1037,8 @@ function reportError(err, context) {
   if (!err || err.name === 'AbortError') return;
   const detail = err.message || 'Something went wrong.';
   if (err.capabilityUnavailable || err.stillWorking) { toast(detail, 'success', 6000); return; }
+  // Results that aged out (scanResultsExpired): the sentence alone, plainly — and nothing more where it was
+  // offered with its Scan again (eighth browser pass K05).
+  if (err.resultsExpired) { if (!err.offered) toast(detail, 'success', 6000); return; }
   toast(context ? context + ': ' + detail : detail, 'error');
 }

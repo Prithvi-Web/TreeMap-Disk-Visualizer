@@ -1982,12 +1982,17 @@ function scanResultsExpired(err, url, body) {
   let named = null;
   if (typeof body === 'string') { try { named = JSON.parse(body).scanId; } catch { /* not JSON: it names no scan */ } }
   if (!state.root || !scanId || !(String(url).includes(scanId) || named === scanId)) return;
+  // An answer, not a failure: whoever prints it says the sentence alone (reportError), and says nothing
+  // more where the sentence was offered with its Scan again (`offered`) — the map said it again as
+  // "Treemap failed: These results have expired…" (eighth browser pass K05).
+  err.resultsExpired = true;
   if (state.scanning) {
     // A scan is under way: Scan again is not offered over it.
     err.message = 'These results have expired — the scan under way replaces them when it finishes.';
     return;
   }
   err.message = 'These results have expired — scan the folder again to refresh them.';
+  err.offered = true;
   // one toast per expired scan, however many calls fail under it
   if (state.expiredOffered === scanId) return;
   state.expiredOffered = scanId;

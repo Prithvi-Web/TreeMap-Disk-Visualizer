@@ -1565,6 +1565,34 @@ test('the tree\'s scan expiring reads as a sentence when a request names it in i
   assert.deepEqual(offers, [AT_REST], 'Scan again is offered once, however many fail');
 });
 
+test('the map\'s expired scan is said as the sentence alone — once at rest, with Scan again; during a scan as a sentence, not as a failure — never "Treemap failed: These results have expired…"; a map that really failed still says so (eighth browser pass K05)', async () => {
+  const DURING = 'These results have expired — the scan under way replaces them when it finishes.';
+  const AT_REST = 'These results have expired — scan the folder again to refresh them.';
+  const toasts: Array<[string, string | undefined]> = [];
+  const offers: string[] = [];
+  const state: Record<string, unknown> = { root: TREE, ...STOPPED, expiredOffered: null,
+    treemap: { mode: 'treemap', rootPath: '/r', maxDepth: 4, kbSel: null, history: { scrubbing: false } } };
+  let answer = { status: 404, body: { error: 'Unknown or expired scanId', code: 'SCAN_NOT_FOUND' } };
+  // The server, as it answers a map of a scan it no longer holds (a restart emptied its memory).
+  const fetch = async () => ({ status: answer.status, ok: false, text: async () => JSON.stringify(answer.body) });
+  const { fns } = page<{ load: (p: string) => Promise<void> }>(['async function api(url', 'function scanResultsExpired(', 'function reportError(', 'async function loadTreemap('], {
+    state, fetch, setTimeout, $: stubDom(), tmLoadSeq: 0, REDUCED: true, isSun: () => false, isCells: () => false, TM_MIN_SIZE: 4096,
+    exitCartPreview: noop, altCircleFor: () => null,
+    toast: (m: string, k?: string) => { toasts.push([m, k]); }, toastAction: (m: string) => { offers.push(m); }, startScan: noop,
+  }, '{ load: loadTreemap }');
+  await fns.load('/r');
+  await fns.load('/r');
+  assert.deepEqual(offers, [AT_REST], 'at rest: the sentence, offered once with Scan again');
+  assert.deepEqual(toasts, [], 'and nothing more — not "Treemap failed: …", not the sentence twice');
+  Object.assign(state, HELD, { expiredOffered: null });
+  await fns.load('/r');
+  assert.deepEqual(toasts, [[DURING, 'success']], 'during a scan: the sentence alone, said plainly — not as a failure');
+  assert.deepEqual(offers, [AT_REST], 'and no Scan again over the scan under way');
+  answer = { status: 500, body: { error: 'The drive stopped answering.', code: 'INTERNAL' } };
+  await fns.load('/r');
+  assert.deepEqual(toasts.at(-1), ['Treemap failed: The drive stopped answering.', 'error'], 'control: a map that really failed says so');
+});
+
 /* ───────────────────────────── Live mode ───────────────────────────── */
 
 test('Live: the toggle watches the scan the tree on screen came from once it has landed — never a scan still walking, which answers its watch 409 — and pressed while a scan runs says Live starts once the scan finishes, and finishScan starts it; over the saved index\'s tree it says what would make the folder watchable', () => {

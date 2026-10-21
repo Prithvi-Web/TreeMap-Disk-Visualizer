@@ -1939,7 +1939,8 @@ test('LOW-2: the floor the note names is the one the map is asked for', async ()
     treemap: { mode: 'treemap', colorMode: 'size', rootPath: '/r', maxDepth: 4, nodes: [], history: { scrubbing: false } } };
   const loadTreemap = load<(p: string) => Promise<void>>(['treeScanId', 'loadTreemap', 'TM_MIN_SIZE'], {
     state, REDUCED: true, isSun: () => false, isCells: () => false, exitCartPreview() {}, $: () => ({ classList: { add() {}, remove() {} } }),
-    api: async (u: string) => { url = u; throw new Error('stop here'); }, toast() {},
+    // The map's failure is said through reportError (K05); this asks only where the map is asked for.
+    api: async (u: string) => { url = u; throw new Error('stop here'); }, toast() {}, reportError() {},
   }, 'loadTreemap', 'let tmLoadSeq = 0;');
   await loadTreemap('/r');
   const floor = load<number>(['TM_MIN_SIZE'], {}, 'TM_MIN_SIZE');

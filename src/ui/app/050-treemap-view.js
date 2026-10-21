@@ -179,7 +179,8 @@ async function loadTreemap(rootPath, animate = false) {
       drawView(); // the scores follow the drawn set — see the branch above
     }
   } catch (e) {
-    toast('Treemap failed: ' + e.message, 'error');
+    // Through reportError: the scan's results expiring is said as its sentence, never as "Treemap failed" (K05).
+    reportError(e, 'Treemap failed');
   } finally {
     if (animate && !REDUCED) requestAnimationFrame(() => requestAnimationFrame(() => zoom.classList.remove('zooming')));
   }
