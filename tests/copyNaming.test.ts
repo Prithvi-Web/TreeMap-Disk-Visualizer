@@ -72,16 +72,19 @@ function tsFilesUnder(dir: string): string[] {
 /**
  * Each string literal and template piece of the TypeScript under `dirs`, with
  * the file and line it is on. Comments are not strings, so they are left out,
- * as the page's are.
+ * as the page's are. The file is named from the repository with forward
+ * slashes on every system — Windows' path.relative gives backslashes — so a
+ * name reads, and compares, alike everywhere. `p` is the path module that
+ * names it, the host's unless a test hands it another system's.
  */
-function sourceStrings(dirs: string[]): { at: string; text: string }[] {
+function sourceStrings(dirs: string[], p: path.PlatformPath = path): { at: string; text: string }[] {
   const out: { at: string; text: string }[] = [];
   for (const file of dirs.flatMap(tsFilesUnder)) {
     const sf = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const visit = (n: ts.Node): void => {
       if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)
         || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) {
-        out.push({ at: `${path.relative(ROOT, file)}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}`, text: n.text });
+        out.push({ at: `${p.relative(ROOT, file).split(p.sep).join('/')}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}`, text: n.text });
       }
       ts.forEachChild(n, visit);
     };
@@ -384,6 +387,15 @@ test('every sentence the server writes names the feature "Clean Up" — never "C
   for (const file of ['src/services/cartCommit.ts', 'src/api/openapi.ts', 'src/mcp/server.ts']) {
     assert.ok(strings.some((s) => s.at.startsWith(`${file}:`)), `control: ${file} is among them`);
   }
+  // CI runs this file on Windows too, where path.relative spells
+  // "src\services\cartCommit.ts" (review F2.1): handed Windows' own path
+  // module, the reader names every file as it does here, with forward slashes.
+  let asked = 0;
+  const win32: path.PlatformPath = { ...path.win32, relative: (from: string, to: string) => { asked++; return path.win32.relative(from, to); } };
+  const onWindows = sourceStrings(['src'], win32);
+  assert.ok(asked > 0, 'control: the reader names each file through the path module it is handed');
+  assert.equal(onWindows.length, strings.length, 'control: the same strings are read');
+  assert.equal(onWindows.find((s, i) => s.at !== strings[i].at)?.at, undefined, 'each file is named alike on every system, with forward slashes');
   assert.deepEqual(strings.flatMap((s) => cleanupNamings(s.text).map((hit) => `${s.at}: ${hit}`)), []);
 });
 
