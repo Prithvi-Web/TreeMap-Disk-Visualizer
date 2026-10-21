@@ -1627,6 +1627,18 @@ test('pressing Scan keeps focus on it through the path\'s lookup — the button 
   h.open();
   await press;
   assert.equal(moved.document.activeElement, moved.$('browseBtn'), 'focus the person moved meanwhile stays where they moved it');
+  // A press that never focused the button — a mouse click in Safari or Firefox on macOS leaves focus where it was,
+  // here <body> — is not given focus it did not have: on Stop, a later Space meant to scroll the page would stop the
+  // scan (review F3.7).
+  const k = gate();
+  const unfocused = boxesRuntime(slowShots(k));
+  unfocused.type('pathInput', SLOW);
+  assert.equal(unfocused.document.activeElement, unfocused.document.body, 'control: nothing is focused before the press');
+  const mouse = unfocused.click('scanBtn');
+  k.open();
+  await mouse;
+  assert.deepEqual(unfocused.scanned.map(([p]) => p), [SLOW], 'control: the folder is scanned');
+  assert.equal(unfocused.document.activeElement, unfocused.document.body, 'focus the button never held is not pulled onto it (now Stop) once the scan starts');
 });
 
 test('Scan holds its button while the path is looked up, and a press the person moved on from acts on nothing (QA4a R4-3)', async () => {
