@@ -1212,6 +1212,34 @@ test('Clean Up (K04): a pane\'s answer the older scan gives once the rescan has 
   }
 });
 
+test('Clean Up (K04): Find asked again of the scan now on screen, after the older scan\'s request failed, holds its button while that request is out — the button was handed back as the re-ask began, so a second press started a second Find (review F1.4)', async () => {
+  const FINDS: Array<[string, (c: ReturnType<typeof cleanUpPage>) => Promise<void>]> = [
+    ['Custom rules › Find', (c) => c.find()], ['Custom rules › Find, by a saved view', (c) => c.fns.byView()]];
+  for (const [label, press] of FINDS) {
+    for (const outcome of ['fails', 'answers'] as const) {
+      const state: Record<string, unknown> = { root: TREE, notes: new Map(), ...HELD };
+      const held: Array<(fail: boolean) => void> = [];
+      const c = cleanUpPage(state, (url) => new Promise((resolve, reject) => {
+        held.push((fail) => (fail ? reject(new Error('Scan is still running')) : resolve(cleanUpAnswer(url))));
+      }));
+      const btn = c.$('cleanFindBtn');
+      const out = press(c);
+      await turns();
+      assert.deepEqual([c.asks.map((a) => a.scanId), btn.disabled], [['scan-old'], true], `${label}: control: asked of the older scan, Find held`);
+      Object.assign(state, LANDED); // finishScan: the new tree is on screen before the answer
+      held.shift()!(outcome === 'fails'); // the older scan's request fails, or answers, after the landing
+      await out;
+      await turns();
+      assert.deepEqual(c.asks.map((a) => a.scanId), ['scan-old', 'scan-new'], `${label}, the older request ${outcome === 'fails' ? 'failing' : 'answering'}: asked again of the scan now on screen`);
+      assert.equal(btn.disabled, true, `${label}, the older request ${outcome === 'fails' ? 'failing' : 'answering'}: and Find stays held while that request is out`);
+      held.shift()!(false);
+      await turns();
+      assert.equal(btn.disabled, false, `${label}: handed back once it answers`);
+      assert.deepEqual(c.toasts, [], `${label}: nothing said as a failure`);
+    }
+  }
+});
+
 /* ───────────────────────────── the Dashboard's cards, the tour ───────────────────────────── */
 
 test('the Dashboard\'s folder budgets, cost to keep and drive health are asked of the scan the tree on screen came from — never the running scan — and over the saved index\'s tree ask nothing', async () => {

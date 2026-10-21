@@ -40440,10 +40440,23 @@ async function runCleanFind(fetcher) {
   const findLabel = findBtn.innerHTML;
   findBtn.disabled = true;
   let data;
+  let failure = null;
+  let failed = false;
   try {
     data = await fetcher(scanId);
   } catch (e) {
-    if (scanId !== treeScanId()) { cleanAskAgain(() => runCleanFind(fetcher)); return; } // the older scan's failure
+    failure = e;
+    failed = true;
+  } finally {
+    findBtn.disabled = false;
+    findBtn.innerHTML = findLabel;
+  }
+  if (failed) {
+    // The older scan's failure: matched again against the scan the tree now on screen came from — once the
+    // button is handed back, so the Find asked again holds it until it answers. Asked again inside the catch,
+    // the finally after it handed the button back while the new request was out, and a second press started
+    // a second Find (review F1.4).
+    if (scanId !== treeScanId()) { cleanAskAgain(() => runCleanFind(fetcher)); return; }
     // Through `reportError`, never a bare red toast. `GET /api/cleanup/rules`
     // answers 202 {status:'running'} while a scan is still going, and `api()`
     // turns exactly that into a throw carrying `stillWorking` — an ANSWER, not
@@ -40452,11 +40465,8 @@ async function runCleanFind(fetcher) {
     // than red), so pressing Find during a rescan used to paint "Still working
     // on that — it hasn't finished yet" as an error for a request that had not
     // failed and would have succeeded a second later.
-    reportError(e);
+    reportError(failure);
     return;
-  } finally {
-    findBtn.disabled = false;
-    findBtn.innerHTML = findLabel;
   }
   if (!data) return; // the source reported its own problem
   // Another tree is on screen since it was asked: matched again against the scan that tree came from.
