@@ -973,12 +973,18 @@ function tmFolderPathOf(r) {
  * cart preview's) is filed under the folder it lies in, its `parentPath`: its
  * name, "<folder> — freed", reads as a name in the folder above, which filed
  * it there — counted twice in that folder, whose own fill (pass 0) it then hid,
- * and never in its own (review F1.4).
+ * and never in its own (review F1.4). The Trash cell of a home folder's map
+ * (maybeInjectTrash) has no folder in its path, "\0trash": it is filed with the
+ * rest of the top level, under the folder they are filed under — filed apart,
+ * no line or band beside it found it, and each was toned against the map's
+ * ground (review F1.3).
  */
 function tmKidsOf(px) {
   const kids = new Map();
+  const sibling = px.find((r) => r.n.depth === 1 && !r.n.isTrash);
+  const top = sibling ? tmFolderPathOf(sibling) : '';
   for (const r of px) {
-    const parent = tmFolderPathOf(r);
+    const parent = r.n.isTrash ? top : tmFolderPathOf(r);
     if (!kids.has(parent)) kids.set(parent, []);
     kids.get(parent).push(r);
   }

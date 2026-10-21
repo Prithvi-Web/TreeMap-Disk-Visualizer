@@ -2821,6 +2821,55 @@ test('owner\'s refinement: a 1 px band laid in two parts tones its inner part pi
   }
 });
 
+/**
+ * A home folder's map, 300×100 px: beside the Trash cell the page adds to it (maybeInjectTrash: path "\0trash", depth 1,
+ * isTrash) — or, with `ordinary`, a file of the Trash cell's own grey-blue in its place — a top-level folder F of two orange
+ * files, or with `leaf`, a top-level file L.
+ */
+function besideTrash(ordinary: boolean, leaf: boolean) {
+  const W = 300, H = 100, pct = (v: number, of: number) => (v / of) * 100;
+  const tiles: Tile[] = leaf
+    ? [{ name: 'L', path: '/Users/me/L', size: 6e9, type: 'file', depth: 1, expanded: false, x: 0, y: 0, w: pct(180, W), h: 100 }]
+    : [
+      { name: 'F', path: '/Users/me/F', size: 6e9, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: pct(180, W), h: 100 },
+      { name: 'a', path: '/Users/me/F/a', size: 4e9, type: 'file', depth: 2, expanded: false, x: 0, y: 0, w: pct(110, W), h: 100 },
+      { name: 'b', path: '/Users/me/F/b', size: 2e9, type: 'file', depth: 2, expanded: false, x: pct(110, W), y: 0, w: pct(70, W), h: 100 },
+    ];
+  const cell = { name: 'Trash', size: 3e9, type: 'dir', depth: 1, expanded: false, x: pct(180, W), y: 0, w: pct(120, W), h: 100 };
+  tiles.push(ordinary ? { ...cell, name: 'G', path: '/Users/me/G', type: 'file' } : { ...cell, path: '\0trash', isTrash: true } as Tile);
+  const colour = (n: Tile) => (n.path === '/Users/me/G' ? [108, 122, 137] as RGB : [220, 104, 55] as RGB);
+  return { tiles, W, H, colour };
+}
+
+test('owner\'s refinement: the Trash cell of a home folder\'s map is a neighbour like any other — a folder\'s band and a file\'s line beside it are toned against the Trash cell, never against the map\'s ground, so the map paints pixel for pixel as it does with an ordinary file of the Trash cell\'s colour there: one clean band, one shared line, at device pixel ratios 1 and 2, in both themes (review F1.3)', () => {
+  // The Trash cell's path, "\0trash", has no folder in it, so it was filed under '' while the files beside it are filed
+  // under the home folder: no line or band facing it found it, and each was toned against the map's ground — a band
+  // with a 1 px stripe of its leaf's orange, and in light three lines stacked where one is shared.
+  for (const dpr of [1, 2]) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      for (const leaf of [false, true]) {
+        const where = `${theme}, dpr ${dpr}, beside ${leaf ? 'a file' : 'a folder'}`;
+        const trash = besideTrash(false, leaf), plain = besideTrash(true, leaf);
+        const t = rasterPaint(trash.tiles, palette, trash.W, trash.H, trash.colour, undefined, false, dpr);
+        const p = rasterPaint(plain.tiles, palette, plain.W, plain.H, plain.colour, undefined, false, dpr);
+        const cell = t.px.find((r) => (r.n as { isTrash?: boolean }).isTrash)!;
+        assert.ok(cell && cell.lines && cell.lines.length > 0, `${where}: control — the Trash cell is drawn, with lines of its own`);
+        const near = (px: Painted[]) => px.filter((r) => r.n.depth === 1)
+          .map((r) => ({ path: r.n.path === '\0trash' || r.n.path === '/Users/me/G' ? 'the cell' : r.n.path, lines: r.lines, bands: r.bands }));
+        assert.deepEqual(near(t.px), near(p.px), `${where}: the lines and bands beside the Trash cell are those beside an ordinary file of its colour`);
+        let differ = 0, first = '';
+        for (let y = 0; y < t.raster.H; y++) {
+          for (let x = 0; x < t.raster.W; x++) {
+            const a = t.raster.at(x, y), b = p.raster.at(x, y);
+            if (a.some((v, i) => Math.abs(v - b[i]) > 0.5)) { if (!differ) first = `${x},${y}: ${a.map(Math.round)} where ${b.map(Math.round)}`; differ++; }
+          }
+        }
+        assert.equal(differ, 0, `${where}: the map paints as it does with an ordinary file in the cell's place — ${differ} device pixels differ, first ${first}`);
+      }
+    }
+  }
+});
+
 /* ── On the device's own pixels: Retina (2) and 150 % (1.5) ── */
 
 test('tmSnap lays a coordinate on the nearest whole device pixel — at device pixel ratios 1, 1.25, 1.5 and 2 (review F1.7)', () => {
