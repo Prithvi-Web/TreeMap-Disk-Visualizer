@@ -145,7 +145,7 @@ const MAP_NAMES = ['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT
   'tmFrameBands', 'tmTouches', 'TM_SIDES', 'TM_FRAME_MIN',
   'tmToneFor', 'tmLumCache', 'tmLitAlpha', 'tmLeafKind', 'tmBandWidth', 'TM_TEXTURE_PX', 'TM_TEXTURE_PITCH', 'tmTextureContrast', 'tmTextureStops',
   'tmFolderPathOf', 'TM_OPPOSITE', 'tmSideAt', 'tmNeighbourhood', 'tmShown', 'tmBaseOf', 'tmFillShown', 'tmUnderBand', 'tmShareOk', 'tmClip',
-  'tmEdgeOf', 'tmAcross', 'tmInside', 'tmBandAsks', 'tmMeets', 'tmOverlay', 'tmSeamParts', 'tmPartRect', 'tmMergeRuns', 'tmLeafLines',
+  'tmEdgeOf', 'tmAcross', 'tmInside', 'tmBandAsks', 'tmMeets', 'tmOverlay', 'tmSeamParts', 'tmPartRect', 'tmMergeRuns', 'tmLeafLines', 'tmBarCorners',
   'tmLineMask', 'tmClearRuns', 'tmUncovered', 'tmFolderTexture', 'tmLeafTexture',
   // The map's ground, which a band beside a hollow or staged cell is toned against (review F1.5), and what a hollow
   // cell shows on its outermost device pixel (review F2.1).

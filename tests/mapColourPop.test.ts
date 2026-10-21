@@ -1357,7 +1357,7 @@ function rasterCtx(W: number, H: number, ground: RGB) {
 type Band = { x: number; y: number; w: number; h: number; rgb: string };
 /** A rectangle as drawTreemap leaves it in pxRects, with what it recorded painting it. */
 type Texture = { stops: RGB[]; rects: number[][] };
-type Painted = { n: Tile; x: number; y: number; w: number; h: number; frame: boolean; lines?: Band[]; lit?: boolean; stops?: RGB[]; fillRgb?: RGB; bg?: RGB[]; bands?: Band[]; tex?: Texture; lw?: number; seen?: RGB[] };
+type Painted = { n: Tile; x: number; y: number; w: number; h: number; frame: boolean; lines?: Band[]; lit?: boolean; stops?: RGB[]; fillRgb?: RGB; bg?: RGB[]; bands?: Band[]; tex?: Texture; lw?: number; seen?: RGB[]; litSeen?: RGB };
 
 /**
  * `tiles` painted by the real drawTreemap onto a `W`×`H` css px map in `palette`'s theme, at device pixel ratio `dpr`: a raster of the device's pixels.
@@ -1436,7 +1436,7 @@ function underTags(raster: ReturnType<typeof rasterCtx>, bare: ReturnType<typeof
       if (got.some((v, i) => Math.abs(v - want[i]) > 0.5) && shown.length < 8) shown.push(`${x},${y}: ${got.map(Math.round)} where the tag over the tiles alone is ${want.map(Math.round)}`);
     }
   }
-  const under = edgesOf(px, raster.W, raster.H, dpr).filter((e) => raster.taggedWhole(...e.line));
+  const under = edgesOf(px, raster.W, raster.H, dpr, raster).filter((e) => raster.taggedWhole(...e.line));
   const lines = { leaf: under.filter((e) => e.kind === 'leaf').length, frame: under.filter((e) => e.kind === 'frame').length };
   let bandPx = 0;
   for (const b of px.flatMap((r) => r.bands || [])) {
@@ -1482,28 +1482,32 @@ function sideOf(l: Band, r: { x: number; y: number; w: number; h: number }): 'to
  * pixel a line covers there, whole or (a second one) in part, means lines meet lines, and is not measured. Two pixels are left out at each end of
  * a line, where lines meet lines. A line under a device pixel across — under a ratio of 1 a 1 css px line is part of
  * one — is measured on the pixel it covers most, blended with its tile as the screen shows it; it was left out, so a
- * test at such a ratio measured nothing (review F3.6).
+ * test at such a ratio measured nothing (review F3.6). Where a line laid after it covers the line's whole pixel in part —
+ * at 175 % a folder's 1 px band laid over a nested folder's a device pixel from it — the line shows on two pixels beside
+ * the tile, each blended: its whole pixel with the later line, and the pixel it covers in part with the tile. Given the
+ * `raster`, the one of the two that stands out more from the tile is measured; where neither does, the line is lost there.
  */
-function edgesOf(painted: Painted[], W: number, H: number, dpr = 1) {
+function edgesOf(painted: Painted[], W: number, H: number, dpr = 1, raster?: ReturnType<typeof rasterCtx>) {
   // 1: a pixel a line covers whole; 2: one it covers only in part.
   const map = new Uint8Array(W * H);
+  // The last line laid that touches each pixel, in the order passes 2.6 and 2.7 lay them (-1: none).
+  const top = new Int32Array(W * H).fill(-1);
   const extent = (x: number, y: number, w: number, h: number) => ({ x0: x * dpr, y0: y * dpr, x1: (x + w) * dpr, y1: (y + h) * dpr });
-  const mark = (x: number, y: number, w: number, h: number) => {
+  const mark = (x: number, y: number, w: number, h: number, order = -1) => {
     const e = extent(x, y, w, h);
     for (let yy = Math.max(0, Math.floor(e.y0 + 1e-9)); yy < Math.min(H, Math.ceil(e.y1 - 1e-9)); yy++) {
       for (let xx = Math.max(0, Math.floor(e.x0 + 1e-9)); xx < Math.min(W, Math.ceil(e.x1 - 1e-9)); xx++) {
         const full = xx >= e.x0 - 1e-9 && xx + 1 <= e.x1 + 1e-9 && yy >= e.y0 - 1e-9 && yy + 1 <= e.y1 + 1e-9;
         const i = yy * W + xx;
         map[i] = map[i] === 1 || full ? 1 : 2;
+        top[i] = Math.max(top[i], order);
       }
     }
   };
-  const lines: Array<{ l: Band; kind: 'leaf' | 'frame'; r: Painted }> = [];
-  for (const r of painted) {
-    for (const l of r.lines || []) lines.push({ l, kind: 'leaf', r });
-    for (const l of r.bands || []) lines.push({ l, kind: 'frame', r });
-  }
-  for (const { l } of lines) mark(l.x, l.y, l.w, l.h);
+  const lines: Array<{ l: Band; kind: 'leaf' | 'frame'; r: Painted; order: number }> = [];
+  for (const r of painted) for (const l of r.lines || []) lines.push({ l, kind: 'leaf', r, order: lines.length });
+  for (const r of painted.filter((p) => p.frame).sort((a, b) => b.n.depth - a.n.depth)) for (const l of r.bands || []) lines.push({ l, kind: 'frame', r, order: lines.length });
+  for (const { l, order } of lines) mark(l.x, l.y, l.w, l.h, order);
   // A hollow cloud cell's or a staged block's dashed edge, stroked 1 px in from its box, is a line too: where it meets a
   // band end-on, lines meet. Its inside — the ground, or its faint wash over it — is a tile.
   for (const r of painted) {
@@ -1515,7 +1519,7 @@ function edgesOf(painted: Painted[], W: number, H: number, dpr = 1) {
   const isPart = (x: number, y: number) => x >= 0 && y >= 0 && x < W && y < H && map[y * W + x] === 2;
   const out: Array<{ line: [number, number]; tile: [number, number]; what: string; kind: 'leaf' | 'frame'; r: Painted }> = [];
   const skip = Math.ceil(2 * Math.max(1, dpr));
-  for (const { l, kind, r } of lines) {
+  for (const { l, kind, r, order } of lines) {
     // The line's whole device pixels.
     const e = extent(l.x, l.y, l.w, l.h);
     let x0 = Math.ceil(e.x0 - 1e-9), x1 = Math.floor(e.x1 + 1e-9) - 1, y0 = Math.ceil(e.y0 - 1e-9), y1 = Math.floor(e.y1 + 1e-9) - 1;
@@ -1529,9 +1533,16 @@ function edgesOf(painted: Painted[], W: number, H: number, dpr = 1) {
     // Past at most one pixel a line covers in part — the one a 1 px line leaves at 125–175 % — to the tile; a second
     // such pixel is another line's edge, where lines meet lines.
     const step = (x: number, y: number, dx: number, dy: number) => {
-      let tx = x + dx, ty = y + dy;
-      if (isPart(tx, ty)) { tx += dx; ty += dy; }
-      if (isTile(tx, ty)) out.push({ line: [x, y], tile: [tx, ty], what, kind, r });
+      let tx = x + dx, ty = y + dy, lx = x, ly = y;
+      let px: [number, number] | null = null;
+      if (isPart(tx, ty)) {
+        // A line laid after this one covers its whole pixel in part: the line shows on its partial pixel too.
+        if (top[y * W + x] > order) px = [tx, ty];
+        tx += dx; ty += dy;
+      }
+      if (!isTile(tx, ty)) return;
+      if (px && raster && contrast(raster.at(...px), raster.at(tx, ty)) > contrast(raster.at(x, y), raster.at(tx, ty))) [lx, ly] = px;
+      out.push({ line: [lx, ly], tile: [tx, ty], what, kind, r });
     };
     for (let x = x0 + skip; x <= x1 - skip; x++) { step(x, y0, 0, -1); step(x, y1, 0, 1); }
     for (let y = y0 + skip; y <= y1 - skip; y++) { step(x0, y, -1, 0); step(x1, y, 1, 0); }
@@ -1612,7 +1623,7 @@ function partings(raster: ReturnType<typeof rasterCtx>, painted: Painted[], dpr 
  * by pixel, wherever a tag covers a pixel whole), so there is no line there to measure. Everywhere else the bar holds.
  */
 function measureEdges(raster: ReturnType<typeof rasterCtx>, px: Painted[], dpr = 1) {
-  const all = edgesOf(px, raster.W, raster.H, dpr);
+  const all = edgesOf(px, raster.W, raster.H, dpr, raster);
   const edges = all.filter((e) => !raster.tagged(...e.line) && !raster.tagged(...e.tile));
   const tagged = all.length - edges.length;
   const under: string[] = [];
@@ -2846,14 +2857,62 @@ function hashColouring(kind: 'age' | 'reclaim'): (n: Tile) => RGB {
   };
 }
 
-test('owner\'s refinement: every line stands out from the tile on EACH of its sides — every leaf\'s line and every folder\'s band at 3:1 against every tile beside it on the device\'s pixels, every two leaves of 8 px and up parted by a line, and the bands at 4.5:1 or more on the size ramp — on a dense corner, corpus/Mail and a realistic map, at device pixel ratios 1, 1.5 and 2, in both themes, coloured by size, Age and Reclaim', () => {
+/** The page's tmToneFor: the shade of `base` nearest it that reaches each group's target against every colour in it, and whether one does. */
+const TONE_FOR = load<(base: RGB, groups: Array<[RGB[], number]>) => { rgb: RGB; ok: boolean }>(['tmToneFor'], {}, 'tmToneFor', (f) => {
+  // A shade that reaches, and none that does (the nearest is taken): every helper it needs, resolved.
+  f([120, 130, 140], [[[[118, 128, 138]], 3.3]]);
+  f([128, 128, 128], [[[[0, 0, 0], [255, 255, 255]], 4.5]]);
+});
+/**
+ * Where two leaves of 8 px and up meet — `a` left of `b` or above it, in one folder, along one device pixel — the owner's
+ * taper has ONE line between them, b's own left or top edge, wherever a shade of b's colour stands out by the painter's
+ * TM_EDGE_MIN from both tiles as the screen shows them (each one's cushion and the highlight under a dark top line, r.seen
+ * and r.litSeen); only where none does do both lay a line (review F3.5). Returns how many such pairs share one line
+ * (`shared`), and the places where `a` lays a line of its own along an edge they share (`doubled`). The edge is found on the
+ * device's pixels, so a lookup that the float noise in a snapped x + w misled — 452.99999999999994 css px at 175 % — is seen.
+ */
+function doubledLines(px: Painted[], dpr: number) {
+  const dev = (v: number) => Math.round(v * dpr);
+  const parentOf = (r: Painted) => r.n.path.slice(0, r.n.path.lastIndexOf('/'));
+  const edged = px.filter((r) => !r.frame && r.lines);
+  const starts = { x: new Map<string, Painted[]>(), y: new Map<string, Painted[]>() };
+  for (const r of edged) {
+    for (const [axis, at] of [['x', r.x], ['y', r.y]] as const) {
+      const k = `${parentOf(r)}\n${dev(at)}`;
+      if (!starts[axis].has(k)) starts[axis].set(k, []);
+      starts[axis].get(k)!.push(r);
+    }
+  }
+  const shown = (r: Painted) => [...(r.seen || []), ...(r.litSeen ? [r.litSeen] : [])];
+  let shared = 0;
+  const doubled: string[] = [];
+  for (const a of edged) {
+    for (const [axis, side] of [['x', 'right'], ['y', 'bottom']] as const) {
+      const across = axis === 'x' ? 'y' : 'x', len = axis === 'x' ? 'h' : 'w';
+      for (const b of starts[axis].get(`${parentOf(a)}\n${dev(axis === 'x' ? a.x + a.w : a.y + a.h)}`) || []) {
+        const lo = Math.max(dev(a[across]), dev(b[across])), hi = Math.min(dev(a[across] + a[len]), dev(b[across] + b[len]));
+        if (hi <= lo || !TONE_FOR(b.fillRgb!, [[shown(b), PAINTER_EDGE], [shown(a), PAINTER_EDGE]]).ok) continue;
+        shared++;
+        // A line of a's own along that edge: on a's last device column or row, along more than a css px of it — the last
+        // pixel of a's side line, where it closes the corner, lies there too, a css px long.
+        const far = dev(axis === 'x' ? a.x + a.w : a.y + a.h);
+        const own = (a.lines || []).filter((l) => dev(axis === 'x' ? l.x + l.w : l.y + l.h) === far &&
+          Math.min(dev(l[across] + l[len]), hi) - Math.max(dev(l[across]), lo) > Math.ceil(dpr));
+        if (own.length && doubled.length < 6) doubled.push(`${a.n.path} lays its own ${side} line beside ${b.n.path}, device px ${lo} to ${hi}`);
+      }
+    }
+  }
+  return { shared, doubled };
+}
+
+test('owner\'s refinement: every line stands out from the tile on EACH of its sides — every leaf\'s line and every folder\'s band at 3:1 against every tile beside it on the device\'s pixels, every two leaves of 8 px and up parted by a line, and meeting at one line wherever a shade stands out from both, and the bands at 4.5:1 or more on the size ramp — on a dense corner and a realistic map at device pixel ratios 1, 1.25, 1.5, 1.75 and 2, and corpus/Mail at 1, 1.5 and 2, in both themes, coloured by size, Age and Reclaim (review F3.5)', () => {
   // Each outline was toned against its own tile alone: beside a smaller leaf, or a folder's fill (J51), it fell to
   // 2.33:1 against the tile on its far side (corpus/Mail, 104 of 1,889 edges).
   const dense = denseCornerNodes(), mail = mailNodes(), real = realisticNodes();
   const maps: Array<[string, Tile[], number, number, number[]]> = [
-    ['the dense corner', dense, DENSE_PX, DENSE_PX, [1, 1.5, 2]],
+    ['the dense corner', dense, DENSE_PX, DENSE_PX, [1, 1.25, 1.5, 1.75, 2]],
     ['corpus/Mail', mail.tiles, mail.W, mail.H, [1, 1.5, 2]],
-    ['the realistic map', real, REAL_W, REAL_H, [1]],
+    ['the realistic map', real, REAL_W, REAL_H, [1, 1.25, 1.5, 1.75, 2]],
   ];
   const colourings: Array<[string, ((n: Tile) => RGB) | undefined]> = [['size', undefined], ['Age', hashColouring('age')], ['Reclaim', hashColouring('reclaim')]];
   for (const [what, tiles, W, H, ratios] of maps) {
@@ -2869,6 +2928,12 @@ test('owner\'s refinement: every line stands out from the tile on EACH of its si
           const p = partings(raster, px, dpr);
           assert.ok(p.looked > (what === 'corpus/Mail' ? 200 : 500) * dpr, `${where}: control — ${p.looked} places along the sides of leaves of 8 px and up`);
           assert.deepEqual(p.unparted, [], `${where}: leaves of 8 px and up not parted from what lies beside them by a line`);
+          // At 175 % the float noise in a snapped x + w is at its worst (802 of the dense corner's 20,000 sides): a neighbour
+          // looked up by Math.floor rather than Math.round there was missed, and the two laid two lines where one is asked.
+          const d = doubledLines(px, dpr);
+          // (corpus/Mail's files are too small for lines: no two of them meet at one.)
+          if (what !== 'corpus/Mail') assert.ok(d.shared > (what === 'the dense corner' ? 10 : 300), `${where}: control — ${d.shared} pairs of leaves of 8 px and up meet where one line serves both`);
+          assert.deepEqual(d.doubled, [], `${where}: two leaves of 8 px and up laying two lines where one, a shade of the second's colour, stands out from both by ${PAINTER_EDGE}:1`);
           if (colouring === 'size') {
             const bands = m.edges.filter((e) => e.kind === 'frame').map((e) => contrast(raster.at(...e.line), raster.at(...e.tile))).sort((a, b) => a - b);
             const median = bands[Math.floor(bands.length / 2)];
@@ -3335,6 +3400,59 @@ test('owner\'s refinement: where a file\'s corner meets another tile\'s edge, th
       const p = partings(raster, px, dpr);
       assert.ok(p.looked > 100 * dpr, `${where}: control — ${p.looked} places along the files' sides`);
       assert.deepEqual(p.unparted, [], `${where}: files not parted by ${EDGE_BAR}:1 from what lies beside them`);
+    }
+  }
+});
+
+/**
+ * T-junctions where a file B's two lines meet at its corner in opposite tones (review F3.5), on a 100 by 100 css px map.
+ * `side`: a file A down the map's left, past B's bottom; B 60 by 12 px beside it, its left line shared with A — dark, a
+ * shade of B's grey that stands out from both — and below B a dark file C too short for lines, so B's bottom line is light.
+ * The bar is B's left line: it runs on past B's corner as A's edge. `across`: the same turned: A across the top, past B's
+ * right edge; B 60 by 12 px below it, its top line shared with A, dark; a dark file C too narrow for lines at B's right, so
+ * B's right line is light. The bar is B's top line.
+ */
+function tBar(kind: 'side' | 'across') {
+  const rgb: Record<string, RGB> = { A: [156, 146, 72], B: [103, 109, 106], C: [30, 32, 34], D: [200, 120, 60], E: [120, 160, 200] };
+  const t = (name: string, x: number, y: number, w: number, h: number): Tile => ({ name, path: `/t/${name}`, size: 1e9, type: 'file', depth: 1, expanded: false, x, y, w, h });
+  const tiles = kind === 'side'
+    ? [t('A', 0, 0, 40, 100), t('B', 40, 0, 60, 12), t('C', 40, 12, 60, 5), t('D', 40, 17, 60, 83)]
+    : [t('A', 0, 0, 100, 40), t('B', 0, 40, 60, 12), t('C', 60, 40, 5, 12), t('D', 65, 40, 35, 12), t('E', 0, 52, 100, 48)];
+  return { tiles, colour: (n: Tile) => rgb[n.name] };
+}
+
+test('owner\'s refinement: at a T-junction the line that runs on past a file\'s corner keeps the corner\'s device pixels — where a file\'s dark side line and its light line across meet, the side line runs on as the edge of the file beside it, or the line across as the edge of the file above, and that one is laid again over the corner, so the file beside or above stays parted there — at device pixel ratios 1, 1.25, 1.5, 1.75 and 2, in both themes (review F3.5)', () => {
+  // At 125, 150 and 175 % the line across covers the corner's last row of device pixels in part; laid over the side line
+  // there it blended dark and light to the file's own grey, 1.5:1 from the file beside it (2 places at 125 %, 8 at 150 %, 5
+  // at 175 % on the realistic map coloured by Reclaim).
+  for (const kind of ['side', 'across'] as const) {
+    const m = tBar(kind);
+    for (const dpr of [1, 1.25, 1.5, 1.75, 2]) {
+      for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+        const where = `the ${kind} bar, ${theme}, dpr ${dpr}`;
+        const { raster, px } = rasterPaint(m.tiles, palette, 100, 100, m.colour, undefined, false, dpr);
+        const b = px.find((r) => r.n.name === 'B')!;
+        const dev = (v: number) => Math.round(v * dpr);
+        // B's bar and its stem: a vertical line at B's left edge and a horizontal one at its bottom, or a horizontal line at
+        // its top and a vertical one at its right edge.
+        const lines = b.lines || [];
+        const [bar, stem] = kind === 'side'
+          ? [lines.find((l) => l.h > l.w && Math.abs(l.x - b.x) < 1e-6), lines.find((l) => l.w > l.h && Math.abs(l.y + l.h - b.y - b.h) < 1e-6)]
+          : [lines.find((l) => l.w > l.h && Math.abs(l.y - b.y) < 1e-6), lines.find((l) => l.h > l.w && Math.abs(l.x + l.w - b.x - b.w) < 1e-6)];
+        assert.ok(bar && stem && contrast(rgba(bar.rgb).slice(0, 3) as RGB, rgba(stem.rgb).slice(0, 3) as RGB) > 3,
+          `${where}: control — B's bar and stem are laid, one dark and one light (${lines.map((l) => `${l.x},${l.y} ${l.w}×${l.h} ${l.rgb}`).join('; ')})`);
+        // The corner's device pixels on the bar's whole line of pixels, over all the stem's rows (columns): the bar's colour.
+        const want = rgba(bar!.rgb).slice(0, 3);
+        const corner: Array<[number, number]> = kind === 'side'
+          ? Array.from({ length: Math.ceil(dpr) }, (_, k) => [dev(b.x), dev(b.y + b.h) - 1 - k])
+          : Array.from({ length: Math.ceil(dpr) }, (_, k) => [dev(b.x + b.w) - 1 - k, dev(b.y)]);
+        const off = corner.map((at) => ({ at, got: raster.at(...at) })).filter(({ got }) => got.some((v, i) => Math.abs(v - want[i]) > 1));
+        assert.deepEqual(off.map(({ at, got }) => `${at}: ${got.map(Math.round)}`), [], `${where}: B's corner pixels on its bar show the bar's ${want}`);
+        const p = partings(raster, px, dpr);
+        assert.ok(p.looked > 200, `${where}: control — ${p.looked} places along the files' sides`);
+        assert.deepEqual(p.unparted, [], `${where}: files not parted by ${EDGE_BAR}:1 from what lies beside them`);
+        assert.deepEqual(measureEdges(raster, px, dpr).under, [], `${where}: lines under ${EDGE_BAR}:1 against a tile beside them`);
+      }
     }
   }
 });

@@ -1345,10 +1345,14 @@ function tmMergeRuns(rects) {
  * of a line laid in two parts, toned against the tile beyond it alone, is laid
  * first, so at a corner the line across keeps its pixel: laid over it, a side
  * line's outer pixel broke the line between r and a tile above it where r's
- * corner meets that tile's edge (review F1.5).
+ * corner meets that tile's edge (review F1.5). And at each corner the line
+ * that runs on past it is laid again there on its whole device pixels
+ * (tmBarCorners).
  */
 function tmLeafLines(r, g) {
   const own = tmShown(r), out = [], under = [], t = tmLinePx(1, g.dpr);
+  // Each side's outer part, and how far in from its edge its line reaches, for tmBarCorners.
+  const outer = { top: [], left: [], right: [], bottom: [] }, reach = { top: 0, left: 0, right: 0, bottom: 0 };
   for (const side of ['top', 'left', 'right', 'bottom']) {
     const [p, s] = TM_SIDES[side];
     // Each runs its side's whole length: where the top line is left out, the side line still closes the corner.
@@ -1360,10 +1364,61 @@ function tmLeafLines(r, g) {
       if (b <= a + 1e-6) continue;
       const beyond = seg.line ? [] : seg.beside, grain = seg.line ? [] : seg.grain || [];
       const parts = tmSeamParts(r.fillRgb, [[own, TM_EDGE_MIN]], beyond, t, null, true, grain, t);
-      for (const part of parts) (parts.length > 1 && part.inset === 0 ? under : out).push(tmPartRect(r, side, a, b, part));
+      for (const part of parts) {
+        const rect = tmPartRect(r, side, a, b, part);
+        (parts.length > 1 && part.inset === 0 ? under : out).push(rect);
+        if (part.inset === 0) outer[side].push(rect);
+        reach[side] = Math.max(reach[side], part.inset + part.width);
+      }
     }
   }
-  return [...tmMergeRuns(under), ...tmMergeRuns(out)];
+  return [...tmMergeRuns(under), ...tmMergeRuns(out), ...tmBarCorners(r, outer, reach, g)];
+}
+/**
+ * Where two of the leaf `r`'s lines meet at a corner, the one that runs on past
+ * it — the edge between the tiles beyond, a T's bar: across r's side, a tile
+ * that runs past r's top or bottom edge; across its top or bottom, one that
+ * runs past its side — laid again over the corner on the device pixels it
+ * covers whole, so it keeps them, as rectangles to lay after r's lines. At
+ * 125, 150 and 175 % the line across covers the corner's last row of device
+ * pixels in part, and laid over a side line there it blended a dark side line
+ * with a light bottom line to the tile's own tone: the side line no longer
+ * parted r from the file beside it, which runs on past r's corner (review
+ * F3.5). `outer` holds each side's outer part as laid, `reach` how far in
+ * from its edge each side's line reaches.
+ */
+function tmBarCorners(r, outer, reach, g) {
+  const index = g.sides.get(g.keyOf.get(r));
+  if (!index) return [];
+  const dpr = g.dpr, eps = 1e-6, out = [];
+  // Whether a tile across `side` of r runs past the line `at` that crosses it: along x (`along`) or y.
+  const runsPast = (side, at, along) => (index[TM_OPPOSITE[side]].get(Math.round(tmSideAt(r, side) * dpr)) || [])
+    .some((c) => c !== r && (along ? c.x < at - eps && c.x + c.w > at + eps : c.y < at - eps && c.y + c.h > at + eps));
+  for (const side of ['left', 'right']) {
+    for (const across of ['top', 'bottom']) {
+      const sideBar = runsPast(side, tmSideAt(r, across), false), acrossBar = runsPast(across, tmSideAt(r, side), true);
+      if (sideBar === acrossBar) continue;
+      const [bar, stem] = sideBar ? [side, across] : [across, side];
+      if (!reach[stem]) continue;
+      // The bar's outer part at this corner.
+      const end = tmSideAt(r, sideBar ? across : side), vertical = bar === 'left' || bar === 'right';
+      const l = outer[bar].find((q) => vertical
+        ? (across === 'top' ? Math.abs(q.y - end) < eps : Math.abs(q.y + q.h - end) < eps)
+        : (side === 'left' ? Math.abs(q.x - end) < eps : Math.abs(q.x + q.w - end) < eps));
+      if (!l) continue;
+      // Its whole device pixels across it, over every device pixel the stem's line reaches along it.
+      const [a0, a1] = vertical ? [l.x, l.x + l.w] : [l.y, l.y + l.h];
+      const lo = Math.ceil(a0 * dpr - eps), hi = Math.floor(a1 * dpr + eps);
+      const edge = tmSideAt(r, stem), inward = stem === 'top' || stem === 'left' ? 1 : -1;
+      const s0 = Math.round(edge * dpr), s1 = inward > 0 ? Math.ceil((edge + reach[stem]) * dpr - eps) : Math.floor((edge - reach[stem]) * dpr + eps);
+      const [b0, b1] = inward > 0 ? [s0, s1] : [s1, s0];
+      if (hi <= lo || b1 <= b0) continue;
+      out.push(vertical
+        ? { x: lo / dpr, y: b0 / dpr, w: (hi - lo) / dpr, h: (b1 - b0) / dpr, rgb: l.rgb }
+        : { x: b0 / dpr, y: lo / dpr, w: (b1 - b0) / dpr, h: (hi - lo) / dpr, rgb: l.rgb });
+    }
+  }
+  return out;
 }
 /**
  * The folder `r`'s frame as the filled bands that draw it, { x, y, w, h, rgb }:
