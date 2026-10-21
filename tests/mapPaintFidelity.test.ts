@@ -324,6 +324,11 @@ test('the lens redraws what the map now paints — a folder\'s own fill (J51) an
     }
   }
   assert.equal(ops.some((op) => op.kind === 'line' && near(op.seg!, [big.x + 1, big.y + 1.5, big.x + big.w - 1, big.y + 1.5])), !!big.lit, `big.bin's highlight ${big.lit ? 'is' : 'is not'} drawn, as on the map`);
+  // And at the map's strength: as deep as its cushion (tmLitAlpha), 0.18 of white on a tile 60 px tall or more. The full
+  // 0.18 on big.bin, 12 px tall, would be five times what the map draws there (review F1.6).
+  const lit = ops.find((op) => op.kind === 'line' && near(op.seg!, [big.x + 1, big.y + 1.5, big.x + big.w - 1, big.y + 1.5]));
+  assert.ok(big.lit && lit && big.h < 60, `control: big.bin (${big.h} px tall, under a full cushion) is lit, on the map and on the glass`);
+  assert.equal(lit!.style, `rgba(255,255,255,${0.18 * Math.min(1, big.h / 60)})`, 'big.bin\'s highlight is laid on the glass at the map\'s strength');
   // Every band of every folder on the glass, in the map's colours, after every leaf.
   const lastLeaf = Math.max(...[big, t1, t2].map((leaf) => ops.findIndex((op) => op.kind === 'fill' && near(op.box, [leaf.x, leaf.y, leaf.w, leaf.h]))));
   assert.ok(lastLeaf > 0, 'control: the leaves are filled on the glass');
