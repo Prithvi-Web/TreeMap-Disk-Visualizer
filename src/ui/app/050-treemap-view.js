@@ -1185,7 +1185,8 @@ function tmOverlay(one, two, from, to) {
 }
 /**
  * One stretch of a line `width` px wide, as its parts { inset, width, rgb },
- * inset from its outer edge. `inside` is what lies within it, as groups
+ * inset from its outer edge — an inner part laid piece by piece with the
+ * stretch it covers, { lo, hi }. `inside` is what lies within it, as groups
  * [[colours, target], …]; `outside` the colours of a tile beyond it, asked
  * for TM_EDGE_MIN. One part, in the shade of `base` nearest it that reaches
  * every target. Where none does:
@@ -1200,8 +1201,11 @@ function tmOverlay(one, two, from, to) {
  *   - a 1 px line takes the nearest shade that reaches TM_EDGE_MIN on both
  *     sides, if one does;
  *   - else two parts: the outer pixel toned against what lies beyond, the
- *     rest against what lies within (`deeper(k)`: the groups k px in, where
- *     the inner part then ends) — so a band keeps its 4.5:1 within.
+ *     rest against what lies within (`deeper(k)`: the tiles k px in, where
+ *     the inner part then ends, as pieces { lo, hi, groups } wherever those
+ *     tiles change) — so a band keeps its 4.5:1 within, piece by piece: a row
+ *     of a light tile and a dark one has no one shade that stands out from
+ *     both (review F1.2).
  * An empty side asks nothing; a line with neither side stands out from its
  * own colour.
  */
@@ -1223,11 +1227,13 @@ function tmSeamParts(base, inside, outside, width, deeper, optional = false) {
     if (eased.ok) return single(eased.rgb);
   }
   const inner = Math.max(1, width - 1);
-  const deep = deeper ? asked(deeper(1 + inner)) : within;
-  return [
-    { inset: 0, width: 1, rgb: tmToneFor(base, [[outside, TM_EDGE_MIN]]).rgb },
-    { inset: 1, width: inner, rgb: tmToneFor(base, deep.length ? deep : alone).rgb },
-  ];
+  const outer = { inset: 0, width: 1, rgb: tmToneFor(base, [[outside, TM_EDGE_MIN]]).rgb };
+  const toned = (groups) => {
+    const deep = asked(groups);
+    return tmToneFor(base, deep.length ? deep : alone).rgb;
+  };
+  if (!deeper) return [outer, { inset: 1, width: inner, rgb: toned(within) }];
+  return [outer, ...deeper(1 + inner).map(({ lo, hi, groups }) => ({ inset: 1, width: inner, lo, hi, rgb: toned(groups) }))];
 }
 /** A part of a line along `side` of the box `r`, from a to b, as the rectangle { x, y, w, h, rgb } it fills. */
 function tmPartRect(r, side, a, b, part) {
@@ -1293,9 +1299,11 @@ function tmFrameBands(r, g) {
     for (const [a, b, inn, beyond] of tmOverlay(inside, outside, from, to)) {
       const base = (inn && inn.base) || r.bgBase || r.ownRgb;
       const within = [[inn && !inn.line ? inn.beside : [], TM_FRAME_MIN]];
-      const deeper = (k) => tmBandAsks(tmInside(r, side, k, g), a, b);
+      // What lies k px in along [a, b), piece by piece where its tiles change: a two-part band's inner part is toned
+      // against the tiles beside each piece alone (review F1.2).
+      const deeper = (k) => tmOverlay(tmInside(r, side, k, g), [], a, b).map(([lo, hi, seg]) => ({ lo, hi, groups: tmBandAsks(seg ? [seg] : [], lo, hi) }));
       const parts = tmSeamParts(base, within, beyond && !beyond.line ? beyond.beside : [], lw, deeper);
-      for (const part of parts) out.push(tmPartRect(r, side, a, b, part));
+      for (const part of parts) out.push(tmPartRect(r, side, part.lo === undefined ? a : part.lo, part.hi === undefined ? b : part.hi, part));
     }
   }
   return tmMergeRuns(out);

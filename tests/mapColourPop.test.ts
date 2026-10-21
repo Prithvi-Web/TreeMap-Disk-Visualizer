@@ -2776,6 +2776,51 @@ test('owner\'s refinement: a band is toned against what a person sees beside it,
   }
 });
 
+/**
+ * A nested folder F, 30×20 px — a 1 px band — whose bottom band runs over a 1 px strip D of Reclaim's dark "not scored" grey,
+ * with a green leaf O past it: no one shade of the band stands 4.5:1 from D and 3:1 from O, so the band is laid in two
+ * parts, its outer pixel toned against O and its inner one against the row 2 px in — a row that holds a yellow tile Y and
+ * a dark one D2 side by side (review F1.2). Every edge inside the map lies a fifth of a px past a whole px, as a layout puts
+ * it: at 150 % a whole odd px is half a device pixel, where two tiles' shared edge, reckoned from each, can round apart.
+ */
+function mixedRowUnderBand() {
+  const W = 60, H = 50, pct = (v: number, of: number) => (v / of) * 100;
+  const yellow: RGB = [209, 182, 40], dark = OTHER_COLOURS.find((c) => c.name === 'Reclaim not scored')!.rgb, green: RGB = [86, 210, 75];
+  const off = (v: number) => (v > 0 ? v + 0.2 : v);
+  const node = (path: string, depth: number, [x, y, w, h]: number[], rgb: RGB): Tile & { rgb: RGB } => ({
+    name: path.slice(path.lastIndexOf('/') + 1), path, size: 1e9, type: 'file', depth, expanded: false,
+    x: pct(off(x), W), y: pct(off(y), H), w: pct(w, W), h: pct(h, H), rgb });
+  const tiles = [
+    { ...node('/T', 1, [0, 0, 60, 45], [120, 120, 200]), type: 'dir', expanded: true },
+    { ...node('/T/F', 2, [10, 10, 30, 20], [120, 120, 200]), type: 'dir', expanded: true },
+    node('/T/O', 2, [10, 30, 30, 5], green),
+    node('/T/F/Y', 3, [10, 10, 15, 18], yellow),
+    node('/T/F/D2', 3, [25, 10, 15, 18], dark),
+    node('/T/F/D', 3, [10, 28, 30, 1], dark),
+    node('/T/F/S', 3, [10, 29, 30, 1], dark),
+  ];
+  return { tiles: tiles as Tile[], W, H, colour: (n: Tile) => (n as Tile & { rgb: RGB }).rgb };
+}
+
+test('owner\'s refinement: a 1 px band laid in two parts tones its inner part piece by piece against the tiles beside each piece — never one shade against a row that mixes a light tile and a dark one, which no shade stands out from (it stood 2.00:1 from the yellow), every band at 3:1 against every tile beside it, at device pixel ratios 1, 1.5 and 2, in both themes (review F1.2)', () => {
+  const m = mixedRowUnderBand();
+  for (const dpr of [1, 1.5, 2]) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      const where = `${theme}, dpr ${dpr}`;
+      const { raster, px } = rasterPaint(m.tiles, palette, m.W, m.H, m.colour, undefined, false, dpr);
+      const f = px.find((r) => r.n.path === '/T/F')!;
+      // Control: F's band is 1 px, and its bottom band is laid in two parts — its last row and the one above — over the strips.
+      const last = f.y + f.h - 1, bottom = (f.bands || []).filter((b) => b.w > b.h && b.y > f.y + f.h / 2);
+      assert.ok(f.lw === 1 && bottom.some((b) => Math.abs(b.y - last) < 1e-6) && bottom.some((b) => Math.abs(b.y - (last - 1)) < 1e-6),
+        `${where}: control — F's 1 px bottom band laid in two parts (${bottom.map((b) => `${b.x},${b.y} ${b.w}×${b.h} ${b.rgb}`).join('; ')})`);
+      const e = measureEdges(raster, px, dpr);
+      const inner = e.edges.filter((x) => x.kind === 'frame' && x.r === f && x.tile[1] < x.line[1] && x.line[1] >= Math.floor((last - 1) * dpr));
+      assert.ok(inner.length > 5 * dpr, `${where}: control — ${inner.length} places F's inner bottom row meets the tiles above it`);
+      assert.deepEqual(e.under, [], `${where}: lines under ${EDGE_BAR}:1 against a tile beside them`);
+    }
+  }
+});
+
 /* ── On the device's own pixels: Retina (2) and 150 % (1.5) ── */
 
 test('tmSnap lays a coordinate on the nearest whole device pixel — at device pixel ratios 1, 1.25, 1.5 and 2 (review F1.7)', () => {
