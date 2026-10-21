@@ -1022,6 +1022,28 @@ function tmHollowEdge(ground, base, dpr) {
   const off = mix(ground, base, TM_HOLLOW_WASH * wash);
   return [off, mix(off, base, TM_HOLLOW_DASH * dash)];
 }
+/**
+ * What a staged block (the cart preview's) shows on its outermost device
+ * pixel, over the map's `ground`, at device pixel ratio `dpr`: the ground laid
+ * over it again (`inside`, what it shows inside its edge), with its hatch's
+ * `amber` at half over that where a hatch line crosses the pixel (when
+ * `hatched`), each where its dashed `amber` outline is off and where it is on
+ * (when `dashed`: a block over 6 px across). Pass 1 lays the ground again and
+ * the hatch from half a css px in, and the outline 1 px wide centred 1 px in,
+ * so each covers that pixel by the share a hollow cell's wash and outline do
+ * (tmHollowEdge). Reckoned as the hatch's amber at half over the ground laid
+ * again at every ratio, it was lighter than the outline leaves that pixel in
+ * the light theme where the outline covers more than half of it — 0.67 at
+ * 67 %, 0.6 at 80 %, 0.55 at 90 % — and darker in the dark theme: a file of 8
+ * px and up stood under 3:1 from a staged block beside it there (review F1.4
+ * of BQJ-2c-r).
+ */
+function tmStagedEdge(ground, inside, amber, hatched, dashed, dpr) {
+  const wash = Math.max(0, 1 - dpr / 2), dash = Math.max(0, Math.min(1, 1.5 * dpr) - dpr / 2);
+  const off = mix(ground, inside, wash);
+  const offs = hatched && amber ? [off, mix(off, amber, 0.5 * wash)] : [off];
+  return dashed && amber ? [...offs, ...offs.map((c) => mix(c, amber, dash))] : offs;
+}
 /** The path of the folder `r` is filed under: its parent's, or for a staged block (the cart preview's) the folder it lies in. */
 function tmFolderPathOf(r) {
   return r.n.freed && typeof r.n.parentPath === 'string' ? r.n.parentPath : tmParentPath(r.n.path);
@@ -1889,6 +1911,8 @@ function drawTreemap() {
       const inside = tmOver(tmCssRgba(cssVar('--tm-canvas-bg')), ground);
       const amber = tmCssRgba(cssVar('--warn') || '#FF9F0A');
       r.shows = tmSeenThrough(hatch && amber ? [inside, mix(inside, amber, 0.5)] : [inside], tmWashesOver(r, washes));
+      // And on its outermost device pixel, for a line beside it (tmStagedEdge, review F1.4 of BQJ-2c-r).
+      r.showsEdge = tmSeenThrough(tmStagedEdge(ground, inside, amber, !!hatch, r.w > 6 && r.h > 6, dpr), tmWashesOver(r, washes));
       continue;
     }
 

@@ -3312,6 +3312,80 @@ test('owner\'s refinement: a hollow online-only cell shows on its outermost devi
 });
 
 /**
+ * Staged blocks of "Preview after" among files with lines of their own (review F1.4 of BQJ-2c-r): a checkerboard of `s` px
+ * tiles, every other one a staged block as the cart preview names it ("… — freed", filed under its folder), the rest files
+ * in each of `leaves` in turn — at the top level, or `nested` in a folder that covers the map.
+ */
+function besideStaged(leaves: RGB[], s: number, nested: boolean) {
+  const n = Math.ceil(Math.sqrt(2 * leaves.length)), W = n * s, H = n * s, folder = nested ? '/h/F' : '/h', depth = nested ? 2 : 1;
+  const tiles: Tile[] = nested ? [{ name: 'F', path: folder, size: 1e11, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 100, h: 100 }] : [];
+  const colourOf = new Map<string, RGB>();
+  let k = 0;
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const staged = (i + j) % 2 === 1, path = staged ? `${folder}/c${i}.${j} — freed` : `${folder}/f${i}.${j}`;
+      const box = { x: (j * s / W) * 100, y: (i * s / H) * 100, w: (s / W) * 100, h: (s / H) * 100 };
+      tiles.push(staged
+        ? { name: `c${i}.${j} — freed`, path, parentPath: folder, size: 2e9, type: 'dir', depth, expanded: false, freed: true, ...box } as Tile
+        : { name: `f${i}.${j}`, path, size: 2e9, type: 'file', depth, expanded: false, ...box });
+      if (!staged) colourOf.set(path, leaves[k++ % leaves.length]);
+    }
+  }
+  return { tiles, W, H, colour: (t: Tile) => colourOf.get(t.path) ?? [10, 132, 255] as RGB };
+}
+
+test('owner\'s refinement: beside a staged block of "Preview after", a leaf\'s line is toned against what the block shows on its outermost device pixel — the ground laid over again inside its edge, its hatch and its dashed amber outline, each covering the share of that pixel it does at the page\'s own ratio — so every file of 8 px and up is parted by 3:1 from each staged block beside it, on the size ramp, Reclaim scores, "not scored" and the Age bands, at the top level and in a folder, at device pixel ratios 0.5, 0.667, 0.8, 0.9, 1, 1.25, 1.5 and 2, in both themes (review F1.4 of BQJ-2c-r)', () => {
+  // The block's edge was reckoned as half its hatch's amber over the ground at every ratio. Its outline, 1 px wide and centred
+  // 1 px in, covers 0.67, 0.6 and 0.55 of that pixel at 67, 80 and 90 %: a file stood 2.31:1 from the block beside it at
+  // 67 %, 2.60:1 at 80 % and 2.85:1 at 90 % in the light theme, and in a folder 2.06:1 at 67 % in the dark theme.
+  const reclaim = (s: number) => OTHER_COLOURS.find((c) => c.name === `Reclaim score ${s}`)!.rgb;
+  const others = OTHER_COLOURS.filter((c) => c.name.startsWith('Age band') || c.name === 'Reclaim not scored').map((c) => c.rgb);
+  const leaves = [...RAMP_COLOURS.map((c) => c.rgb), ...Array.from({ length: 21 }, (_, k) => reclaim(5 * k)), ...others];
+  for (const dpr of [0.5, 0.667, 0.8, 0.9, 1, 1.25, 1.5, 2]) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      for (const nested of [false, true]) {
+        const where = `${nested ? 'in a folder' : 'at the top level'}, ${theme}, dpr ${dpr}`;
+        // 16 device px a tile under a ratio of 1, as at 100 %.
+        const m = besideStaged(leaves, 16 * Math.max(1, 1 / dpr), nested);
+        const { raster, px } = rasterPaint(m.tiles, palette, m.W, m.H, m.colour, undefined, false, dpr);
+        const staged = px.filter((r) => (r.n as { freed?: boolean }).freed), files = px.filter((r) => !r.frame && !(r.n as { freed?: boolean }).freed);
+        assert.ok(staged.length >= leaves.length && staged.every((r) => !r.stops) && files.length >= leaves.length && files.every((r) => r.lines),
+          `${where}: control — the staged blocks are drawn as blocks, and the files have lines of their own`);
+        const p = partings(raster, px, dpr);
+        assert.ok(p.looked > leaves.length * 4 * 6 * Math.max(1, dpr), `${where}: control — ${p.looked} places along the files' sides`);
+        assert.deepEqual(p.unparted.slice(0, 6), [], `${where}: places a file is not parted by ${EDGE_BAR}:1 from the staged block beside it`);
+      }
+    }
+  }
+});
+
+test('owner\'s refinement: a staged block shows on its outermost device pixel what the painter reckons a line beside it is toned against (tmStagedEdge) — where its dashed outline is on, the outline over the ground laid again, and over a hatch line, each covering the share of that pixel it does: the ground and the hatch 1 − dpr / 2 of it, the outline as a hollow cell\'s does — at device pixel ratios 0.5, 0.667, 0.8, 0.9, 1, 1.25, 1.5 and 2, in both themes (review F1.4 of BQJ-2c-r)', () => {
+  // The raster lays the block's dashed outline without its gaps, so its edge shows the shades where the dash is on: between
+  // the outline over the ground laid again (showsEdge[2]) and over a hatch line (showsEdge[3]), as the hatch crosses the pixel.
+  for (const dpr of [0.5, 0.667, 0.8, 0.9, 1, 1.25, 1.5, 2]) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      const k = Math.max(1, 1 / dpr), where = `${theme}, dpr ${dpr}`;
+      const tiles = [{ name: 'c — freed', path: '/h/c — freed', parentPath: '/h', size: 2e9, type: 'dir', depth: 1, expanded: false, freed: true, x: 20, y: 20, w: 40, h: 40 } as Tile];
+      const { raster, px } = rasterPaint(tiles, palette, 100 * k, 100 * k, () => [10, 132, 255], undefined, false, dpr);
+      const r = px[0] as Painted & { shows?: RGB[]; showsEdge?: RGB[] };
+      assert.ok(r && !r.stops && r.shows && r.showsEdge && r.showsEdge.length === 4, `${where}: control — the block is drawn as a staged block, its edge reckoned with and without its outline and a hatch line`);
+      const [lo, hi] = [r.showsEdge![2], r.showsEdge![3]];
+      const off: string[] = [];
+      let crossed = 0;
+      // Its left column of device pixels, clear of its corners by a quarter of its height.
+      for (let y = Math.round((r.y + r.h / 4) * dpr); y < Math.round((r.y + (3 * r.h) / 4) * dpr); y++) {
+        const got = raster.at(Math.round(r.x * dpr), y);
+        if (contrast(got, lo) > 1.05) crossed++;
+        if (!got.every((v, i) => v >= Math.min(lo[i], hi[i]) - 1.5 && v <= Math.max(lo[i], hi[i]) + 1.5)) off.push(`${y}: ${got.map(Math.round)}`);
+      }
+      // From 200 % nothing covers that pixel but the ground, and no hatch line crosses it.
+      if (dpr < 2) assert.ok(crossed > 0, `${where}: control — a hatch line crosses the block's outermost device pixels`);
+      assert.deepEqual(off.slice(0, 4), [], `${where}: the block's outermost device pixels show the painter's reckoning, from ${lo} to ${hi} (${off.length} do not)`);
+    }
+  }
+});
+
+/**
  * History diff maps where a wash meets a line at its folder's own edge (review F2.3), each node's diff colour from the
  * kind named for it. `beside`: in a top-level folder P, a file L 20 px tall over a folder G 6 px tall — too small for a
  * band — whose one file T fills it, so L's bottom line runs along G's top edge. `sliver`: a top-level folder F1 over a

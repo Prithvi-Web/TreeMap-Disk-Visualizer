@@ -148,8 +148,8 @@ const MAP_NAMES = ['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT
   'tmEdgeOf', 'tmAcross', 'tmInside', 'tmBandAsks', 'tmMeets', 'tmOverlay', 'tmSeamParts', 'tmPartRect', 'tmMergeRuns', 'tmLeafLines', 'tmBarCorners',
   'tmLineMask', 'tmClearRuns', 'tmUncovered', 'tmFolderTexture', 'tmLeafTexture',
   // The map's ground, which a band beside a hollow or staged cell is toned against (review F1.5), and what a hollow
-  // cell shows on its outermost device pixel (review F2.1).
-  'tmGroundRgb', 'tmCssRgba', 'tmOver', 'tmHollowEdge', 'TM_HOLLOW_WASH', 'TM_HOLLOW_DASH',
+  // cell (review F2.1) and a staged block (review F1.4 of BQJ-2c-r) show on their outermost device pixel.
+  'tmGroundRgb', 'tmCssRgba', 'tmOver', 'tmHollowEdge', 'TM_HOLLOW_WASH', 'TM_HOLLOW_DASH', 'tmStagedEdge',
   // The name tags the outlines and bands stop at (review F3.1).
   'tmClipOutTags', 'TM_TAG_RADIUS'];
 
