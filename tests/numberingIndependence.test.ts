@@ -858,14 +858,22 @@ test('one worker and eight workers give the same answers for the same tree', asy
   applyEngineBudgetSetting({ preset: 'turbo', cpuPercent: null });
   let one: { scan: ScanResult; store: PackedScanStore };
   let eight: { scan: ScanResult; store: PackedScanStore };
+  // Eight workers allowed is not eight at once: on a small tree and a busy
+  // three-core runner the system can run them one after another (GitHub's
+  // Windows runner did, once, at 134674f6). So the eight-worker walk is taken
+  // again, up to five times, until two workers were counted at once, and the
+  // answers below are compared against a walk that really ran in parallel.
+  // Counted, not timed.
+  const TRIES = 5;
   try {
     one = await walk(1);
     eight = await walk(8);
+    for (let tried = 1; peaks[peaks.length - 1] < 2 && tried < TRIES; tried++) eight = await walk(8);
   } finally {
     applyEngineBudgetSetting({ preset: 'auto', cpuPercent: null });
   }
   assert.equal(peaks[0], 1, 'the first walk ran on one worker');
-  assert.ok(peaks[1] >= 2, `the second walk ran on ${peaks[1]} workers at once`);
+  assert.ok(peaks[peaks.length - 1] >= 2, `the eight-worker walk ran on ${peaks.slice(1).join(', ')} workers at once in ${peaks.length - 1} of ${TRIES} tries`);
 
   const counters = (scan: ScanResult): unknown => [
     scan.scanned, scan.fileCount, scan.dirCount, scan.hardlinkedFiles, scan.hardlinkedBytes, scan.sparseFiles, scan.sparseBytes,
