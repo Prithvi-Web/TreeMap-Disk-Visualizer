@@ -792,6 +792,26 @@ test('programs whose open files could not be read keep the line\'s measured byte
   assertBalances(two);
 });
 
+test('with holders, the held line still says whose programs TreeMap sees and where another account\'s held space is, as its zero does (BQR-1 item 15)', async () => {
+  const scope = 'TreeMap sees programs running under another account only when it runs as root; any space they hold is otherwise in Unaccounted.';
+  const s = await buildStatement(
+    scanFixture({ store: storeOfSize(GB) }),
+    sourcesFixture({
+      zombies: {
+        processes: [{ pid: 42, processName: 'Docker', bytes: 3 * GB, appBundle: null, handles: [] }] as never,
+        totalBytes: 3 * GB, fileCount: 1,
+      },
+    }),
+  );
+  const held = lineOf(s, 'openHandles');
+  assert.equal(held.bytes, 3 * GB, 'control: with holders, the bytes they hold');
+  assert.ok(held.notes.includes(scope), `and the line says whose programs it saw (notes: ${held.notes.join(' | ')})`);
+  assert.equal(held.notes.filter((n) => n === scope).length, 1, 'once');
+  const zero = lineOf(await buildStatement(scanFixture({ store: storeOfSize(GB) }), sourcesFixture()), 'openHandles');
+  assert.ok(zero.detail.endsWith(scope), 'control: the zero says it in the same words');
+  assertBalances(s);
+});
+
 test('where no held-space pass can run — Windows, a Mac without lsof — the line is unknown with the probe\'s reason, never a measured 0 (BQL item 11)', async () => {
   // Windows' provider answers an empty list (it has no mechanism) and its probe says why; the statement
   // read the empty list as "nothing held", a measured 0 over files nobody checked.

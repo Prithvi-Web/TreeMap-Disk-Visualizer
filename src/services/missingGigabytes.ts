@@ -655,6 +655,14 @@ export function purgeableLine(plat: NodeJS.Platform): StatementLine {
   };
 }
 
+/**
+ * Whose programs the held line speaks for: lsof and /proc show another
+ * account's open files only to root. Said by the zero and, beside the holders,
+ * by a line with holders too (BQR-1 item 15: the Dashboard card said it only
+ * when it found none).
+ */
+const OTHER_ACCOUNTS_UNSEEN = 'TreeMap sees programs running under another account only when it runs as root; any space they hold is otherwise in Unaccounted.';
+
 /** `held`: the held-space probe, started by buildStatement before the layout was read. */
 async function openHandleLine(held: Promise<ZombieReport>): Promise<StatementLine> {
   const remedy: StatementRemedy = {
@@ -694,8 +702,8 @@ async function openHandleLine(held: Promise<ZombieReport>): Promise<StatementLin
         // "none of your programs is holding one": under a /proc mounted with
         // hidepid=2 a program of yours that is not dumpable is not even listed.
         detail: unchecked.length > 0
-          ? 'TreeMap found no deleted file held open by your programs, but could not check every file they have open. TreeMap sees programs running under another account only when it runs as root; any space they hold is otherwise in Unaccounted.'
-          : 'TreeMap found no deleted file held open by your programs, so it counts none of their space as held back. TreeMap sees programs running under another account only when it runs as root; any space they hold is otherwise in Unaccounted.',
+          ? `TreeMap found no deleted file held open by your programs, but could not check every file they have open. ${OTHER_ACCOUNTS_UNSEEN}`
+          : `TreeMap found no deleted file held open by your programs, so it counts none of their space as held back. ${OTHER_ACCOUNTS_UNSEEN}`,
         count: 0,
         notes: unchecked,
         remedy: null,
@@ -719,6 +727,7 @@ async function openHandleLine(held: Promise<ZombieReport>): Promise<StatementLin
       );
     }
     notes.push(...unchecked);
+    notes.push(OTHER_ACCOUNTS_UNSEEN);
     return {
       id: 'openHandles',
       label: 'Held by programs still running',

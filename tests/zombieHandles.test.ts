@@ -978,6 +978,21 @@ test('the held-up space card never gives an all-clear while some programs\' open
     /2 other programs’ open files couldn’t be read/, 'in the plural');
 });
 
+test('with holders listed, the held-up space card still says whose programs it looked at, as its empty state does: your own, and another account\'s only when TreeMap runs as root (BQR-1 item 15)', () => {
+  const empty = { processes: [], totalBytes: 0, unknownSizeCount: 0, fileCount: 0, sharedFileCount: 0, scannedAt: 0, undecidedCount: 0, unreadableProgramCount: 0 };
+  const row = { pid: 7, processName: 'Mail', appBundle: null, bytes: 100, unknownSizeCount: 0, restartable: true, restartRefusal: null,
+    handles: [{ path: '/tmp/held.mbox', bytes: 100, holders: 1 }] };
+  const scope = '<div class="zh-note">TreeMap sees your own programs, and another account’s only when it runs as root.</div>';
+  const held = paintZombies({ ...empty, processes: [row], totalBytes: 100, fileCount: 1 });
+  assert.match(held, /100 B held by a program that won’t let go/, 'control: the card lists a holder');
+  assert.ok(held.includes(scope), `and says whose programs it looked at, true whether or not TreeMap runs as root (${held.slice(-300)})`);
+  const unsure = paintZombies({ ...empty, processes: [row], totalBytes: 100, fileCount: 1, undecidedCount: 2, unreadableProgramCount: 1 });
+  assert.ok(unsure.includes(scope), 'beside the notes on what could not be checked too');
+  const clear = paintZombies(empty);
+  assert.match(clear, /held open by your programs\./, 'control: the empty state says it in its own sentence');
+  assert.ok(!clear.includes(scope), 'which it keeps');
+});
+
 test('the restart refusals are stated in one sentence the Missing GB page quotes (QA D40)', () => {
   for (const kind of [/part of the operating system/, /system administrator/, /another user/, /TreeMap itself/, /its own parent/]) {
     assert.match(RESTART_REFUSES, kind, `the sentence names every refusal restartProcess makes (${String(kind)})`);

@@ -9064,7 +9064,10 @@ function renderZombies(report) {
     ? `<div class="zh-note">${undecided} other open file${undecided === 1 ? '' : 's'} couldn’t be checked, so the real total may be higher.</div>`
     : '') + (unreadable > 0
     ? `<div class="zh-note">${unreadableWords(unreadable, true)}, so the real total may be higher.</div>`
-    : '');
+    : '')
+    // Whose programs these are, as the empty state says (BQR-1 item 15): lsof
+    // and /proc show another account's open files only to root. True either way.
+    + '<div class="zh-note">TreeMap sees your own programs, and another account’s only when it runs as root.</div>';
   // A refresh of the same machine's holders rolls the totals in place; any
   // change in WHO is holding shifts the statics, which FxNum snaps on.
   FxNum.rollHtml(body, head + rows + more + note, 'zh');
