@@ -881,6 +881,34 @@ test('Clean Up: what a match takes on its disk, and the cloud-safe list, are ask
   }
 });
 
+test('Clean Up: the cloud-safe list asked of the older scan during a rescan is not painted once the rescan has landed — nor its "still counting" or its failure — the list is asked again of the scan now on screen', async () => {
+  const OLD = { totalCount: 1, totalSize: 9, groups: [{ provider: 'icloud', count: 1, totalSize: 9, files: [{ name: 'old.mov', path: '/r/old.mov', size: 9, modifiedAt: 0 }] }] };
+  for (const outcome of ['list', 'still counting', 'fails'] as const) {
+    const $ = stubDom();
+    const state: Record<string, unknown> = { root: TREE, ...HELD };
+    const held: Array<() => void> = [];
+    const { fns, asks } = page<{ render: () => Promise<void> }>(['async function renderCloudSafe('], {
+      state, $, seedNodes: noop, formatCount: String, formatBytes: (n: number) => `${n} B`, formatDate: String, escapeHtml: esc,
+      chipFor: () => '', cartButtonHtml: () => '', refreshCartButtons: noop,
+    }, '{ render: renderCloudSafe }', (url) => (url.includes('scan-new') ? { totalCount: 0, groups: [] } : new Promise((resolve, reject) => {
+      held.push(() => (outcome === 'list' ? resolve(OLD)
+        : reject(Object.assign(new Error(outcome === 'fails' ? 'Could not reach the server' : 'Scan is still running'), { stillWorking: outcome === 'still counting' }))));
+    })));
+    // The new tree's tab as its own state left it: hidden, nothing listed.
+    $('cleanTabCloud').hidden = true;
+    const out = fns.render(); // Clean Up opened during the rescan
+    await turns();
+    assert.deepEqual(asks.map((a) => a.scanId), ['scan-old'], `${outcome}: control: asked of the tree's scan, during the rescan`);
+    Object.assign(state, LANDED); // finishScan, before the answer
+    held[0]();
+    await out;
+    await turns();
+    assert.doesNotMatch($('cloudResults').innerHTML, /old\.mov|Still counting|safe/, `${outcome}: the older scan's answer is not painted over the new tree`);
+    assert.deepEqual(asks.map((a) => a.scanId), ['scan-old', 'scan-new'], `${outcome}: the list is asked again of the scan now on screen`);
+    assert.equal($('cleanTabCloud').hidden, true, `${outcome}: and the tab is as that scan's answer leaves it — nothing online-only to list`);
+  }
+});
+
 /* ───────────────────────────── the Dashboard's cards, the tour ───────────────────────────── */
 
 test('the Dashboard\'s folder budgets, cost to keep and drive health are asked of the scan the tree on screen came from — never the running scan — and over the saved index\'s tree ask nothing', async () => {

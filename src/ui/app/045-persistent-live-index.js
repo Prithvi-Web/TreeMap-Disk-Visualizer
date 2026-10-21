@@ -1247,10 +1247,20 @@ async function renderCloudSafe() {
   // The client tree is pruned to a node budget, so counting placeholders here
   // would only see the part that came through. The server walks the whole scan:
   // its counts and byte totals are exact, only the file lists are capped.
+  // An answer, a "still counting" or a failure the older scan gives once
+  // another tree is on screen — the rescan landed, a Stop or an index paint
+  // changed it — is not painted over it: the list is asked again of the
+  // scan the tree now came from, or hidden for the saved index's (review F2.4).
+  const superseded = () => {
+    if (scanId === treeScanId()) return false;
+    void renderCloudSafe();
+    return true;
+  };
   let data;
   try {
     data = await api(`/api/cleanup/cloud-safe?scanId=${scanId}`);
   } catch (e) {
+    if (superseded()) return;
     // Two different answers arrive here and only one of them is a failure.
     // While a scan runs the endpoint answers 202 { status: 'running' }, which
     // api() turns into a thrown `stillWorking` error rather than a body — so
@@ -1267,6 +1277,7 @@ async function renderCloudSafe() {
     hide();
     return;
   }
+  if (superseded()) return;
 
   if (tab) tab.hidden = data.totalCount === 0;
   if (!data.totalCount) { host.innerHTML = ''; return; }
