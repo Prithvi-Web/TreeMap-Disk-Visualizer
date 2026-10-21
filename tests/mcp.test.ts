@@ -381,6 +381,55 @@ test('trash_paths dryRun never reads as an all-clear over a check that could not
   assert.match(tool?.description ?? '', /inUse: false with complete: false is not an all-clear/, 'the tool tells an agent how to read it');
 });
 
+test('a real trash_paths says what the open-file check before it saw, as the dry run does: complete false and why ride beside inUse, so an agent that acts without a dry run still tells the person the check could not see every program (BQR-1 item 16)', async () => {
+  const provider = platform() as unknown as {
+    getOpenHandlesBatch: (paths: string[]) => Promise<unknown>;
+    probeOpenHandleGuard: () => Promise<unknown>;
+  };
+  const batch = provider.getOpenHandlesBatch.bind(provider);
+  const probe = provider.probeOpenHandleGuard.bind(provider);
+  const why = 'TreeMap could not read which files 1 program has open (a test), so a file it holds open may be in use without being listed.';
+  let asked = 0;
+  const answer = (a: unknown) => { provider.getOpenHandlesBatch = () => { asked++; return a instanceof Error ? Promise.reject(a) : Promise.resolve(a); }; };
+  const standIn = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mcp-trash-'));
+  setTrashStepForTests(async (p) => { fs.renameSync(p, path.join(standIn, path.basename(p))); });
+  let n = 0;
+  const trashOne = async (extra: Record<string, unknown> = {}) => {
+    const r = await call('trash_paths', { paths: [write(`real-check-${++n}.txt`, 'x')], dryRun: false, ...extra });
+    assert.ok(!r.isError, JSON.stringify(r.content));
+    assert.equal((r.structuredContent!.deleted as string[]).length, 1, 'control: the file was moved (to the stand-in)');
+    return r.structuredContent!;
+  };
+  provider.probeOpenHandleGuard = () => Promise.resolve({ available: true, mechanism: 'test' });
+  invalidateCapabilities();
+  try {
+    answer({ handles: [], complete: false, reason: why });
+    const partial = (await trashOne()).openHandles as Record<string, unknown> | undefined;
+    assert.ok(partial, 'the real run carries the check\'s word');
+    assert.deepEqual([partial.inUse, partial.checked, partial.complete], [false, true, false], 'checked, not complete — never silent, never a bare "not in use"');
+    assert.ok(String(partial.note).includes(why), `and why: ${JSON.stringify(partial)}`);
+    answer({ handles: [], complete: true });
+    assert.deepEqual((await trashOne()).openHandles, { inUse: false, checked: true, complete: true }, 'a whole check that found nothing says so');
+    answer(new Error('the probe did not answer (a test)'));
+    const unchecked = (await trashOne()).openHandles as Record<string, unknown>;
+    assert.deepEqual([unchecked.inUse, unchecked.checked, unchecked.complete], [false, false, false], 'a check that could not run says so');
+    assert.match(String(unchecked.note), /the probe did not answer/);
+    // ignoreOpenHandles: no check runs, and the answer claims none.
+    asked = 0;
+    const ignored = await trashOne({ ignoreOpenHandles: true });
+    assert.equal(asked, 0, 'control: with ignoreOpenHandles the check does not run');
+    assert.equal('openHandles' in ignored, false, 'and the answer carries no word from a check that did not run');
+  } finally {
+    provider.getOpenHandlesBatch = batch;
+    provider.probeOpenHandleGuard = probe;
+    invalidateCapabilities();
+    setTrashStepForTests(null);
+    fs.rmSync(standIn, { recursive: true, force: true });
+  }
+  const tool = (await client.listTools()).tools.find((t) => t.name === 'trash_paths');
+  assert.match(tool?.description ?? '', /A real run carries the same openHandles/, 'the tool tells an agent the real run says it too');
+});
+
 test('trash_paths refuses paths outside every scanned root', async () => {
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mcp-outside-'));
   try {

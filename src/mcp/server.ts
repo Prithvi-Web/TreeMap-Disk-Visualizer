@@ -179,13 +179,15 @@ function trashNote(moved: number, failed: readonly { stopped?: boolean }[]): str
 }
 
 /**
- * The trash_paths dry run's word on open files (B2). `complete` rides beside `inUse` always, and the check's
- * reason with it whenever the check did not see every program — it could not run (`checked: false`), or it ran
- * and could not read some: on Linux a program of this account that made itself not dumpable, as ssh-agent does;
- * on Windows past Restart Manager's cap. Only `inUse: false` beside `complete: true` is the all-clear (the BQL-a
- * review, F3.1: the dry run kept `checked` alone, so an agent told a person nothing held files nobody had seen).
+ * trash_paths' word on open files (B2), its dry run's and its real run's. `complete` rides beside `inUse`
+ * always, and the check's reason with it whenever the check did not see every program — it could not run
+ * (`checked: false`), or it ran and could not read some: on Linux a program of this account that made itself
+ * not dumpable, as ssh-agent does; on Windows past Restart Manager's cap. Only `inUse: false` beside
+ * `complete: true` is the all-clear (the BQL-a review, F3.1: the dry run kept `checked` alone, so an agent told
+ * a person nothing held files nobody had seen). The real run said nothing of the check before it (BQR-1
+ * item 16), so an agent that acted without a dry run could not tell the person it was incomplete.
  */
-function dryRunOpenHandles(report: OpenHandleReport): Record<string, unknown> {
+function openHandlesWord(report: OpenHandleReport): Record<string, unknown> {
   const unseen = report.complete ? undefined : report.reason;
   if (report.conflicts.length > 0) {
     const named = describeConflicts(report.conflicts);
@@ -862,7 +864,9 @@ export function buildMcpServer(): McpServer {
         'touching anything — dry-run first, and only act once the user has confirmed. Every path must lie inside ' +
         'a folder this server has scanned (run scan_path first); cloud and in-archive paths are refused. The dry ' +
         'run\'s openHandles says whether a program holds any of these files open: inUse: false with complete: false ' +
-        'is not an all-clear — the check could not see every program, and its note says why; tell the user.',
+        'is not an all-clear — the check could not see every program, and its note says why; tell the user. A real ' +
+        'run carries the same openHandles for the check it made before moving anything (none with ' +
+        'ignoreOpenHandles, which skips the check).',
       inputSchema: {
         paths: z.array(z.string().min(1)).min(1).max(MAX_PATHS).describe('Files/folders to trash (inside a scanned root)'),
         dryRun: z.boolean().default(false).describe('true = report the manifest, act on nothing'),
@@ -907,13 +911,15 @@ export function buildMcpServer(): McpServer {
             wouldTrash: sized.map(withInstalledProgram),
             totalKnownBytes: knownTotal,
             totalKnownFormatted: formatBytes(knownTotal),
-            openHandles: dryRunOpenHandles(openHandles),
+            openHandles: openHandlesWord(openHandles),
             note: 'Dry run — nothing was moved to the Trash.',
           });
         }
         let result;
+        // What the check before the Trash steps saw; none with ignoreOpenHandles, which skips it.
+        let checked = null as OpenHandleReport | null; // set in a callback: kept wide, never narrowed to null
         try {
-          result = await moveToTrash(paths, { ignoreOpenHandles });
+          result = await moveToTrash(paths, { ignoreOpenHandles, onOpenHandleReport: (report) => { checked = report; } });
         } catch (err) {
           if (err instanceof AppError && err.code === 'OPEN_HANDLE_CONFLICT') {
             await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun: false, outcome: 'refused', code: err.code });
@@ -929,6 +935,7 @@ export function buildMcpServer(): McpServer {
           failed: result.failed,
           reclaimedBytes: freed,
           reclaimedFormatted: formatBytes(freed),
+          ...(checked === null ? {} : { openHandles: openHandlesWord(checked) }),
           note: trashNote(result.deleted.length, result.failed),
         });
       }),

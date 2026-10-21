@@ -4,7 +4,7 @@ import path from 'path';
 import { CleanResult } from '../models/types';
 import { AppError } from '../middleware/errorHandler';
 import { describeFsError } from '../utils/errno';
-import { checkOpenHandles, describeConflicts } from './openHandleGuard';
+import { checkOpenHandles, describeConflicts, type OpenHandleReport } from './openHandleGuard';
 import { capabilityState } from '../platform/capabilities';
 import { assertNotSafetyRecord, assertNotSpillPath, insideAnyScanRoot } from '../middleware/pathGuard';
 import { RealMachineRefusal, refuseUnderTestRunner } from './realMachineGuard';
@@ -164,6 +164,12 @@ export interface TrashOptions {
    */
   ignoreOpenHandles?: boolean;
   /**
+   * Told what the open-file check found, when it runs (not with
+   * `ignoreOpenHandles`), before any refusal: MCP's real trash_paths says
+   * whether the check saw every program, as its dry run does (BQR-1 item 16).
+   */
+  onOpenHandleReport?: (report: OpenHandleReport) => void;
+  /**
    * Nobody is watching this delete (Autopilot). An open-file check that could
    * not run — the mechanism exists here, but this attempt failed, as `lsof`
    * does when it outruns its limit on a loaded machine — then refuses the
@@ -232,6 +238,7 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
   }
   if (!opts.ignoreOpenHandles) {
     const report = await checkOpenHandles(paths);
+    opts.onOpenHandleReport?.(report);
     if (report.conflicts.length > 0) {
       throw new AppError(409, 'OPEN_HANDLE_CONFLICT', describeConflicts(report.conflicts), {
         conflicts: report.conflicts,
