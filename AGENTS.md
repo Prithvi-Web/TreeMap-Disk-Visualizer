@@ -757,7 +757,7 @@ read-what-you-saw) permission to act.
   (both ends, checked again by the move itself), the offload destination and
   every copy an offload plans under it, `/api/compression/encode` and
   `/api/system/snapshots/restore` (path and destination). Facts about it still answer, since answering touches nothing;
-  the Empty Folders view never offers it; Autopilot leaves it out of every run
+  Clean Up's Empty folders tab never offers it; Autopilot leaves it out of every run
   and says so in `skipped`; and the Trash pathway itself (`moveToTrash`, the
   Undo Vault's `protectAndTrash`) refuses it whatever asked. An Autopilot run
   whose delete is refused there, or fails before anything is deleted, is

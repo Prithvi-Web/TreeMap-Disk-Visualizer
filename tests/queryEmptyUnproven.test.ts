@@ -82,7 +82,9 @@ test('on a gdu scan every childless folder is unknown to empty:, and degraded sa
   assert.deepEqual(yes.dirs, [], 'gdu shows a folder it could not read as an empty one: none is offered as empty');
   assert.match(yes.degraded.get('undecided') ?? '', /^2 items could not be decided/);
   assert.match(yes.degraded.get('emptyUnproven') ?? '', /gdu/, 'the reason names the engine');
-  assert.match(yes.degraded.get('emptyUnproven') ?? '', /onlyEmptyFolders|Empty Folders/, 'and what to do instead');
+  assert.match(yes.degraded.get('emptyUnproven') ?? '', /onlyEmptyFolders: true/, 'and what to do instead');
+  // The page prints the sentence as it comes, so it names the tab as the tab says it (G18 review F1.5).
+  assert.match(yes.degraded.get('emptyUnproven') ?? '', /Clean Up › Empty folders looks at each folder again on disk/, 'in the tab\'s own words');
   const no = await run(scan, 'type:dir empty:no');
   assert.deepEqual(no.dirs, ['/g', '/g/keep', '/g/nest'], 'a folder with a listed child is decided');
   // The plain-words phrase lands on the same terms.

@@ -150,7 +150,7 @@ export const FEATURES = {
   duplicates: { ...GROWS, label: 'duplicate finding' },
   nearDuplicates: { ...GROWS, label: 'near-duplicate finding' },
   compare: { ...GROWS, label: 'comparing two scans' },
-  emptyFolders: { ...GROWS, label: 'the Empty Folders view' },
+  emptyFolders: { ...GROWS, label: 'Clean Up’s Empty folders tab' },
   customRulesDup: { ...GROWS, label: 'the custom rule for names and sizes that occur more than once' },
   fileExport: { ...GROWS, label: 'the per-file export (CSV or XLSX)' },
   folderOffload: { ...GROWS, label: 'offloading a whole folder' },

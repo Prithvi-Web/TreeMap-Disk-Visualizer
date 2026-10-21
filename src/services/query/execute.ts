@@ -289,7 +289,7 @@ export function isOnlyHasBeenOpened(ast: Ast): boolean {
  * are only a summary.
  */
 export function childlessUnproven(scan: Pick<ScanResult, 'engine' | 'deniedEntries' | 'unreadableEntries' | 'unreadableDirs' | 'unreadableDirsNamed'>): string | null {
-  const instead = 'Clean Up › Empty Folders looks at each folder again on disk; an agent trashes these hits with onlyEmptyFolders: true, which does the same.';
+  const instead = 'Clean Up › Empty folders looks at each folder again on disk; an agent trashes these hits with onlyEmptyFolders: true, which does the same.';
   if (scan.engine === 'gdu-turbo') {
     return `This scan ran on gdu, which shows a folder it could not read as an empty one, so "empty:" cannot tell an empty folder from one it never read: folders with nothing listed in them are left undecided. ${instead}`;
   }

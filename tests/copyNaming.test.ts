@@ -284,6 +284,34 @@ test('README, SECURITY and AGENTS name the feature "Clean Up" as the page does: 
   }
 });
 
+/**
+ * The Clean Up tabs and the Duplicates mode as they were spelled before G18;
+ * the tabs now say "Custom rules", "Empty folders", "Shrink video" and
+ * "Near-duplicate images".
+ */
+const OLD_TAB_NAMES = ['Custom Rules', 'Empty Folders', 'Shrink Video', 'Near-Duplicate Images'];
+
+/** Each place `text` names a Clean Up tab in its old Title Case, with a little around it. */
+function oldTabNamings(text: string): string[] {
+  const hits: string[] = [];
+  for (const m of text.matchAll(new RegExp(OLD_TAB_NAMES.join('|'), 'g'))) {
+    const at = m.index ?? 0;
+    hits.push(JSON.stringify(text.slice(Math.max(0, at - 40), at + m[0].length + 30)));
+  }
+  return hits;
+}
+
+test('the page, every sentence the server writes and the docs name a Clean Up tab as the tab says it: "Empty folders", "Shrink video" (G18 review F1.5)', () => {
+  // The query box prints the server's degraded reason as it comes, and on a
+  // gdu scan it sent the person to "Clean Up › Empty Folders"; a refusal by
+  // storage mode named "the Empty Folders view".
+  assert.equal(oldTabNamings('Clean Up › Empty Folders looks at each folder').length, 1, 'control: the old spelling is found');
+  assert.deepEqual(oldTabNamings('Clean Up › Empty folders looks at each folder; emptyFolders, onlyEmptyFolders'), [], 'control: the new one, and a program\'s names, are not');
+  assert.deepEqual(oldTabNamings(pageText(INDEX)), [], 'public/index.html');
+  assert.deepEqual(sourceStrings(['src']).flatMap((s) => oldTabNamings(s.text).map((hit) => `${s.at}: ${hit}`)), [], 'the server\'s strings');
+  for (const doc of DOCS) assert.deepEqual(oldTabNamings(fs.readFileSync(path.join(ROOT, doc), 'utf8')), [], doc);
+});
+
 test('the Undo Vault tab prints a copy\'s reason in the cart\'s words, and an older copy\'s "staged in the cleanup cart" as the cart says it now (G18 review F1.1)', () => {
   // A copy keeps the reason it was stored with (timecapsule.json), so a copy
   // the cart made before the name was settled still holds the old words.
