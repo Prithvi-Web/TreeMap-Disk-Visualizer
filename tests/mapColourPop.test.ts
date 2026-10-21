@@ -3067,7 +3067,7 @@ test('owner\'s refinement: a leaf\'s line is left out only where the tiles part 
  * A grey file L, 30×9 px, in a top-level folder P, with a 6 px file T of Reclaim's dark "not scored" grey just right of it
  * (review F2.2): with `inFolder`, T is the only file in a folder F of its own size, too small for a band, so what lies
  * beyond L's right side is found inside F. T's texture's left column runs along L's right side; L's cushion parts from T's
- * by a little over 3.3:1 for the greys from about 150 to 170, and from T's lighter texture by less.
+ * by 3.3:1 or more for the greys from 154 to 170 (3.33 to 4.01:1), and from T's lighter texture by less (2.52 to 3.02:1).
  */
 function besideBandless(grey: number, inFolder: boolean) {
   const W = 100, H = 100, dark = OTHER_COLOURS.find((c) => c.name === 'Reclaim not scored')!.rgb;
@@ -3174,8 +3174,8 @@ test('owner\'s refinement: in the History diff a line along a washed folder\'s e
   // Each wash was laid half a css px in from its folder's edge, while the painter toned the lines against every tile in
   // the folder as washed: at 2× the tile's outer device pixel was unwashed, and L's line stood 2.91:1 from it (a folder
   // that shrank, holding one that grew); a folder half a px tall was washed off the map, and the band above it stood
-  // 2.72:1 from it; and a file half a px tall just past a washed folder was counted washed by it too — the band of a
-  // folder that grew stood 2.94:1 from the unwashed file under it.
+  // 2.72:1 from it in the review's fuzz (2.94:1 here); and a file half a px tall just past a washed folder was counted
+  // washed by it too — the band of a folder that grew stood 2.94:1 from the unwashed file under it.
   const history = { active: true, diff: true }, colour = (n: Tile) => DIFF_PAGE.diffRgb(n);
   const kinds = ['grew', 'shrank', 'unchanged'];
   for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
