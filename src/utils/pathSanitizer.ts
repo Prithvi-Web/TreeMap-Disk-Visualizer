@@ -845,6 +845,31 @@ export function sanitizePathToRead(input: unknown): { path: string; answerable: 
 }
 
 /**
+ * The names among `names` — entries of the folder `dir`, as listed — whose paths `sanitizePath` refuses, by
+ * their spelling or by where they lead (eighth browser pass K53: the folder picker drew "db" in /var, which
+ * leads into /private/var/db, and a click on it answered only with that refusal). Judged by `sanitizePath`'s
+ * own rule, for each entry named like a folder of the blocklist, letter case aside (and on Windows a trailing
+ * dot or space, which Windows drops): an entry of a folder TreeMap may list is refused only as that folder,
+ * by its own name or another — a link leads elsewhere, but a listing leaves links out. Any other name is
+ * asked nothing of the file system, so a folder of thousands of subfolders costs no call per subfolder.
+ */
+export function refusedChildren(dir: string, names: readonly string[]): Set<string> {
+  const win = process.platform === 'win32';
+  const fold = (name: string): string => (win ? withoutWin32Tail(name) : name).toLowerCase();
+  const named = new Set((win ? WINDOWS_BLOCKLIST : UNIX_BLOCKLIST).map((b) => fold(path.basename(b))));
+  const refused = new Set<string>();
+  for (const name of names) {
+    if (!named.has(fold(name))) continue;
+    try {
+      if (!sanitizePathToRead(path.join(dir, name)).answerable) refused.add(name);
+    } catch {
+      refused.add(name); // refused by its spelling
+    }
+  }
+  return refused;
+}
+
+/**
  * `sanitizePath`'s work: throws the refusal a path's spelling earns (not a path, a null byte, a second
  * name, the blocklist as spelled); answers, beside the path resolved, the refusal it earns only for
  * where it leads (the canonical form on the blocklist or through a second name, or the same folder as

@@ -151,3 +151,48 @@ test('the published spec names total, always sent, and says dirs is the first 50
     dirs: /first 500 in the order the picker shows them: ordinary folders first, then dot-folders, each by name/.test(schema.properties.dirs.description ?? ''),
   }, { required: ['path', 'parent', 'dirs', 'total'], total: 'integer', dirs: true });
 });
+
+test('a folder the path rules refuse is not listed, by its name or by where it leads — through a link to the drive\'s root no "dev" (or System32 under Windows\' folder), on macOS /var no "db", which leads into /private/var/db — and total counts what is listed (eighth browser pass K53)', async () => {
+  const win = process.platform === 'win32';
+  const target = win ? (process.env.SystemRoot ?? 'C:\\Windows') : '/';
+  const refusedName = win ? 'system32' : 'dev';
+  const keptName = win ? 'fonts' : 'usr';
+  const dir = fs.realpathSync(fileTempDir('treemap-fslist-refused-'));
+  const link = path.join(dir, 'leads-to-system');
+  fs.symlinkSync(target, link, win ? 'junction' : 'dir');
+  const names = (r: { body: { dirs: Array<{ name: string }> } }) => r.body.dirs.map((d) => d.name.toLowerCase());
+  const through = await listing(link);
+  assert.equal(through.status, 200, JSON.stringify(through.body));
+  assert.ok(names(through).includes(keptName), `control: ${keptName} is listed through the link (${names(through).join(', ')})`);
+  assert.ok(!names(through).includes(refusedName), `${refusedName}, reached through the link, leads into a folder TreeMap stays out of: not listed`);
+  if (through.body.dirs.length < 500) assert.equal(through.body.total, through.body.dirs.length, 'total counts the folders listed, not the one left out');
+  const opened = await listing(path.join(link, win ? 'System32' : 'dev'));
+  assert.equal(opened.status, 400, 'control: the folder itself, asked for, is refused as before');
+  if (!win) assert.ok(!names(await listing('/')).includes('dev'), 'the root lists no /dev, refused by its own name');
+  if (process.platform === 'darwin') {
+    assert.ok(!names(await listing('/var')).includes('db'), '/var lists no "db": it leads into /private/var/db');
+    assert.ok(!names(await listing('/private/var')).includes('db'), 'nor does /private/var, by its name');
+    assert.ok(names(await listing('/var')).includes('folders'), 'control: /var still lists its other folders');
+  }
+});
+
+test('judging which folders a listing may show asks nothing of the file system per folder where none can be refused — 520 subfolders of an ordinary folder cost no stat, lstat or realpath of one of them (eighth browser pass K53)', async () => {
+  const dir = fs.realpathSync(fileTempDir('treemap-fslist-cheap-'));
+  for (let i = 0; i < 520; i++) fs.mkdirSync(path.join(dir, `d${pad(i)}`));
+  const inside = (p: unknown) => typeof p === 'string' && p.startsWith(dir + path.sep);
+  let asked = 0;
+  const real = { lstat: fs.lstatSync, stat: fs.statSync, native: fs.realpathSync.native };
+  const fsAny = fs as unknown as { lstatSync: unknown; statSync: unknown; realpathSync: { native: unknown } };
+  fsAny.lstatSync = (p: fs.PathLike, ...a: unknown[]) => { if (inside(p)) asked++; return (real.lstat as (...x: unknown[]) => unknown)(p, ...a); };
+  fsAny.statSync = (p: fs.PathLike, ...a: unknown[]) => { if (inside(p)) asked++; return (real.stat as (...x: unknown[]) => unknown)(p, ...a); };
+  fsAny.realpathSync.native = (p: fs.PathLike, ...a: unknown[]) => { if (inside(p)) asked++; return (real.native as (...x: unknown[]) => unknown)(p, ...a); };
+  let r: { status: number; body: any };
+  try {
+    r = await listing(dir);
+  } finally {
+    fsAny.lstatSync = real.lstat; fsAny.statSync = real.stat; fsAny.realpathSync.native = real.native;
+  }
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.total, 520, 'control: every subfolder is listed');
+  assert.equal(asked, 0, 'and none of them was looked at to judge it');
+});

@@ -3,7 +3,7 @@ import { promises as fsp } from 'fs';
 import os from 'os';
 import path from 'path';
 import { guardQueryPath, assertNotSpillPath, assertNotAppDataPath } from '../middleware/pathGuard';
-import { sanitizePath } from '../utils/pathSanitizer';
+import { refusedChildren, sanitizePath } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
 import { idempotency } from '../middleware/idempotency';
 import { findDeleted, ReplaceRefused, restoreFromSnapshot } from '../services/snapshotRecovery';
@@ -215,8 +215,9 @@ const FOLDER_NAME_ORDER = new Intl.Collator(undefined, { sensitivity: 'base' });
  * Sorted in the order the picker shows them — ordinary folders first, then
  * dot-folders (its browseOrder), each by name — and only then cut, so the 500
  * sent are the first 500 shown. Cut first, they were whichever 500 the
- * directory read met first (POL item 2). `total` counts every subfolder, so
- * the picker can say the list was cut.
+ * directory read met first (POL item 2). `total` counts every subfolder it
+ * lists, so the picker can say the list was cut. A link is not listed, nor a
+ * folder the path rules refuse — by its name, or by where it leads (K53).
  */
 systemRouter.get('/fs/list', guardQueryPath('path'), async (req: Request, res: Response) => {
   const target = (req.query.path as string | undefined) ?? os.homedir();
@@ -227,8 +228,12 @@ systemRouter.get('/fs/list', guardQueryPath('path'), async (req: Request, res: R
   }
 
   const entries = await fsp.readdir(target, { withFileTypes: true });
-  const all = entries
-    .filter((e) => e.isDirectory() && !e.isSymbolicLink())
+  const folders = entries.filter((e) => e.isDirectory() && !e.isSymbolicLink());
+  // Nor a folder the path rules refuse, by its name or by where it leads: a row for one opened only that
+  // refusal — /var listed "db", which leads into /private/var/db (eighth browser pass K53).
+  const refused = refusedChildren(target, folders.map((e) => e.name));
+  const all = folders
+    .filter((e) => !refused.has(e.name))
     .map((e) => ({
       name: e.name,
       path: path.join(target, e.name),
