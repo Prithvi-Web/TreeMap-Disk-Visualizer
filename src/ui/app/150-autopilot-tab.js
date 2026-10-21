@@ -108,6 +108,12 @@ function describeMatch(match) {
   if (match.kind === 'suggestion') {
     // Counted only where a rule here has the kind: an id an earlier build's editor offered and no pack
     // ever shipped matches nothing, so it is said apart (BQL-b1 review F3.1, F3.5).
+    // Packs the server could not read: no id is a kind TreeMap has or lacks that it can name, and the card
+    // says so rather than counting each as a kind of reclaimable file (BQR-1 item 17).
+    if (!apKindsKnown()) {
+      const named = match.groupIds.length;
+      return `${named} kind${named === 1 ? '' : 's'} of file — ${apCannotTell(named)}`;
+    }
     const gone = apUnknownKinds(match.groupIds);
     const n = match.groupIds.length - gone.length;
     const kinds = `${n} kind${n === 1 ? '' : 's'} of reclaimable file`;
@@ -441,6 +447,16 @@ function apUnknownKinds(ids) {
   return Array.isArray(known) ? ids.filter(id => !known.includes(id)) : [];
 }
 
+/** Whether the server said which kinds the rule packs here have (null when it could not read them). */
+function apKindsKnown() {
+  return Array.isArray(state.autopilot && state.autopilot.knownGroupIds);
+}
+
+/** What the card and the editor say of `n` named kinds while the rule packs cannot be read (BQR-1 item 17). */
+function apCannotTell(n) {
+  return `TreeMap could not read its rule packs, so it cannot tell ${n === 1 ? 'whether it has it' : 'which of them it has'}`;
+}
+
 /** "a kind of file", "2 kinds of file". */
 function apKinds(n) {
   return n === 1 ? 'a kind of file' : `${n} kinds of file`;
@@ -456,7 +472,7 @@ function renderApGroupList(selected) {
   const other = unlisted.filter(id => !gone.includes(id));
   const parts = [
     gone.length ? `${apKinds(gone.length)} TreeMap does not have (${gone.join(', ')}), which ${gone.length === 1 ? 'matches' : 'match'} nothing` : null,
-    other.length ? `${apKinds(other.length)} this list does not offer (${other.join(', ')})` : null,
+    other.length ? `${apKinds(other.length)} this list does not offer (${other.join(', ')})${apKindsKnown() ? '' : `, and ${apCannotTell(other.length)}`}` : null,
   ].filter(Boolean);
   const note = parts.length
     ? `<div class="muted" style="margin:0 0 8px;line-height:1.5;">This policy names ${escapeHtml(parts.join(', and '))}. Saving keeps only the kinds ticked below.</div>`

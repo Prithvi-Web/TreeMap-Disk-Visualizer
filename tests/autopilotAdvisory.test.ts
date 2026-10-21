@@ -336,7 +336,7 @@ test('a policy naming a kind TreeMap does not have says so on its card and in it
   const served = { policies: [], knownGroupIds: ['regen-node-modules', 'regen-python-venv', 'old-downloads', 'tool-caches'] };
   const state: { autopilot: { policies?: unknown; runs?: unknown; knownGroupIds?: unknown } } = { autopilot: {} };
   const page = new Function('state', '$', 'api', 'fxApBreatheSync', 'renderAutopilot',
-    ['escapeHtml', 'AP_GROUPS', 'apUnknownKinds', 'apKinds', 'describeMatch', 'renderApGroupList', 'loadAutopilot'].map(pageDecl).join('\n') +
+    ['escapeHtml', 'AP_GROUPS', 'apUnknownKinds', 'apKindsKnown', 'apCannotTell', 'apKinds', 'describeMatch', 'renderApGroupList', 'loadAutopilot'].map(pageDecl).join('\n') +
     '\nreturn { describeMatch, renderApGroupList, loadAutopilot };',
   )(state, $, async (url: string) => (url.startsWith('/api/autopilot/runs') ? { runs: [] } : served), () => undefined, () => undefined) as {
     describeMatch: (m: unknown) => string; renderApGroupList: (ids: string[]) => void; loadAutopilot: () => Promise<void>;
@@ -362,9 +362,21 @@ test('a policy naming a kind TreeMap does not have says so on its card and in it
   page.renderApGroupList(['<img src=x onerror=alert(1)>']);
   assert.ok((html.apGroupList ?? '').includes('(&lt;img src=x onerror=alert(1)&gt;)') && !(html.apGroupList ?? '').includes('<img'), `an id is escaped: ${html.apGroupList}`);
 
-  // Packs the server could not read: nothing is judged, as before.
+  // Packs the server could not read: no id is counted as a kind TreeMap has, and the card and the editor say
+  // plainly that it cannot tell (BQR-1 item 17: the card counted every named id as a kind of reclaimable file).
   served.knownGroupIds = 'unreadable' as unknown as string[];
   await page.loadAutopilot();
   assert.equal(state.autopilot.knownGroupIds, null, 'a list that is not one is no list');
-  assert.equal(card(['cache-general']), '1 kind of reclaimable file', 'with no list, nothing is judged: every named id is counted, as before');
+  assert.equal(card(['cache-general']), '1 kind of file — TreeMap could not read its rule packs, so it cannot tell whether it has it',
+    'with no list, the card says it cannot judge the kind, never that it is one');
+  assert.equal(card(['regen-node-modules', 'cache-general']), '2 kinds of file — TreeMap could not read its rule packs, so it cannot tell which of them it has',
+    'in the plural, the boxes\' own kinds among them');
+  page.renderApGroupList(['regen-node-modules', 'cache-general']);
+  assert.ok((html.apGroupList ?? '').includes('This policy names a kind of file this list does not offer (cache-general), and TreeMap could not read its rule packs, so it cannot tell whether it has it. Saving keeps only the kinds ticked below.'),
+    `the editor says it cannot tell either: ${html.apGroupList}`);
+  page.renderApGroupList(['regen-node-modules']);
+  assert.doesNotMatch(html.apGroupList ?? '', /This policy names/, 'control: a policy of offered kinds gets no such line');
+  served.knownGroupIds = ['regen-node-modules'];
+  await page.loadAutopilot();
+  assert.equal(card(['regen-node-modules']), '1 kind of reclaimable file', 'control: the list back, the kind is counted');
 });
