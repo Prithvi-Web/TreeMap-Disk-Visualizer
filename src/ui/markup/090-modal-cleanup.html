@@ -16,6 +16,12 @@
       <!-- Where what Clean Up removes goes: the system Trash, or a cloud account's own trash.
            Written by the Clean Up button for the scan the sheet opens on (cleanUpWhereItGoes). -->
       <div class="muted" id="cleanWhereNote" style="margin-bottom:6px;"></div>
+      <!-- What a pane is working on, said aloud (review F3.9): a pane's working
+           rows carry their sentence as a label, which a screen reader does not
+           announce. This region is in the sheet from the start; cleanSayWorking
+           puts the sentence in its text once the rows are on screen, and takes
+           it out once they are gone. -->
+      <div id="cleanWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
       <div id="cleanPaneRules" class="pane-fade">
         <!-- v4 §4.5 — the ladder: a saved view is a Clean Up rule, and a Clean
              Up rule is an Autopilot policy. One matching engine throughout. -->

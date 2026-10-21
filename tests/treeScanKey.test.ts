@@ -1194,8 +1194,11 @@ const SAYS_WORKING = {
 /** Working rows left standing, or the notice that a pane waits for the scan. */
 const LEFT_WORKING = /class="skeleton"|fills in/;
 
-/** The Clean Up sheet's panes, lifted whole, over a stub DOM with the sheet open and a server answering each pane. */
-function cleanUpPage(state: Record<string, unknown>, answer: (url: string) => unknown = cleanUpAnswer) {
+/**
+ * The Clean Up sheet's panes, lifted whole, over a stub DOM with the sheet open and a server answering each pane;
+ * `extra` lifts more of the page's functions, with what they need.
+ */
+function cleanUpPage(state: Record<string, unknown>, answer: (url: string) => unknown = cleanUpAnswer, extra: { decls?: string[]; given?: Record<string, unknown> } = {}) {
   const $ = stubDom();
   $('cleanModal').classList.add('open');
   const handlers: Record<string, () => Promise<void>> = {};
@@ -1221,6 +1224,7 @@ function cleanUpPage(state: Record<string, unknown>, answer: (url: string) => un
     emptyFolders: [], videoCandidates: [], smartGroups: [], packageOrphans: [], cleanMatches: [], cleanOnDisk: new Map(),
     loadEmptyFoldersSeq: 0, loadVideoSeq: 0, loadSmartSeq: 0, cleanRuleSource: 'simple', smartSort: 'size',
     cleanUpWhereItGoes: () => '', cleanFunnelDrop: noop, setCleanRuleSource: noop, cleanPane: 'rules', videoJobStream: null, cleanFindNoList: true,
+    ...extra.given,
   };
   const { fns, asks } = page<{ empty: () => Promise<void>; video: () => Promise<void>; smart: () => Promise<void>; byView: () => Promise<void>; changed: () => void; pane: (p: string) => void }>([
     'function cleanNoScanHtml(', 'function cleanOpen(', 'function cleanAskAgain(', 'function cleanScanChanged(',
@@ -1228,6 +1232,7 @@ function cleanUpPage(state: Record<string, unknown>, answer: (url: string) => un
     'async function renderGitRepos(', 'async function renderPackageOrphans(', 'async function renderBrowserProfiles(',
     'async function runCleanFind(', 'async function findBySavedView(', "$('cleanFindBtn').addEventListener('click', async () => {",
     'subscribe(TOPIC.scan, (scanId) => {\n  cleanScanChanged();', "$('cleanupBtn').addEventListener('click', () => {", 'function setCleanPane(',
+    ...(extra.decls ?? []),
   ], given, '{ empty: loadEmptyFolders, video: loadVideoCandidates, smart: loadSmartSuggestions, byView: () => runCleanFind(findBySavedView), changed: cleanScanChanged, pane: setCleanPane }',
   // A pane that asks again without end — its answer never the tree's — is stopped: the sheet closes, and the
   // assertions about what it asked say why (a hand mutant made one ask forever, and the run ran out of memory).
@@ -1531,6 +1536,108 @@ test('every Clean Up pane says it is working in words assistive technology reads
   for (const [pane, host] of [['smart', 'smartResults'], ['empty', 'emptyResults'], ['video', 'videoBody'], ['rules', 'cleanResults']] as const) {
     assert.match(c.$(host).innerHTML, SAYS_WORKING[pane], `${pane}: its working rows carry role="status" and a sentence (${c.$(host).innerHTML})`);
   }
+});
+
+/** A MutationObserver as a browser runs one over `childList`: told of a change a microtask later, and never after a disconnect. */
+class FakeObserver {
+  private queued = false;
+  private readonly on = new Set<{ watchers: Set<FakeObserver> }>();
+  constructor(private readonly cb: () => void) {}
+  observe(target: { watchers: Set<FakeObserver> }, opts: { childList?: boolean }): void { assert.equal(opts.childList, true, 'it watches the host\'s children'); this.on.add(target); target.watchers.add(this); }
+  disconnect(): void { for (const t of this.on) t.watchers.delete(this); this.on.clear(); this.queued = false; }
+  notify(): void {
+    if (this.queued) return;
+    this.queued = true;
+    queueMicrotask(() => { if (!this.queued) return; this.queued = false; this.cb(); });
+  }
+}
+
+/**
+ * A pane's host as a browser keeps it: each innerHTML write replaces its children — the rows written before leave the
+ * page (isConnected false) — and is told to each observer watching it. Its first child answers getAttribute from the
+ * markup written.
+ */
+function liveHost(el: El): void {
+  const watchers = new Set<FakeObserver>();
+  let html = el.innerHTML;
+  let first: { isConnected: boolean; getAttribute: (k: string) => string | null } | null = null;
+  Object.defineProperty(el, 'innerHTML', {
+    get: () => html,
+    set: (v: string) => {
+      if (first) first.isConnected = false;
+      html = v;
+      const open = /^\s*<[a-z]+([^>]*)>/i.exec(v);
+      first = open ? { isConnected: true, getAttribute: (k: string) => new RegExp(`\\s${k}="([^"]*)"`).exec(open[1])?.[1] ?? null } : null;
+      for (const w of watchers) w.notify();
+    },
+  });
+  Object.defineProperty(el, 'firstElementChild', { get: () => first });
+  Object.assign(el, { watchers });
+}
+
+test('each Clean Up pane\'s working sentence reaches the text of a live region that is in the sheet from the start — a frame after its rows are written, so a screen reader announces it — and leaves once those rows are gone; a newer pane\'s rows take the region over (review F3.9)', async () => {
+  // The working rows carry their sentence as the aria-label of a role="status" element that one innerHTML write puts on
+  // screen already filled: a screen reader announces a live region's text as it changes, not its label, and seldom a
+  // region that appears filled.
+  const at = INDEX.indexOf('<div class="modal-backdrop" id="cleanModal"');
+  const sheet = INDEX.slice(at, INDEX.indexOf('<!-- ═══════════', at));
+  assert.match(sheet, /<div id="cleanWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"><\/div>/,
+    'the Clean Up sheet keeps a live region of its own, empty, in its markup from the start');
+  const frames: Array<() => void> = [];
+  const frame = () => { for (const fn of frames.splice(0)) fn(); };
+  const HELD = ['/api/cleanup/suggestions', '/api/empty-folders', '/api/compression/candidates', '/api/cleanup/rules'];
+  const held = new Map<string, Array<() => void>>(HELD.map((p) => [p, []]));
+  const c = cleanUpPage({ root: TREE, notes: new Map(), ...LANDED }, (url) => {
+    const prefix = HELD.find((p) => url.startsWith(p));
+    return prefix ? new Promise((resolve) => { held.get(prefix)!.push(() => resolve(cleanUpAnswer(url))); }) : cleanUpAnswer(url);
+  }, { decls: ['function cleanSayWorking('], given: { requestAnimationFrame: (fn: () => void) => frames.push(fn), MutationObserver: FakeObserver, cleanWorkingFor: null } });
+  /** The pane's requests answer, and what they paint is painted. */
+  const answer = async (prefix: string) => { for (const fn of held.get(prefix)!.splice(0)) fn(); await turns(); };
+  for (const id of ['smartResults', 'emptyResults', 'videoBody', 'cleanResults']) liveHost(c.$(id));
+  const said: string[] = [];
+  let text = '';
+  Object.defineProperty(c.$('cleanWorking'), 'textContent', { get: () => text, set: (v: string) => { text = v; said.push(v); } });
+  const PANES = [
+    ['Smart suggestions', () => c.fns.smart(), '/api/cleanup/suggestions', 'Working out what Clean Up suggests…'],
+    ['Empty folders', () => c.fns.empty(), '/api/empty-folders', 'Finding empty folders…'],
+    ['Shrink video', () => c.fns.video(), '/api/compression/candidates', 'Finding videos worth re-encoding…'],
+    ['Custom rules › Find', () => c.find(), '/api/cleanup/rules', 'Finding files that match…'],
+  ] as const;
+  for (const [pane, ask, prefix, sentence] of PANES) {
+    void ask();
+    await turns();
+    assert.equal(held.get(prefix)!.length, 1, `${pane}: control: its request is out`);
+    frame();
+    assert.equal(text, sentence, `${pane}: its sentence reaches the live region's text, a frame after its rows are written`);
+    await answer(prefix);
+    assert.equal(text, '', `${pane}: and leaves once the pane answered and its rows are gone`);
+  }
+  // Two panes at work: the newer pane's rows take the region over. The older pane's sentence, its frame not come yet, is
+  // never said over the newer one's, and the older pane answering does not empty the region the newer one speaks in.
+  said.length = 0;
+  void c.fns.smart();
+  void c.fns.video();
+  await turns();
+  frame();
+  assert.deepEqual(said.filter(Boolean), ['Finding videos worth re-encoding…'], 'only the newer pane\'s sentence is said');
+  await answer('/api/cleanup/suggestions');
+  const afterOlder = text;
+  await answer('/api/compression/candidates');
+  assert.deepEqual([afterOlder, text], ['Finding videos worth re-encoding…', ''], 'the older pane answering leaves the newer pane\'s sentence; the newer one answering empties the region');
+  // Asked again while its rows are on screen (the scan behind the tree changed under it, cleanAskAgain): the region is
+  // emptied as the new rows are written and given the sentence a frame later — the same sentence again is a change, heard.
+  void c.fns.empty();
+  await turns();
+  frame();
+  const before = text;
+  void c.fns.empty();
+  await turns();
+  const asWritten = text;
+  frame();
+  const nextFrame = text;
+  await answer('/api/empty-folders'); // the older answer is passed over (a newer load owns the list), the newer one paints
+  assert.deepEqual([before, asWritten, nextFrame, text], ['Finding empty folders…', '', 'Finding empty folders…', ''],
+    'asked again, the region is emptied as the new rows are written, says the sentence again a frame later, and leaves once the newer load answers');
 });
 
 test('Clean Up (K04): Find asked again of the scan now on screen, after the older scan\'s request failed, holds its button while that request is out — the button was handed back as the re-ask began, so a second press started a second Find (review F1.4)', async () => {
