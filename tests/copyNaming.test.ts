@@ -169,17 +169,26 @@ function plainLabel(inner: string): string {
 /** No more texts are judged for one expression than this: a label's branches multiply. */
 const MOST_VARIANTS = 64;
 
+/** What `escapeHtml(…)` is handed, or null: the page's escaping keeps a label's words, so a label is read through it. */
+function escaped(expr: ts.Expression): ts.Expression | null {
+  return ts.isCallExpression(expr) && ts.isIdentifier(expr.expression) && expr.expression.text === 'escapeHtml' && expr.arguments.length === 1
+    ? expr.arguments[0] : null;
+}
+
 /**
  * The texts `expr` can give, one for each way its branches can go: a string
  * literal or a template's own pieces as written, each arm of a `? :`, either
- * side of `||` or `??`, and `+` joining what both sides can give. What code
- * computes (a call such as `icon('cart', 15)`, a name, a property) is a blank,
- * so an icon's name is never read as words.
+ * side of `||` or `??`, `+` joining what both sides can give, and what
+ * escapeHtml is handed. What code computes (a call such as
+ * `icon('cart', 15)`, a name, a property) is a blank, so an icon's name is
+ * never read as words.
  */
 function variantsOf(expr: ts.Expression): string[] {
   const join = (a: string[], b: string[]): string[] => a.flatMap((x) => b.map((y) => x + y)).slice(0, MOST_VARIANTS);
   const either = (a: string[], b: string[]): string[] => [...a, ...b].slice(0, MOST_VARIANTS);
   if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return [expr.text];
+  const handed = escaped(expr);
+  if (handed) return variantsOf(handed);
   if (ts.isParenthesizedExpression(expr)) return variantsOf(expr.expression);
   if (ts.isConditionalExpression(expr)) return either(variantsOf(expr.whenTrue), variantsOf(expr.whenFalse));
   if (ts.isTemplateExpression(expr)) {
@@ -232,37 +241,165 @@ function labelIds(page: string): Set<string> {
 }
 
 /**
+ * The parts of `expr` whose words a label shows — the places variantsOf
+ * reads: each arm of a `? :`, both sides of `+`, `||` and `??`, a template's
+ * interpolations, what escapeHtml is handed. Any other call's arguments
+ * (`icon(iconName, 15)`) are not words.
+ */
+function wordParts(expr: ts.Expression): ts.Expression[] {
+  const handed = escaped(expr);
+  if (handed) return wordParts(handed);
+  if (ts.isParenthesizedExpression(expr)) return wordParts(expr.expression);
+  if (ts.isConditionalExpression(expr)) return [...wordParts(expr.whenTrue), ...wordParts(expr.whenFalse)];
+  if (ts.isTemplateExpression(expr)) return expr.templateSpans.flatMap((span) => wordParts(span.expression));
+  if (ts.isBinaryExpression(expr)) {
+    const op = expr.operatorToken.kind;
+    if (op === ts.SyntaxKind.PlusToken || op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.QuestionQuestionToken) {
+      return [...wordParts(expr.left), ...wordParts(expr.right)];
+    }
+  }
+  return [expr];
+}
+
+/** The label `n` writes into a button or a modal heading by its id — `$('confirmOk').innerHTML = …` — or null. */
+function labelWrite(n: ts.Node, ids: Set<string>): ts.Expression | null {
+  if (!ts.isBinaryExpression(n) || n.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+    || !ts.isPropertyAccessExpression(n.left) || !/^(?:innerHTML|textContent)$/.test(n.left.name.text)) return null;
+  const target = n.left.expression;
+  return ts.isCallExpression(target) && ts.isIdentifier(target.expression) && target.expression.text === '$'
+    && target.arguments.length === 1 && ts.isStringLiteral(target.arguments[0]) && ids.has(target.arguments[0].text) ? n.right : null;
+}
+
+/** A function the page's scripts name: a declaration, or a function or arrow a `const` holds. */
+type PageFunction = { name: string; params: ts.NodeArray<ts.ParameterDeclaration>; body: ts.Node | undefined };
+
+/** Every named function in the page's scripts, the source file each was read from beside it. */
+function pageFunctions(page: string): { files: ts.SourceFile[]; fns: PageFunction[] } {
+  const files = scriptsOf(page).map((code) => ts.createSourceFile('page.js', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS));
+  const fns: PageFunction[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isFunctionDeclaration(n) && n.name) fns.push({ name: n.name.text, params: n.parameters, body: n.body });
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer
+      && (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))) {
+      fns.push({ name: n.name.text, params: n.initializer.parameters, body: n.initializer.body });
+    }
+    ts.forEachChild(n, visit);
+  };
+  for (const sf of files) visit(sf);
+  return { files, fns };
+}
+
+/**
+ * Each name a function's parameters bind, with the argument it holds and its
+ * default: `'1'` for the second argument, `'0.ok'` for `{ ok }` or
+ * `{ ok: okLabel }` taken from the first.
+ */
+function paramKeys(params: ts.NodeArray<ts.ParameterDeclaration>): Map<string, { key: string; init?: ts.Expression }> {
+  const out = new Map<string, { key: string; init?: ts.Expression }>();
+  params.forEach((param, i) => {
+    if (ts.isIdentifier(param.name)) out.set(param.name.text, { key: `${i}`, init: param.initializer });
+    else if (ts.isObjectBindingPattern(param.name)) {
+      for (const el of param.name.elements) {
+        if (!ts.isIdentifier(el.name)) continue;
+        const prop = el.propertyName && ts.isIdentifier(el.propertyName) ? el.propertyName.text : el.name.text;
+        out.set(el.name.text, { key: `${i}.${prop}`, init: el.initializer });
+      }
+    }
+  });
+  return out;
+}
+
+/** The argument a word part holds, by its key: a parameter (`label`, `title`), or a property of one (`opts.title`). */
+function argKey(part: ts.Expression, params: Map<string, { key: string }>): string | null {
+  if (ts.isIdentifier(part)) return params.get(part.text)?.key ?? null;
+  if (ts.isPropertyAccessExpression(part) && ts.isIdentifier(part.expression)) {
+    const whole = params.get(part.expression.text);
+    return whole ? `${whole.key}.${part.name.text}` : null;
+  }
+  return null;
+}
+
+/** What `call` hands where its callee writes a label, by `sinks`: an argument, or a property of an object argument. */
+function handedLabels(call: ts.CallExpression, sinks: Map<string, Set<string>>): ts.Expression[] {
+  if (!ts.isIdentifier(call.expression)) return [];
+  const out: ts.Expression[] = [];
+  for (const key of sinks.get(call.expression.text) ?? []) {
+    const [at, prop] = key.split('.');
+    const arg = call.arguments[Number(at)];
+    if (!arg) continue;
+    if (prop === undefined) out.push(arg);
+    else if (ts.isObjectLiteralExpression(arg)) {
+      for (const p of arg.properties) {
+        if (ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === prop) out.push(p.initializer);
+        if (ts.isShorthandPropertyAssignment(p) && p.name.text === prop) out.push(p.name);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Which arguments of which page functions end up as a button's or a modal
+ * heading's label: one the function writes there by id
+ * (`setConfirmButton(label)` writes `$('confirmOk')`), or hands on to a
+ * function that does (`watchOffloadJob(jobId, title)` hands `title` to
+ * watchJob, which writes the progress sheet's heading). Read until nothing
+ * more is found, so a function that hands a label on is found wherever it is
+ * declared.
+ */
+function labelSinks(page: string): Map<string, Set<string>> {
+  const ids = labelIds(page);
+  const { fns } = pageFunctions(page);
+  const sinks = new Map<string, Set<string>>();
+  let found = true;
+  while (found) {
+    found = false;
+    for (const fn of fns) {
+      const params = paramKeys(fn.params);
+      const reach = (expr: ts.Expression): void => {
+        for (const part of wordParts(expr)) {
+          const key = argKey(part, params);
+          if (!key || sinks.get(fn.name)?.has(key)) continue;
+          sinks.set(fn.name, new Set([...(sinks.get(fn.name) ?? []), key]));
+          found = true;
+        }
+      };
+      const visit = (n: ts.Node): void => {
+        const written = labelWrite(n, ids);
+        if (written) reach(written);
+        if (ts.isCallExpression(n)) handedLabels(n, sinks).forEach(reach);
+        ts.forEachChild(n, visit);
+      };
+      if (fn.body) visit(fn.body);
+    }
+  }
+  return sinks;
+}
+
+/**
  * The labels the page's scripts write into a button or a modal heading by
  * its id — `$('confirmTitle').innerHTML = icon('trash', 18) + 'Move to
- * Trash?'`, `$('confirmOk').innerHTML = …` — and the `title` and `ok` handed
- * to askText and watchJob, which write them into the ask sheet's heading and
- * OK button and the progress sheet's heading. A label passed on through a
- * variable from anywhere else is not followed.
+ * Trash?'`, `$('confirmOk').innerHTML = …` — and every label handed to a
+ * function that writes one (labelSinks): `setConfirmButton('Empty the
+ * Trash')`, openBrowse's title and button label, askText's `title` and `ok`,
+ * and a default such a function gives one (`ok = 'OK'`). A label held in a
+ * variable of its own is not followed.
  */
 function assignedLabels(page: string): string[] {
   const ids = labelIds(page);
+  const sinks = labelSinks(page);
+  const { files, fns } = pageFunctions(page);
   const out: string[] = [];
-  for (const code of scriptsOf(page)) {
-    const sf = ts.createSourceFile('page.js', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-    const visit = (n: ts.Node): void => {
-      if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken
-        && ts.isPropertyAccessExpression(n.left) && /^(?:innerHTML|textContent)$/.test(n.left.name.text)) {
-        const target = n.left.expression;
-        if (ts.isCallExpression(target) && ts.isIdentifier(target.expression) && target.expression.text === '$'
-          && target.arguments.length === 1 && ts.isStringLiteral(target.arguments[0]) && ids.has(target.arguments[0].text)) {
-          out.push(...variantsOf(n.right));
-        }
-      }
-      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && /^(?:askText|watchJob)$/.test(n.expression.text)
-        && n.arguments.length > 0 && ts.isObjectLiteralExpression(n.arguments[0])) {
-        for (const prop of n.arguments[0].properties) {
-          if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name) && /^(?:title|ok)$/.test(prop.name.text)) out.push(...variantsOf(prop.initializer));
-        }
-      }
-      ts.forEachChild(n, visit);
-    };
-    visit(sf);
+  for (const fn of fns) {
+    for (const { key, init } of paramKeys(fn.params).values()) if (init && sinks.get(fn.name)?.has(key)) out.push(...variantsOf(init));
   }
+  const visit = (n: ts.Node): void => {
+    const written = labelWrite(n, ids);
+    if (written) out.push(...variantsOf(written));
+    if (ts.isCallExpression(n)) for (const arg of handedLabels(n, sinks)) out.push(...variantsOf(arg));
+    ts.forEachChild(n, visit);
+  };
+  for (const sf of files) visit(sf);
   return [...new Set(out.map(plainLabel))].filter((label) => label && !joinedByCode(label));
 }
 
@@ -333,11 +470,48 @@ test('the label reader reads the words an interpolation gives, and the labels th
     '<h3 id="confirmTitle">Move to Trash?</h3><button id="confirmOk">OK</button><div id="note">x</div>',
     "<script>$('confirmTitle').innerHTML = icon('trash', 18) + 'Forget This Copy?';",
     "$('confirmOk').innerHTML = icon(r ? 'refresh' : 'stop', 15) + (r ? 'Restart It' : 'Quit it');",
-    "$('note').textContent = 'Not A Label'; $('confirmOk').textContent = label;",
-    "askText({ title: 'Save View', label: 'Name This View', ok: 'Save view' }); watchJob({ title: n === 1 ? 'Putting It Back…' : 'Putting everything back…', cancelUrl: u });</script>",
+    "$('note').textContent = 'Not A Label'; $('confirmOk').textContent = label;</script>",
   ].join('\n');
-  assert.deepEqual(assignedLabels(page), ['Forget This Copy?', 'Restart It', 'Quit it', 'Save View', 'Save view', 'Putting It Back…', 'Putting everything back…'],
-    'a heading\'s and a button\'s, by id, and askText\'s and watchJob\'s; not another element\'s, not a field label, not a name');
+  assert.deepEqual(assignedLabels(page), ['Forget This Copy?', 'Restart It', 'Quit it'],
+    'a heading\'s and a button\'s, by id; not another element\'s, not a name');
+});
+
+test('the label reader follows a label handed to a page function that writes it into a button or a heading (G18 review F2.2)', () => {
+  // setConfirmButton('Empty the Trash') writes its label into the confirm
+  // button, openBrowse its title and button label into the folder picker,
+  // watchOffloadJob its title through watchJob into the progress sheet: the
+  // reader knew only askText and watchJob by name, so a Title Case label
+  // handed to any other passed unseen.
+  const page = [
+    '<h3 id="confirmTitle">x</h3><button id="confirmOk">OK</button><h3 id="jobTitle">x</h3><h3 id="browseTitle">x</h3><button id="browseUse">x</button><div id="note">x</div>',
+    '<script>',
+    'function forward(a, t) { relay(t); }', // handed on twice, by functions declared before the one that writes it
+    'function relay(x) { setOk(x); }',
+    "function setOk(label, iconName = 'trash') { $('confirmOk').innerHTML = icon(iconName, 15) + escapeHtml(label); }",
+    "function ask({ title, hint, ok: okLabel = 'Got It' }) { $('confirmTitle').textContent = title; $('note').textContent = hint; $('confirmOk').textContent = okLabel; }",
+    "function job(opts) { $('jobTitle').innerHTML = icon(opts.icon || 'x', 18) + opts.title; }",
+    "function jobFor(id, title) { job({ title, icon: 'archive' }); }",
+    'function jobNamed(t) { job({ title: t }); }',
+    "async function browse(start, pick, title, use) { $('browseTitle').innerHTML = icon('folder', 18) + (title || 'Choose A Folder'); $('browseUse').innerHTML = escapeHtml(use || (pick ? 'Use This Folder' : 'Scan this folder')); }",
+    "function noted(text) { $('note').textContent = text; }",
+    'const okLater = (text) => { setTimeout(() => setOk(text)); };',
+    "function headed(n, name, fallback) { $('jobTitle').innerHTML = n ? `Open ${name}` : (fallback ?? 'Open it?'); }",
+    '</script>',
+    "<script>setOk('Empty The Trash'); forward(1, 'Save Now'); relay(n ? 'Move It' : 'Keep it'); okLater('Approve All'); headed(2, 'Old Files', 'Open Them?');",
+    "ask({ title: 'Save View', hint: 'Not A Label', ok: 'Save view' }); jobFor(3, 'Offloading Files…'); jobNamed('Putting It Back…');",
+    "job({ title: 'Restoring…', icon: 'Not Words' }); browse(s, cb, 'Folder This Policy Cleans', 'Offload To This Folder'); browse(s);",
+    "noted('Not A Label Either'); setOk(label);</script>",
+  ].join('\n');
+  const sinks = Object.fromEntries([...labelSinks(page)].map(([name, keys]) => [name, [...keys].sort()]));
+  assert.deepEqual(sinks, {
+    forward: ['1'], relay: ['0'], setOk: ['0'], ask: ['0.ok', '0.title'], job: ['0.title'], jobFor: ['1'], jobNamed: ['0'], browse: ['2', '3'], okLater: ['0'],
+    headed: ['1', '2'],
+  }, 'the arguments that end up as a label: written by id, or handed on, wherever declared; not an icon\'s name, not a field label');
+  assert.deepEqual([...assignedLabels(page)].sort(), [
+    'Got It', 'Choose A Folder', 'Use This Folder', 'Scan this folder', 'Empty The Trash', 'Save Now', 'Move It', 'Keep it', 'Approve All',
+    'Open', 'Open it?', 'Old Files', 'Open Them?',
+    'Save View', 'Save view', 'Offloading Files…', 'Putting It Back…', 'Restoring…', 'Folder This Policy Cleans', 'Offload To This Folder',
+  ].sort(), 'every label handed to a function that writes it, directly, destructured, as a property or handed on; its default; what escapeHtml is handed — not a field label, an icon\'s name or a name');
 });
 
 /* ══════════════ The page ══════════════ */
@@ -349,15 +523,22 @@ test('the page names the feature "Clean Up" — never "Cleanup", never "the clea
 test('every button and modal title of the page is in sentence case, but for proper names (G18)', () => {
   const sidebar = sidebarNames(INDEX);
   assert.ok(sidebar.includes('Clean Up') && sidebar.includes('Undo Vault') && sidebar.includes('Missing GB'), `control: the sidebar's names are read (${sidebar.join(', ')})`);
+  assert.deepEqual(titleCaseLabels(INDEX), []);
+  // The controls come after the verdict, so a label gone Title Case is named
+  // by it, and a reader that stopped reading one fails here.
   const labels = [...labelsIn(markupOf(INDEX)), ...scriptsOf(INDEX).flatMap(labelsIn)];
   assert.ok(labels.length > 150, `control: the page's labels are read, markup and script (${labels.length})`);
   assert.ok(labels.includes('Remove budget') && labels.includes('Keyboard shortcuts'), 'control: a script\'s button and a modal heading are among them');
   assert.ok(labels.includes('Edit budget…') && labels.includes('Set budget…'), 'control: both arms of an interpolated label are among them');
-  const assigned = assignedLabels(INDEX);
-  for (const label of ['Move to Trash?', 'Forget this copy?', 'Copy, verify, then trash', 'Save view', 'Restoring…', 'New policy']) {
-    assert.ok(assigned.includes(label), `control: a label written by id, or through askText or watchJob, is read: ${label} (${assigned.length} read)`);
+  const sinks = labelSinks(INDEX);
+  for (const [fn, key] of [['setConfirmButton', '0'], ['openBrowse', '2'], ['openBrowse', '3'], ['watchOffloadJob', '1'], ['askText', '0.title'], ['askText', '0.ok'], ['watchJob', '0.title']]) {
+    assert.ok(sinks.get(fn)?.has(key), `control: ${fn}'s argument ${key} is known to end up as a label (${[...sinks.keys()].join(', ')})`);
   }
-  assert.deepEqual(titleCaseLabels(INDEX), []);
+  const assigned = assignedLabels(INDEX);
+  for (const label of ['Move to Trash?', 'Forget this copy?', 'Copy, verify, then trash', 'Save view', 'Restoring…', 'New policy',
+    'Purge snapshots', 'Forget this copy', 'Folder this policy cleans', 'Offload to this folder', 'Offloading…', 'Use this folder', 'OK']) {
+    assert.ok(assigned.includes(label), `control: a label written by id, or handed to a function that writes one, is read: ${label} (${assigned.length} read)`);
+  }
 });
 
 test('the Clean Up cart, its Settings target and the Clean Up tabs say it in the decided words (G18)', () => {
