@@ -1025,6 +1025,39 @@ test('G09: the SVG export lays the History diff\'s wash over each folder that gr
   }
 });
 
+test('owner\'s outlines: the SVG export lays the History diff\'s wash in the canvas\'s order — after every folder\'s own fill, leaf and texture (passes 0 to 2.4), before every leaf\'s line and folder\'s band (passes 2.6 and 2.7), so no line is tinted by it (review F2.4)', () => {
+  // The lines are laid after the washes so each is seen in the tone it was picked in: under two washes even black reached
+  // only 2.3:1 on a grey tile. An export that laid its washes over the lines passed every test, which compared the washes
+  // only among themselves. Two folders that changed, each holding two files of one colour side by side, which meet at a
+  // line (svgDiffTiles' files part from what lies beside them unaided, and lay none).
+  const node = (path: string, dir: boolean, x: number, y: number, w: number, h: number, kind: string): Tile =>
+    ({ name: path.slice(path.lastIndexOf('/') + 1), path, size: 5e9, prevSize: PREV[kind](5e9), type: dir ? 'dir' : 'file', depth: dir ? 1 : 2, expanded: dir, x, y, w, h } as Tile);
+  const tiles = [
+    node('/r/P', true, 0, 0, 40, 40, 'grew'), node('/r/P/a', false, 0.2, 0.2, 19.8, 30, 'unchanged'), node('/r/P/b', false, 20, 0.2, 19.8, 30, 'unchanged'),
+    node('/r/Q', true, 50, 0, 40, 40, 'shrank'), node('/r/Q/c', false, 50.2, 0.2, 19.8, 30, 'grew'), node('/r/Q/d', false, 70, 0.2, 19.8, 30, 'grew'),
+  ];
+  const { svg, px } = exportSvg(tiles, (n) => DIFF_PAGE.diffRgb(n), '#0e0e13', { active: true, diff: true });
+  const f = (v: number) => v.toFixed(2);
+  const lineKey = (b: Band) => `${f(b.x)} ${f(b.y)} ${f(Math.max(0, b.w))} ${f(Math.max(0, b.h))} ${b.rgb}`;
+  const lines = new Set(px.flatMap((r: Painted) => [...(r.lines || [])].map(lineKey)));
+  const bands = new Set(px.flatMap((r: Painted) => [...(r.bands || [])].map(lineKey)));
+  const order = [...svg.matchAll(/<rect ([^>]*?)\/?>/g)].map((m) => attrs(m[1])).map((a) => {
+    if ('fill-opacity' in a && !('stroke' in a)) return 'wash';
+    const key = `${a.x} ${a.y} ${a.width} ${a.height} ${a.fill}`;
+    if (lines.has(key)) return 'line';
+    if (bands.has(key)) return 'band';
+    return /^url\(#tm-[cft]\d+\)$/.test(a.fill || '') ? 'tile' : 'other';
+  });
+  const count = (k: string) => order.filter((o) => o === k).length;
+  assert.ok(count('wash') === 2 && count('line') >= 2 && count('band') >= 8 && count('tile') >= 6,
+    `control — the export holds the two washes, the leaves' lines, the folders' bands and the tiles (${['wash', 'line', 'band', 'tile'].map((k) => `${count(k)} ${k === 'wash' ? 'washes' : `${k}s`}`).join(', ')})`);
+  const firstWash = order.indexOf('wash'), lastWash = order.lastIndexOf('wash');
+  const tileAfter = order.findIndex((o, i) => o === 'tile' && i > firstWash);
+  const lineBefore = order.findIndex((o, i) => (o === 'line' || o === 'band') && i < lastWash);
+  assert.equal(tileAfter, -1, `every tile is laid before the washes (rect ${tileAfter} is a tile after the first wash, rect ${firstWash})`);
+  assert.equal(lineBefore, -1, `every line and band is laid after the washes (rect ${lineBefore} is a ${order[lineBefore]} before the last wash, rect ${lastWash})`);
+});
+
 test('G09: the SVG export lays the History diff\'s wash only while the diff is on — exported from History without it, or with a diff flag left over on the live map, it is the live map\'s own export', () => {
   // The export lays each wash tmDiffWashes names (review F2.1), so the same
   // guard keeps it out of an export made outside the diff (review F3.2).
