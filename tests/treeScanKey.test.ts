@@ -1083,6 +1083,18 @@ test('Clean Up: the cloud-safe list asked of the older scan during a rescan is n
 
 /* ── The Clean Up sheet's panes (eighth browser pass K04) ── */
 
+/** The page's own skeletonRows: the Clean Up sheet's working rows are checked as they ship (review F3.9). */
+const CLEAN_SKELETON = liftPage<(n: number, h?: number, label?: string) => string>(['escapeHtml', 'skeletonRows'], 'skeletonRows');
+/** What each pane's working rows say to assistive technology while its request is out (review F3.9). */
+const SAYS_WORKING = {
+  smart: /<div role="status" aria-label="Working out what Clean Up suggests…">(<div class="skeleton"[^>]*><\/div>)+<\/div>/,
+  empty: /<div role="status" aria-label="Finding empty folders…">(<div class="skeleton"[^>]*><\/div>)+<\/div>/,
+  video: /<div role="status" aria-label="Finding videos worth re-encoding…">(<div class="skeleton"[^>]*><\/div>)+<\/div>/,
+  rules: /<div role="status" aria-label="Finding files that match…">(<div class="skeleton"[^>]*><\/div>)+<\/div>/,
+};
+/** Working rows left standing, or the notice that a pane waits for the scan. */
+const LEFT_WORKING = /class="skeleton"|fills in/;
+
 /** The Clean Up sheet's panes, lifted whole, over a stub DOM with the sheet open and a server answering each pane. */
 function cleanUpPage(state: Record<string, unknown>, answer: (url: string) => unknown = cleanUpAnswer) {
   const $ = stubDom();
@@ -1102,7 +1114,7 @@ function cleanUpPage(state: Record<string, unknown>, answer: (url: string) => un
   const subs: Array<(scanId: string | null) => void> = [];
   const given: Record<string, unknown> = {
     subscribe: (_topic: string, fn: (scanId: string | null) => void) => { subs.push(fn); }, TOPIC: { scan: 'scan' },
-    state, $, document: { activeElement: null, body: null }, escapeHtml: esc, icon: () => '', skeletonRows: () => '<i>loading</i>', formatCount: String, formatBytes: String, formatDate: String,
+    state, $, document: { activeElement: null, body: null }, escapeHtml: esc, icon: () => '', skeletonRows: CLEAN_SKELETON, formatCount: String, formatBytes: String, formatDate: String,
     chipFor: () => '', cartButtonHtml: () => '', refreshCartButtons: noop, updateCleanSummary: noop, seedNodes: noop, sizeInk: () => '',
     renderSmartGroups: noop, ecosystemLabel: String, renderCloudSafe: async () => { cloud.push(1); }, toast: (m: string) => { toasts.push(m); },
     reportError: (e: Error) => { toasts.push(e.message); }, selectedSavedView: () => ({ id: 'v', q: 'size>1gb' }), cleanOnDiskOf: async () => new Map(),
@@ -1321,10 +1333,10 @@ test('Clean Up (K04): once the scan lands, Smart suggestions and Custom rules �
   await turns();
   assert.equal(held.length, 1, 'control: its packages section is asked of the scan that landed, and is out');
   assert.doesNotMatch(c.$('smartResults').innerHTML, COMING, `Smart suggestions no longer says it waits for a scan that has finished (${c.$('smartResults').innerHTML})`);
-  assert.match(c.$('smartResults').innerHTML, /loading/, 'it says it is working');
+  assert.match(c.$('smartResults').innerHTML, SAYS_WORKING.smart, `it says it is working, in words assistive technology reads (${c.$('smartResults').innerHTML})`);
   held.shift()!();
   await turns();
-  assert.doesNotMatch(c.$('smartResults').innerHTML, /loading|fills in/, `control: then it answers (${c.$('smartResults').innerHTML})`);
+  assert.doesNotMatch(c.$('smartResults').innerHTML, LEFT_WORKING, `control: then it answers (${c.$('smartResults').innerHTML})`);
   // Custom rules › Find: the notice stood through the whole request; and a Find that fails must not leave rows loading.
   for (const fails of [false, true]) {
     const name = `Custom rules › Find${fails ? ', failing' : ''}`;
@@ -1339,10 +1351,10 @@ test('Clean Up (K04): once the scan lands, Smart suggestions and Custom rules �
     await turns();
     assert.deepEqual(r.asks.map((a) => a.scanId), ['scan-new'], `${name}: control: asked of the scan that landed, and out`);
     assert.doesNotMatch(r.$('cleanResults').innerHTML, COMING, `${name}: no longer says it waits for a scan that has finished (${r.$('cleanResults').innerHTML})`);
-    assert.match(r.$('cleanResults').innerHTML, /loading/, `${name}: it says it is working`);
+    assert.match(r.$('cleanResults').innerHTML, SAYS_WORKING.rules, `${name}: it says it is working, in words assistive technology reads`);
     out.shift()!(fails);
     await turns();
-    assert.doesNotMatch(r.$('cleanResults').innerHTML, /loading|fills in/, `${name}: once it ${fails ? 'fails' : 'answers'}, nothing is left loading (${r.$('cleanResults').innerHTML})`);
+    assert.doesNotMatch(r.$('cleanResults').innerHTML, LEFT_WORKING, `${name}: once it ${fails ? 'fails' : 'answers'}, nothing is left loading (${r.$('cleanResults').innerHTML})`);
     assert.deepEqual(r.toasts, fails ? ['The rules could not be matched'] : [], `${name}: ${fails ? 'the failure is said, once' : 'nothing said as a failure'}`);
   }
   // Another tree on screen before the Find run on the landing answers: asked again, still working, and its failure leaves nothing loading.
@@ -1360,10 +1372,10 @@ test('Clean Up (K04): once the scan lands, Smart suggestions and Custom rules �
     out.shift()!(late === 'fails');
     await turns();
     assert.deepEqual(r.asks.map((a) => a.scanId), ['scan-old', 'scan-new'], `${name}: control: asked again of the scan now on screen`);
-    assert.match(r.$('cleanResults').innerHTML, /loading/, `${name}: still says it is working`);
+    assert.match(r.$('cleanResults').innerHTML, SAYS_WORKING.rules, `${name}: still says it is working`);
     out.shift()!(true);
     await turns();
-    assert.doesNotMatch(r.$('cleanResults').innerHTML, /loading|fills in/, `${name}: and once that fails, nothing is left loading (${r.$('cleanResults').innerHTML})`);
+    assert.doesNotMatch(r.$('cleanResults').innerHTML, LEFT_WORKING, `${name}: and once that fails, nothing is left loading (${r.$('cleanResults').innerHTML})`);
     assert.deepEqual(r.toasts, ['The rules could not be matched'], `${name}: the failure for the tree on screen is said, once`);
   }
   // A fresh opening's list is blank: a Find pressed in it says it is working too, and so does one pressed after a failure
@@ -1375,14 +1387,14 @@ test('Clean Up (K04): once the scan lands, Smart suggestions and Custom rules �
   await r.open();
   const pressed = r.find();
   await turns();
-  assert.match(r.$('cleanResults').innerHTML, /loading/, 'a Find pressed in a fresh opening says it is working over the blank list');
+  assert.match(r.$('cleanResults').innerHTML, SAYS_WORKING.rules, 'a Find pressed in a fresh opening says it is working over the blank list');
   out.shift()!(true);
   await pressed;
   await turns();
   assert.equal(r.$('cleanResults').innerHTML, '', 'control: it failed, and left nothing loading');
   const again = r.find();
   await turns();
-  assert.match(r.$('cleanResults').innerHTML, /loading/, 'pressed again after that failure, it says it is working');
+  assert.match(r.$('cleanResults').innerHTML, SAYS_WORKING.rules, 'pressed again after that failure, it says it is working');
   out.shift()!(false);
   await again;
   await turns();
@@ -1399,11 +1411,27 @@ test('Clean Up (K04): once the scan lands, Smart suggestions and Custom rules �
   await v.fns.byView();
   await turns();
   assert.deepEqual([v.asks.length, v.toasts], [0, ['Pick a saved view first']], 'control: nothing asked, and the source said why');
-  assert.doesNotMatch(v.$('cleanResults').innerHTML, /loading/, `Find by a saved view with none picked leaves no rows loading (${v.$('cleanResults').innerHTML})`);
+  assert.doesNotMatch(v.$('cleanResults').innerHTML, LEFT_WORKING, `Find by a saved view with none picked leaves no rows loading (${v.$('cleanResults').innerHTML})`);
   v.given.selectedSavedView = () => ({ id: 'v', q: 'size>1gb' });
   const viewed = v.fns.byView();
-  assert.match(v.$('cleanResults').innerHTML, /loading/, 'and a view picked then says it is working over the blank list');
+  assert.match(v.$('cleanResults').innerHTML, SAYS_WORKING.rules, 'and a view picked then says it is working over the blank list');
   await viewed;
+});
+
+test('every Clean Up pane says it is working in words assistive technology reads while its request is out — Smart suggestions, Empty folders, Shrink video and Find — never bare shimmer rows (review F3.9)', async () => {
+  // d2938a83 made Smart suggestions and Find show skeletonRows with no label while their requests were out: bare rows
+  // with no role and no words, so a screen reader heard nothing; Empty folders and Shrink video were the same.
+  const out: string[] = [];
+  const c = cleanUpPage({ root: TREE, notes: new Map(), ...LANDED }, (url) => { out.push(url.slice(0, url.indexOf('?') >>> 0)); return new Promise(() => {}); });
+  void c.fns.smart();
+  void c.fns.empty();
+  void c.fns.video();
+  void c.find();
+  await turns();
+  assert.ok(['/api/empty-folders', '/api/compression/candidates', '/api/cleanup/rules'].every((u) => out.includes(u)), `control: each pane's request is out (${out.join(', ')})`);
+  for (const [pane, host] of [['smart', 'smartResults'], ['empty', 'emptyResults'], ['video', 'videoBody'], ['rules', 'cleanResults']] as const) {
+    assert.match(c.$(host).innerHTML, SAYS_WORKING[pane], `${pane}: its working rows carry role="status" and a sentence (${c.$(host).innerHTML})`);
+  }
 });
 
 test('Clean Up (K04): Find asked again of the scan now on screen, after the older scan\'s request failed, holds its button while that request is out — the button was handed back as the re-ask began, so a second press started a second Find (review F1.4)', async () => {

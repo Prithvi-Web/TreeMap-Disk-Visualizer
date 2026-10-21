@@ -39385,7 +39385,8 @@ async function loadVideoCandidates() {
   // The scan the tree on screen came from (K04), or none: then nothing is asked.
   const scanId = treeScanId();
   if (!scanId) { videoCandidates = []; host.innerHTML = cleanNoScanHtml('video'); return; }
-  host.innerHTML = skeletonRows(4, 34);
+  // Labelled, so assistive technology hears that the pane is working, not bare shimmer rows (review F3.9).
+  host.innerHTML = skeletonRows(4, 34, 'Finding videos worth re-encoding…');
   let data;
   try { data = await api('/api/compression/candidates?scanId=' + scanId); }
   catch (e) {
@@ -39582,7 +39583,7 @@ async function loadEmptyFolders() {
   // The scan the tree on screen came from (K04), or none: then nothing is asked.
   const scanId = treeScanId();
   if (!scanId) { emptyFolders = []; host.innerHTML = cleanNoScanHtml('empty'); updateCleanSummary(); return; }
-  host.innerHTML = skeletonRows(4, 30);
+  host.innerHTML = skeletonRows(4, 30, 'Finding empty folders…'); // labelled for assistive technology (review F3.9)
   try {
     const data = await api(`/api/empty-folders?scanId=${scanId}&ignoreJunk=${$('emptyIgnoreJunk').checked}`);
     if (seq !== loadEmptyFoldersSeq) return; // a newer load owns the list
@@ -40171,8 +40172,8 @@ async function loadSmartSuggestions() {
     return;
   }
   // Working from here, while its sections are asked before it: a notice that it waits for the scan stood
-  // through their requests once the scan had finished (review F2.9).
-  host.innerHTML = skeletonRows(4, 34);
+  // through their requests once the scan had finished (review F2.9) — in words assistive technology reads (F3.9).
+  host.innerHTML = skeletonRows(4, 34, 'Working out what Clean Up suggests…');
   void renderGitRepos();
   const hadPackages = await renderPackageOrphans();
   const hadBrowsers = await renderBrowserProfiles();
@@ -40460,7 +40461,7 @@ async function runCleanFind(fetcher) {
   // A list with none of its own — blank, or saying it waits for the scan, which has finished — says it is
   // working (review F2.9). Results already listed stand until the new ones replace them, as before.
   const working = cleanFindNoList;
-  if (working) { cleanFindNoList = false; $('cleanResults').innerHTML = skeletonRows(4, 30); }
+  if (working) { cleanFindNoList = false; $('cleanResults').innerHTML = skeletonRows(4, 30, 'Finding files that match…'); } // labelled (review F3.9)
   /** Matched again against the scan the tree now on screen came from, the list still holding none of its own. */
   const askAgain = () => { if (working) cleanFindNoList = true; cleanAskAgain(() => runCleanFind(fetcher)); };
   const findBtn = $('cleanFindBtn');
