@@ -188,6 +188,9 @@ OpenAPI 3 spec).
      the file (only a real file is moved) or is gone since the scan, and
      something already there. A `.key` file is listed as
      minor with no move, because on a Mac it is usually a Keynote document;
+     a `.pem` whose name suggests public certificates (`roots.pem`,
+     `cacert.pem`, `ca-bundle.pem`) is minor too, and a `.pem` in a folder
+     named `certs` or `ca-certificates` is where it belongs, so not listed;
      files inside program bundles, frameworks, a program's data folders
      (`Library/Application Support`, `Library/Containers`, `AppData`), package
      folders (`node_modules`, `site-packages`) and the operating system's own

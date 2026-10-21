@@ -66,6 +66,11 @@ export interface SecurityPattern {
    * the pattern does; `why` where it does not. Never by opening the file.
    */
   whyFor?: (name: string) => string;
+  /**
+   * The severity for one file, from its name alone, where the name says more than the pattern does;
+   * `severity` where it does not. Never by opening the file.
+   */
+  severityFor?: (name: string) => SecuritySeverity;
 }
 
 /**
@@ -90,13 +95,27 @@ const PEM_WHY_KEY =
 const PEM_WHY =
   'A .pem file may hold a private key, or only public material such as certificates. TreeMap reads names and sizes, never ' +
   'contents, so it cannot tell which: open it to check — a private key’s block begins with a line naming a PRIVATE KEY.';
-export function pemWhy(name: string): string {
+/** What a .pem's name suggests it holds: public certificates, a private key, or neither or both ('unknown'). */
+function pemSuggests(name: string): 'certs' | 'key' | 'unknown' {
   const words = name.toLowerCase().replace(/\.pem$/, '').split(/[^a-z0-9]+/).filter(Boolean);
   const key = words.some((w) => PEM_KEY_WORDS.has(w));
   const certs = words.some((w) => PEM_CERT_WORDS.has(w) || PEM_CERT_ENDINGS.test(w));
-  if (certs && !key) return PEM_WHY_CERTS;
-  if (key && !certs) return PEM_WHY_KEY;
-  return PEM_WHY;
+  if (certs && !key) return 'certs';
+  if (key && !certs) return 'key';
+  return 'unknown';
+}
+export function pemWhy(name: string): string {
+  const suggests = pemSuggests(name);
+  return suggests === 'certs' ? PEM_WHY_CERTS : suggests === 'key' ? PEM_WHY_KEY : PEM_WHY;
+}
+/**
+ * A .pem whose name suggests public certificates is minor (eighth browser pass K54): roots.pem, cacert.pem
+ * and ca-bundle.pem were badged SERIOUS beside a sentence saying they hold certificates, which are not
+ * secret. Still listed, since a .pem can hold a key whatever its name; a name that suggests a key, or
+ * says nothing, stays serious.
+ */
+export function pemSeverity(name: string): SecuritySeverity {
+  return pemSuggests(name) === 'certs' ? 'low' : 'high';
 }
 
 /**
@@ -127,8 +146,12 @@ export const SECURITY_PATTERNS: SecurityPattern[] = [
     why: PEM_WHY,
     whyFor: pemWhy,
     severity: 'high',
+    severityFor: pemSeverity,
     extensions: ['pem'],
-    expectedIn: ['.ssh', '.certs', '.config/certs'],
+    // Where certificates and keys are kept on purpose: a folder named certs anywhere (ssl/certs among
+    // them) or ca-certificates, as well as the hidden ones (eighth browser pass K54: "In “certs”, which
+    // is not where this kind of file belongs" was said of a CA bundle in a folder named certs).
+    expectedIn: ['.ssh', '.certs', '.config/certs', 'certs', 'ca-certificates'],
     // No suggested home: a .pem is as often a TLS key or a certificate as an
     // SSH key, and ~/.ssh is not where either of those belongs.
   },
@@ -522,7 +545,8 @@ export function collectSecurityFindings(
 
       // Being inside a synced or shared folder raises the stakes, never lowers
       // them — a medium finding in Dropbox is a high one.
-      const stakes = syncFolder && pattern.severity === 'medium' ? 'high' : pattern.severity;
+      const named = pattern.severityFor ? pattern.severityFor(name) : pattern.severity;
+      const stakes = syncFolder && named === 'medium' ? 'high' : named;
       const osOwned = isOsOwned(childPath);
       const appOwned = osOwned || isApplicationOwned(childPath);
       // The program by name where the shared detector knows it (H05): an app, a program under Program Files.

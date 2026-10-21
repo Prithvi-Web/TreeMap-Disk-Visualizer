@@ -469,17 +469,18 @@ test('a .pem is said to hold what its name suggests — public certificates, or 
   // public material, and TreeMap reads names, never contents — so the row says what the name suggests,
   // where it suggests something, and otherwise that the file may hold a private key.
   const at = path.join(HOME, 'Downloads');
-  const whyOf = (name: string) => {
+  const whyOf = (name: string, severity: 'high' | 'low' = 'high') => {
     const f = findingsFor([file(name, at)])[0];
     assert.ok(f, `${name}: listed`);
     assert.equal(f.patternId, 'pem-key', `${name}: by the .pem rule`);
-    assert.equal(f.severity, 'high', `${name}: still serious — the name is only a suggestion`);
+    // Serious unless the name suggests public certificates, which are minor (K54) — listed still: a .pem can hold a key.
+    assert.equal(f.severity, severity, `${name}: ${severity === 'high' ? 'serious' : 'minor'}`);
     assert.doesNotMatch(f.why, /usually hold a private key/, `${name}: never the old overstatement`);
     assert.match(f.why, /names and sizes/, `${name}: says TreeMap goes by the name, never the contents`);
     return f.why;
   };
   for (const name of ['roots.pem', 'zcacert.pem', 'cacert.pem', 'ca-bundle.pem', 'fullchain.pem', 'cert.pem', 'DigiCertGlobalRootCA.pem']) {
-    const why = whyOf(name);
+    const why = whyOf(name, 'low');
     assert.match(why, /^Its name suggests public certificates/, `${name}: the name suggests certificates (${why})`);
     assert.match(why, /can hold a private key too/, `${name}: and a .pem can still hold a key (${why})`);
   }
@@ -492,6 +493,27 @@ test('a .pem is said to hold what its name suggests — public certificates, or 
     assert.match(why, /^A \.pem file may hold a private key, or only public material/, `${name}: may hold a key (${why})`);
     assert.doesNotMatch(why, /suggests/, `${name}: and claims no suggestion its name does not make`);
   }
+});
+
+test('a .pem whose name suggests public certificates is minor, never badged serious beside "which are not secret", and a folder named certs or ca-certificates is where a .pem belongs; the counts still cover every finding (eighth browser pass K54)', () => {
+  const downloads = path.join(HOME, 'Downloads');
+  const bundles = ['roots.pem', 'cacert.pem', 'ca-bundle.pem'].map((n) => file(n, downloads, 200_000));
+  const keys = ['privkey.pem', 'server.pem'].map((n) => file(n, downloads, 3_000));
+  const report = collectSecurityFindings(treeWith(HOME, [...bundles, ...keys]), [], HOME);
+  const sev = Object.fromEntries(report.findings.map((f) => [f.name, f.severity]));
+  assert.deepEqual(sev, { 'roots.pem': 'low', 'cacert.pem': 'low', 'ca-bundle.pem': 'low', 'privkey.pem': 'high', 'server.pem': 'high' },
+    'a name that suggests certificates is minor; one that suggests a key, or nothing, stays serious');
+  for (const f of report.findings.filter((x) => x.severity === 'low')) {
+    assert.match(f.why, /^Its name suggests public certificates/, `${f.name}: minor because its name suggests certificates, and it says so`);
+  }
+  assert.deepEqual({ counts: report.counts, total: report.total }, { counts: { high: 2, medium: 0, low: 3 }, total: 5 },
+    'the counts and the total still cover every finding, by the severity each is listed with');
+  // Where certificates are kept on purpose: not listed at all.
+  for (const dir of [path.join(HOME, 'certs'), path.join(HOME, 'code', 'app', 'ssl', 'certs'), path.join(HOME, 'tools', 'ca-certificates'), path.join(HOME, 'Projects', 'certs', 'live')]) {
+    assert.deepEqual(findingsFor([file('cacert.pem', dir), file('server.pem', dir)]).map((f) => f.name), [], `${dir}: a .pem in it is where it belongs`);
+  }
+  // Nor is every folder named like certs one: a folder whose name only holds the word is not.
+  assert.equal(findingsFor([file('cacert.pem', path.join(HOME, 'mycerts-backup'))]).length, 1, 'control: a folder that is not named certs gives no pass');
 });
 
 test('the 500 cap keeps the most serious findings, and the counts describe every finding (D77)', () => {
@@ -532,7 +554,12 @@ test('certificates inside frameworks and bundles belong to the software (D42)', 
 });
 
 test('files in the operating system’s own folders belong to it (D42)', { skip: process.platform === 'win32' }, () => {
-  for (const dir of ['/System/Library/Security', '/usr/share/ca-certificates/mozilla', '/etc/ssl/certs', '/private/etc/ssl']) {
+  // /usr/share/ca-certificates and /etc/ssl/certs are folders certificates are kept in on purpose: a .pem there is
+  // where it belongs, and not listed at all (eighth browser pass K54).
+  for (const dir of ['/usr/share/ca-certificates/mozilla', '/etc/ssl/certs']) {
+    assert.deepEqual(collectSecurityFindings(treeWith('/', [file('ca.pem', dir)]), [], HOME).findings, [], `${dir}: where a .pem belongs`);
+  }
+  for (const dir of ['/System/Library/Security', '/private/etc/ssl', '/etc/pki/tls']) {
     const f = collectSecurityFindings(treeWith('/', [file('ca.pem', dir)]), [], HOME).findings[0];
     assert.ok(f, `${dir}: still listed`);
     assert.equal(f.appOwned, true, `${dir} is the operating system's`);
