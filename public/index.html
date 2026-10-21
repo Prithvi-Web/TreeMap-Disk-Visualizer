@@ -13263,11 +13263,12 @@ function tmSetEmpty(text) {
  *     are a texture, a slightly darker shade of its own colour on a light tile
  *     and a lighter one on a dark tile (tmTextureStops), at tmTextureContrast —
  *     1.1:1 on a 2 px leaf up to 1.375:1 on a 7 px one, so a folder of tiny
- *     files reads as many files while its mean brightness stays within a tenth
- *     of the solid fill: never near-black, never a mesh. A folder's own fill
- *     (J51) carries the same texture every TM_TEXTURE_PITCH px, for its files
- *     too small to draw. A texture keeps a pixel clear of every line
- *     (tmLineMask), so a line only ever meets a tile's fill;
+ *     files reads as many files while its mean lightness (L*) stays within a
+ *     tenth of the solid fill's: never near-black, never a mesh. A folder's
+ *     own fill (J51) carries the same kind of texture, a seam every
+ *     TM_TEXTURE_PITCH px at 1.21:1, for its files too small to draw. A
+ *     texture keeps a pixel clear of every line (tmLineMask), so a line only
+ *     ever meets a tile's fill;
  *   - a folder is framed inside its own box by a band tmBandWidth px wide, by
  *     its size and depth: 3 px for a top-level folder 96 px or more across its
  *     thinner side, 2 px from 32 px (from 48 px for a nested one), 1 px from

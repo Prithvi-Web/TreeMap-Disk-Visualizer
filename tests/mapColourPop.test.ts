@@ -2394,10 +2394,11 @@ function uniformGrid(s: number, n: number, bytes: number) {
  * solid fill, from the stops the painter recorded): the share of their pixels that stand apart from it toward the shade
  * a line or a texture takes on that tile (darker on a light tile, lighter on a dark one) by more than 1.05:1 — `apart`,
  * the line pixels and texture together, not the highlight — the strongest contrast, the share under luminance 0.03, the
- * mean relative luminance against the solid fill's (`mean`, 1 when equal), and the mean CIE L* less the solid fill's.
+ * mean relative luminance against the solid fill's (`mean`, 1 when equal), the mean CIE L* less the solid fill's (`dL`),
+ * and the solid fill's own mean L* (`L`).
  */
 function tileLook(raster: ReturnType<typeof rasterCtx>, px: Painted[], inBox: (r: Painted) => boolean, dpr = 1) {
-  let total = 0, apart = 0, black = 0, sum = 0, solid = 0, dL = 0, strongest = 1;
+  let total = 0, apart = 0, black = 0, sum = 0, solid = 0, dL = 0, L = 0, strongest = 1;
   for (const r of px) {
     if (r.frame || !r.stops || !inBox(r)) continue;
     const darker = luminance(r.fillRgb!) >= 0.18;
@@ -2410,19 +2411,19 @@ function tileLook(raster: ReturnType<typeof rasterCtx>, px: Painted[], inBox: (r
         if (c > 1.05 && (luminance(p) < luminance(fill)) === darker) apart++;
         strongest = Math.max(strongest, c);
         if (luminance(p) < 0.03) black++;
-        sum += luminance(p); solid += luminance(fill); dL += lab(p).L - lab(fill).L;
+        sum += luminance(p); solid += luminance(fill); dL += lab(p).L - lab(fill).L; L += lab(fill).L;
       }
     }
   }
-  return { total, apart: apart / total, strongest, black: black / total, mean: sum / solid, dL: dL / total };
+  return { total, apart: apart / total, strongest, black: black / total, mean: sum / solid, dL: dL / total, L: L / total };
 }
 
 /** Three colours of the size ramp — a 2 MB file's green, a 400 MB file's amber, a 6 GB file's red — and two of the other colourings. */
-const TAPER_COLOURS: Array<{ name: string; rgb: RGB; ramp: boolean }> = [
-  { name: 'size ramp 2 MB', rgb: ramp.sizeRgb(2e6), ramp: true },
-  { name: 'size ramp 400 MB', rgb: ramp.sizeRgb(4e8), ramp: true },
-  { name: 'size ramp 6 GB', rgb: ramp.sizeRgb(6e9), ramp: true },
-  ...OTHER_COLOURS.filter((c) => c.name === 'Reclaim not scored' || c.name === 'Age band C_ORANGE').map((c) => ({ ...c, ramp: false })),
+const TAPER_COLOURS: Array<{ name: string; rgb: RGB }> = [
+  { name: 'size ramp 2 MB', rgb: ramp.sizeRgb(2e6) },
+  { name: 'size ramp 400 MB', rgb: ramp.sizeRgb(4e8) },
+  { name: 'size ramp 6 GB', rgb: ramp.sizeRgb(6e9) },
+  ...OTHER_COLOURS.filter((c) => c.name === 'Reclaim not scored' || c.name === 'Age band C_ORANGE'),
 ];
 
 test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 to 18 px, the share of pixels a line or a texture takes, and the mean lightness, change smoothly from one size to the next, in both themes, on the size ramp, Reclaim\'s "not scored" grey and an Age band, at device pixel ratios 1 and 2', () => {
@@ -2555,7 +2556,10 @@ function subFloorFolder(w: number, h: number): { tiles: Tile[]; W: number; H: nu
   };
 }
 
-test('owner\'s refinement: where tiles are too small for lines, a faint texture — a folder of tiny files reads as many files, never one flat slab and never a mesh: texture over a fifth of its pixels, no pixel past 1.6:1 from its own fill, none near-black, and its mean luminance within a tenth of the solid fill — for leaves 2 to 7 px and for a folder\'s own fill (J51), in both themes, at device pixel ratios 1 and 2', () => {
+test('owner\'s refinement: where tiles are too small for lines, a faint texture — a folder of tiny files reads as many files, never one flat slab and never a mesh: texture over a fifth of its pixels, no pixel past 1.6:1 from its own fill, none near-black, and its mean lightness (L*) within a tenth of the solid fill\'s — for leaves 2 to 7 px and for a folder\'s own fill (J51), whose seams stand 1.2:1 or more from it, on the size ramp, Reclaim\'s "not scored" grey and an Age band, in both themes, at device pixel ratios 1 and 2 (review F1.7)', () => {
+  // Lightness is CIE L*, as a person sees it, for every colour. Relative luminance is no measure of how bright a dark tile
+  // looks: the lighter texture on Reclaim's "not scored" grey (L* 27) raises its luminance by a fifth (117-121%) — about
+  // 0.01 — and its L* by 2.5, under a tenth; the size ramp's darker texture lowers its L* by under 3 of 60-76.
   const runs = [...TAPER_COLOURS.map((c) => ({ c, dpr: 1 })), { c: TAPER_COLOURS[1], dpr: 2 }];
   for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
     for (const { c, dpr } of runs) {
@@ -2568,29 +2572,33 @@ test('owner\'s refinement: where tiles are too small for lines, a faint texture 
         assert.ok(t.apart > 0.2, `${where}: a texture shows — ${(t.apart * 100).toFixed(1)}% of the pixels stand apart from the fill`);
         assert.ok(t.strongest <= 1.6, `${where}: a texture, not a line — at most ${fmt(t.strongest)}:1 from the fill`);
         assert.equal(t.black, 0, `${where}: nothing near-black`);
-        if (c.ramp) assert.ok(Math.abs(t.mean - 1) <= 0.1, `${where}: mean luminance ${(t.mean * 100).toFixed(1)}% of the solid fill's`);
+        assert.ok(Math.abs(t.dL) <= 0.1 * t.L, `${where}: mean lightness ${t.dL.toFixed(2)} L* from the solid fill's ${t.L.toFixed(1)}`);
       }
     }
-    // A folder of files all under the floor, as Wide folder (20×21 px in the corpus map) and a larger one.
-    for (const [w, h] of [[20, 21], [200, 120]]) {
+    // A folder of files all under the floor, as Wide folder (20×21 px in the corpus map) and a larger one, on the size ramp
+    // and in Reclaim's "not scored" grey.
+    const grey = OTHER_COLOURS.find((c) => c.name === 'Reclaim not scored')!;
+    for (const [w, h, colour] of [[20, 21, undefined], [200, 120, undefined], [200, 120, grey]] as const) {
       const g = subFloorFolder(w, h);
-      const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H);
+      const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, colour ? () => colour.rgb : undefined);
       const f = px.find((r) => r.n.path === '/c/Wide folder')!;
       const lw = bandOf(f), x0 = f.x + lw, y0 = f.y + lw, x1 = f.x + f.w - lw, y1 = f.y + f.h - lw;
-      let total = 0, apart = 0, black = 0, sum = 0, solid = 0, strongest = 1;
+      let total = 0, apart = 0, black = 0, dL = 0, L = 0, strongest = 1, weakest = Infinity;
       for (let y = y0; y < y1; y++) {
         const fill = lerp(f.bg![0], f.bg![1], (y + 0.5 - f.y) / f.h);
         for (let x = x0; x < x1; x++) {
           const p = raster.at(x, y), k = contrast(p, fill);
-          total++; if (k > 1.05) apart++; if (luminance(p) < 0.03) black++;
-          strongest = Math.max(strongest, k); sum += luminance(p); solid += luminance(fill);
+          total++; if (luminance(p) < 0.03) black++;
+          if (k > 1.05) { apart++; weakest = Math.min(weakest, k); }
+          strongest = Math.max(strongest, k); dL += lab(p).L - lab(fill).L; L += lab(fill).L;
         }
       }
-      const where = `${theme}, a ${w}×${h} px folder of files under the floor`;
+      const where = `${theme}, a ${w}×${h} px folder of files under the floor${colour ? `, ${colour.name}` : ''}`;
       assert.ok(apart / total > 0.2, `${where}: a texture shows — ${(100 * apart / total).toFixed(1)}% of its pixels`);
+      assert.ok(weakest >= 1.2, `${where}: its seams stand ${fmt(weakest)}:1 or more from its fill — faint, and seen`);
       assert.ok(strongest <= 1.6, `${where}: a texture, not a mesh — at most ${fmt(strongest)}:1 from its fill`);
       assert.equal(black, 0, `${where}: nothing near-black`);
-      assert.ok(Math.abs(sum / solid - 1) <= 0.1, `${where}: mean luminance ${(100 * sum / solid).toFixed(1)}% of the solid fill's`);
+      assert.ok(Math.abs(dL / total) <= 0.1 * (L / total), `${where}: mean lightness ${(dL / total).toFixed(2)} L* from the solid fill's ${(L / total).toFixed(1)}`);
     }
   }
 });
