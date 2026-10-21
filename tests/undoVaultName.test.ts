@@ -16,8 +16,10 @@ import { INDEX } from './fixtures/liftFrontend';
  * What a program reads keeps its name, because people and agents already
  * depend on it: the `/api/timecapsule…` routes, the two setting keys, the
  * capsule's folder and index file in app-data (existing copies must still be
- * found and restored), and the view id `capsule` behind its bookmarkable hash.
- * A careless sweep that renamed those goes RED here too.
+ * found and restored), and the view id `capsule`, which the page's code and its
+ * tests name (no URL opens a view: nothing reads location.hash, so an old
+ * #capsule bookmark opens the Dashboard, as any other does — eighth browser
+ * pass K52). A careless sweep that renamed those goes RED here too.
  *
  * The server's strings are read through the TypeScript parser, so a sentence
  * split across a + is found even with a comment between its pieces; every
@@ -319,6 +321,12 @@ test('the routes, the setting keys, the capsule\'s folder and the view id keep t
   assert.ok(capsule.includes("const INDEX_FILE = 'timecapsule.json';"), 'the index existing copies are listed in is still found');
   assert.ok(capsule.includes("const CAPSULE_DIR = 'timecapsule';"), 'the folder existing copies sit in is still found');
 
-  assert.match(INDEX, /registerView\(\{\s+id: 'capsule',/, 'the view id behind #capsule is still capsule');
+  assert.match(INDEX, /registerView\(\{\s+id: 'capsule',/, 'the view id is still capsule');
+  // No URL opens a view — the page reads no location.hash — so nothing may promise that an old #capsule
+  // bookmark opens the Undo Vault (eighth browser pass K52): loading one shows the Dashboard.
+  if (!/location\.hash/.test(INDEX)) {
+    const promised = ['README.md', 'AGENTS.md', 'CHANGELOG.md', 'SECURITY.md', 'docs/PLATFORM_NOTES.md'].filter((f) => /#capsule\b/i.test(read(f)));
+    assert.deepEqual(promised, [], 'no document says a #capsule link opens the Undo Vault, since nothing reads the address\'s hash');
+  }
   assert.ok(INDEX.includes('data-view="capsule"'), 'and the sidebar still opens it by that id');
 });
