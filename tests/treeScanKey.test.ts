@@ -1392,6 +1392,18 @@ test('Clean Up (K04): once the scan lands, Smart suggestions and Custom rules �
   assert.match(r.$('cleanResults').innerHTML, /a\.log/, 'pressed over results listed, they stand while it works, as before');
   out.shift()!(false);
   await third;
+  // A source that says its own problem and answers nothing — Find by a saved view with none picked — leaves nothing loading either.
+  const v = cleanUpPage({ root: TREE, notes: new Map(), ...LANDED });
+  v.given.selectedSavedView = () => null;
+  await v.open();
+  await v.fns.byView();
+  await turns();
+  assert.deepEqual([v.asks.length, v.toasts], [0, ['Pick a saved view first']], 'control: nothing asked, and the source said why');
+  assert.doesNotMatch(v.$('cleanResults').innerHTML, /loading/, `Find by a saved view with none picked leaves no rows loading (${v.$('cleanResults').innerHTML})`);
+  v.given.selectedSavedView = () => ({ id: 'v', q: 'size>1gb' });
+  const viewed = v.fns.byView();
+  assert.match(v.$('cleanResults').innerHTML, /loading/, 'and a view picked then says it is working over the blank list');
+  await viewed;
 });
 
 test('Clean Up (K04): Find asked again of the scan now on screen, after the older scan\'s request failed, holds its button while that request is out — the button was handed back as the re-ask began, so a second press started a second Find (review F1.4)', async () => {

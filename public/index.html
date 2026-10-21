@@ -40496,7 +40496,10 @@ async function runCleanFind(fetcher) {
     reportError(failure);
     return;
   }
-  if (!data) return; // the source reported its own problem
+  if (!data) { // the source reported its own problem, and answered nothing
+    if (working) { $('cleanResults').innerHTML = ''; cleanFindNoList = true; } // no rows left loading
+    return;
+  }
   // Another tree is on screen since it was asked: matched again against the scan that tree came from.
   if (scanId !== treeScanId()) { askAgain(); return; }
   cleanMatches = data.files;
