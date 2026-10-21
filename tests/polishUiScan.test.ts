@@ -1225,10 +1225,12 @@ test('a stale index badge gives the server\'s reason, escaped, and keeps the old
  * the index probe answers; `painted` whether the index paint succeeds. Every
  * POST /api/scan body is recorded, and so is every badge and index-line
  * paint, with how many of each, and the line's generation, when the probe went out.
+ * `omit` leaves page names out of the scope, for the guard test below.
  */
-function startScanHarness({ indexed, painted = true, onScreen = '/Users/x/corpus' }: { indexed: boolean; painted?: boolean; onScreen?: string | null }) {
+function startScanHarness({ indexed, painted = true, onScreen = '/Users/x/corpus', omit = [] }: { indexed: boolean; painted?: boolean; onScreen?: string | null; omit?: string[] }) {
   const src = slice('async function startScan(path', 'function quietRescanFailed(');
   const posts: Array<Record<string, unknown>> = [];
+  const failures: unknown[] = [];
   const badges: unknown[] = [];
   const chrome: Array<Record<string, unknown>> = [];
   const noop = () => {};
@@ -1239,19 +1241,25 @@ function startScanHarness({ indexed, painted = true, onScreen = '/Users/x/corpus
   let genAtProbe = -1;
   let gen: () => number = () => 0; // the page's own indexLineGen, read once the Function below has made it
   const deps: Record<string, unknown> = {
-    state, toast: noop, closeEventSource: noop, disableLive: noop,
+    // An error toast is a failure path too ("A scan is already running"): recorded, as failScan's are below.
+    state, toast: (m: string, kind?: string) => { if (kind === 'error') failures.push(new Error(`error toast: ${m}`)); }, closeEventSource: noop, disableLive: noop,
     beginScanChrome: (o: Record<string, unknown> = {}) => { chrome.push(o); state.scanning = true; },
     indexStatusFor: async (p: string) => { probeAt = badges.length; linesAtProbe = lines.length; genAtProbe = gen(); return indexed ? { indexed: true, path: p, root: { path: '/Users/x/corpus', state: 'ready', live: true } } : { indexed: false }; },
     openFromIndex: async () => painted,
     renderIndexBadge: (info: unknown) => { badges.push(info); },
     renderIndexLine: (line: unknown) => { lines.push(line); },
     api: async (url: string, opts: { body: string }) => { if (url === '/api/scan') posts.push(JSON.parse(opts.body)); return { scanId: 'new' }; },
-    abandonIfStopped: () => false, followScanProgress: noop, quietRescanFailed: noop, failScan: noop,
+    abandonIfStopped: () => false, followScanProgress: noop,
+    // Everything after the POST that throws goes to one of these two. Recorded,
+    // never discarded: a no-op here hid a ReferenceError (BQL item 10).
+    quietRescanFailed: (e: unknown) => { failures.push(e); },
+    failScan: (msg: string, e?: unknown) => { failures.push(e ?? new Error(msg)); },
     startNoteAllowed: noop, // what the start screen learns from a scan the server accepted: tests/coreScanFlow.test.ts's
     // The Full Disk Access notice beside the scan (U-11): asked for alongside the request, never awaited.
     scanAccessNotice: async () => {},
     performance: { now: () => 0 },
   };
+  for (const name of omit) delete deps[name];
   // `indexLineGen` is 045's own `let`; the slice does not carry it, so it is
   // declared here for the code to bump, and handed back so a test can read it.
   const page = new Function(...Object.keys(deps), `'use strict'; let indexLineGen = 0; ${src} return { startScan, gen: () => indexLineGen };`)(
@@ -1259,10 +1267,27 @@ function startScanHarness({ indexed, painted = true, onScreen = '/Users/x/corpus
   ) as { startScan: (p: string, o?: Record<string, unknown>) => Promise<void>; gen: () => number };
   gen = page.gen;
   return {
-    run: page.startScan, posts, badges, chrome, state, lines, gen: () => gen(),
+    run: page.startScan, posts, badges, chrome, state, lines, gen: () => gen(), failures,
     badgesBeforeProbe: () => probeAt, linesBeforeProbe: () => linesAtProbe, genAtProbe: () => genAtProbe,
   };
 }
+
+test('the scan harness records what reaches failScan or quietRescanFailed: a name the page calls after the request, missing, is a failure, never a pass (BQL item 10)', async () => {
+  // startScanRequest sends everything after the POST that throws to failScan
+  // (or, behind an index paint, quietRescanFailed). This harness stubbed both
+  // as no-ops, so a ReferenceError there — startNoteAllowed or
+  // followScanProgress missing — vanished, and the B04 tests' one POST with
+  // `interactive: true` still passed (BQL triage item 10, scratch r10).
+  for (const indexed of [false, true]) {
+    const h = startScanHarness({ indexed, omit: ['startNoteAllowed'] });
+    await h.run('/Users/x/corpus');
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    assert.equal(h.posts.length, 1, `indexed=${indexed}: control — the request went out; the missing name is called after it`);
+    assert.equal(h.failures.length, 1, `indexed=${indexed}: the one error is recorded, not discarded (${h.failures.map(String).join(' | ')})`);
+    assert.ok(h.failures[0] instanceof ReferenceError, `indexed=${indexed}: and it is the ReferenceError (${String(h.failures[0])})`);
+    assert.match(String(h.failures[0]), /\bstartNoteAllowed\b/, `indexed=${indexed}: naming the missing name`);
+  }
+});
 
 test('a scan a person starts is sent as theirs (interactive) whether or not the index painted first (B04)', async () => {
   // B04: the index-first path ran the real scan with `interactive: !quiet` =
@@ -1276,12 +1301,14 @@ test('a scan a person starts is sent as theirs (interactive) whether or not the 
     assert.equal(h.posts.length, 1, `indexed=${indexed}: one scan request`);
     assert.equal(h.posts[0].interactive, true, `indexed=${indexed}: the request says a person started it`);
     assert.equal(h.posts[0].path, '/Users/x/corpus');
+    assert.deepEqual(h.failures.map(String), [], `indexed=${indexed}: the request ran to its end — nothing went to failScan or quietRescanFailed`);
   }
   // The chrome is still quiet behind an index paint — the tree stays on screen.
   const h = startScanHarness({ indexed: true });
   await h.run('/Users/x/corpus');
   for (let i = 0; i < 5; i++) await Promise.resolve();
   assert.deepEqual(h.chrome.map((c) => !!c.quiet), [true, true], 'both chrome calls are quiet: the painted tree is not wiped');
+  assert.deepEqual(h.failures.map(String), [], 'the request ran to its end — nothing went to failScan or quietRescanFailed');
 });
 
 test('a scan nobody started — the rescan at the end of an offload or an undo — is never sent as a person\'s, index or no index (B04 review F1.2)', async () => {
@@ -1299,6 +1326,7 @@ test('a scan nobody started — the rescan at the end of an offload or an undo �
     for (let i = 0; i < 5; i++) await Promise.resolve();
     assert.equal(h.posts.length, 1, `indexed=${indexed}: one scan request`);
     assert.equal(h.posts[0].interactive, false, `indexed=${indexed}: an unattended scan is not sent as a person's`);
+    assert.deepEqual(h.failures.map(String), [], `indexed=${indexed}: the request ran to its end — nothing went to failScan or quietRescanFailed`);
   }
 });
 
@@ -1330,8 +1358,10 @@ function jobRescanHarness({ indexed }: { indexed: boolean }) {
   const noop = () => {};
   const dom = makeDom();
   const state: Record<string, unknown> = { scanning: false, scanGen: 0, root: { path: '/Users/x/Videos' }, scanId: 'old', cart: new Map() };
+  /** Everything that went to a failure path — failScan, quietRescanFailed, an error toast: recorded, never discarded (BQL item 10). */
+  const failures: unknown[] = [];
   const deps: Record<string, unknown> = {
-    state, $: dom.$, toast: noop, EventSource: FakeEventSource, FxBeam: { attach: noop }, icon: () => '', closeModal: noop,
+    state, $: dom.$, toast: (m: string, kind?: string) => { if (kind === 'error') failures.push(new Error(`error toast: ${m}`)); }, EventSource: FakeEventSource, FxBeam: { attach: noop }, icon: () => '', closeModal: noop,
     formatBytes: String, formatCount: String, baseName: (p: string) => p, escapeHtml: (s: string) => s,
     saveCart: noop, renderCart: noop, refreshCartButtons: noop, refreshDock: noop, loadOffloadIndex: noop, passedOverToast: () => '',
     OFFLOAD_PHASE_LABEL: { checking: 'Checking free space…' },
@@ -1346,7 +1376,9 @@ function jobRescanHarness({ indexed }: { indexed: boolean }) {
     beginScanChrome: () => { state.scanning = true; },
     indexStatusFor: async (p: string) => (indexed ? { indexed: true, path: p, root: { path: p, state: 'ready', live: true } } : { indexed: false }),
     openFromIndex: async () => true, renderIndexBadge: noop, renderIndexLine: noop,
-    abandonIfStopped: () => false, followScanProgress: noop, quietRescanFailed: noop, failScan: noop,
+    abandonIfStopped: () => false, followScanProgress: noop,
+    quietRescanFailed: (e: unknown) => { failures.push(e); },
+    failScan: (msg: string, e?: unknown) => { failures.push(e ?? new Error(msg)); },
     startNoteAllowed: noop, // what the start screen learns from a scan the server accepted: tests/coreScanFlow.test.ts's
     scanAccessNotice: async () => {}, // the Full Disk Access notice beside the scan (U-11), as above
     performance: { now: () => 0 },
@@ -1358,7 +1390,7 @@ function jobRescanHarness({ indexed }: { indexed: boolean }) {
     rescan: () => void; runOffloadJob: (paths: string[], dest: string) => Promise<void>;
     cartUndoRun: (runId: string) => Promise<void>; startEncode: (paths: string[]) => Promise<void>;
   };
-  return { page, posts, streams };
+  return { page, posts, streams, failures };
 }
 const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
 
@@ -1385,6 +1417,7 @@ test('the rescan that ends a long job — an offload, the cart\'s undo, a video 
       assert.equal(h.posts.length, 1, `indexed=${indexed}, ${what}: the job's end rescans the folder`);
       assert.equal(h.posts[0].path, '/Users/x/Videos', `indexed=${indexed}, ${what}: the folder on screen is the one rescanned`);
       assert.equal(h.posts[0].interactive, false, `indexed=${indexed}, ${what}: the rescan at the job's end is not sent as a person's`);
+      assert.deepEqual(h.failures.map(String), [], `indexed=${indexed}, ${what}: the job and its rescan ran to their end — nothing went to a failure path`);
     }
     // ⌘R, the palette's Rescan and a delete just confirmed call rescan() as it is: a person asked.
     const h = jobRescanHarness({ indexed });
@@ -1392,6 +1425,7 @@ test('the rescan that ends a long job — an offload, the cart\'s undo, a video 
     await settle();
     assert.equal(h.posts.length, 1, `indexed=${indexed}: a rescan asked for is sent`);
     assert.equal(h.posts[0].interactive, true, `indexed=${indexed}: a rescan a person asks for is still sent as theirs`);
+    assert.deepEqual(h.failures.map(String), [], `indexed=${indexed}: the rescan ran to its end — nothing went to a failure path`);
   }
 });
 
@@ -1441,16 +1475,22 @@ test('a scan of another folder takes the index badge down before the index is as
   assert.equal(other.linesBeforeProbe(), 1, 'the line too, before the probe is sent');
   assert.equal(other.gen(), 1, 'and the line\'s generation moves on once: the last folder\'s build can no longer paint it');
   assert.equal(other.genAtProbe(), 1, 'the generation too, before the probe is sent');
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  assert.deepEqual(other.failures.map(String), [], 'another folder: the request ran to its end — nothing went to failScan');
   const same = startScanHarness({ indexed: false, onScreen: '/Users/x/corpus' });
   await same.run('/Users/x/corpus');
   assert.deepEqual(same.badges, [], 'a rescan of the folder on screen leaves its badge to the index paint');
   assert.deepEqual(same.lines, [], 'and its line');
   assert.equal(same.gen(), 0, 'and the line\'s generation: a build of the folder on screen still owns the line');
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  assert.deepEqual(same.failures.map(String), [], 'a rescan of the folder on screen: the request ran to its end — nothing went to failScan');
   const first = startScanHarness({ indexed: false, onScreen: null });
   await first.run('/Users/x/corpus');
   assert.equal(first.badges[0], null, 'with nothing on screen there is nothing to keep');
   assert.deepEqual(first.lines, [null], 'nor any line to keep');
   assert.equal(first.gen(), 1, 'and no build may paint one');
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  assert.deepEqual(first.failures.map(String), [], 'nothing on screen: the request ran to its end — nothing went to failScan');
 });
 
 test('the index paint takes the last folder\'s ring and forecast down while its lists are pending (B05, B08)', async () => {

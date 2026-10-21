@@ -381,6 +381,8 @@ function scanStartHarness(indexed: boolean) {
   const state: Record<string, unknown> = { scanning: false, abortScan: null, scanGen: 0, scanId: null, settledScanId: null, root: null, scanStats: null, whatsNew: { seq: 0 }, view: 'dashboard' };
   /** What happened, in order: every request, the paint, a scan followed. */
   const log: string[] = [];
+  /** Every error that reached a failure path — failScan, quietRescanFailed, an error toast — whole, never discarded (BQL item 10). */
+  const failures: unknown[] = [];
   /** The index answers out, each waiting for the test. */
   const out: Array<{ what: string; answer: () => void }> = [];
   const waitFor = (what: string) => new Promise<void>((resolve) => { out.push({ what, answer: resolve }); });
@@ -402,7 +404,7 @@ function scanStartHarness(indexed: boolean) {
   const noop = () => {};
   const env: Record<string, unknown> = {
     state, $, api, log, performance, console,
-    toast: noop, closeEventSource: noop, disableLive: noop, icon: () => '', REDUCED: true, escapeHtml: (s: string) => s,
+    toast: (m: string, kind?: string) => { if (kind === 'error') failures.push(new Error(`error toast: ${m}`)); }, closeEventSource: noop, disableLive: noop, icon: () => '', REDUCED: true, escapeHtml: (s: string) => s,
     fxStateBeam: noop, fxOrbShow: noop, fxOrbHide: noop, fxScanHeroSync: noop, fxDonutLoadingSync: noop, tourScanStarted: noop, tourScanFailed: noop,
     liveQueuedSync: noop, liveScanEnded: noop, // the Live pill's wish through a scan: tests/coreScanFlow.test.ts's (review F2.14)
     // The chrome takes the last folder's ring down while the lists load (B05);
@@ -421,7 +423,8 @@ function scanStartHarness(indexed: boolean) {
     // An index paint standing over older results gives them back at a Stop: tests/coreScanFlow.test.ts's (J06).
     putBackHeldTree: () => false,
     followScanProgress: (scanId: string) => { log.push(`follow ${scanId}`); },
-    quietRescanFailed: () => { log.push('quiet rescan failed'); }, failScan: (m: string) => { log.push(`failed: ${m}`); },
+    quietRescanFailed: (e: unknown) => { log.push('quiet rescan failed'); failures.push(e); },
+    failScan: (m: string, e?: unknown) => { log.push(`failed: ${m}`); failures.push(e ?? new Error(m)); },
     INSTANT_OPEN_NODES: 25000,
   };
   const names = Object.keys(env);
@@ -440,7 +443,7 @@ function scanStartHarness(indexed: boolean) {
     out.splice(at, 1)[0].answer();
     await turns(20);
   };
-  return { ...fns, state, log, $, answer, scansPosted: () => log.filter((l) => l === 'POST /api/scan').length };
+  return { ...fns, state, log, $, answer, failures, scansPosted: () => log.filter((l) => l === 'POST /api/scan').length };
 }
 
 /** Let `n` turns of the event loop pass: a count, never a time. */
@@ -466,6 +469,7 @@ test('a Stop pressed while the index is asked about an unindexed folder starts n
   assert.equal(h.state.scanning, false, 'and nothing says a scan is running');
   assert.match(h.$('scanStatus').innerHTML, /Scan stopped by user/, 'the status still says what the person did');
   assert.ok(done(), 'and the click has finished');
+  assert.deepEqual(h.failures.map(String), [], 'a Stop is not a failure: nothing went to failScan or an error toast');
 });
 
 test('a Stop pressed while the index is asked about an indexed folder neither paints it nor starts a scan (final review F1.7)', async () => {
@@ -477,6 +481,7 @@ test('a Stop pressed while the index is asked about an indexed folder neither pa
   assert.deepEqual(h.log.filter((l) => l.startsWith('GET /api/index/tree') || l === 'painted the index tree'), [], 'the tree is not read');
   assert.equal(h.scansPosted(), 0, `and no scan is asked for (${h.log.join(', ')})`);
   assert.ok(done(), 'and the click has finished');
+  assert.deepEqual(h.failures.map(String), [], 'a Stop while the index is asked about is not a failure');
 });
 
 test('a Stop pressed while the index tree is read neither paints it nor starts a scan (final review F1.7)', async () => {
@@ -490,6 +495,7 @@ test('a Stop pressed while the index tree is read neither paints it nor starts a
   assert.equal(h.scansPosted(), 0, `and no scan is asked for (${h.log.join(', ')})`);
   assert.match(h.$('scanStatus').innerHTML, /Scan stopped by user/);
   assert.ok(done(), 'and the click has finished');
+  assert.deepEqual(h.failures.map(String), [], 'a Stop while the index tree is read is not a failure');
 });
 
 test('a Scan pressed again after a Stop starts one scan, not two: the first click\'s probe answering late starts nothing (final review F1.7)', async () => {
@@ -506,6 +512,7 @@ test('a Scan pressed again after a Stop starts one scan, not two: the first clic
   assert.equal(h.scansPosted(), 1, `the second click starts its scan (${h.log.join(', ')})`);
   assert.deepEqual(h.log.filter((l) => l.startsWith('follow')), ['follow scan-1'], 'and it is followed');
   assert.ok(second());
+  assert.deepEqual(h.failures.map(String), [], 'Scan again after a Stop: both clicks ran to their end — nothing went to failScan or an error toast');
 });
 
 test('without a Stop, an indexed folder is painted from the index and then scanned quietly; an unindexed one is scanned (final review F1.7)', async () => {
@@ -516,12 +523,14 @@ test('without a Stop, an indexed folder is painted from the index and then scann
   await indexed.answer('tree');
   assert.deepEqual(indexed.log.filter((l) => l === 'painted the index tree' || l === 'POST /api/scan' || l.startsWith('follow')), ['painted the index tree', 'POST /api/scan', 'follow scan-1'], indexed.log.join(', '));
   assert.ok(a());
+  assert.deepEqual(indexed.failures.map(String), [], 'indexed: the quiet rescan ran to its end — nothing went to quietRescanFailed');
   const plain = scanStartHarness(false);
   const b = settledYet(plain.startScan('/x'));
   await turns(20);
   await plain.answer('status');
   assert.deepEqual(plain.log.filter((l) => l === 'POST /api/scan' || l.startsWith('follow')), ['POST /api/scan', 'follow scan-1'], plain.log.join(', '));
   assert.ok(b());
+  assert.deepEqual(plain.failures.map(String), [], 'unindexed: the scan request ran to its end — nothing went to failScan');
 });
 
 test('a tree with no scan behind it does not leave the Duplicates panes claiming to be scanning', () => {
