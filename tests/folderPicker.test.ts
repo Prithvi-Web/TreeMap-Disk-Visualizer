@@ -1351,9 +1351,16 @@ type BoxEl = FakeEl & { checked?: boolean; hidden?: boolean; querySelector(sel: 
  */
 function boxesRuntime(listing: (p: string) => unknown) {
   const els = new Map<string, BoxEl>();
+  /**
+   * Where focus is, as a browser keeps it: a control focused holds it until another takes it — or until it
+   * is disabled, when the browser's focus fixup hands it to <body> as it next reads where focus is, and
+   * enabling the control again does not give it back (eighth browser pass K02).
+   */
+  const focus: { active: BoxEl | null } = { active: null };
   const $ = (id: string) => {
     if (!els.has(id)) {
       const el = fakeEl(id) as BoxEl;
+      el.focus = () => { focus.active = el; };
       // A box may have several listeners for one event (the page adds one per concern).
       el.addEventListener = (type, fn) => {
         const before = el.listeners[type];
@@ -1395,9 +1402,15 @@ function boxesRuntime(listing: (p: string) => unknown) {
   };
   const stored = new Map<string, string>();
   const localStorage = { getItem: (k: string) => stored.get(k) ?? null, setItem: (k: string, v: string) => { stored.set(k, v); } };
+  const body = fakeEl('body') as BoxEl;
   const document = {
     querySelector: (sel: string) => (sel === '#apMatchSeg button[aria-selected="true"]' ? { dataset: { apmatch: 'custom' } } : null),
     querySelectorAll: () => [],
+    body,
+    get activeElement(): BoxEl {
+      if (focus.active && focus.active.disabled) focus.active = null; // the focus fixup
+      return focus.active ?? body;
+    },
   };
   const browse = between('/* ───────────────────────────── Browse modal ───────────────────────────── */',
     "$('browseUseBtn').addEventListener('click'") + between("$('browseUseBtn').addEventListener('click'", '\n});\n') + '\n});\n';
@@ -1448,7 +1461,7 @@ function boxesRuntime(listing: (p: string) => unknown) {
   const saved = () => sent.filter((s) => s.url === '/api/autopilot/policies').map((s) => s.body.policies!.map((p) => p.path));
   /** How many times the policy list was saved. */
   const saves = () => saved().length;
-  return { rt, $, asked, scanned, toasts, offers, click, type, policy, saved, saves, timers, fire };
+  return { rt, $, asked, scanned, toasts, offers, click, type, policy, saved, saves, timers, fire, document };
 }
 
 test('a folder picked into the Scan card keeps its trailing space when Scan and Browse… read the box again, and Fast rescan knows it (review F2.4, F2.8)', async () => {
@@ -1590,6 +1603,30 @@ const slowShots = (g: ReturnType<typeof gate>) => (p: string) =>
 /** DOCS + ' ' is not there, and says so only when the gate opens; DOCS is. */
 const slowStray = (g: ReturnType<typeof gate>) => (p: string) =>
   (p === DOCS + ' ' ? g.opened.then(() => notFound()) : strictListing(p));
+
+test('pressing Scan keeps focus on it through the path\'s lookup — the button held disabled hands focus to <body>, and it is given back as the button is handed back — so the scan\'s Stop holds it and Enter reaches Stop (eighth browser pass K02)', async () => {
+  const g = gate();
+  const { $, scanned, click, type, document } = boxesRuntime(slowShots(g));
+  type('pathInput', SLOW);
+  $('scanBtn').focus();
+  const pending = click('scanBtn');
+  assert.equal($('scanBtn').disabled, true, 'control: Scan is held while the path is looked up');
+  assert.equal(document.activeElement, document.body, 'control: a browser hands focus from the disabled button to <body>');
+  g.open();
+  await pending;
+  assert.deepEqual(scanned.map(([p]) => p), [SLOW], 'control: the folder is scanned');
+  assert.equal(document.activeElement, $('scanBtn'), 'focus is on the Scan button again — the scan\'s Stop — never left on <body>');
+  // Focus the person moved elsewhere while the path was looked up is left where they put it.
+  const h = gate();
+  const moved = boxesRuntime(slowShots(h));
+  moved.type('pathInput', SLOW);
+  moved.$('scanBtn').focus();
+  const press = moved.click('scanBtn');
+  moved.$('browseBtn').focus();
+  h.open();
+  await press;
+  assert.equal(moved.document.activeElement, moved.$('browseBtn'), 'focus the person moved meanwhile stays where they moved it');
+});
 
 test('Scan holds its button while the path is looked up, and a press the person moved on from acts on nothing (QA4a R4-3)', async () => {
   // Box changed while the lookup ran.

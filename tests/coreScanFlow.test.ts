@@ -3059,3 +3059,24 @@ test('K04: the Clean Up sheet\'s panes waiting on a scan hear of every change to
       `${end}: heard once the scan has ended and the scan behind the tree on screen is settled — never with the ended scan's id on hand`);
   }
 });
+
+test('K02: the Dashboard\'s Scan pressed over a tree keeps focus on #scanBtn through the scan — it reads Stop — its landing, and a Stop of the next one; never <body>', async () => {
+  const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
+  const h = page({ index: true, root: mail, settledScanId: 'scan-mail', route: server({ roots: [] }) });
+  h.switchView('dashboard');
+  h.$('scanBtn').focus(); // scanTheBox hands focus back to it once the path is looked up (folderPicker's test)
+  await h.startScan(MAIL);
+  await turns();
+  assert.equal(h.state.scanning, true, 'control: the rescan runs');
+  assert.equal(h.dom.activeElement, h.$('scanBtn'), 'while the scan runs, focus is on the button, which reads Stop');
+  assert.match(h.$('scanBtn').innerHTML, /Stop/, 'control: it reads Stop');
+  h.streams.find((s) => s.url === '/api/scan/scan-1/progress')!.onmessage!({ data: JSON.stringify({ type: 'complete', root: mail, stats: { fileCount: 1, dirCount: 1 } }) });
+  await turns();
+  assert.equal(h.state.scanning, false, 'control: it landed');
+  assert.equal(h.dom.activeElement, h.$('scanBtn'), 'after the landing, focus is on the button, which reads Scan');
+  await h.startScan(MAIL);
+  await turns();
+  await h.stopScan();
+  await turns();
+  assert.equal(h.dom.activeElement, h.$('scanBtn'), 'after a Stop of the next scan, focus is on the button still');
+});

@@ -12183,6 +12183,11 @@ async function scanTheBox() {
   const incremental = !$('fastRescanWrap').hidden && $('fastRescan').checked;
   const seq = ++scanPressSeq;
   const checking = 'Checking that the folder exists…';
+  // Held, the button is disabled, and a browser hands focus from a disabled
+  // control to <body> — where it stayed through the scan, its landing and a
+  // Stop, and Enter mid-scan reached nothing (eighth browser pass K02). It is
+  // given back as the button is, unless the person moved it meanwhile.
+  const heldFocus = document.activeElement === btn;
   btn.disabled = true;
   if (boxLooksUp(p)) {
     btn.setAttribute('aria-busy', 'true');
@@ -12199,6 +12204,7 @@ async function scanTheBox() {
     if (seq === scanPressSeq) {
       btn.removeAttribute('aria-busy');
       if (state.scanning) btn.disabled = false; else setScanButtonMode('scan');
+      if (heldFocus && (!document.activeElement || document.activeElement === document.body)) btn.focus({ preventScroll: true });
       // And the check is over: the live region stops saying one is running,
       // however it ended — an offer, a press dropped — unless a scan started
       // meanwhile has said its own sentence there (final review F2.4).
