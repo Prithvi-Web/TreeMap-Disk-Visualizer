@@ -3645,7 +3645,10 @@ test('tmSnap lays a coordinate on the nearest whole device pixel — at device p
  * edge (buildTreemap rounds nothing). On a map 333 by 241 css px at 150 % F's right and bottom edges are 499.49999999999994
  * and 361.49999999999994 device px, its files' 499.5 and 361.5 (and on one 334 by 242 css px, at 125 and 175 %, half a
  * device pixel too): a bare Math.round put B, C and D a device pixel past their folder, beside its band, which was toned
- * against the map's ground beyond it.
+ * against the map's ground beyond it. On a page zoomed out the same: at 50 % on 333 by 241 css px F's edges are
+ * 166.49999999999997 and 120.49999999999999 device px, its files' 166.5 and 120.5 (and on 667 by 483 css px half a device
+ * pixel too), and at 90 % on 555 by 405 css px 499.4999999999999 and 364.49999999999994 against 499.5 and 364.5 (review
+ * F1.7 of BQJ-2c-r).
  */
 function farEdgeNoise(): Tile[] {
   const near = 99.99999999999999;
@@ -3658,13 +3661,14 @@ function farEdgeNoise(): Tile[] {
   ] as Tile[];
 }
 
-test('owner\'s refinement at 125, 150 and 175 %: a file and its folder that end together in the layout end on the same device pixel — the float noise at a layout\'s far edge (100 against 99.99999999999999 %) never snaps them a device pixel apart, where a file then lay past its folder, beside the folder\'s band toned against the map\'s ground beyond it, at 1.02:1 — on the review\'s map, 333 by 241 and 334 by 242 css px, by size and in the History diff, in both themes, and on a realistic map 1043 by 741 css px (review F3.1)', () => {
+test('owner\'s refinement at 50, 90, 125, 150 and 175 %: a file and its folder that end together in the layout end on the same device pixel — the float noise at a layout\'s far edge (100 against 99.99999999999999 %) never snaps them a device pixel apart, where a file then lay past its folder, beside the folder\'s band toned against the map\'s ground beyond it, at 1.02:1 — on the review\'s map, 333 by 241 and 334 by 242 css px, and on a page zoomed out 333 by 241 and 667 by 483 at 50 % and 555 by 405 at 90 %, by size and in the History diff, in both themes, and on a realistic map 1043 by 741 css px (review F3.1; F1.7 of BQJ-2c-r)', () => {
   const snap = load<(v: number, dpr: number) => number>(['tmSnap'], {}, 'tmSnap');
   // 241 × 1.5 is 361.5, and 241 × 0.9999999999999999 × 1.5 is 361.49999999999994.
   assert.equal(snap((99.99999999999999 / 100) * 241, 1.5), snap((100 / 100) * 241, 1.5), 'the two spellings of one far edge snap to one device pixel');
   const colourings: Array<[string, ((n: Tile) => RGB) | undefined, { active: boolean; diff: boolean }]> = [
     ['size', undefined, { active: false, diff: false }], ['the History diff', (n: Tile) => DIFF_PAGE.diffRgb(n), { active: true, diff: true }]];
-  for (const [dpr, W, H] of [[1.25, 334, 242], [1.5, 333, 241], [1.75, 334, 242]]) for (const [colouring, colour, history] of colourings) {
+  // Under a ratio of 1 too, where a css size times the ratio is half a device pixel (review F1.7 of BQJ-2c-r).
+  for (const [dpr, W, H] of [[1.25, 334, 242], [1.5, 333, 241], [1.75, 334, 242], [0.5, 333, 241], [0.5, 667, 483], [0.9, 555, 405]]) for (const [colouring, colour, history] of colourings) {
     for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
       const where = `the review's map, ${W} by ${H} css px, by ${colouring}, ${theme}, dpr ${dpr}`;
       const { raster, px } = rasterPaint(farEdgeNoise(), palette, W, H, colour, history, false, dpr);
@@ -3681,7 +3685,7 @@ test('owner\'s refinement at 125, 150 and 175 %: a file and its folder that end 
   // A realistic map: every rectangle whose right or bottom edge is its folder's in the layout ends on its folder's device pixel.
   const real = realisticNodes(), W = 1043, H = 741;
   const layout = new Map(real.map((n) => [n.path, n]));
-  for (const dpr of [1.25, 1.5, 1.75]) {
+  for (const dpr of [1.25, 1.5, 1.75, 0.5, 0.9]) {
     const { px } = rasterPaint(real, DARK, W, H, undefined, undefined, false, dpr);
     const folders = new Map(px.filter((r) => r.frame).map((r) => [r.n.path, r]));
     const dev = (v: number) => Math.round(v * dpr);
