@@ -3210,6 +3210,43 @@ test('owner\'s refinement: in the History diff a line along a washed folder\'s e
   }
 });
 
+/**
+ * A T-junction (review F2.7): in a top-level folder P of Reclaim's dark "not scored" grey, a yellow file A across its top
+ * and a mid-grey file B, 80 px tall, below A from 40 px in — B's top-left corner meets A's bottom edge mid-way, and B's
+ * left side faces P's own fill. No one shade of B's grey stands out from both B's whole cushion and P's dark fill, so B's
+ * left line is laid in two parts; its top line, which B and A share, is one.
+ */
+function tJunction() {
+  const W = 120, H = 100, pct = (v: number, of: number) => (v / of) * 100;
+  const node = (path: string, depth: number, dir: boolean, x: number, y: number, w: number, h: number): Tile =>
+    ({ name: path.slice(path.lastIndexOf('/') + 1), path, size: dir ? 1e10 : 4e9, type: dir ? 'dir' : 'file', depth, expanded: dir, x: pct(x, W), y: pct(y, H), w: pct(w, W), h: pct(h, H) });
+  const tiles = [node('/P', 1, true, 0, 0, 120, 100), node('/P/A', 2, false, 0, 0, 120, 20), node('/P/B', 2, false, 40, 20, 80, 80)];
+  const rgb: Record<string, RGB> = { '/P': OTHER_COLOURS.find((c) => c.name === 'Reclaim not scored')!.rgb, '/P/A': [220, 190, 40], '/P/B': [128, 128, 128] };
+  return { tiles, W, H, colour: (n: Tile) => rgb[n.path] };
+}
+
+test('owner\'s refinement: where a file\'s corner meets another tile\'s edge, the line across keeps its own pixel at the corner — a side line laid in two parts lays its outer pixel first, under the line along the top — so the file stays parted from the tile above it there, at device pixel ratios 1, 1.5 and 2, in both themes (review F2.7)', () => {
+  // A two-part line's outer pixel is toned against the tile beyond it alone; laid over the corner, it broke the line
+  // between the file and the tile above it. Only one place in the realistic map, under one colouring, held this.
+  const m = tJunction();
+  for (const dpr of [1, 1.5, 2]) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      const where = `${theme}, dpr ${dpr}`;
+      const { raster, px } = rasterPaint(m.tiles, palette, m.W, m.H, m.colour, undefined, false, dpr);
+      const b = px.find((r) => r.n.path === '/P/B')!;
+      const left = (b.lines || []).filter((l) => l.h > 1 && l.w === 1 && l.y <= b.y + 1e-6);
+      const top = (b.lines || []).find((l) => l.h === 1 && Math.abs(l.y - b.y) < 1e-6 && l.x <= b.x + 1e-6 && l.x + l.w > b.x);
+      assert.ok(left.some((l) => Math.abs(l.x - b.x) < 1e-6) && left.some((l) => Math.abs(l.x - (b.x + 1)) < 1e-6) && top,
+        `${where}: control — B's left line laid in two parts, and its top line across the corner (${(b.lines || []).map((l) => `${l.x},${l.y} ${l.w}×${l.h} ${l.rgb}`).join('; ')})`);
+      const want = rgba(top!.rgb).slice(0, 3), got = raster.at(Math.round(b.x * dpr), Math.round(b.y * dpr));
+      assert.ok(got.every((v, i) => Math.abs(v - want[i]) <= 1), `${where}: B's corner pixel is its top line's ${want} (it shows ${got.map(Math.round)})`);
+      const p = partings(raster, px, dpr);
+      assert.ok(p.looked > 100 * dpr, `${where}: control — ${p.looked} places along the files' sides`);
+      assert.deepEqual(p.unparted, [], `${where}: files not parted by ${EDGE_BAR}:1 from what lies beside them`);
+    }
+  }
+});
+
 /* ── On the device's own pixels: Retina (2) and 150 % (1.5) ── */
 
 test('tmSnap lays a coordinate on the nearest whole device pixel — at device pixel ratios 1, 1.25, 1.5 and 2 (review F1.7)', () => {
