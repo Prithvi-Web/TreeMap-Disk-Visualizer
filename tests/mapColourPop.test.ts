@@ -2526,42 +2526,50 @@ function offsetFolders() {
   return { tiles, W, H };
 }
 
-test('owner\'s refinement at 125, 150 and 175 %: the 8 px step and the band steps are taken by size on the device\'s pixels — every one of a grid of identical 8 px tiles lined, and painted pixel for pixel as its neighbour, never some textured by the float noise in a snapped width; and every folder exactly 8, 32, 48 or 96 px across banded as that size asks, in both themes (review F1.1)', () => {
+test('owner\'s refinement at 125, 150 and 175 %: the 8 px step, the 2 px texture step and the band steps are taken by size on the device\'s pixels — every one of a grid of identical 8 px tiles lined, and at 150 % every one of a grid of identical 2 px tiles textured, each painted pixel for pixel as its neighbour, never some classed a step down by the float noise in a snapped width; and every folder exactly 8, 32, 48 or 96 px across banded as that size asks, in both themes (review F1.1, F2.6)', () => {
   // A tile 12 device px wide at 150 % is 8 css px; its width as two snapped edges' difference was 7.999999999999998, and
   // `>= 8` classed it textured: a 1.375:1 seam beside identical tiles parted by 3.3:1 lines — a speckle at exactly the
   // step the owner asked to taper. The same noise took a band a step thinner.
+  // At 150 % the same noise put a 2 px tile (3 device px) a hair under the 2 px texture step: 1.9999999999999996, a plain
+  // tile among textured ones (review F2.6).
   const kindOf = (r: Painted) => (r.lines ? 'lined' : r.tex ? 'textured' : 'solid');
   const onDevice = (r: Painted, dpr: number) => ({ ...r, w: Math.round(r.w * dpr) / dpr, h: Math.round(r.h * dpr) / dpr });
+  // A grid of identical `s` px tiles at `dpr`: each classed `kind`, and each clear of the map's edge painted pixel for pixel
+  // as the first such tile.
+  const identical = (where: string, palette: Record<string, string>, dpr: number, s: number, cols: number, rows: number, kind: string) => {
+    const d = s * dpr;
+    const g = offsetGrid(s, cols, rows, 0.7, 0.3);
+    const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, () => TAPER_COLOURS[1].rgb, undefined, false, dpr);
+    assert.ok(px.length === cols * rows && px.every((r) => Math.round(r.w * dpr) === d && Math.round(r.h * dpr) === d),
+      `${where}: control — ${px.length} tiles, each ${d} device px square`);
+    const under = px.filter((r) => Math.min(r.w, r.h) < s).length;
+    assert.ok(under > 0, `${where}: control — ${under} of the snapped sizes fall a hair under ${s} css px`);
+    const kinds: Record<string, number> = {};
+    for (const r of px) kinds[kindOf(r)] = (kinds[kindOf(r)] || 0) + 1;
+    assert.deepEqual(kinds, { [kind]: cols * rows }, `${where}: identical ${s} px tiles, each ${kind}`);
+    const box = (r: Painted) => [Math.round(r.x * dpr), Math.round(r.y * dpr)];
+    const ref = px.find((r) => r.n.path === '/g/g1.1')!, [rx, ry] = box(ref);
+    let worst = 0, at = '';
+    for (const r of px) {
+      const [i, j] = /g(\d+)\.(\d+)$/.exec(r.n.path)!.slice(1).map(Number);
+      if (i === 0 || j === 0 || i === rows - 1 || j === cols - 1) continue;
+      const [x0, y0] = box(r);
+      for (let v = 0; v < d; v++) {
+        for (let u = 0; u < d; u++) {
+          const p = raster.at(x0 + u, y0 + v), q = raster.at(rx + u, ry + v);
+          const diff = Math.max(...p.map((c, k) => Math.abs(c - q[k])));
+          if (diff > worst) { worst = diff; at = `${r.n.path} at +${u},+${v}: ${p.map(Math.round)} where ${ref.n.path} shows ${q.map(Math.round)}`; }
+        }
+      }
+    }
+    assert.ok(worst <= 1, `${where}: identical ${s} px tiles painted alike — ${at}`);
+  };
   for (const dpr of [1.25, 1.5, 1.75]) {
     for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
       const where = `${theme}, dpr ${dpr}`;
-      const cols = 40, rows = 12, d = 8 * dpr;
-      const g = offsetGrid(8, cols, rows, 0.7, 0.3);
-      const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, () => TAPER_COLOURS[1].rgb, undefined, false, dpr);
-      assert.ok(px.length === cols * rows && px.every((r) => Math.round(r.w * dpr) === d && Math.round(r.h * dpr) === d),
-        `${where}: control — ${px.length} tiles, each ${d} device px square`);
-      const under = px.filter((r) => Math.min(r.w, r.h) < 8).length;
-      assert.ok(under > 0, `${where}: control — ${under} of the snapped sizes fall a hair under 8 css px`);
-      const kinds: Record<string, number> = {};
-      for (const r of px) kinds[kindOf(r)] = (kinds[kindOf(r)] || 0) + 1;
-      assert.deepEqual(kinds, { lined: cols * rows }, `${where}: identical 8 px tiles, each lined`);
-      // Painted alike: each tile clear of the map's edge shows what the first such tile shows, pixel for pixel.
-      const box = (r: Painted) => [Math.round(r.x * dpr), Math.round(r.y * dpr)];
-      const ref = px.find((r) => r.n.path === '/g/g1.1')!, [rx, ry] = box(ref);
-      let worst = 0, at = '';
-      for (const r of px) {
-        const [i, j] = /g(\d+)\.(\d+)$/.exec(r.n.path)!.slice(1).map(Number);
-        if (i === 0 || j === 0 || i === rows - 1 || j === cols - 1) continue;
-        const [x0, y0] = box(r);
-        for (let v = 0; v < d; v++) {
-          for (let u = 0; u < d; u++) {
-            const p = raster.at(x0 + u, y0 + v), q = raster.at(rx + u, ry + v);
-            const diff = Math.max(...p.map((c, k) => Math.abs(c - q[k])));
-            if (diff > worst) { worst = diff; at = `${r.n.path} at +${u},+${v}: ${p.map(Math.round)} where ${ref.n.path} shows ${q.map(Math.round)}`; }
-          }
-        }
-      }
-      assert.ok(worst <= 1, `${where}: identical tiles painted alike — ${at}`);
+      identical(where, palette, dpr, 8, 40, 12, 'lined');
+      // 2 css px is a whole number of device pixels only at 150 %.
+      if (dpr === 1.5) identical(where, palette, dpr, 2, 300, 6, 'textured');
       // The band steps.
       const f = offsetFolders();
       const fp = rasterPaint(f.tiles, palette, f.W, f.H, undefined, undefined, false, dpr).px.filter((r) => r.frame);
