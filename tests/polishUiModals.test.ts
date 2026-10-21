@@ -254,6 +254,39 @@ test('closing a dialog gives focus back to where it came from and lifts inert', 
   assert.equal(p.side.inert, false);
 });
 
+test('a sheet opened by a click that does not focus its button — Safari, Firefox on macOS, a scripted click — gives focus back to that button as it closes, not to the field focused before it (BQR-1 item 12b)', () => {
+  // The Autopilot editor opens on its Name field; "Browse…" pressed with the mouse in Safari opens the folder picker
+  // without taking focus, and the picker closed with focus on Name: the newest focus the net had seen.
+  const doc = makeDoc();
+  const p = pageWith(doc);
+  const mk = mkOf(doc);
+  const field = append(p.main, mk('input', 'apName'));
+  const icon = append(p.pageBtn, mk('span', '', ['ico'])); // what the click lands on: the button's own icon
+  const listeners: Record<string, Array<{ fn: (e: unknown) => void; capture: unknown }>> = {};
+  (doc as unknown as { addEventListener: (t: string, fn: (e: unknown) => void, capture?: unknown) => void }).addEventListener =
+    (t, fn, capture) => { (listeners[t] ??= []).push({ fn, capture }); };
+  const api = loadModalNet(doc);
+  const clicks = listeners.click ?? [];
+  assert.equal(clicks.length, 1, 'the net listens for clicks');
+  assert.ok(clicks[0].capture === true || (clicks[0].capture as { capture?: boolean } | undefined)?.capture === true,
+    'as the click starts (capture), before any handler opens a sheet');
+  field.focus(); api.noteFocus(field);
+  clicks[0].fn({ target: icon }); // pressed with the mouse: no focus moves, the button is noted all the same
+  assert.equal(doc.activeElement, field, 'control: the click focused nothing');
+  setOpen(api, p.confirm, true);
+  doc.activeElement = doc.body; // the sheet stops painting
+  setOpen(api, p.confirm, false);
+  assert.equal(doc.activeElement, p.pageBtn, 'focus returns to the button the click pressed');
+
+  // A click on what is no control — the page's background — is no opener.
+  field.focus(); api.noteFocus(field);
+  clicks[0].fn({ target: p.main });
+  setOpen(api, p.confirm, true);
+  doc.activeElement = doc.body;
+  setOpen(api, p.confirm, false);
+  assert.equal(doc.activeElement, field, 'a click on no control leaves the field focused before as the place to return to');
+});
+
 test('a sheet whose opener is gone by the time it closes hands focus to where it would have gone had that control left the screen — the tour card\'s Skip, inert until the sheet closed — never <body> (review F2.1)', () => {
   // The welcome card's own "Choose a folder" opens the folder browser.
   // "Scan this folder" closes the sheet and, in the same turn, starts the

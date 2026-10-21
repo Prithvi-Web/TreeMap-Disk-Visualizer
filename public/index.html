@@ -42525,6 +42525,17 @@ document.addEventListener('focusin', (e) => {
   const top = topModal();
   if (top && !top.contains(e.target) && !$('toasts').contains(e.target) && !inModalOverlay(e.target)) modalFocusInto(top);
 });
+/* A press that focuses nothing opens a sheet all the same: a click in Safari
+   or Firefox on macOS, which do not focus a button they click, or a scripted
+   click(). Closing it then gave focus back to the newest focus the net had
+   seen — the Autopilot editor's Name field, not the "Browse…" that opened the
+   picker (BQR-1 item 12b). So the control a click presses counts as the
+   newest focus, noted as the click starts (capture), before any handler opens
+   a sheet. A click on no control — the page's background — notes nothing. */
+document.addEventListener('click', (e) => {
+  const control = e.target && e.target.closest ? e.target.closest('button, a[href], input, select, textarea, [tabindex]') : null;
+  if (control && control !== document.activeElement) noteFocus(control);
+}, true);
 
 /* Which sheet is on top, bottom to top.
    NOT DOM order. Backdrops share one z-index, so DOM order is what PAINTS —
