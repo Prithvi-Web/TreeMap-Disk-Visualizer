@@ -1362,7 +1362,9 @@ type Texture = { stops: RGB[]; rects: number[][] };
 type Painted = { n: Tile; x: number; y: number; w: number; h: number; frame: boolean; lines?: Band[]; lit?: boolean; stops?: RGB[]; fillRgb?: RGB; bg?: RGB[]; bands?: Band[]; tex?: Texture; lw?: number; seen?: RGB[]; litSeen?: RGB };
 
 /**
- * `tiles` painted by the real drawTreemap onto a `W`×`H` css px map in `palette`'s theme, at device pixel ratio `dpr`: a raster of the device's pixels.
+ * `tiles` painted by the real drawTreemap onto a `W`×`H` css px map in `palette`'s theme, at device pixel ratio `dpr`: a raster of the device's pixels,
+ * as many across and down as the painter made its canvas (review F2.1 of BQJ-2c-r: a raster sized here apart from the
+ * canvas could not see the map run past it).
  * With everything the real map lays over the tiles that bears on its lines (review F2.2): a staged block's
  * amber hatch, as tmHatchPattern builds it (hatchOf), and each top-level folder's name tag, the half-black
  * rounded pill pass 3 fills (the page's roundRect, a rounded rectangle path). They were stubbed out, so the
@@ -1373,13 +1375,11 @@ type Painted = { n: Tile; x: number; y: number; w: number; h: number; frame: boo
  */
 function rasterPaint(tiles: Tile[], palette: Record<string, string>, W: number, H: number,
   colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.size), history = { active: false, diff: false }, hideCloud = false, dpr = 1, bare?: Set<string>) {
-  // The grid starts as the card the canvas sits on — what a cleared pixel shows — and the painter lays the
-  // theme's --tm-canvas-bg over it, as on screen: so what the page reckons its ground to be is measured too.
-  const raster = rasterCtx(Math.round(W * dpr), Math.round(H * dpr), cardGround(palette));
   const state = { treemap: { nodes: tiles, hideCloud, rootSize: 1e12, history, pxRects: [] as Painted[], colorMode: 'size', mode: 'treemap', query: '' } };
+  const canvas = { style: {}, width: 0, height: 0 };
   const deps = {
     $: () => ({ clientWidth: W + 20 }), treemapCanvasHeight: () => H, window: { devicePixelRatio: dpr },
-    tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: raster.ctx,
+    tmCanvas: canvas, tmBuffer: { width: 0, height: 0 },
     cssVar: (name: string) => palette[name] ?? 'rgba(0,0,0,0)',
     state, tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
     cellRgb: colour, tmPreview: { on: false },
@@ -1388,6 +1388,17 @@ function rasterPaint(tiles: Tile[], palette: Record<string, string>, W: number, 
     roundRect: (c: { roundRect: (x: number, y: number, w: number, h: number, r: number) => void }, x: number, y: number, w: number, h: number, r: number) => c.roundRect(x, y, w, h, r),
     formatBytes: (n: number) => `${Math.round(n)} B`,
   };
+  // Resolving the helpers runs the painter, once per helper it turns out to need, each run stopping where a
+  // helper is missing — on a context that keeps what a run left (a clip, a save) that would carry into the
+  // next. So they are resolved on a recording context, and the grid gets one clean paint of its own from the
+  // painter they resolved.
+  let into: any = recordingCtx().ctx;
+  const ctx = new Proxy({}, { get: (_t, k: string) => into[k], set: (_t, k: string, v) => { into[k] = v; return true; } });
+  const draw = load<() => void>(['drawTreemap'], { ...deps, tmBufCtx: ctx }, 'drawTreemap', (d) => d());
+  // The grid is the canvas the painter sized, and starts as the card the canvas sits on — what a cleared pixel
+  // shows — and the painter lays the theme's --tm-canvas-bg over it, as on screen: so what the page reckons its
+  // ground to be is measured too.
+  const raster = rasterCtx(canvas.width, canvas.height, cardGround(palette));
   const onGrid = !bare ? raster.ctx : new Proxy(raster.ctx, {
     get(t, k: string) {
       if (k === 'strokeRect' || k === 'fillRect') {
@@ -1398,13 +1409,6 @@ function rasterPaint(tiles: Tile[], palette: Record<string, string>, W: number, 
     },
     set(t, k: string, v) { t[k] = v; return true; },
   });
-  // Resolving the helpers runs the painter, once per helper it turns out to need, each run stopping where a
-  // helper is missing — on a context that keeps what a run left (a clip, a save) that would carry into the
-  // next. So they are resolved on a recording context, and the grid gets one clean paint of its own from the
-  // painter they resolved.
-  let into: any = recordingCtx().ctx;
-  const ctx = new Proxy({}, { get: (_t, k: string) => into[k], set: (_t, k: string, v) => { into[k] = v; return true; } });
-  const draw = load<() => void>(['drawTreemap'], { ...deps, tmBufCtx: ctx }, 'drawTreemap', (d) => d());
   into = onGrid;
   draw();
   return { raster, px: state.treemap.pxRects };
@@ -3900,21 +3904,36 @@ function outerEdgePixels(raster: ReturnType<typeof rasterCtx>, px: Painted[], dp
   return { looked, off };
 }
 
-test('owner\'s outlines at 125, 150 and 175 %, on a map whose css size times the ratio is not whole: the clip that keeps the lines from under the name tags covers the whole canvas — the map\'s right and bottom edge lines are laid in full on its last device column and row, and every line reaches 3:1 there, in both themes (review F1.1, F1.2)', () => {
+test('owner\'s outlines at 70, 115, 125, 150, 175 and 270 %, on a map whose css size times the ratio is not whole: the canvas ends where the map does — its last device column and row hold the map\'s right and bottom edges, and nothing the painter lays runs past them — and the clip that keeps the lines from under the name tags covers the whole canvas, so the map\'s right and bottom edge lines are laid in full on its last device column and row, and every line reaches 3:1 there, in both themes (review F1.1, F1.2; F2.1 of BQJ-2c-r)', () => {
   // At each ratio a size whose device width and height round up: the canvas, and the map's far edges with it, reach past
   // the map's css size by part of a device pixel, which a clip of the css size alone lets through only in part.
-  for (const [dpr, W, H] of [[1.25, 643, 403], [1.5, 641, 401], [1.75, 641, 401]] as const) {
+  // And at ratios a double does not hold exactly, where a css size times the ratio can land a hair under half a device
+  // pixel — 325 × 0.7 is 227.49999999999997, 330 × 1.15 is 379.49999999999994, and at 225 % zoomed in to 120 % (2.25 × 1.2,
+  // 2.6999999999999997) 305 css px is 823.4999999999999 device px — which tmSnap's tie-break rounds up and a bare round
+  // down: a canvas sized by a bare round ended a device pixel short of the map, and the map's right and bottom edge lines
+  // were not painted (review F2.1 of BQJ-2c-r).
+  for (const [dpr, W, H] of [[1.25, 643, 403], [1.5, 641, 401], [1.75, 641, 401], [0.7, 325, 165], [1.15, 330, 170], [2.25 * 1.2, 305, 215]] as const) {
     for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
       const { raster, px } = rasterPaint(edgeMap(), palette, W, H, undefined, undefined, false, dpr);
       const where = `${theme}, dpr ${dpr}, ${W}×${H}`;
       const f = px.find((r) => r.n.path === '/e/F')!, b = px.find((r) => r.n.path === '/e/B')!;
+      // The map's far edges on the canvas's last device column and row, and every rectangle, line, band and seam inside it.
+      const dev = (v: number) => Math.round(v * dpr);
+      assert.deepEqual([dev(b.x + b.w), dev(b.y + b.h)], [raster.W, raster.H], `${where}: the map's right and bottom edges end on the canvas's last device column and row`);
+      const past = [...px.map((r) => ({ what: r.n.path, box: [r.x, r.y, r.w, r.h] })), ...linesLaid(px)]
+        .filter(({ box: [x, y, w, h] }) => (x + w) * dpr > raster.W + 1e-6 || (y + h) * dpr > raster.H + 1e-6)
+        .map(({ what, box: [x, y, w, h] }) => `${what} ends at ${((x + w) * dpr).toFixed(3)},${((y + h) * dpr).toFixed(3)} device px`);
+      assert.deepEqual(past, [], `${where}: laid past the canvas's ${raster.W}×${raster.H} device px`);
       assert.ok(raster.taggedShare() > 0 && f.w >= 90 && f.h >= 44, `${where}: control — F carries a name tag, so the clip under the tags is on`);
       const ends = [[f.x + f.w, raster.W], [b.x + b.w, raster.W], [b.y + b.h, raster.H]].map(([at, dev]) => `${(at * dpr).toFixed(3)} of ${dev}`);
       assert.ok(b.x + b.w > W && b.y + b.h > H && [f.x + f.w, b.x + b.w].every((v) => Math.abs(v * dpr - raster.W) < 1e-6) && Math.abs((b.y + b.h) * dpr - raster.H) < 1e-6,
         `${where}: control — F's and B's right edges and B's bottom edge lie on the canvas's last device pixel, past the map's css size (${ends.join(', ')} device px)`);
       const m = measureEdges(raster, px, dpr);
-      const onEdge = m.edges.filter((e) => (e.what.startsWith('/e/B') && e.what.endsWith('right side') && e.line[0] === raster.W - 1) || (e.what.startsWith('/e/B') && e.what.endsWith('bottom side') && e.line[1] === raster.H - 1));
-      assert.ok(onEdge.length > 0.9 * (b.h + b.w) * dpr, `${where}: control — B's right and bottom outlines are measured on the canvas's last device column and row (${onEdge.length} places)`);
+      // A line 1 css px wide covers the last device column (row) and, over a ratio of 1, part or all of the ones before it,
+      // ⌈dpr⌉ in all: it is measured on its whole device pixel next to the tile, within them.
+      const last = Math.ceil(dpr - 1e-9);
+      const onEdge = m.edges.filter((e) => (e.what.startsWith('/e/B') && e.what.endsWith('right side') && e.line[0] >= raster.W - last) || (e.what.startsWith('/e/B') && e.what.endsWith('bottom side') && e.line[1] >= raster.H - last));
+      assert.ok(onEdge.length > 0.9 * (b.h + b.w) * dpr, `${where}: control — B's right and bottom outlines are measured on the canvas's last device columns and rows (${onEdge.length} places)`);
       assert.deepEqual(m.under, [], `${where}: lines under ${EDGE_BAR}:1 against the tile beside them, on the device's pixels`);
       const o = outerEdgePixels(raster, px, dpr);
       assert.ok(o.looked > 0.95 * (raster.W + raster.H), `${where}: control — ${o.looked} pixels of the last device column and row lie under a line`);

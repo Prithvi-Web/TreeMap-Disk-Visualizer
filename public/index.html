@@ -14264,7 +14264,12 @@ function drawTreemap() {
   const dpr = window.devicePixelRatio || 1;
   tmCanvas.style.width = cssW + 'px';
   tmCanvas.style.height = cssH + 'px';
-  const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
+  // The canvas ends where tmSnap lays the map's far edges, its tie-break and
+  // all: a bare round ended it a device pixel short of the map where a css
+  // size times the ratio lands a hair under a half (165 × 0.7 is
+  // 115.49999999999999), and the map's right or bottom edge line went
+  // unpainted (review F2.1 of BQJ-2c-r).
+  const pw = Math.round(cssW * dpr + 1e-6), ph = Math.round(cssH * dpr + 1e-6);
   if (tmCanvas.width !== pw) tmCanvas.width = pw;
   if (tmCanvas.height !== ph) tmCanvas.height = ph;
   if (tmBuffer.width !== pw) tmBuffer.width = pw;
