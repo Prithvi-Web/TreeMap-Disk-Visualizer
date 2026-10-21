@@ -506,6 +506,24 @@ test('the label reader reads the words an interpolation gives, and the labels th
     'a heading\'s and a button\'s, by id; not another element\'s, not a name');
 });
 
+test('each way the label reader reads a label holds a case of its own (G18 review F2.4)', () => {
+  assert.deepEqual(labelsIn('`<button>Move ${x ?? \'Now\'}</button>`'), ['Move', 'Move Now'], 'either side of ??');
+  const page = [
+    '<h3 id="confirmTitle">x</h3><button id="confirmOk">OK</button>',
+    "<script>$('confirmOk').textContent = 'Save Now'; $('confirmTitle').innerHTML = `Plain Backtick Title`;</script>",
+  ].join('\n');
+  assert.deepEqual(assignedLabels(page), ['Save Now', 'Plain Backtick Title'], 'a label written as text by id, and one written as a backtick string with no ${}');
+  // A label's content that does not read back as one template is read with
+  // its interpolations taken out, never dropped and never half-read.
+  assert.deepEqual(labelVariants("Save ${x ? 'All' : 'It'"), ['Save'], 'an interpolation that never closes');
+  assert.deepEqual(labelVariants('a ${b}` + `c'), ['a ` + `c'], 'two templates joined by code');
+  assert.deepEqual(labelVariants('${a}`;`${b}'), ['`;`'], 'two statements');
+  // Every way a label can go is judged, up to 64 of them for one label.
+  const choices = (n: number): string => `\`<button>${Array.from({ length: n }, (_, i) => `\${f${i} ? 'a${i}' : 'b${i}'}`).join('')}</button>\``;
+  assert.equal(labelsIn(choices(6)).length, 64, 'six two-way choices: all 64 labels are judged');
+  assert.equal(labelsIn(choices(7)).length, 64, 'seven: no more than 64');
+});
+
 test('the label reader follows a label handed to a page function that writes it into a button or a heading (G18 review F2.2)', () => {
   // setConfirmButton('Empty the Trash') writes its label into the confirm
   // button, openBrowse its title and button label into the folder picker,
@@ -566,7 +584,7 @@ test('every button and modal title of the page is in sentence case, but for prop
   }
   const assigned = assignedLabels(INDEX);
   for (const label of ['Move to Trash?', 'Forget this copy?', 'Copy, verify, then trash', 'Save view', 'Restoring…', 'New policy',
-    'Purge snapshots', 'Forget this copy', 'Folder this policy cleans', 'Offload to this folder', 'Offloading…', 'Use this folder', 'OK']) {
+    'Purge snapshots', 'Forget this copy', 'Folder this policy cleans', 'Offload to this folder', 'Offloading…', 'Use this folder', 'OK', 'Show all']) {
     assert.ok(assigned.includes(label), `control: a label written by id, or handed to a function that writes one, is read: ${label} (${assigned.length} read)`);
   }
 });
