@@ -755,9 +755,20 @@ $('browseUseBtn').addEventListener('click', async () => {
     // closing already has, and a newer press may be holding it now.
     const opening = browseTo(typed, true);
     const mine = browseSeq;
+    // Held, the button may let focus fall to the page, where it stayed: a
+    // typed path that did not open left the next Enter reaching nothing, and
+    // an offload's held pick below, finding the button without focus, gave
+    // none back (as K02 found of Scan). It is given back as the button is —
+    // only from the page, as the held pick does, and only to a button that
+    // had it.
+    const heldFocus = document.activeElement === btn;
     btn.disabled = true;
     const opened = await opening;
-    if (mine === browseSeq) btn.disabled = false;
+    if (mine === browseSeq) {
+      btn.disabled = false;
+      const at = document.activeElement;
+      if (heldFocus && (!at || at === document.body)) btn.focus({ preventScroll: true });
+    }
     // Not opened, or overtaken while it opened, by a newer listing or by the
     // picker closing: nothing is acted on.
     if (!opened) return;

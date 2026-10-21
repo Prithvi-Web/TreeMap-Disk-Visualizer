@@ -638,6 +638,12 @@ $('apSaveBtn').addEventListener('click', async () => {
     const seq = ++apSaveSeq;
     // Held while the folder is looked up, at most PATH_LOOKUP_MS, and busy
     // while it is (final review F1.11).
+    // Held, the button is disabled, and a browser hands focus from a disabled
+    // control to <body>, where it stayed once the lookup ended: with the editor
+    // still open — the save refused, the folder changed — the next Enter
+    // reached nothing (as K02 found of Scan). It is given back as the button
+    // is, unless the person moved it meanwhile or the button never had it.
+    const heldFocus = document.activeElement === btn;
     btn.disabled = true;
     if (boxLooksUp(edited.path)) btn.setAttribute('aria-busy', 'true');
     let meant = null;
@@ -646,8 +652,12 @@ $('apSaveBtn').addEventListener('click', async () => {
     } finally {
       // Handed back by the press that holds it, however the lookup ended
       // (final review F1.5). The editor closed, or a newer press took over:
-      // the button is not this press's to hand back.
-      if (seq === apSaveSeq) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+      // the button is not this press's to hand back, nor focus to give it.
+      if (seq === apSaveSeq) {
+        btn.disabled = false;
+        btn.removeAttribute('aria-busy');
+        if (heldFocus && (!document.activeElement || document.activeElement === document.body)) btn.focus({ preventScroll: true });
+      }
     }
     // Nothing is saved for a closed editor, or in a newer press's place.
     if (seq !== apSaveSeq) return;

@@ -361,6 +361,13 @@ async function renderShellIntegration(carryStatus = '') {
   btn.classList.toggle('btn-danger', !!data.installed);
   btn.disabled = false;
   btn.onclick = async () => {
+    // Held, the button is disabled, and a browser hands focus from a disabled
+    // control to <body>, where it stayed once the entry was re-read: the next
+    // Enter reached nothing (as K02 found of Scan). It is given back as the
+    // button is, unless the person moved it meanwhile or the button never had
+    // it. A re-read that fails keeps the button held — what the OS has is not
+    // known — so the sheet places focus by its own rule (modalFocusInto).
+    const heldFocus = document.activeElement === btn;
     btn.disabled = true;
     status.textContent = data.installed ? 'Removing…' : 'Adding…';
     let message;
@@ -381,5 +388,9 @@ async function renderShellIntegration(carryStatus = '') {
     // Re-read the truth rather than assuming the action landed, carrying the
     // confirmation through so it survives the refresh.
     await renderShellIntegration(message);
+    if (heldFocus && (!document.activeElement || document.activeElement === document.body)) {
+      if (!btn.disabled && !btn.hidden) btn.focus({ preventScroll: true });
+      else { const top = topModal(); if (top) modalFocusInto(top); }
+    }
   };
 }

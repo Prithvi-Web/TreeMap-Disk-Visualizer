@@ -1350,7 +1350,7 @@ type BoxEl = FakeEl & { checked?: boolean; hidden?: boolean; querySelector(sel: 
  * and the Autopilot policy editor, evaluated together from the built page:
  * the picker fills a box, and the box is read again by everything else.
  */
-function boxesRuntime(listing: (p: string) => unknown) {
+function boxesRuntime(listing: (p: string) => unknown, saveRefusal: Error | null = null) {
   const els = new Map<string, BoxEl>();
   /**
    * Where focus is, as a browser keeps it: a control focused holds it until another takes it — or until it
@@ -1394,6 +1394,8 @@ function boxesRuntime(listing: (p: string) => unknown) {
     }
     const body = JSON.parse(opts?.body ?? '{}');
     sent.push({ url, body });
+    // The server refusing the policy list (`saveRefusal`): the editor stays open, saying why.
+    if (url === '/api/autopilot/policies' && saveRefusal) throw saveRefusal;
     if (url !== '/api/autopilot/simulate') return {};
     // The server scans the policy's folder to preview it: a folder that is not
     // there answers as its listing does — 404 PATH_NOT_FOUND (simulatePolicy → startScan).
@@ -1639,6 +1641,95 @@ test('pressing Scan keeps focus on it through the path\'s lookup — the button 
   await mouse;
   assert.deepEqual(unfocused.scanned.map(([p]) => p), [SLOW], 'control: the folder is scanned');
   assert.equal(unfocused.document.activeElement, unfocused.document.body, 'focus the button never held is not pulled onto it (now Stop) once the scan starts');
+});
+
+/** A folder typed into the picker that is not there, on a drive that says so only when the gate opens. */
+const SLOW_GONE = '/Volumes/NAS/Gone';
+const slowGone = (g: ReturnType<typeof gate>) => (p: string) => (p === SLOW_GONE ? g.opened.then(() => notFound()) : strictListing(p));
+
+test('the picker\'s Use keeps focus while a typed path opens — held disabled, the button hands focus to <body>, and it is given back as the button is, unless the person moved it meanwhile, the button never had it or the picker closed (as K02 found of Scan)', async () => {
+  // A typed folder that is not there: the picker stays open, saying so, and Use holds focus for the next path.
+  {
+    const g = gate();
+    const { rt, $, toasts, scanned, click, document } = boxesRuntime(slowGone(g));
+    await rt.openBrowse(null);
+    $('browseCurrent').value = SLOW_GONE;
+    $('browseUseBtn').focus(); // Tab to "Scan this folder", then Enter
+    const pending = click('browseUseBtn');
+    assert.equal($('browseUseBtn').disabled, true, 'control: Use is held while the typed path opens');
+    assert.equal(document.activeElement, document.body, 'control: a browser hands focus from the held button to <body>');
+    g.open();
+    await pending;
+    assert.deepEqual([toasts.at(-1), scanned], ['Path does not exist', []], 'control: nothing is scanned, and the person is told why');
+    assert.ok($('browseModal').cls.has('open'), 'control: the picker stays open');
+    assert.equal($('browseUseBtn').disabled, false, 'control: Use is handed back');
+    assert.equal(document.activeElement, $('browseUseBtn'), 'focus is on Use again — a second Enter reaches it — never left on <body>');
+  }
+  // A typed folder for an offload's held pick: it opens, the pick answers (refused here, so the picker stays open),
+  // and Use holds focus through both — the pick's own hand-back gives focus back only to a button that held it as
+  // the pick began (F02), which it did not once the typed path's hold had dropped it on <body>.
+  {
+    const g = gate();
+    const { rt, $, click, document } = boxesRuntime(slowShots(g));
+    const picked: string[] = [];
+    const answers: Array<() => void> = [];
+    const pick = (dest: string) => new Promise<void>((resolve) => { picked.push(dest); answers.push(resolve); });
+    const open = rt.openBrowse as unknown as (start: string | null, onPick: unknown, title: string, label: string, where: unknown) => Promise<void>;
+    await open('/home/u', pick, 'Offload to…', 'Offload to this folder', { hint: 'Pick a folder on another drive.', holdOpen: true });
+    $('browseCurrent').value = SLOW;
+    $('browseUseBtn').focus();
+    const pending = click('browseUseBtn');
+    assert.equal(document.activeElement, document.body, 'control: a browser hands focus from the held button to <body>');
+    g.open();
+    for (let i = 0; i < 50 && !picked.length; i++) await settle();
+    assert.deepEqual(picked, [SLOW], 'control: the typed folder opened and is handed to the pick');
+    assert.equal($('browseUseBtn').disabled, true, 'control: the pick holds Use while it answers');
+    assert.equal(document.activeElement, document.body, 'control: and focus falls from it again');
+    answers[0](); // refused: the pick toasts and does not leave
+    await pending;
+    assert.equal($('browseUseBtn').disabled, false, 'control: Use is handed back');
+    assert.equal(document.activeElement, $('browseUseBtn'), 'focus is on Use once the pick answers — never left on <body>');
+  }
+  // Focus the person moved while the typed path opened — back into the path field, to type another — stays there.
+  {
+    const g = gate();
+    const { rt, $, click, document } = boxesRuntime(slowGone(g));
+    await rt.openBrowse(null);
+    $('browseCurrent').value = SLOW_GONE;
+    $('browseUseBtn').focus();
+    const pending = click('browseUseBtn');
+    $('browseCurrent').focus();
+    g.open();
+    await pending;
+    assert.equal(document.activeElement, $('browseCurrent'), 'focus moved meanwhile is left where the person put it');
+  }
+  // A press that never focused the button — a mouse click in Safari or Firefox on macOS — is given no focus (F3.7).
+  {
+    const g = gate();
+    const { rt, $, click, document } = boxesRuntime(slowGone(g));
+    await rt.openBrowse(null);
+    $('browseCurrent').value = SLOW_GONE;
+    assert.equal(document.activeElement, document.body, 'control: nothing is focused before the press');
+    const pending = click('browseUseBtn');
+    g.open();
+    await pending;
+    assert.equal(document.activeElement, document.body, 'focus the button never held is not pulled onto it');
+  }
+  // The picker closed while the typed path opened: its button is not this press's to give focus to.
+  {
+    const g = gate();
+    const { rt, $, click, document } = boxesRuntime(slowGone(g));
+    await rt.openBrowse(null);
+    $('browseCurrent').value = SLOW_GONE;
+    $('browseUseBtn').focus();
+    const pending = click('browseUseBtn');
+    assert.equal(document.activeElement, document.body, 'control: focus falls from the held button');
+    rt.close('browseModal');
+    assert.equal($('browseUseBtn').disabled, false, 'control: the closed picker hands its button back');
+    g.open();
+    await pending;
+    assert.notEqual(document.activeElement, $('browseUseBtn'), 'focus is not pulled into the closed picker');
+  }
 });
 
 test('Scan holds its button while the path is looked up, and a press the person moved on from acts on nothing (QA4a R4-3)', async () => {
@@ -2519,6 +2610,69 @@ test('Save reads every field when pressed, holds its button while the folder is 
     await newer;
     assert.equal($('apSaveBtn').disabled, false, 'the newer press hands it back');
     assert.deepEqual(saved(), [[SLOW]], 'and saves its folder');
+  }
+});
+
+test('Save keeps focus through its folder\'s lookup — held disabled, the button hands focus to <body>, and it is given back as the button is, unless the person moved it meanwhile, the button never had it or the editor closed (as K02 found of Scan)', async () => {
+  const refusal = Object.assign(new Error('A policy needs at least one condition'), { code: 'POLICY_MATCH_EMPTY', status: 400 });
+  // The server refuses the policy once the folder is found: the editor stays open, saying why, and Save holds focus
+  // for the press after the person fixes it.
+  {
+    const g = gate();
+    const { rt, $, click, type, saves, toasts, document } = boxesRuntime(slowShots(g), refusal);
+    rt.openPolicyEditor(null);
+    type('apPath', SLOW);
+    $('apSaveBtn').focus(); // Tab to Save, then Enter
+    const pending = click('apSaveBtn');
+    assert.equal($('apSaveBtn').disabled, true, 'control: Save is held while the folder is looked up');
+    assert.equal(document.activeElement, document.body, 'control: a browser hands focus from the held button to <body>');
+    g.open();
+    await pending;
+    assert.deepEqual([saves(), toasts.at(-1)], [1, refusal.message], 'control: the save was asked for, and refused with its reason');
+    assert.ok($('apModal').cls.has('open'), 'control: the editor stays open');
+    assert.equal($('apSaveBtn').disabled, false, 'control: Save is handed back');
+    assert.equal(document.activeElement, $('apSaveBtn'), 'focus is on Save again — the next Enter reaches it — never left on <body>');
+  }
+  // Focus the person moved while the folder was looked up — to the name field — stays there.
+  {
+    const g = gate();
+    const { rt, $, click, type, document } = boxesRuntime(slowShots(g), refusal);
+    rt.openPolicyEditor(null);
+    type('apPath', SLOW);
+    $('apSaveBtn').focus();
+    const pending = click('apSaveBtn');
+    $('apName').focus();
+    g.open();
+    await pending;
+    assert.equal(document.activeElement, $('apName'), 'focus moved meanwhile is left where the person put it');
+  }
+  // A press that never focused the button — a mouse click in Safari or Firefox on macOS — is given no focus (F3.7).
+  {
+    const g = gate();
+    const { rt, $, click, type, document } = boxesRuntime(slowShots(g), refusal);
+    rt.openPolicyEditor(null);
+    type('apPath', SLOW);
+    assert.equal(document.activeElement, document.body, 'control: nothing is focused before the press');
+    const pending = click('apSaveBtn');
+    g.open();
+    await pending;
+    assert.equal(document.activeElement, document.body, 'focus the button never held is not pulled onto it');
+  }
+  // The editor closed while the folder was looked up: its Save is not this press's to give focus to.
+  {
+    const g = gate();
+    const { rt, $, click, type, saves, document } = boxesRuntime(slowShots(g), refusal);
+    rt.openPolicyEditor(null);
+    type('apPath', SLOW);
+    $('apSaveBtn').focus();
+    const pending = click('apSaveBtn');
+    assert.equal(document.activeElement, document.body, 'control: focus falls from the held button');
+    rt.close('apModal');
+    assert.equal($('apSaveBtn').disabled, false, 'control: the closed editor hands Save back');
+    g.open();
+    await pending;
+    assert.equal(saves(), 0, 'control: a closed editor saves nothing');
+    assert.notEqual(document.activeElement, $('apSaveBtn'), 'focus is not pulled into the closed editor');
   }
 });
 

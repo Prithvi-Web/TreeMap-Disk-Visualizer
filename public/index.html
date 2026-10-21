@@ -32084,6 +32084,12 @@ $('apSaveBtn').addEventListener('click', async () => {
     const seq = ++apSaveSeq;
     // Held while the folder is looked up, at most PATH_LOOKUP_MS, and busy
     // while it is (final review F1.11).
+    // Held, the button is disabled, and a browser hands focus from a disabled
+    // control to <body>, where it stayed once the lookup ended: with the editor
+    // still open — the save refused, the folder changed — the next Enter
+    // reached nothing (as K02 found of Scan). It is given back as the button
+    // is, unless the person moved it meanwhile or the button never had it.
+    const heldFocus = document.activeElement === btn;
     btn.disabled = true;
     if (boxLooksUp(edited.path)) btn.setAttribute('aria-busy', 'true');
     let meant = null;
@@ -32092,8 +32098,12 @@ $('apSaveBtn').addEventListener('click', async () => {
     } finally {
       // Handed back by the press that holds it, however the lookup ended
       // (final review F1.5). The editor closed, or a newer press took over:
-      // the button is not this press's to hand back.
-      if (seq === apSaveSeq) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+      // the button is not this press's to hand back, nor focus to give it.
+      if (seq === apSaveSeq) {
+        btn.disabled = false;
+        btn.removeAttribute('aria-busy');
+        if (heldFocus && (!document.activeElement || document.activeElement === document.body)) btn.focus({ preventScroll: true });
+      }
     }
     // Nothing is saved for a closed editor, or in a newer press's place.
     if (seq !== apSaveSeq) return;
@@ -39148,9 +39158,20 @@ $('browseUseBtn').addEventListener('click', async () => {
     // closing already has, and a newer press may be holding it now.
     const opening = browseTo(typed, true);
     const mine = browseSeq;
+    // Held, the button may let focus fall to the page, where it stayed: a
+    // typed path that did not open left the next Enter reaching nothing, and
+    // an offload's held pick below, finding the button without focus, gave
+    // none back (as K02 found of Scan). It is given back as the button is —
+    // only from the page, as the held pick does, and only to a button that
+    // had it.
+    const heldFocus = document.activeElement === btn;
     btn.disabled = true;
     const opened = await opening;
-    if (mine === browseSeq) btn.disabled = false;
+    if (mine === browseSeq) {
+      btn.disabled = false;
+      const at = document.activeElement;
+      if (heldFocus && (!at || at === document.body)) btn.focus({ preventScroll: true });
+    }
     // Not opened, or overtaken while it opened, by a newer listing or by the
     // picker closing: nothing is acted on.
     if (!opened) return;
@@ -41523,6 +41544,13 @@ async function renderShellIntegration(carryStatus = '') {
   btn.classList.toggle('btn-danger', !!data.installed);
   btn.disabled = false;
   btn.onclick = async () => {
+    // Held, the button is disabled, and a browser hands focus from a disabled
+    // control to <body>, where it stayed once the entry was re-read: the next
+    // Enter reached nothing (as K02 found of Scan). It is given back as the
+    // button is, unless the person moved it meanwhile or the button never had
+    // it. A re-read that fails keeps the button held — what the OS has is not
+    // known — so the sheet places focus by its own rule (modalFocusInto).
+    const heldFocus = document.activeElement === btn;
     btn.disabled = true;
     status.textContent = data.installed ? 'Removing…' : 'Adding…';
     let message;
@@ -41543,6 +41571,10 @@ async function renderShellIntegration(carryStatus = '') {
     // Re-read the truth rather than assuming the action landed, carrying the
     // confirmation through so it survives the refresh.
     await renderShellIntegration(message);
+    if (heldFocus && (!document.activeElement || document.activeElement === document.body)) {
+      if (!btn.disabled && !btn.hidden) btn.focus({ preventScroll: true });
+      else { const top = topModal(); if (top) modalFocusInto(top); }
+    }
   };
 }
 

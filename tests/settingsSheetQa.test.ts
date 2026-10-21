@@ -46,6 +46,7 @@ type FakeEl = {
   classList: { add(c: string): void; remove(c: string): void; toggle(c: string, on?: boolean): void; contains(c: string): boolean };
   listeners: Record<string, () => unknown>;
   addEventListener(type: string, fn: () => unknown): void;
+  focus(opts?: unknown): void;
 };
 
 function fakeEl(id: string, init: Partial<FakeEl> = {}): FakeEl {
@@ -61,6 +62,7 @@ function fakeEl(id: string, init: Partial<FakeEl> = {}): FakeEl {
     },
     listeners: {},
     addEventListener(type, fn) { el.listeners[type] = fn; },
+    focus() {},
     ...init,
   };
   return el;
@@ -68,12 +70,31 @@ function fakeEl(id: string, init: Partial<FakeEl> = {}): FakeEl {
 
 function fakeDom(markup: Record<string, Partial<FakeEl>> = {}) {
   const els = new Map<string, FakeEl>();
+  /**
+   * Where focus is, as a browser keeps it: a control focused holds it until another takes it — or until it is
+   * disabled, when the browser's focus fixup hands it to <body> as it next reads where focus is, and enabling the
+   * control again does not give it back (as folderPicker's harness keeps it, eighth browser pass K02).
+   */
+  let active: FakeEl | null = null;
   const $ = (id: string): FakeEl => {
     let el = els.get(id);
-    if (!el) { el = fakeEl(id, markup[id]); els.set(id, el); }
+    if (!el) {
+      const made = fakeEl(id, markup[id]);
+      made.focus = () => { active = made; };
+      els.set(id, made);
+      el = made;
+    }
     return el;
   };
-  return { $, els };
+  const body = fakeEl('body');
+  const document = {
+    body,
+    get activeElement(): FakeEl {
+      if (active && active.disabled) active = null; // the focus fixup
+      return active ?? body;
+    },
+  };
+  return { $, els, document };
 }
 
 type ApiCall = { url: string; options?: { method?: string; body?: string } };
@@ -111,18 +132,23 @@ function openSettingsRuntime(api: (url: string, options?: ApiCall['options']) =>
   ].filter((name) => !lifted.includes(name));
   const liftedSrc = lifted.map((name) => braced(`async function ${name}(`)).join('\n');
   const toasts: string[] = [];
+  // The focus net's two calls (235): the top open sheet, and focus put where that sheet lands it — its [autofocus],
+  // Settings' "Close without saving", stood in for here by one element. Each sheet the net lands is recorded.
+  const landed: string[] = [];
+  const topModal = () => (dom.$('settingsModal').classes.has('open') ? dom.$('settingsModal') : null);
+  const modalFocusInto = (sheet: FakeEl) => { landed.push(sheet.id); dom.$('settingsCloseWithoutSaving').focus(); };
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(
-    '$', 'api', 'toast',
+    '$', 'api', 'toast', 'document', 'topModal', 'modalFocusInto',
     `'use strict';
      let settingsData = { ignore: [], schedules: [] };
      ${stubs.map((name) => `function ${name}() {}`).join('\n')}
      ${liftedSrc}
      ${opener});`,
-  )(dom.$, api, (msg: string) => { toasts.push(msg); });
+  )(dom.$, api, (msg: string) => { toasts.push(msg); }, dom.document, topModal, modalFocusInto);
   const open = dom.$('settingsBtn').listeners.click;
   assert.ok(open, 'the Settings button has a click handler');
-  return { dom, open, toasts };
+  return { dom, open, toasts, landed };
 }
 
 /* ══════════════ D70 — opening Settings asks the OS about the right-click entry ══════════════ */
@@ -154,6 +180,87 @@ test('an installed entry is offered for removal on open, from the same request (
   await settle();
   assert.equal(dom.$('shellIntegrationBtn').textContent, 'Remove from right-click menu');
   assert.equal(dom.$('shellIntegrationBtn').disabled, false);
+});
+
+/* ══════════════ The right-click button keeps focus through its request (as K02 found of Scan) ══════════════ */
+
+/**
+ * The right-click row's api, answered by the test: GET says what the OS has, the POST waits until `release`, and the
+ * GET after it answers with what the POST did — or fails, with `rereadFails`.
+ */
+function shellIntegrationApi(rereadFails: boolean) {
+  let installed = false;
+  let posted = false;
+  let release!: () => void;
+  const answer = new Promise<void>((resolve) => { release = resolve; });
+  const api = async (url: string, options?: ApiCall['options']) => {
+    if (url !== '/api/platform/shell-integration') return url === '/api/settings' ? { ignore: [], schedules: [] } : {};
+    if (options?.method === 'POST') {
+      await answer;
+      posted = true;
+      installed = JSON.parse(options.body ?? '{}').install === true;
+      return { installed, targets: ['Finder Quick Action'] };
+    }
+    if (posted && rereadFails) throw new Error('The server did not answer');
+    return { supported: true, installed };
+  };
+  return { api, release: () => release() };
+}
+
+/** Settings opened, its right-click row answered, and a press of the row's button out, its POST held until `release`. */
+async function shellIntegrationPressed(focusFirst: boolean, rereadFails = false) {
+  const { api, release } = shellIntegrationApi(rereadFails);
+  const rt = openSettingsRuntime(api, ['renderShellIntegration']);
+  await rt.open();
+  await settle();
+  const btn = rt.dom.$('shellIntegrationBtn');
+  const { document } = rt.dom;
+  assert.deepEqual([btn.disabled, btn.textContent], [false, 'Add to right-click menu'], 'control: the row answered, its button live');
+  if (focusFirst) btn.focus(); // Tab to the button, then Enter
+  else assert.equal(document.activeElement, document.body, 'control: nothing is focused before the press');
+  const press = btn.onclick!() as Promise<void>;
+  assert.equal(btn.disabled, true, 'control: the button is held while its request is out');
+  assert.equal(document.activeElement, document.body, 'control: focus is on <body> while the button is held');
+  return { ...rt, btn, document, press, release };
+}
+
+test('the right-click button keeps focus through its request — held disabled, it hands focus to <body>, and it is given back as the button is, unless the person moved it meanwhile or the button never had it; a re-read that fails keeps the button held, and the sheet takes focus by its own rule (as K02 found of Scan)', async () => {
+  {
+    const h = await shellIntegrationPressed(true);
+    h.release();
+    await h.press;
+    assert.deepEqual([h.btn.disabled, h.btn.textContent, h.dom.$('shellIntegrationStatus').textContent],
+      [false, 'Remove from right-click menu', 'Added (Finder Quick Action).'], 'control: added, re-read, and the button handed back');
+    assert.equal(h.document.activeElement, h.btn, 'focus is on the button again — the next Enter reaches it — never left on <body>');
+    assert.deepEqual(h.landed, [], 'control: the sheet is not asked to place focus');
+  }
+  {
+    // Focus the person moved while the request was out — to another field in the sheet — stays there.
+    const h = await shellIntegrationPressed(true);
+    h.dom.$('forecastDays').focus();
+    h.release();
+    await h.press;
+    assert.equal(h.document.activeElement, h.dom.$('forecastDays'), 'focus moved meanwhile is left where the person put it');
+  }
+  {
+    // A press that never focused the button — a mouse click in Safari or Firefox on macOS — is given no focus (F3.7).
+    const h = await shellIntegrationPressed(false);
+    h.release();
+    await h.press;
+    assert.equal(h.document.activeElement, h.document.body, 'focus the button never held is not pulled onto it');
+    assert.deepEqual(h.landed, [], 'nor put into the sheet');
+  }
+  {
+    // The re-read after the request fails: what the OS has is unknown, so the button stays held, and focus cannot go
+    // back to it — the sheet places it, as its focus net places it on any landing (modalFocusInto), not <body>.
+    const h = await shellIntegrationPressed(true, true);
+    h.release();
+    await h.press;
+    assert.equal(h.btn.disabled, true, 'control: a re-read that fails keeps the button held');
+    assert.match(h.dom.$('shellIntegrationBlurb').textContent, /^Could not check: The server did not answer$/, 'control: and says so');
+    assert.deepEqual(h.landed, ['settingsModal'], 'the sheet the press was made in places focus');
+    assert.equal(h.document.activeElement, h.dom.$('settingsCloseWithoutSaving'), 'focus is on the sheet\'s landing control, never left on <body>');
+  }
 });
 
 /* ══════════════ D72 — the Time Capsule says which deletes it copies ══════════════ */
