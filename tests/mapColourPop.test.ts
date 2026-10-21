@@ -2870,6 +2870,59 @@ test('owner\'s refinement: the Trash cell of a home folder\'s map is a neighbour
   }
 });
 
+/** Each texture seam the painter laid (r.tex) that runs past its own tile's box, as text. */
+function texOutside(px: Painted[]) {
+  const out: string[] = [];
+  for (const r of px) {
+    for (const [x, y, w, h] of r.tex?.rects || []) {
+      if (x < r.x - 1e-6 || y < r.y - 1e-6 || x + w > r.x + r.w + 1e-6 || y + h > r.y + r.h + 1e-6) out.push(`${r.n.path} (${r.x},${r.y} ${r.w}×${r.h}): a seam at ${x},${y} ${w}×${h}`);
+    }
+  }
+  return out;
+}
+
+test('owner\'s refinement: a folder\'s texture lies inside its own box — its last seam is cut at the folder\'s edge, never laid a part of a px over the tile beside it — on a 4.5 px folder beside a file too small for a texture and on a dense corner, at 125, 150 and 175 % and 2×, in both themes (review F1.4)', () => {
+  // A folder's seams were each 1 px thick from every 4th px, so the last ran up to 1 px past a folder whose side is not a
+  // whole multiple of 4 px: at 2× a 4.5 px folder's seam at 4 px covered the next tile's first device column.
+  const W = 200, H = 100, pct = (v: number, of: number) => (v / of) * 100;
+  // N is 6, 7, 8 and 9 device px wide at 125, 150, 175 % and 2× — 4.8, 4.67, 4.57 and 4.5 px, each a part of a px past
+  // 4 — from x 40; L 2 device px past it. Each edge a fifth of a device pixel past where it lies, clear of a tie.
+  const tilesAt = (dpr: number): Tile[] => {
+    const k = { 1.25: 6, 1.5: 7, 1.75: 8, 2: 9 }[dpr]!, end = (40 * dpr + k + 0.2) / dpr, far = (40 * dpr + k + 2.2) / dpr;
+    return [
+      { name: 'N', path: '/r/N', size: 2e8, type: 'dir', depth: 1, expanded: true, x: pct(40, W), y: pct(20, H), w: pct(end - 40, W), h: pct(32, H) },
+      { name: 'L', path: '/r/L', size: 6e9, type: 'file', depth: 1, expanded: false, x: pct(end, W), y: pct(20, H), w: pct(far - end, W), h: pct(32, H) },
+    ];
+  };
+  const dense = denseCornerNodes();
+  for (const dpr of [1.25, 1.5, 1.75, 2]) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      const where = `${theme}, dpr ${dpr}`;
+      const { raster, px } = rasterPaint(tilesAt(dpr), palette, W, H, undefined, undefined, false, dpr);
+      const n = px.find((r) => r.n.path === '/r/N')!, l = px.find((r) => r.n.path === '/r/L')!;
+      assert.ok(n.tex && n.tex.rects.length > 0 && !l.tex && !l.lines && n.w % 4 > 0 && n.w % 4 < 1,
+        `${where}: control — N (${n.w} px across) is textured, with a part of a seam past its last whole 4 px; L (${l.w} px) is plain`);
+      assert.deepEqual(texOutside(px), [], `${where}: texture seams past their own box`);
+      // L shows its own cushion on every device pixel: no seam of N's lies on it.
+      let worst = 1, at = '';
+      const x0 = Math.round(l.x * dpr), x1 = Math.round((l.x + l.w) * dpr), y0 = Math.round(l.y * dpr), y1 = Math.round((l.y + l.h) * dpr);
+      for (let y = y0; y < y1; y++) {
+        const fill = lerp(l.stops![0], l.stops![1], Math.max(0, Math.min(1, ((y + 0.5) / dpr - l.y) / l.h)));
+        for (let x = x0; x < x1; x++) {
+          const c = contrast(raster.at(x, y), fill);
+          if (c > worst) { worst = c; at = `${x},${y}: ${raster.at(x, y).map(Math.round)} on its cushion ${fill.map(Math.round)}`; }
+        }
+      }
+      assert.ok(worst < 1.02, `${where}: L shows its own cushion — ${fmt(worst)}:1 off it at ${at}`);
+      if (dpr === 1.5 || dpr === 2) {
+        const d = rasterPaint(dense, palette, DENSE_PX, DENSE_PX, undefined, undefined, false, dpr).px;
+        assert.ok(d.filter((r) => r.frame && r.tex).length > 200, `${where}: control — the dense corner's folders are textured`);
+        assert.deepEqual(texOutside(d).slice(0, 6), [], `${where}: the dense corner's texture seams past their own box`);
+      }
+    }
+  }
+});
+
 /* ── On the device's own pixels: Retina (2) and 150 % (1.5) ── */
 
 test('tmSnap lays a coordinate on the nearest whole device pixel — at device pixel ratios 1, 1.25, 1.5 and 2 (review F1.7)', () => {

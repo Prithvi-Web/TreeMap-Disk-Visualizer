@@ -1374,7 +1374,9 @@ function tmUncovered(lo, hi, cover) {
  * TM_TEXTURE_PITCH px down and across its box, from its top-left corner, in
  * the shade of its cushion tmTextureContrast puts at that pitch — the files in
  * it too small to draw. Only where its own fill shows: never under what is
- * drawn in it, and clear of every line (`mask`, tmLineMask).
+ * drawn in it, and clear of every line (`mask`, tmLineMask). The last seam is
+ * cut at the folder's edge: a folder whose side is not a whole multiple of
+ * TM_TEXTURE_PITCH px laid it up to 1 px over the tile beside it (review F1.4).
  */
 function tmFolderTexture(r, kids, mask, mw, mh, dpr) {
   const inside = kids.get(r.n.path) || [];
@@ -1385,14 +1387,15 @@ function tmFolderTexture(r, kids, mask, mw, mh, dpr) {
     const byStart = [...inside].sort((a, b) => a[p] - b[p]);
     let next = 0, open = [];
     for (let v = r[p]; v < r[p] + r[s] - 1e-6; v += TM_TEXTURE_PITCH) {
-      while (next < byStart.length && byStart[next][p] < v + 1 - 1e-6) open.push(byStart[next++]);
+      const thick = Math.min(1, r[p] + r[s] - v);
+      while (next < byStart.length && byStart[next][p] < v + thick - 1e-6) open.push(byStart[next++]);
       open = open.filter((c) => c[p] + c[s] > v + 1e-6);
       const cover = open.map((c) => [c[q], c[q] + c[t]]);
-      for (const [a, b] of tmUncovered(r[q], r[q] + r[t], cover)) rects.push(...tmClearRuns(seam(v, a, b), mask, mw, mh, dpr));
+      for (const [a, b] of tmUncovered(r[q], r[q] + r[t], cover)) rects.push(...tmClearRuns(seam(v, a, b, thick), mask, mw, mh, dpr));
     }
   };
-  seams('x', 'w', 'y', 'h', (x, a, b) => [x, a, 1, b - a]);
-  seams('y', 'h', 'x', 'w', (y, a, b) => [a, y, b - a, 1]);
+  seams('x', 'w', 'y', 'h', (x, a, b, thick) => [x, a, thick, b - a]);
+  seams('y', 'h', 'x', 'w', (y, a, b, thick) => [a, y, b - a, thick]);
   return { stops: tmTextureStops(r.bg, r.bgBase, tmTextureContrast(TM_TEXTURE_PITCH)), rects };
 }
 /** A small leaf's texture (tmLeafKind 'textured'): its top row and its left column below that, clear of every line (`mask`). */
