@@ -32598,8 +32598,10 @@ function tourMaybeStart(done, { asked = false } = {}) {
   tour.unknownReason = '';
   tour.winsAwaitScan = false;
   // A first scan running when it starts — `?path=`, or a folder the desktop
-  // shell handed over — is the scanning step; a scan on screen is the map.
-  tour.step = state.scanning && !state.root ? 'scanning' : state.scanId ? 'map' : 'welcome';
+  // shell handed over — is the scanning step; a tree on screen is the map,
+  // the saved index's too, which no scan stands behind: the welcome's "Start
+  // with one folder" stood over a map already drawn (review F2.16).
+  tour.step = state.scanning && !state.root ? 'scanning' : state.root ? 'map' : 'welcome';
   tourRender();
 }
 
@@ -32959,9 +32961,19 @@ async function tourLoadWins({ takeFocus = true } = {}) {
   // a still-running scan (202 — poll it out), a broken rule catalog
   // (available:false with its reason), and a transport error. Each gets the
   // honest card; only a real, complete, empty answer earns "looks clean".
+  // An answer, a refusal or a failure the older scan gives once another tree
+  // is on screen — the rescan landed, a Stop put a tree back — is not said
+  // over it: the card is asked again of the scan the tree now came from
+  // (review F2.2). A tour finished meanwhile asks for nothing.
+  const superseded = () => {
+    if (scanId === treeScanId()) return false;
+    if (tour.active) void tourLoadWins({ takeFocus });
+    return true;
+  };
   let groups = [];
   try {
     const res = await api(`/api/cleanup/suggestions?scanId=${scanId}`, undefined, { poll: true });
+    if (superseded()) return;
     if (res && res.available === false) {
       tour.step = 'unknown';
       tour.unknownReason = res.reason || 'Suggestions are not available right now.';
@@ -32970,6 +32982,7 @@ async function tourLoadWins({ takeFocus = true } = {}) {
     }
     groups = (res && res.groups) || [];
   } catch (e) {
+    if (superseded()) return;
     tour.step = 'unknown';
     tour.unknownReason = 'Could not check: ' + e.message;
     tourRender(takeFocus);
@@ -33064,7 +33077,7 @@ $('tourResetBtn').addEventListener('click', () => {
       // A restart in a scanned session opens at "this is your disk as a map"
       // — so put the map on screen (QA finding 5: the card narrated a view
       // the user wasn't looking at).
-      if (state.scanId && state.view !== 'treemap') switchView('treemap');
+      if (state.root && state.view !== 'treemap') switchView('treemap'); // a tree on screen, scan or none (review F2.16)
       tourMaybeStart(false, { asked: true });
     } catch (e) { toast('Could not reset the tour: ' + e.message, 'error'); }
   })();

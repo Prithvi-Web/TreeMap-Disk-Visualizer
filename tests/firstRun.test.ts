@@ -439,7 +439,8 @@ test('the last step reads what this run added against the cart as it is now, and
   const start = INDEX.slice(INDEX.indexOf('function tourMaybeStart'), INDEX.indexOf('async function tourFinish'));
   const tour = { active: false, step: 'cart', wins: [win], winIx: 2, added: ['/c/a'], unknownReason: 'Could not check: offline', booted: true };
   let rendered = 0;
-  new Function('tour', 'state', 'tourRender', `'use strict'; ${start} tourMaybeStart(false);`)(tour, { scanId: 's1' }, () => { rendered++; });
+  // A scanned session: its tree on screen (state.root) — the map step's test, review F2.16.
+  new Function('tour', 'state', 'tourRender', `'use strict'; ${start} tourMaybeStart(false);`)(tour, { scanId: 's1', root: { path: '/c' } }, () => { rendered++; });
   assert.equal(rendered, 1, 'control: the tour started');
   assert.equal(tour.step, 'map', 'control: a scanned session opens on the map');
   assert.deepEqual(tour.added, [], 'nothing added yet in this run');
@@ -580,7 +581,8 @@ test('a first run, with nothing scanned, opens on the welcome card; a scanned se
   const run = (scanId: string | null, done: unknown = false, active = false) => {
     const tour = { active, step: 'cart', wins: [], winIx: 0, added: [], unknownReason: '', booted: true, wanted: false, deferred: false };
     let rendered = 0;
-    new Function('tour', 'state', 'tourRender', `'use strict'; ${start} tourMaybeStart(arguments[3]);`)(tour, { scanId }, () => { rendered++; }, done);
+    // A scanned session has its tree on screen (state.root): what the map step reads (review F2.16).
+    new Function('tour', 'state', 'tourRender', `'use strict'; ${start} tourMaybeStart(arguments[3]);`)(tour, { scanId, root: scanId ? { path: '/c' } : null }, () => { rendered++; }, done);
     return { step: tour.step, rendered, active: tour.active };
   };
   assert.deepEqual(run(null), { step: 'welcome', rendered: 1, active: true }, 'nothing scanned: the welcome card, painted once');

@@ -1068,6 +1068,65 @@ test('the welcome tour\'s cleanup wins are asked of the scan the tree on screen 
   assert.equal(asks.length, done, 'a finished tour asks for no wins');
 });
 
+test('the welcome tour\'s cleanup wins asked of the older scan during a rescan are not shown once the rescan has landed — nor its refusal or its failure — the card is asked again of the scan now on screen', async () => {
+  const OLD = { groups: [{ title: 'old-cache', advisory: false, totalSize: 9_000_000_000, items: [{ path: '/r/old' }] }] };
+  const NEW = { groups: [{ title: 'new-cache', advisory: false, totalSize: 1_000_000_000, items: [{ path: '/r/new' }] }] };
+  for (const outcome of ['wins', 'refused', 'fails', 'finished'] as const) {
+    const tour: Record<string, unknown> = { active: true, step: 'map', wins: [], winIx: 0, unknownReason: '', winsAwaitScan: false };
+    const state: Record<string, unknown> = { root: TREE, ...HELD, scanRefused: null, scanningPath: '/r' };
+    const held: Array<() => void> = [];
+    const { fns, asks } = page<{ wins: () => Promise<void> }>(['async function tourLoadWins('], {
+      state, tour, tourRender: noop, refusedFolderWords: () => '',
+    }, '{ wins: tourLoadWins }', (url) => (url.includes('scan-new') ? NEW : new Promise((resolve, reject) => {
+      held.push(() => (outcome === 'fails' ? reject(new Error('Could not reach the server'))
+        : resolve(outcome === 'refused' ? { available: false, reason: 'The rule catalog could not be read.' } : OLD)));
+    })));
+    const out = fns.wins(); // "Show me what I could free", pressed on the map card during the rescan
+    await turns();
+    assert.deepEqual(asks.map((a) => a.scanId), ['scan-old'], `${outcome}: control: asked of the tree's scan, during the rescan`);
+    Object.assign(state, LANDED); // finishScan: the new tree is on screen before the answer
+    if (outcome === 'finished') tour.active = false; // Finish pressed while the answer was out
+    held[0]();
+    await out;
+    await turns();
+    if (outcome === 'finished') {
+      assert.equal(asks.length, 1, 'a tour finished meanwhile asks for no wins again');
+      continue;
+    }
+    assert.deepEqual(asks.map((a) => a.scanId), ['scan-old', 'scan-new'], `${outcome}: the card is asked again of the scan now on screen`);
+    assert.deepEqual([tour.step, (tour.wins as Array<{ title: string }>).map((g) => g.title), tour.unknownReason], ['win', ['new-cache'], ''],
+      `${outcome}: what the card says is the new tree's — not the older scan's answer over it`);
+  }
+});
+
+test('the welcome tour started, or restarted from Settings, over a tree no scan stands behind starts at the map — the tree is on screen — and the restart puts the map on screen', async () => {
+  const tour: Record<string, unknown> = { active: false, booted: true, wanted: false, deferred: false };
+  const switched: string[] = [];
+  let press: () => void = noop;
+  const state: Record<string, unknown> = { root: TREE, view: 'dashboard', scannedBefore: true, ...INDEX_STOPPED };
+  const { fns } = page<{ start: (done: unknown, o?: unknown) => void }>(['function tourMaybeStart(', "$('tourResetBtn').addEventListener('click', () => {"], {
+    state, tour, tourRender: noop, toast: noop, closeModal: noop, switchView: (v: string) => { switched.push(v); },
+    $: () => ({ addEventListener: (_t: string, fn: () => void) => { press = fn; } }),
+  }, '{ start: tourMaybeStart }', () => ({}));
+  for (const [name, phase, root, want] of [
+    ['the saved index\'s tree, a Stop or a failure left on screen', INDEX_STOPPED, TREE, 'map'],
+    ['the saved index\'s tree, its scan running', INDEX_RUNNING, TREE, 'map'],
+    ['a scanned tree', STOPPED, TREE, 'map'],
+    ['a first scan running, no tree yet', { ...HELD, settledScanId: null }, null, 'scanning'],
+    ['nothing on screen', INDEX_STOPPED, null, 'welcome'],
+  ] as const) {
+    Object.assign(state, phase, { root });
+    tour.active = false;
+    fns.start(false, { asked: true });
+    assert.equal(tour.step, want, `${name}: the tour starts at the ${want} card`);
+  }
+  Object.assign(state, INDEX_STOPPED, { root: TREE, view: 'dashboard' });
+  press(); // Settings › Show the welcome tour again
+  await turns();
+  assert.deepEqual(switched, ['treemap'], 'the restart puts the map it narrates on screen — the tree is there, scan or none');
+  assert.equal(tour.step, 'map', 'and the card it restarts at is the map');
+});
+
 /* ───────────────────────────── Live mode ───────────────────────────── */
 
 test('Live: the toggle watches the scan the tree on screen came from once it has landed — never a scan still walking, which answers its watch 409 — and pressed while a scan runs says Live starts once the scan finishes, and finishScan starts it; over the saved index\'s tree it says what would make the folder watchable', () => {
@@ -1177,9 +1236,8 @@ const SCAN_ON_HAND: Record<string, string> = {
   renderBrowserProfiles: 'Clean Up (220), left for after BQL-b1',
   loadSmartSuggestions: 'Clean Up (220), left for after BQL-b1',
   findBySavedView: 'Clean Up (220), left for after BQL-b1',
-  "$('cleanFindBtn').addEventListener('click', async () => {": 'Clean Up (220): its Find button, left for after BQL-b1',
   // Top-level statements (review F1.8), named by their first line.
-  "$('tourResetBtn').addEventListener('click', () => {": 'the tour\'s restart: the scan on hand decides only whether the map is put on screen; what it asks is the settings write',
+  "$('cleanFindBtn').addEventListener('click', async () => {": 'Clean Up (220): its Find button, left for after BQL-b1',
 };
 
 test('no page function or top-level handler that asks the server reads the scan on hand, but those whose reason is stated — every other ask about the tree on screen goes through treeScanId', () => {
