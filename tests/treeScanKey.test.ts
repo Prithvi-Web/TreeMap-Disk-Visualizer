@@ -1109,15 +1109,15 @@ function cleanUpPage(state: Record<string, unknown>, answer: (url: string) => un
     whyLeftOut: () => '', MB: 1e6, cleanWaiting: new Set(), cleanFindWaiting: null, CLEAN_NO_SCAN: liftPage<Record<string, [string, string]>>(['CLEAN_NO_SCAN'], 'CLEAN_NO_SCAN'),
     emptyFolders: [], videoCandidates: [], smartGroups: [], packageOrphans: [], cleanMatches: [], cleanOnDisk: new Map(),
     loadEmptyFoldersSeq: 0, loadVideoSeq: 0, loadSmartSeq: 0, cleanRuleSource: 'simple', smartSort: 'size',
-    cleanUpWhereItGoes: () => '', cleanFunnelDrop: noop, setCleanRuleSource: noop, setCleanPane: noop,
+    cleanUpWhereItGoes: () => '', cleanFunnelDrop: noop, setCleanRuleSource: noop, cleanPane: 'rules', videoJobStream: null, cleanFindNoList: true,
   };
-  const { fns, asks } = page<{ empty: () => Promise<void>; video: () => Promise<void>; smart: () => Promise<void>; byView: () => Promise<void>; changed: () => void }>([
+  const { fns, asks } = page<{ empty: () => Promise<void>; video: () => Promise<void>; smart: () => Promise<void>; byView: () => Promise<void>; changed: () => void; pane: (p: string) => void }>([
     'function cleanNoScanHtml(', 'function cleanOpen(', 'function cleanAskAgain(', 'function cleanScanChanged(',
     'async function loadEmptyFolders(', 'async function loadVideoCandidates(', 'async function loadSmartSuggestions(',
     'async function renderGitRepos(', 'async function renderPackageOrphans(', 'async function renderBrowserProfiles(',
     'async function runCleanFind(', 'async function findBySavedView(', "$('cleanFindBtn').addEventListener('click', async () => {",
-    'subscribe(TOPIC.scan, (scanId) => {\n  cleanScanChanged();', "$('cleanupBtn').addEventListener('click', () => {",
-  ], given, '{ empty: loadEmptyFolders, video: loadVideoCandidates, smart: loadSmartSuggestions, byView: () => runCleanFind(findBySavedView), changed: cleanScanChanged }',
+    'subscribe(TOPIC.scan, (scanId) => {\n  cleanScanChanged();', "$('cleanupBtn').addEventListener('click', () => {", 'function setCleanPane(',
+  ], given, '{ empty: loadEmptyFolders, video: loadVideoCandidates, smart: loadSmartSuggestions, byView: () => runCleanFind(findBySavedView), changed: cleanScanChanged, pane: setCleanPane }',
   // A pane that asks again without end — its answer never the tree's — is stopped: the sheet closes, and the
   // assertions about what it asked say why (a hand mutant made one ask forever, and the run ran out of memory).
   (url) => { if (++answered > 200) { $('cleanModal').classList.remove('open'); throw new Error('asked without end'); } return answer(url); });
@@ -1216,18 +1216,22 @@ test('Clean Up (K04): a pane\'s answer the older scan gives once the rescan has 
   }
 });
 
-test('Clean Up (K04): Smart suggestions and its git, package and browser sections paint none of the older scan\'s rows once the rescan has landed — its suggestions, or a section, answering or failing late — and never take down the rows the scan now on screen gave; the pane is asked again of that scan (review F1.7)', async () => {
-  // Each request of the four, by its scan: the older scan's rows are named OLD, the new scan's NEW.
-  const rows = (tag: string): Record<string, unknown> => ({
+/** Each request of the Smart pane's four, by its scan: the older scan's rows are named OLD, the new scan's NEW. */
+const smartRows = (tag: string): Record<string, unknown> => ({
     git: { repos: [{ repoPath: `/r/${tag}-repo`, totalBytes: 2e6, packBytes: 1e6, looseObjectBytes: 1e6, lfsBytes: 0, canGC: false }] },
     packages: { available: true, orphanCount: 1, orphanBytes: 5, cacheBytes: 0, activeBytes: 0,
       ecosystems: [{ ecosystem: 'npm', orphanCount: 1, orphanBytes: 5, cacheCount: 0, cacheBytes: 0, activeCount: 0, activeBytes: 0,
         entries: [{ kind: 'orphan', path: `/r/${tag}-pkg/node_modules`, name: 'node_modules', size: 5, modifiedAt: 0, reason: 'No project file beside it', projectName: null }] }] },
     browser: { profiles: [{ browser: 'Chrome', profile: `${tag}-profile`, totalBytes: 10, items: [{ path: `/r/${tag}-cache`, bytes: 10, label: 'Cache' }] }] },
     suggestions: { available: true, groups: [{ label: `${tag}-group` }], catalog: {} },
-  });
-  const kindOf = (url: string) => (url.startsWith('/api/git/repos') ? 'git' : url.startsWith('/api/packages/orphans') ? 'packages'
-    : url.startsWith('/api/cleanup/browser-profiles') ? 'browser' : url.startsWith('/api/cleanup/suggestions') ? 'suggestions' : assert.fail(`unexpected ask ${url}`));
+});
+/** Which of the Smart pane's four a request is. */
+const smartKindOf = (url: string) => (url.startsWith('/api/git/repos') ? 'git' : url.startsWith('/api/packages/orphans') ? 'packages'
+  : url.startsWith('/api/cleanup/browser-profiles') ? 'browser' : url.startsWith('/api/cleanup/suggestions') ? 'suggestions' : assert.fail(`unexpected ask ${url}`));
+
+test('Clean Up (K04): Smart suggestions and its git, package and browser sections paint none of the older scan\'s rows once the rescan has landed — its suggestions, or a section, answering or failing late — and never take down the rows the scan now on screen gave; the pane is asked again of that scan (review F1.7)', async () => {
+  const rows = smartRows;
+  const kindOf = smartKindOf;
   const HOSTS = ['gitRepos', 'packageOrphans', 'browserProfiles', 'smartResults'];
   for (const [late, again] of [['suggestions', false], ['packages', false], ['browser', false], ['packages', true], ['browser', true]] as const) {
     for (const fails of [false, true]) {
@@ -1269,6 +1273,125 @@ test('Clean Up (K04): Smart suggestions and its git, package and browser section
       assert.deepEqual(c.toasts, [], `${name}: nothing said as a failure`);
     }
   }
+});
+
+test('Clean Up (K04): a package or browser section whose request for the scan now on screen fails is cleared — rows an older scan painted there never stand under the new tree — and nothing is said as a failure (review F2.3)', async () => {
+  // e33b17bf kept a failure for the tree on screen clearing its section, and only the opposite case was pinned: a
+  // section that kept the older scan's rows on its own failure passed every test.
+  for (const failing of [['packages'], ['browser'], ['packages', 'browser']]) {
+    const name = `its ${failing.join(' and ')} request failing for the scan now on screen`;
+    const state: Record<string, unknown> = { root: TREE, notes: new Map(), ...STOPPED };
+    let failNew = false;
+    const c = cleanUpPage(state, (url) => {
+      const kind = smartKindOf(url);
+      const old = url.includes('scan-old');
+      if (!old && failNew && failing.includes(kind)) return Promise.reject(new Error('The scan could not be read'));
+      return smartRows(old ? 'OLD' : 'NEW')[kind];
+    });
+    c.given.browserFav = () => '';
+    c.given.renderSmartGroups = () => { c.$('smartResults').innerHTML = (c.given.smartGroups as Array<{ label: string }>).map((g) => g.label).join(', '); };
+    await c.fns.smart();
+    await turns();
+    assert.match(c.$('packageOrphans').innerHTML + c.$('browserProfiles').innerHTML, /OLD-pkg[\s\S]*OLD-profile/, `${name}: control: the older scan's rows are painted`);
+    Object.assign(state, LANDED); // the rescan lands; Smart is asked of it
+    failNew = true;
+    await c.fns.smart();
+    await turns();
+    for (const [kind, host] of [['packages', 'packageOrphans'], ['browser', 'browserProfiles']] as const) {
+      if (failing.includes(kind)) assert.equal(c.$(host).innerHTML, '', `${name}: #${host} is cleared — none of the older scan's rows stand under the new tree (${c.$(host).innerHTML})`);
+      else assert.match(c.$(host).innerHTML, /NEW/, `${name}: control: #${host} holds the new scan's rows`);
+    }
+    assert.match(c.$('smartResults').innerHTML, /NEW-group/, `${name}: control: the suggestions are the new scan's`);
+    assert.deepEqual(c.toasts, [], `${name}: nothing said as a failure`);
+  }
+});
+
+test('Clean Up (K04): once the scan lands, Smart suggestions and Custom rules › Find say they are working while their requests are out — not "this fills in once the scan finishes", which the scan has — and a Find that then fails leaves no rows loading (review F2.9)', async () => {
+  // Smart: the waiting notice stood through the package and browser sections' requests, which come before its own.
+  const state: Record<string, unknown> = { root: TREE, notes: new Map(), ...INDEX_RUNNING, scanningPath: TREE.path };
+  const held: Array<() => void> = [];
+  const c = cleanUpPage(state, (url) => {
+    if (url.startsWith('/api/packages/orphans')) return new Promise((resolve) => { held.push(() => resolve(cleanUpAnswer(url))); });
+    return cleanUpAnswer(url);
+  });
+  await c.fns.smart();
+  assert.match(c.$('smartResults').innerHTML, COMING, 'control: Smart suggestions waits for the scan');
+  Object.assign(state, LANDED);
+  c.emitScan('scan-new');
+  await turns();
+  assert.equal(held.length, 1, 'control: its packages section is asked of the scan that landed, and is out');
+  assert.doesNotMatch(c.$('smartResults').innerHTML, COMING, `Smart suggestions no longer says it waits for a scan that has finished (${c.$('smartResults').innerHTML})`);
+  assert.match(c.$('smartResults').innerHTML, /loading/, 'it says it is working');
+  held.shift()!();
+  await turns();
+  assert.doesNotMatch(c.$('smartResults').innerHTML, /loading|fills in/, `control: then it answers (${c.$('smartResults').innerHTML})`);
+  // Custom rules › Find: the notice stood through the whole request; and a Find that fails must not leave rows loading.
+  for (const fails of [false, true]) {
+    const name = `Custom rules › Find${fails ? ', failing' : ''}`;
+    const st: Record<string, unknown> = { root: TREE, notes: new Map(), ...INDEX_RUNNING, scanningPath: TREE.path };
+    const out: Array<(fail: boolean) => void> = [];
+    const r = cleanUpPage(st, (url) => new Promise((resolve, reject) => { out.push((fail) => (fail ? reject(new Error('The rules could not be matched')) : resolve(cleanUpAnswer(url)))); }));
+    r.given.cleanFindNoList = false; // an earlier Find in this opening listed results; then another folder was opened from its saved index
+    await r.find();
+    assert.match(r.$('cleanResults').innerHTML, COMING, `${name}: control: waits for the scan`);
+    Object.assign(st, LANDED);
+    r.emitScan('scan-new');
+    await turns();
+    assert.deepEqual(r.asks.map((a) => a.scanId), ['scan-new'], `${name}: control: asked of the scan that landed, and out`);
+    assert.doesNotMatch(r.$('cleanResults').innerHTML, COMING, `${name}: no longer says it waits for a scan that has finished (${r.$('cleanResults').innerHTML})`);
+    assert.match(r.$('cleanResults').innerHTML, /loading/, `${name}: it says it is working`);
+    out.shift()!(fails);
+    await turns();
+    assert.doesNotMatch(r.$('cleanResults').innerHTML, /loading|fills in/, `${name}: once it ${fails ? 'fails' : 'answers'}, nothing is left loading (${r.$('cleanResults').innerHTML})`);
+    assert.deepEqual(r.toasts, fails ? ['The rules could not be matched'] : [], `${name}: ${fails ? 'the failure is said, once' : 'nothing said as a failure'}`);
+  }
+  // Another tree on screen before the Find run on the landing answers: asked again, still working, and its failure leaves nothing loading.
+  for (const late of ['fails', 'answers'] as const) {
+    const name = `Custom rules › Find, the tree changing again while it is out, the older request ${late === 'fails' ? 'failing' : 'answering'}`;
+    const st: Record<string, unknown> = { root: TREE, notes: new Map(), ...INDEX_RUNNING, scanningPath: TREE.path };
+    const out: Array<(fail: boolean) => void> = [];
+    const r = cleanUpPage(st, (url) => new Promise((resolve, reject) => { out.push((fail) => (fail ? reject(new Error('The rules could not be matched')) : resolve(cleanUpAnswer(url)))); }));
+    r.given.cleanFindNoList = false; // as above: results listed earlier in this opening
+    await r.find();
+    Object.assign(st, STOPPED); // a scan stands behind the tree: the Find runs
+    r.emitScan('scan-old');
+    await turns();
+    Object.assign(st, LANDED); // and another tree is on screen before it answers
+    out.shift()!(late === 'fails');
+    await turns();
+    assert.deepEqual(r.asks.map((a) => a.scanId), ['scan-old', 'scan-new'], `${name}: control: asked again of the scan now on screen`);
+    assert.match(r.$('cleanResults').innerHTML, /loading/, `${name}: still says it is working`);
+    out.shift()!(true);
+    await turns();
+    assert.doesNotMatch(r.$('cleanResults').innerHTML, /loading|fills in/, `${name}: and once that fails, nothing is left loading (${r.$('cleanResults').innerHTML})`);
+    assert.deepEqual(r.toasts, ['The rules could not be matched'], `${name}: the failure for the tree on screen is said, once`);
+  }
+  // A fresh opening's list is blank: a Find pressed in it says it is working too, and so does one pressed after a failure
+  // cleared the list; one pressed over results listed leaves them standing until the new ones come.
+  const st: Record<string, unknown> = { root: TREE, notes: new Map(), ...LANDED };
+  const out: Array<(fail: boolean) => void> = [];
+  const r = cleanUpPage(st, (url) => new Promise((resolve, reject) => { out.push((fail) => (fail ? reject(new Error('The rules could not be matched')) : resolve({ files: [{ name: 'a.log', path: '/r/a.log', size: 5 }], matched: 1 }))); }));
+  r.given.cleanFindNoList = false; // what an earlier opening left: results listed
+  await r.open();
+  const pressed = r.find();
+  await turns();
+  assert.match(r.$('cleanResults').innerHTML, /loading/, 'a Find pressed in a fresh opening says it is working over the blank list');
+  out.shift()!(true);
+  await pressed;
+  await turns();
+  assert.equal(r.$('cleanResults').innerHTML, '', 'control: it failed, and left nothing loading');
+  const again = r.find();
+  await turns();
+  assert.match(r.$('cleanResults').innerHTML, /loading/, 'pressed again after that failure, it says it is working');
+  out.shift()!(false);
+  await again;
+  await turns();
+  assert.match(r.$('cleanResults').innerHTML, /a\.log/, 'control: then lists what matched');
+  const third = r.find();
+  await turns();
+  assert.match(r.$('cleanResults').innerHTML, /a\.log/, 'pressed over results listed, they stand while it works, as before');
+  out.shift()!(false);
+  await third;
 });
 
 test('Clean Up (K04): Find asked again of the scan now on screen, after the older scan\'s request failed, holds its button while that request is out — the button was handed back as the re-ask began, so a second press started a second Find (review F1.4)', async () => {
@@ -1342,6 +1465,62 @@ test('Clean Up (K04): with the sheet closed nothing is asked — not the panes a
   c3.fns.changed(); // a later change: a scan of the folder starting, say (TOPIC.scan)
   await turns();
   assert.deepEqual(c3.asks.map((a) => a.url), [], 'what waited in the earlier opening is not asked — not the old Find with its old rules, nor its pane');
+});
+
+test('Clean Up: opening the sheet starts Shrink video and the Smart pane\'s sections afresh — the list an older scan gave goes, and choosing Shrink video asks the scan now on screen; a re-encode under way keeps its progress (review F2.8)', async () => {
+  // Opening reset every pane but Shrink video, which loads only while it holds no list: over a newer tree it showed
+  // the older scan's videos, asked nothing — after a re-encode, the files just re-encoded, offered again.
+  const video = (tag: string) => ({ available: true, shortlisted: 1, unreadable: 0,
+    candidates: [{ name: `${tag}.mov`, path: `/r/${tag}.mov`, size: 5e9, estimatedBytes: 2e9, estimatedSaving: 3e9, reason: 'h264' }] });
+  /** The packages answer with a project still beside its folder too, which fills the section's projects fold. */
+  const packages = (tag: string) => {
+    const p = smartRows(tag).packages as { activeBytes: number; ecosystems: Array<{ activeCount: number; activeBytes: number; entries: unknown[] }> };
+    p.activeBytes = 7; p.ecosystems[0].activeCount = 1; p.ecosystems[0].activeBytes = 7;
+    p.ecosystems[0].entries.push({ kind: 'active', path: `/r/${tag}-proj/node_modules`, name: 'node_modules', size: 7, modifiedAt: 0, reason: `In ${tag}-proj`, projectName: `${tag}-proj` });
+    return p;
+  };
+  const state: Record<string, unknown> = { root: TREE, notes: new Map(), ...STOPPED };
+  const c = cleanUpPage(state, (url) => {
+    const tag = url.includes('scan-old') ? 'OLD' : 'NEW';
+    if (url.startsWith('/api/compression/candidates')) return video(tag);
+    if (url.startsWith('/api/packages/orphans')) return packages(tag);
+    return smartRows(tag)[smartKindOf(url)];
+  });
+  c.given.browserFav = () => '';
+  c.given.renderSmartGroups = noop;
+  c.given.sizeInk = () => '';
+  await c.open();
+  c.fns.pane('video');
+  c.fns.pane('smart');
+  await turns();
+  for (const host of ['videoBody', 'gitRepos', 'packageOrphans', 'packageProjects', 'browserProfiles']) {
+    assert.match(c.$(host).innerHTML, /OLD/, `control: #${host} holds the older scan's rows`);
+  }
+  c.$('cleanModal').classList.remove('open'); // closed; the rescan lands — or a re-encode's own rescan
+  Object.assign(state, LANDED);
+  c.emitScan('scan-new');
+  await turns();
+  const before = c.asks.length;
+  await c.open();
+  for (const host of ['videoBody', 'gitRepos', 'packageOrphans', 'packageProjects', 'browserProfiles']) {
+    assert.doesNotMatch(c.$(host).innerHTML, /OLD/, `opening the sheet takes #${host}'s older rows down (${c.$(host).innerHTML})`);
+  }
+  c.fns.pane('video');
+  await turns();
+  assert.deepEqual(c.asks.slice(before).filter((a) => a.url.startsWith('/api/compression/candidates')).map((a) => a.scanId), ['scan-new'],
+    'choosing Shrink video asks the scan now on screen');
+  assert.match(c.$('videoBody').innerHTML, /NEW\.mov/, 'and lists its videos');
+  assert.doesNotMatch(c.$('videoBody').innerHTML, /OLD\.mov/, 'and none of the older scan\'s');
+  // A re-encode under way: its progress is in the pane, and opening the sheet keeps it.
+  c.$('videoBody').innerHTML = '<div id="vidProgress">2 of 3 done</div>';
+  c.given.videoJobStream = { close: noop };
+  c.$('cleanModal').classList.remove('open');
+  const asked = c.asks.length;
+  await c.open();
+  c.fns.pane('video');
+  await turns();
+  assert.match(c.$('videoBody').innerHTML, /2 of 3 done/, 'a re-encode under way keeps its progress in the pane');
+  assert.equal(c.asks.slice(asked).filter((a) => a.url.startsWith('/api/compression/candidates')).length, 0, 'and its list is not asked again over it');
 });
 
 /* ───────────────────────────── the Dashboard's cards, the tour ───────────────────────────── */

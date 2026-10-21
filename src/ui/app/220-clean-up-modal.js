@@ -71,6 +71,13 @@ function cleanUpWhereItGoes() {
 const cleanWaiting = new Set();
 /** The Find pressed over a tree no scan stands behind, run once a scan stands behind it. */
 let cleanFindWaiting = null;
+/**
+ * Whether Custom rules' list holds no results of its own — blank as the sheet opens, its notice that it
+ * waits for a scan, or the working line that replaced it once a scan stood behind the tree — so a Find then
+ * says it is working, and one that fails leaves no rows loading (review F2.9). Results listed stand until
+ * the new ones replace them.
+ */
+let cleanFindNoList = true;
 /** Each pane's words over the saved index's tree: what it is worked out from, and what a scan would let it do. */
 const CLEAN_NO_SCAN = {
   smart: ['Smart suggestions are worked out from a finished scan', 'see what Clean Up suggests for it'],
@@ -135,6 +142,12 @@ $('cleanupBtn').addEventListener('click', () => {
   $('cleanProgress').classList.remove('on');
   $('cleanProgressFill').style.width = '0%';
   cleanMatches = []; emptyFolders = []; smartGroups = []; cleanOnDisk = new Map();
+  cleanFindNoList = true; // the list is blank
+  // Shrink video and the Smart pane's own sections start afresh too: a list an older scan gave stood over
+  // a newer tree, and choosing the tab asked nothing (review F2.8) — but not over a re-encode under way,
+  // whose progress the pane shows until it ends.
+  if (!videoJobStream) { videoCandidates = []; $('videoBody').innerHTML = ''; }
+  $('gitRepos').innerHTML = ''; $('packageOrphans').innerHTML = ''; $('packageProjects').innerHTML = '';
   cleanFunnelDrop(); // the standing funnel described the previous results
   setCleanRuleSource('simple'); // §4.5 — the pane opens where it always did
   setCleanPane('rules', true);
@@ -964,12 +977,14 @@ async function loadSmartSuggestions() {
     updateCleanSummary();
     return;
   }
+  // Working from here, while its sections are asked before it: a notice that it waits for the scan stood
+  // through their requests once the scan had finished (review F2.9).
+  host.innerHTML = skeletonRows(4, 34);
   void renderGitRepos();
   const hadPackages = await renderPackageOrphans();
   const hadBrowsers = await renderBrowserProfiles();
   if (seq !== loadSmartSeq) return; // a newer load owns the pane
   if (scanId !== treeScanId()) { cleanAskAgain(loadSmartSuggestions); return; } // another tree is on screen
-  host.innerHTML = skeletonRows(4, 34);
   try {
     const data = await api(`/api/cleanup/suggestions?scanId=${scanId}`);
     if (seq !== loadSmartSeq) return;
@@ -1243,11 +1258,18 @@ async function runCleanFind(fetcher) {
     cleanMatches = [];
     cleanOnDisk = new Map();
     $('cleanResults').innerHTML = cleanNoScanHtml('rules');
+    cleanFindNoList = true;
     $('cleanConfirmBtn').disabled = true;
     $('cleanSummary').textContent = '';
     return;
   }
   cleanFindWaiting = null;
+  // A list with none of its own — blank, or saying it waits for the scan, which has finished — says it is
+  // working (review F2.9). Results already listed stand until the new ones replace them, as before.
+  const working = cleanFindNoList;
+  if (working) { cleanFindNoList = false; $('cleanResults').innerHTML = skeletonRows(4, 30); }
+  /** Matched again against the scan the tree now on screen came from, the list still holding none of its own. */
+  const askAgain = () => { if (working) cleanFindNoList = true; cleanAskAgain(() => runCleanFind(fetcher)); };
   const findBtn = $('cleanFindBtn');
   const findLabel = findBtn.innerHTML;
   findBtn.disabled = true;
@@ -1268,7 +1290,8 @@ async function runCleanFind(fetcher) {
     // button is handed back, so the Find asked again holds it until it answers. Asked again inside the catch,
     // the finally after it handed the button back while the new request was out, and a second press started
     // a second Find (review F1.4).
-    if (scanId !== treeScanId()) { cleanAskAgain(() => runCleanFind(fetcher)); return; }
+    if (scanId !== treeScanId()) { askAgain(); return; }
+    if (working) { $('cleanResults').innerHTML = ''; cleanFindNoList = true; } // no rows left loading: the failure is said below
     // Through `reportError`, never a bare red toast. `GET /api/cleanup/rules`
     // answers 202 {status:'running'} while a scan is still going, and `api()`
     // turns exactly that into a throw carrying `stillWorking` — an ANSWER, not
@@ -1282,7 +1305,7 @@ async function runCleanFind(fetcher) {
   }
   if (!data) return; // the source reported its own problem
   // Another tree is on screen since it was asked: matched again against the scan that tree came from.
-  if (scanId !== treeScanId()) { cleanAskAgain(() => runCleanFind(fetcher)); return; }
+  if (scanId !== treeScanId()) { askAgain(); return; }
   cleanMatches = data.files;
   cleanOnDisk = new Map();
   seedNodes(cleanMatches); // staged from here, so their sizes must resolve later

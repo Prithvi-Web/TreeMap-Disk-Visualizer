@@ -73,7 +73,7 @@ function runnable(body: string, deps: Record<string, unknown>, args = ''): (...a
  */
 function sheet(scanId = 's1'): Record<string, unknown> {
   return {
-    treeScanId: () => scanId, cleanWaiting: new Set(), cleanFindWaiting: null, loadVideoSeq: 0,
+    treeScanId: () => scanId, cleanWaiting: new Set(), cleanFindWaiting: null, loadVideoSeq: 0, cleanFindNoList: true, skeletonRows: () => '',
     cleanAskAgain: () => assert.fail('no other tree came on screen'), cleanNoScanHtml: () => assert.fail('a scan stands behind the tree'),
   };
 }
@@ -702,7 +702,7 @@ function findHarness(facts: (paths: string[]) => Promise<unknown>, cloud = false
   let measuredNow = (): number => 0;
   const deps: Record<string, unknown> = {
     cleanAskAgain: () => assert.fail('no other tree came on screen'), cleanNoScanHtml: () => assert.fail('a scan stands behind the tree'),
-    $, state: { scanId: 'scan-1' }, isCloudScan: () => cloud, toast: () => {}, reportError: () => assert.fail('nothing failed'), seedNodes: () => {}, icon: () => '',
+    $, state: { scanId: 'scan-1' }, isCloudScan: () => cloud, toast: () => {}, reportError: () => assert.fail('nothing failed'), seedNodes: () => {}, icon: () => '', skeletonRows: () => '',
     chipFor: () => '', formatDate: () => '', sizeInk: () => '', formatBytes: (n: number) => `${n} B`, formatCount: String, escapeHtml: String,
     cartButtonHtml: () => '', refreshCartButtons: () => {}, updateCleanSummary: () => { summaries.push(measuredNow()); },
     api: async (url: string, opts: { body: string }) => {
@@ -714,7 +714,7 @@ function findHarness(facts: (paths: string[]) => Promise<unknown>, cloud = false
   };
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const page = new Function(...keys, `let cleanMatches = [], cleanOnDisk = new Map(), cleanFindWaiting = null;
+  const page = new Function(...keys, `let cleanMatches = [], cleanOnDisk = new Map(), cleanFindWaiting = null, cleanFindNoList = true;
     ${declOf('runCleanFind')}
     const CLEAN_ON_DISK_CHUNK = ${/const CLEAN_ON_DISK_CHUNK = (\d+);/.exec(INDEX)?.[1] ?? 'undefined'};
     ${declOf('treeScanId')}
@@ -1122,6 +1122,7 @@ function openCleanUp(opts: { cloud?: { name: string; trashLabel: string } } = {}
   const deps: Record<string, unknown> = {
     $: dom.$, state: { root: { path: opts.cloud ? 'cloud://drive' : '/r', name: 'r' } }, toast: () => assert.fail('the sheet opened on a scan'),
     cleanMatches: [], emptyFolders: [], smartGroups: [], cleanWaiting: new Set(), cleanFindWaiting: null, // opened afresh (K04)
+    cleanFindNoList: true, videoJobStream: null, videoCandidates: [], // and Shrink video with them (review F2.8, F2.9)
     cleanFunnelDrop: () => {}, setCleanRuleSource: () => {}, setCleanPane: () => {}, renderCloudSafe: () => {},
     isCloudScan: () => Boolean(opts.cloud), cloudProviderOfScan: () => opts.cloud ?? assert.fail('a local scan has no provider'),
   };
