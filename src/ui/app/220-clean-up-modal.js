@@ -560,8 +560,11 @@ async function renderPackageOrphans() {
   const scanId = treeScanId();
   if (!scanId) { host.innerHTML = ''; return false; }
   let data;
-  try { data = await api('/api/packages/orphans?scanId=' + scanId); } catch { host.innerHTML = ''; return false; }
-  if (scanId !== treeScanId()) { host.innerHTML = ''; return false; } // another tree is on screen: its own load paints
+  // Another tree on screen once it answers, or fails: its own load paints, and what that load has painted
+  // already stays — taken down here, a late answer of the older scan left the new tree with no leftovers
+  // listed (review F1.7).
+  try { data = await api('/api/packages/orphans?scanId=' + scanId); } catch { if (scanId === treeScanId()) host.innerHTML = ''; return false; }
+  if (scanId !== treeScanId()) return false;
   if (data.available === false) {
     // Same honesty rule as Smart Suggestions: a broken catalog is "unknown",
     // never "you have no leftovers".
@@ -695,9 +698,11 @@ async function renderBrowserProfiles() {
   const scanId = treeScanId();
   if (!scanId) { host.innerHTML = ''; return false; }
   let profiles = [];
+  // Another tree on screen once it answers, or fails: its own load paints, and what that load has painted
+  // already stays (review F1.7).
   try { ({ profiles } = await api('/api/cleanup/browser-profiles?scanId=' + scanId)); }
-  catch { host.innerHTML = ''; return false; }
-  if (scanId !== treeScanId()) { host.innerHTML = ''; return false; } // another tree is on screen: its own load paints
+  catch { if (scanId === treeScanId()) host.innerHTML = ''; return false; }
+  if (scanId !== treeScanId()) return false;
   if (!profiles.length) { host.innerHTML = ''; return false; }
   const total = profiles.reduce((s, p) => s + p.totalBytes, 0);
   host.innerHTML = `<div class="bp-section-h"><b>${icon('globe', 15)}Browser caches</b>` +

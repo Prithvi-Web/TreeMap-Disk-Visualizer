@@ -1212,6 +1212,61 @@ test('Clean Up (K04): a pane\'s answer the older scan gives once the rescan has 
   }
 });
 
+test('Clean Up (K04): Smart suggestions and its git, package and browser sections paint none of the older scan\'s rows once the rescan has landed — its suggestions, or a section, answering or failing late — and never take down the rows the scan now on screen gave; the pane is asked again of that scan (review F1.7)', async () => {
+  // Each request of the four, by its scan: the older scan's rows are named OLD, the new scan's NEW.
+  const rows = (tag: string): Record<string, unknown> => ({
+    git: { repos: [{ repoPath: `/r/${tag}-repo`, totalBytes: 2e6, packBytes: 1e6, looseObjectBytes: 1e6, lfsBytes: 0, canGC: false }] },
+    packages: { available: true, orphanCount: 1, orphanBytes: 5, cacheBytes: 0, activeBytes: 0,
+      ecosystems: [{ ecosystem: 'npm', orphanCount: 1, orphanBytes: 5, cacheCount: 0, cacheBytes: 0, activeCount: 0, activeBytes: 0,
+        entries: [{ kind: 'orphan', path: `/r/${tag}-pkg/node_modules`, name: 'node_modules', size: 5, modifiedAt: 0, reason: 'No project file beside it', projectName: null }] }] },
+    browser: { profiles: [{ browser: 'Chrome', profile: `${tag}-profile`, totalBytes: 10, items: [{ path: `/r/${tag}-cache`, bytes: 10, label: 'Cache' }] }] },
+    suggestions: { available: true, groups: [{ label: `${tag}-group` }], catalog: {} },
+  });
+  const kindOf = (url: string) => (url.startsWith('/api/git/repos') ? 'git' : url.startsWith('/api/packages/orphans') ? 'packages'
+    : url.startsWith('/api/cleanup/browser-profiles') ? 'browser' : url.startsWith('/api/cleanup/suggestions') ? 'suggestions' : assert.fail(`unexpected ask ${url}`));
+  const HOSTS = ['gitRepos', 'packageOrphans', 'browserProfiles', 'smartResults'];
+  for (const [late, again] of [['suggestions', false], ['packages', false], ['browser', false], ['packages', true], ['browser', true]] as const) {
+    for (const fails of [false, true]) {
+      const name = `${late === 'suggestions' ? 'its suggestions' : `its ${late} section`} ${fails ? 'failing' : 'answering'} late${again ? ', the Smart tab chosen again first' : ''}`;
+      const state: Record<string, unknown> = { root: TREE, notes: new Map(), ...HELD };
+      // Held for the older scan: the late request, and the git section (never awaited), which answers last of all.
+      const held = new Map<string, (fail: boolean) => void>();
+      const hold = new Set<string>([late, 'git']);
+      const c = cleanUpPage(state, (url) => {
+        const kind = kindOf(url);
+        const old = url.includes('scan-old');
+        if (old && hold.has(kind)) {
+          return new Promise((resolve, reject) => { held.set(kind, (fail) => (fail ? reject(new Error('Scan is still running')) : resolve(rows('OLD')[kind]))); });
+        }
+        return rows(old ? 'OLD' : 'NEW')[kind];
+      });
+      c.given.browserFav = () => '';
+      c.given.renderSmartGroups = () => { c.$('smartResults').innerHTML = (c.given.smartGroups as Array<{ label: string }>).map((g) => g.label).join(', '); };
+      const out = c.fns.smart();
+      await turns();
+      assert.ok(held.has(late), `${name}: control: the older scan's ${late} request is out (${c.asks.map((a) => a.url).join(', ')})`);
+      Object.assign(state, LANDED); // finishScan: the new tree is on screen before the answer
+      const landed = c.asks.length;
+      // Or the section's late answer meets a load of the new tree first: the Smart tab chosen again, as a person does.
+      if (again) { await c.fns.smart(); await turns(); }
+      held.get(late)!(fails);
+      held.delete(late);
+      await turns();
+      held.get('git')!(false); // the older scan's git answer, last of all
+      await out;
+      await turns();
+      for (const host of HOSTS) {
+        assert.doesNotMatch(c.$(host).innerHTML, /OLD|Scan is still running/, `${name}: #${host} paints none of the older scan's rows (${c.$(host).innerHTML})`);
+        assert.match(c.$(host).innerHTML, /NEW/, `${name}: #${host} holds the rows of the scan now on screen (${c.$(host).innerHTML})`);
+      }
+      assert.deepEqual(['git', 'packages', 'browser', 'suggestions'].filter((k) => !c.asks.some((a) => a.scanId === 'scan-new' && kindOf(a.url) === k)), [],
+        `${name}: each is asked of the scan now on screen`);
+      assert.deepEqual(c.asks.slice(landed).filter((a) => a.scanId !== 'scan-new').map((a) => a.url), [], `${name}: and nothing more of the older scan once the rescan has landed`);
+      assert.deepEqual(c.toasts, [], `${name}: nothing said as a failure`);
+    }
+  }
+});
+
 test('Clean Up (K04): Find asked again of the scan now on screen, after the older scan\'s request failed, holds its button while that request is out — the button was handed back as the re-ask began, so a second press started a second Find (review F1.4)', async () => {
   const FINDS: Array<[string, (c: ReturnType<typeof cleanUpPage>) => Promise<void>]> = [
     ['Custom rules › Find', (c) => c.find()], ['Custom rules › Find, by a saved view', (c) => c.fns.byView()]];
