@@ -52,7 +52,7 @@ function cleanUpWhereItGoes() {
       + 'so it can be put back only until that trash is emptied — by you, or by the provider after the time it keeps deleted files.';
   }
   return 'Nothing is removed until you confirm. What Clean Up removes goes to the system Trash and is not copied to the Undo Vault, '
-    + 'so it can be put back only until the Trash is emptied. Shrink Video’s re-encode loses a little quality for good, and the original then goes to the Trash too.';
+    + 'so it can be put back only until the Trash is emptied. Shrink video’s re-encode loses a little quality for good, and the original then goes to the Trash too.';
 }
 
 $('cleanupBtn').addEventListener('click', () => {

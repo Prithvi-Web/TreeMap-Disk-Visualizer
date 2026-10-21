@@ -1,4 +1,4 @@
-/* ───────────────────────────── Cleanup cart (Feature 2) ───────────────────────────── */
+/* ───────────────────────────── Clean Up cart (Feature 2) ───────────────────────────── */
 state.cart = new Set();
 try { JSON.parse(localStorage.getItem('tm-cart') || '[]').forEach((p) => state.cart.add(p)); } catch {}
 
@@ -88,7 +88,7 @@ function cartPreviewInvalidated() {
 /**
  * A per-row cart toggle for `path`, drawn in the state it is in. Every one in
  * the app is written here (QA third pass D11): eleven templates each wrote
- * "Add … to cleanup cart" into the label, so a staged item — ✓ icon, "Remove"
+ * "Add … to cleanup cart" (the cart's old name) into the label, so a staged item — ✓ icon, "Remove"
  * tooltip — still told a screen reader that pressing it adds. `name` is what
  * the label calls the item: a file's name, "the shader cache for Portal".
  */
@@ -98,9 +98,9 @@ function cartButtonHtml(path, name, px = 13) {
     `data-cartin="${staged ? '1' : '0'}" title="${cartButtonTitle(staged)}" aria-label="${escapeHtml(cartButtonLabel(name, staged))}">` +
     `${icon(staged ? 'check' : 'plus', px)}</button>`;
 }
-function cartButtonTitle(staged) { return staged ? 'Remove from cleanup cart' : 'Add to cleanup cart'; }
+function cartButtonTitle(staged) { return staged ? 'Remove from Clean Up cart' : 'Add to Clean Up cart'; }
 /** What pressing the toggle does, with the item's name: the label a screen reader reads, as the tooltip and the icon say it. */
-function cartButtonLabel(name, staged) { return staged ? `Remove ${name} from cleanup cart` : `Add ${name} to cleanup cart`; }
+function cartButtonLabel(name, staged) { return staged ? `Remove ${name} from Clean Up cart` : `Add ${name} to Clean Up cart`; }
 
 /**
  * Sync the +/✓ state of every per-row "add to cart" button currently on screen.
@@ -212,9 +212,9 @@ function renderCartGoal(staged, unknown = 0) {
       : `<span><b>${escapeHtml(shown)}</b> of ${escapeHtml(goal)} staged</span>` +
         `<span class="g-pct num">${Math.round(pct)}%</span>`;
   host.setAttribute('aria-label',
-    !sized ? `Cleanup target ${goal}: the staged size is unknown, not in this scan`
-      : met ? `Cleanup target met: ${said} staged toward ${goal}`
-      : `Cleanup target: ${said} of ${goal} staged, ${Math.round(pct)} percent`);
+    !sized ? `Clean Up target ${goal}: the staged size is unknown, not in this scan`
+      : met ? `Clean Up target met: ${said} staged toward ${goal}`
+      : `Clean Up target: ${said} of ${goal} staged, ${Math.round(pct)} percent`);
 }
 
 async function renderCart() {

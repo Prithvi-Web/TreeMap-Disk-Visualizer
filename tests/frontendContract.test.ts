@@ -1778,7 +1778,7 @@ test('the empty state explains that an empty capsule is the correct state', () =
   // callers in tests/settingsSheetQa.test.ts — QA D72.)
   const code = appCode();
   assert.match(code, /that.s the normal state/i);
-  assert.match(code, /<b>Autopilot<\/b> or the <b>cleanup cart<\/b> moves to the Trash/, 'it names what fills the capsule');
+  assert.match(code, /<b>Autopilot<\/b> or the <b>Clean Up cart<\/b> moves to the Trash/, 'it names what fills the capsule');
   assert.match(code, /any other way \(right-click, the Grid, ` \+\s*`Duplicates, Clean Up\) go to the Trash only and aren’t copied here/, 'and what deliberately does not');
 });
 

@@ -77,7 +77,7 @@ test('the core actions exist by name', () => {
   assert.notEqual(start, -1, 'the action registry exists');
   const reg = INDEX.slice(start, INDEX.indexOf('function cmdkItems'));
   for (const label of [
-    'Scan a folder', 'Rescan', 'Empty the cleanup cart', 'Export the map as PNG',
+    'Scan a folder', 'Rescan', 'Empty the Clean Up cart', 'Export the map as PNG',
     'Search all indexed files', 'Open Settings', 'Keyboard shortcuts',
     'Switch light / dark', 'Ask in plain words',
   ]) {
@@ -298,7 +298,7 @@ function everyIndexOf(head: string): number[] {
  * on a fresh start. Typing returns the labels of the rows listed, in order, their hints, and each
  * row's HTML.
  */
-function paletteAsShipped(): (typed: string) => { rows: string[]; hints: string[]; html: string[] } {
+function paletteAsShipped({ cart = [] }: { cart?: string[] } = {}): (typed: string) => { rows: string[]; hints: string[]; html: string[] } {
   const views = declarationAt(INDEX.indexOf('const VIEWS = ['), '[', ']');
   const registrations = everyIndexOf('registerView({').map((at) => `${declarationAt(at, '{', '}')})`);
   assert.ok(registrations.some((r) => r.includes("id: 'capsule'")), 'the Undo Vault view is registered with registerView');
@@ -310,7 +310,7 @@ function paletteAsShipped(): (typed: string) => { rows: string[]; hints: string[
     ${views};
     function registerView(view) { VIEWS.push(view); }
     ${registrations.join(';\n')};
-    const state = { cart: new Set(), root: null, scanning: false, view: 'dashboard', savedViews: [] };
+    const state = { cart: new Set(${JSON.stringify(cart)}), root: null, scanning: false, view: 'dashboard', savedViews: [] };
     const tabs = [];
     const cmdkRoots = [];
     let cmdkSel = 0;
@@ -381,4 +381,25 @@ test('a word the palette never shows is held to more than scattered letters, and
       assert.ok(i < rows.indexOf(hidden[0]), `typing "${typed}": "${label}", which matched by its own words, comes before the Undo Vault rows: ${JSON.stringify(rows)}`);
     }
   }
+});
+
+/* ═══════════ The G18 naming sweep: "Clean Up", two words (BQL item 13) ═══════════ */
+
+test('typed as they were before, the palette still finds the Clean Up cart\'s Empty action and its Settings target — and both rows say "Clean Up"', () => {
+  // The cart was "the cleanup cart" and the Settings heading "Cleanup target"
+  // (design pass G18). The new labels hold every letter of the old ones, in
+  // order, so the scorer's own match finds each old wording: no word the
+  // palette never shows is needed for them.
+  const type = paletteAsShipped({ cart: ['/Users/x/big.mov'] });
+  for (const typed of ['Empty the cleanup cart', 'empty the cleanup cart', 'cleanup cart', 'empty cleanup', 'emptythecleanupcart']) {
+    const { rows } = type(typed);
+    assert.equal(rows[0], 'Empty the Clean Up cart', `typing "${typed}" lists the cart's Empty action first: ${JSON.stringify(rows)}`);
+  }
+  for (const typed of ['Cleanup target', 'cleanup target', 'cleanuptarget', 'Settings: Cleanup target']) {
+    const { rows } = type(typed);
+    assert.equal(rows[0], 'Settings: Clean Up target', `typing "${typed}" lists the Settings target first: ${JSON.stringify(rows)}`);
+  }
+  const { html } = type('cleanup');
+  for (const row of html.slice(0, -1)) assert.doesNotMatch(row, /Cleanup|cleanup cart/, `no row the palette lists spells the old name: ${row}`);
+  assert.ok(!paletteAsShipped()('cleanup cart').rows.includes('Empty the Clean Up cart'), 'control: with nothing in the cart, its Empty action is not offered');
 });

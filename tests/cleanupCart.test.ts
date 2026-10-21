@@ -247,25 +247,25 @@ function cartToggles(staged: string[]) {
   return { state, html: page.cartButtonHtml, parse, refresh };
 }
 
-test('a cart toggle tells a screen reader what pressing it does: "Remove … from cleanup cart" on a staged item (QA third pass D11)', () => {
+test('a cart toggle tells a screen reader what pressing it does: "Remove … from Clean Up cart" on a staged item (QA third pass D11)', () => {
   // QA third pass D11: on a staged item the tooltip said "Remove from cleanup
   // cart" and the icon was ✓, but the label a screen reader reads still said
   // "Add holiday-4k.mov to cleanup cart" — on the Dashboard's Largest Files,
   // Duplicates and Clean Up rows alike.
   const t = cartToggles([MOV.path]);
   const staged = t.parse(t.html(MOV.path, MOV.name, 14));
-  assert.equal(staged.attrs['aria-label'], 'Remove holiday-4k.mov from cleanup cart', 'a staged item: pressing it removes');
-  assert.equal(staged.attrs.title, 'Remove from cleanup cart');
+  assert.equal(staged.attrs['aria-label'], 'Remove holiday-4k.mov from Clean Up cart', 'a staged item: pressing it removes');
+  assert.equal(staged.attrs.title, 'Remove from Clean Up cart');
   assert.match(staged.innerHTML, /data-icon="check"/);
   assert.ok(staged.cls.has('cartin'));
   assert.equal(staged.dataset.cartin, '1', 'stamped, so the cart walk has nothing to rewrite');
   const fresh = t.parse(t.html(DMG.path, DMG.name));
-  assert.equal(fresh.attrs['aria-label'], 'Add Installer.dmg to cleanup cart', 'an item not staged: pressing it adds');
-  assert.equal(fresh.attrs.title, 'Add to cleanup cart');
+  assert.equal(fresh.attrs['aria-label'], 'Add Installer.dmg to Clean Up cart', 'an item not staged: pressing it adds');
+  assert.equal(fresh.attrs.title, 'Add to Clean Up cart');
   assert.match(fresh.innerHTML, /data-icon="plus"/);
   assert.equal(fresh.dataset.cartin, '0');
   const odd = t.parse(t.html('/c/a"b.txt', 'a"b <x>.txt'));
-  assert.equal(odd.attrs['aria-label'], 'Add a"b <x>.txt to cleanup cart', 'a name is escaped into the attribute, not cut short by it');
+  assert.equal(odd.attrs['aria-label'], 'Add a"b <x>.txt to Clean Up cart', 'a name is escaped into the attribute, not cut short by it');
   assert.equal(odd.attrs['data-cart-add'], '/c/a"b.txt');
 });
 
@@ -274,13 +274,13 @@ test('a cart toggle\'s label follows the cart both ways as the item is staged an
   const b = t.parse(t.html(MOV.path, MOV.name, 14));
   t.state.cart.add(MOV.path);
   t.refresh(b);
-  assert.equal(b.attrs['aria-label'], 'Remove holiday-4k.mov from cleanup cart', 'staged: the label says it removes');
-  assert.equal(b.attrs.title, 'Remove from cleanup cart', 'as the tooltip says');
+  assert.equal(b.attrs['aria-label'], 'Remove holiday-4k.mov from Clean Up cart', 'staged: the label says it removes');
+  assert.equal(b.attrs.title, 'Remove from Clean Up cart', 'as the tooltip says');
   assert.match(b.innerHTML, /data-icon="check"/);
   t.state.cart.delete(MOV.path);
   t.refresh(b);
-  assert.equal(b.attrs['aria-label'], 'Add holiday-4k.mov to cleanup cart', 'unstaged: it adds again');
-  assert.equal(b.attrs.title, 'Add to cleanup cart');
+  assert.equal(b.attrs['aria-label'], 'Add holiday-4k.mov to Clean Up cart', 'unstaged: it adds again');
+  assert.equal(b.attrs.title, 'Add to Clean Up cart');
 });
 
 test('every cart toggle in the app is written by the one helper, so none can be drawn in the wrong state (QA third pass D11)', () => {
@@ -374,7 +374,7 @@ test('the cart pill\'s accessible name contains the words it shows — a voice u
     assert.deepEqual(shown.slice(-1), ['review'], `control: the pill shows "Review" (${shown.join(' ')})`);
     const name = accessibleName(t);
     assert.ok(containsWords(wordsOf(name), shown), `named "${name.replace(/\s+/g, ' ').trim()}", it contains what it shows: "${shown.join(' ')}"`);
-    assert.match(name, /cleanup cart/i, 'and still says what it is');
+    assert.match(name, /Clean Up cart/, 'and still says what it is');
   }
 });
 
@@ -631,20 +631,20 @@ test('the cleanup-target meter does not count an unsized staged item as 0 B: unk
 
   const some = goalShows(3_000_000_000, 1, 2);
   assert.match(some.line, /<b>3000000000 B\+<\/b> of 50000000000 B staged/, `the known part is marked a floor: ${some.line}`);
-  assert.match(some.label, /Cleanup target: at least 3000000000 B of 50000000000 B staged, 6 percent/, some.label);
+  assert.match(some.label, /Clean Up target: at least 3000000000 B of 50000000000 B staged, 6 percent/, some.label);
 
   const all = goalShows(3_000_000_000, 0, 1);
   assert.match(all.line, /<b>3000000000 B<\/b> of 50000000000 B staged/, `no mark when everything is sized: ${all.line}`);
-  assert.match(all.label, /Cleanup target: 3000000000 B of 50000000000 B staged, 6 percent/, all.label);
+  assert.match(all.label, /Clean Up target: 3000000000 B of 50000000000 B staged, 6 percent/, all.label);
 
   // Past the target, the figure that met it is still a floor while some items are unsized.
   const metSome = goalShows(60_000_000_000, 1, 2);
   assert.equal(metSome.met, true, 'the sized part alone meets the target');
   assert.match(metSome.line, /Target met\.<\/b> <span>60000000000 B\+ staged toward 50000000000 B\./, `marked a floor: ${metSome.line}`);
-  assert.match(metSome.label, /Cleanup target met: at least 60000000000 B staged toward 50000000000 B/, metSome.label);
+  assert.match(metSome.label, /Clean Up target met: at least 60000000000 B staged toward 50000000000 B/, metSome.label);
   const metAll = goalShows(60_000_000_000, 0, 1);
   assert.match(metAll.line, /Target met\.<\/b> <span>60000000000 B staged toward 50000000000 B\./, `no mark when everything is sized: ${metAll.line}`);
-  assert.match(metAll.label, /Cleanup target met: 60000000000 B staged toward 50000000000 B/, metAll.label);
+  assert.match(metAll.label, /Clean Up target met: 60000000000 B staged toward 50000000000 B/, metAll.label);
 
   // renderCart hands the meter the same unknown count the pill and footer use.
   const other = ['/elsewhere/a/node_modules', '/elsewhere/b/node_modules'];

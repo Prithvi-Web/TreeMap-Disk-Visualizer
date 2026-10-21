@@ -1130,7 +1130,7 @@ test('the Clean Up sheet says where its removals go: the Trash, until it is empt
   assert.match(said, /system Trash/, said);
   assert.match(said, /until the Trash is emptied/, `the way back ends when the Trash is emptied: ${said}`);
   assert.match(said, /not copied to the Undo Vault/, `and no capsule copy outlives it: ${said}`);
-  assert.match(said, /Shrink Video/, said);
+  assert.match(said, /Shrink video/, said);
   assert.match(said, /quality/, `the re-encode loses quality for good: ${said}`);
   // What the sentence says of Clean Up is what Clean Up does: its moves are trashPaths, never the cart commit.
   assert.match(declOf('runCleanTrash'), /await trashPaths\(chunk,/, 'Clean Up moves through trashPaths');

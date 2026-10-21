@@ -402,9 +402,9 @@ test('a quick win says what it found — the rule\'s plain words, each item\'s n
 test('the last step does not point at a cart that is not on screen (G04)', () => {
   const none = tourCard('cart', { added: [] });
   assert.doesNotMatch(none.text, /The cart at the bottom is where/, 'nothing staged: the cart is not drawn, so it is not pointed at');
-  assert.match(none.text, /You added nothing — also fine\. Anything you add later waits in a cleanup cart that appears at the bottom right once it holds something\./, none.text);
+  assert.match(none.text, /You added nothing — also fine\. Anything you add later waits in the Clean Up cart, which appears at the bottom right once it holds something\./, none.text);
   const some = tourCard('cart', { added: ['/c/a', '/c/b'], cart: ['/c/a', '/c/b'] });
-  assert.match(some.text, /Everything you added is waiting in the cleanup cart at the bottom right\. Committing the cart/, some.text);
+  assert.match(some.text, /Everything you added is waiting in the Clean Up cart at the bottom right\. Committing the cart/, some.text);
 });
 
 test('the last step reads what this run added against the cart as it is now, and a restarted tour starts with nothing added (review F1.1)', () => {
@@ -414,13 +414,13 @@ test('the last step reads what this run added against the cart as it is now, and
   // "Everything you added is waiting in the cleanup cart at the bottom
   // right" over a cart that was not drawn.
   const staged = tourCard('cart', { added: ['/c/a', '/c/b'], cart: ['/c/a', '/c/b', '/c/older'] });
-  assert.match(staged.text, /Everything you added is waiting in the cleanup cart at the bottom right\./, staged.text);
+  assert.match(staged.text, /Everything you added is waiting in the Clean Up cart at the bottom right\./, staged.text);
   assert.doesNotMatch(staged.text, /Nothing has been deleted/, 'no claim about deletions the cart cannot vouch for: the header already says "deleted only when you say so"');
   const gone = tourCard('cart', { added: ['/c/a'], cart: [] });
   assert.doesNotMatch(gone.text, /Everything you added is waiting|You added nothing/, `taken out or committed since: neither "waiting" nor "nothing added": ${gone.text}`);
-  assert.match(gone.text, /Everything you added has since left the cart\. The cleanup cart shows at the bottom right whenever it holds something\./, gone.text);
+  assert.match(gone.text, /Everything you added has since left the cart\. The Clean Up cart shows at the bottom right whenever it holds something\./, gone.text);
   const part = tourCard('cart', { added: ['/c/a', '/c/b'], cart: ['/c/a'] });
-  assert.match(part.text, /Some of what you added has since left the cart\. The cleanup cart shows at the bottom right whenever it holds something\./, part.text);
+  assert.match(part.text, /Some of what you added has since left the cart\. The Clean Up cart shows at the bottom right whenever it holds something\./, part.text);
   const older = tourCard('cart', { added: [], cart: ['/c/older'] });
   assert.match(older.text, /You added nothing — also fine\./, 'what was staged before this run is not this run\'s');
 
@@ -491,7 +491,7 @@ test('the cart step follows the cart: taken out, cleared or committed while its 
   // "Everything you added is waiting in the cleanup cart at the bottom right"
   // over a cart that was no longer drawn.
   const card = tourCard('cart', { added: ['/c/a', '/c/b'], cart: ['/c/a', '/c/b'] });
-  assert.match(card.text, /Everything you added is waiting in the cleanup cart at the bottom right\./, `control: ${card.text}`);
+  assert.match(card.text, /Everything you added is waiting in the Clean Up cart at the bottom right\./, `control: ${card.text}`);
   card.cart.delete('/c/b');
   card.cartChanged();
   assert.match(card.now().text, /Some of what you added has since left the cart\./, `one taken out: ${card.now().text}`);

@@ -1,4 +1,4 @@
-/* ── Cleanup cart (Feature 2) ── */
+/* ── Clean Up cart (Feature 2) ── */
 /* `max-width: 92vw` is a guard against the VIEWPORT only, and it is correct
    here because the dock rests 22px from the right edge. Any state that pushes
    the dock further in must cap the width again against the strip that is

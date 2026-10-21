@@ -95,7 +95,7 @@ A squarified treemap of every file, sized by bytes and colored **teal → amber 
 <img src="demo/03-circles.jpg" width="100%" alt="Nested circles: every circle's area is its bytes, and a folder's name sits on its own ring">
 <img src="demo/04-voronoi.jpg" width="100%" alt="The Voronoi map of the same folder: cells whose areas are proportional to bytes">
 
-**Drag to lasso.** Rubber-band by default, freehand with ⌥, and everything whose centre falls inside is staged in the cleanup cart — with a running count and byte total while you drag, so you can see what you have caught before you let go. ⌘ (Ctrl) over a region takes those items back out. Nothing is deleted and no gesture ever empties the cart; the cart still runs its own dry run and confirmation. It works the same way in **Disk City**, where a modifier is needed because a plain drag pans.
+**Drag to lasso.** Rubber-band by default, freehand with ⌥, and everything whose centre falls inside is staged in the Clean Up cart — with a running count and byte total while you drag, so you can see what you have caught before you let go. ⌘ (Ctrl) over a region takes those items back out. Nothing is deleted and no gesture ever empties the cart; the cart still runs its own dry run and confirmation. It works the same way in **Disk City**, where a modifier is needed because a plain drag pans.
 
 <img src="demo/06-lasso.jpg" width="100%" alt="A freehand lasso over the treemap, with the running count and byte total of what it has caught">
 
@@ -214,7 +214,7 @@ That last part is the design. A signal TreeMap cannot read is **left out of the 
 
 The weights live in **Settings → Reclaim Score** and are yours to change, with a reset to the defaults. A ranking whose reasoning you cannot inspect or adjust is an oracle, and this app does not ship oracles. Setting a weight to zero removes that signal from the score entirely — which is a different statement from it scoring zero. And the score never selects anything: it sorts, and it explains.
 
-**The cleanup cart** is the one place a deletion is actually committed. Stage anything, from any view that lists something reclaimable — Largest Files, Duplicates and near-duplicates, Clean Up groups and rules, Empty Folders, package orphans, browser caches, cloud-only files, an app's **caches and logs** (never the app itself or your data), a game's **shader cache** (never the install, the mods or a Proton prefix), or every file a query matched. Advisory groups and Security findings get no cart button at all — not a disabled one, none, because they have no delete path anywhere in the app.
+**The Clean Up cart** is the one place a deletion is actually committed. Stage anything, from any view that lists something reclaimable — Largest Files, Duplicates and near-duplicates, Clean Up groups and rules, Empty Folders, package orphans, browser caches, cloud-only files, an app's **caches and logs** (never the app itself or your data), a game's **shader cache** (never the install, the mods or a Proton prefix), or every file a query matched. Advisory groups and Security findings get no cart button at all — not a disabled one, none, because they have no delete path anywhere in the app.
 
 **Preview after** re-lays the treemap out with the staged items taken out and hatches what would come back, under a banner that says nothing has been deleted. The freed space stays on the map rather than the survivors growing into it: area means bytes, and a rectangle that silently became worth more bytes than it was a second ago would make every size comparison against the live map wrong. Exiting restores the map exactly as it was. It is pure arithmetic in the browser — no scan, no server call, nothing on disk.
 
@@ -240,7 +240,7 @@ The third option next to *keep* and *trash*: **Offload…** copies files to anot
 <td width="50%" valign="top">
 
 ### 🗄️ Undo Vault
-The safety net for **Autopilot** and the **cleanup cart**. Before either moves anything to the Trash, TreeMap copies it here, **verifies every byte** (SHA-256), and only then moves the original to the Trash — so emptying the Trash doesn't lose it, as long as the copy is kept. Searchable and grouped by run, with one-click verified **Restore** back to the exact original path (never overwriting anything that's there now). It can't fill your disk: a size cap (default 10%) evicts the oldest copies first, and anything too big to protect is **left undeleted rather than deleted unprotected** — with the reason shown, never hidden in a log. Copies are kept 30 days by default; both numbers are in Settings. Files you move to the Trash any other way (right-click, the Grid, Duplicates, Clean Up) go to the Trash as usual and aren't copied here.
+The safety net for **Autopilot** and the **Clean Up cart**. Before either moves anything to the Trash, TreeMap copies it here, **verifies every byte** (SHA-256), and only then moves the original to the Trash — so emptying the Trash doesn't lose it, as long as the copy is kept. Searchable and grouped by run, with one-click verified **Restore** back to the exact original path (never overwriting anything that's there now). It can't fill your disk: a size cap (default 10%) evicts the oldest copies first, and anything too big to protect is **left undeleted rather than deleted unprotected** — with the reason shown, never hidden in a log. Copies are kept 30 days by default; both numbers are in Settings. Files you move to the Trash any other way (right-click, the Grid, Duplicates, Clean Up) go to the Trash as usual and aren't copied here.
 
 </td>
 </tr>
@@ -542,7 +542,7 @@ A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows in
 | `POST /api/autopilot/simulate` | Exactly what a policy would delete — writes nothing, touches no schedule |
 | `POST /api/autopilot/policies/:id/approve` | Let a policy start deleting, after its mandatory first preview |
 | `GET /api/autopilot/runs` · `POST …/runs/:id/undo` | Run history, and a verified one-click undo from the Undo Vault |
-| `GET /api/timecapsule` | The Undo Vault: what the cleanup cart and Autopilot copied aside before trashing it, with capacity + history |
+| `GET /api/timecapsule` | The Undo Vault: what the Clean Up cart and Autopilot copied aside before trashing it, with capacity + history |
 | `POST /api/timecapsule/:id/restore` · `DELETE /api/timecapsule/:id` | Verified restore to the original path (202 + SSE job), or forget one copy |
 | `GET /api/timecapsule/jobs/:jobId/progress` | Restore progress (Server-Sent Events), cancellable |
 | `GET /api/settings` · `PUT /api/settings` | Ignore list, scheduled scans, folder budgets, the Scan engine and the scanning budget |

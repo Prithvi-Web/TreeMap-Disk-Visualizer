@@ -201,7 +201,7 @@ for (const input of engineBudgetInputs()) {
   input.addEventListener('change', () => { if (input.checked) void saveEngineBudget(input.value); });
 }
 
-/* ── Cleanup target (v4 §4.1) ──
+/* ── Clean Up target (v4 §4.1) ──
    Stored as bytes; shown in whichever unit divides evenly, largest first, so
    50 GB comes back as "50 GB" rather than "50000 MB". Units are decimal, as
    printed (QA D09). An empty box is the no-target state and is written back

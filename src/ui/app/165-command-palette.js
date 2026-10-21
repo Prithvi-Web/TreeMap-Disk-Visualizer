@@ -71,7 +71,7 @@ const CMDK_ACTIONS = [
     pi.select();
   } },
   { label: 'Rescan this folder', hint: 'fresh numbers for the same tree', when: () => !!state.root && !state.scanning, run: () => rescan() },
-  { label: 'Empty the cleanup cart', hint: 'unstages everything, deletes nothing', when: () => state.cart.size > 0, run: () => cartClear() },
+  { label: 'Empty the Clean Up cart', hint: 'unstages everything, deletes nothing', when: () => state.cart.size > 0, run: () => cartClear() },
   { label: 'Export the map as PNG', hint: 'the current treemap, as pixels', when: () => state.view === 'treemap' && drawnCells().length > 0, run: () => exportTreemapPNG() },
   { label: 'Search all indexed files', hint: 'the sidebar search box', run: () => summonGlobalSearch() },
   // Gated on a scan: with none, switchView('treemap') shows the empty state
@@ -101,7 +101,7 @@ const CMDK_SETTINGS_SECTIONS = [
   { name: 'Live activity', hint: 'watch, auto-pause' },
   { name: 'Undo Vault', hint: 'retention, undo copies', aliases: ['timecapsule', 'capsule'] },
   { name: 'Reclaim Score', hint: 'weights, sliders, signals' },
-  { name: 'Cleanup target', hint: 'goal, free up, meter' },
+  { name: 'Clean Up target', hint: 'goal, free up, meter' },
   { name: 'Human-scale sizes', hint: 'photo equivalents, tooltips' },
   { name: 'Ask in plain words', hint: 'natural language, translate' },
   { name: 'Welcome tour', hint: 'first run, onboarding' },

@@ -231,7 +231,7 @@ $('dupBody').addEventListener('change', (e) => {
 });
 
 /* The reclaim funnel: everything the hunt found → what is selected → what
-   of that is already staged in the cleanup cart. All three live in state
+   of that is already staged in the Clean Up cart. All three live in state
    this view already keeps; the funnel exists only while a selection does —
    an empty funnel would be decoration, not a statement. */
 let dupFunnelHandle = null;

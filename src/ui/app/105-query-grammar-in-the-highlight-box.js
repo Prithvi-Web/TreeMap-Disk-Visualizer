@@ -166,8 +166,8 @@ function tmSyncStageButton() {
   const nouns = `${stage.noun}${n === 1 ? '' : 's'}`;
   btn.textContent = `Stage ${formatCount(n)} ${nouns}`;
   btn.title = tmLastHits.truncated
-    ? `Add ${formatCount(n)} matched ${nouns}, from the biggest of ${formatCount(tmLastHits.total)} matches, to the cleanup cart. Nothing is deleted — staging only.`
-    : `Add ${formatCount(n)} matched ${nouns} to the cleanup cart. Nothing is deleted — staging only.`;
+    ? `Add ${formatCount(n)} matched ${nouns}, from the biggest of ${formatCount(tmLastHits.total)} matches, to the Clean Up cart. Nothing is deleted — staging only.`
+    : `Add ${formatCount(n)} matched ${nouns} to the Clean Up cart. Nothing is deleted — staging only.`;
 }
 
 /** Clear the staged-matches offer. Called wherever a query stops being current. */

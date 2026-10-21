@@ -129,7 +129,7 @@ type Runtime = {
 
 /** The Settings block, evaluated with api/$/toast injected — the real wiring included. */
 function budgetRuntime(api: (url: string, options?: ApiCall['options']) => Promise<unknown>, toast: (msg: string, kind?: string) => void) {
-  const src = slice('/* ── Scanning budget', '/* ── Cleanup target');
+  const src = slice('/* ── Scanning budget', '/* ── Clean Up target');
   const dom = makeSettingsDom();
   const budgetPresetLabel = lift<(p: unknown) => string>(['budgetPresetLabel'], 'budgetPresetLabel');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -241,7 +241,7 @@ test('the save handler PUTs to /api/engine/budget through the shared wrapper —
   assert.doesNotMatch(save, /\/api\/settings/, 'never the general settings endpoint — that one merges a form, this is a dial');
   assert.match(save, /body:\s*JSON\.stringify\(\{\s*preset,\s*cpuPercent\s*\}\)/, 'the contract body: { preset, cpuPercent }');
   assert.match(save, /catch \(e\) \{[\s\S]*toast\([^)]*'error'\)/, 'a failure is a toast, not a silent revert');
-  const wiring = slice('/* ── Scanning budget', '/* ── Cleanup target');
+  const wiring = slice('/* ── Scanning budget', '/* ── Clean Up target');
   assert.match(wiring, /addEventListener\('change'[\s\S]{0,120}saveEngineBudget\(/, 'every radio saves on change');
 });
 

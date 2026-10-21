@@ -166,7 +166,7 @@ test('an installed entry is offered for removal on open, from the same request (
  */
 const CAPSULE_ROUTES: Record<string, string> = {
   'autopilot.ts': 'Autopilot',
-  'cartCommit.ts': 'cleanup cart',
+  'cartCommit.ts': 'Clean Up cart',
 };
 /** Ways to move a file to the Trash that go through DELETE /api/files — no capsule copy. */
 const DIRECT_TRASH_WORDS = ['right-click', 'Grid', 'Duplicates', 'Clean Up'];

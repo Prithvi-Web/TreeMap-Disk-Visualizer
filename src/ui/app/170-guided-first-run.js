@@ -190,10 +190,10 @@ function tourRender(takeFocus = true) {
     // may have left it since — taken out, or committed.
     const kept = tour.added.filter((p) => state.cart.has(p)).length;
     const where = !tour.added.length
-      ? 'You added nothing — also fine. Anything you add later waits in a cleanup cart that appears at the bottom right once it holds something.'
+      ? 'You added nothing — also fine. Anything you add later waits in the Clean Up cart, which appears at the bottom right once it holds something.'
       : kept === tour.added.length
-        ? 'Everything you added is waiting in the cleanup cart at the bottom right.'
-        : `${kept ? 'Some of what you added' : 'Everything you added'} has since left the cart. The cleanup cart shows at the bottom right whenever it holds something.`;
+        ? 'Everything you added is waiting in the Clean Up cart at the bottom right.'
+        : `${kept ? 'Some of what you added' : 'Everything you added'} has since left the cart. The Clean Up cart shows at the bottom right whenever it holds something.`;
     host.innerHTML = `
       ${head('The cart · step 4 of 4', false)}
       <h4>${icon('cart', 16)}Staged — deleted only when you say so</h4>
