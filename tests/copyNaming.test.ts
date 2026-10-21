@@ -163,15 +163,104 @@ function plainLabel(inner: string): string {
     .replace(/\s+/g, ' ').trim();
 }
 
+/** No more texts are judged for one expression than this: a label's branches multiply. */
+const MOST_VARIANTS = 64;
+
+/**
+ * The texts `expr` can give, one for each way its branches can go: a string
+ * literal or a template's own pieces as written, each arm of a `? :`, either
+ * side of `||` or `??`, and `+` joining what both sides can give. What code
+ * computes (a call such as `icon('cart', 15)`, a name, a property) is a blank,
+ * so an icon's name is never read as words.
+ */
+function variantsOf(expr: ts.Expression): string[] {
+  const join = (a: string[], b: string[]): string[] => a.flatMap((x) => b.map((y) => x + y)).slice(0, MOST_VARIANTS);
+  const either = (a: string[], b: string[]): string[] => [...a, ...b].slice(0, MOST_VARIANTS);
+  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return [expr.text];
+  if (ts.isParenthesizedExpression(expr)) return variantsOf(expr.expression);
+  if (ts.isConditionalExpression(expr)) return either(variantsOf(expr.whenTrue), variantsOf(expr.whenFalse));
+  if (ts.isTemplateExpression(expr)) {
+    let out = [expr.head.text];
+    for (const span of expr.templateSpans) out = join(join(out, variantsOf(span.expression)), [span.literal.text]);
+    return out;
+  }
+  if (ts.isBinaryExpression(expr)) {
+    const op = expr.operatorToken.kind;
+    if (op === ts.SyntaxKind.PlusToken) return join(variantsOf(expr.left), variantsOf(expr.right));
+    if (op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.QuestionQuestionToken) return either(variantsOf(expr.left), variantsOf(expr.right));
+  }
+  return [' '];
+}
+
+/**
+ * The labels a button's or heading's content can show. In a script the
+ * content sits inside a template, so each `${…}` is read for the text it can
+ * give — `${inCart ? 'Remove from cart' : 'Add to cart'}` gives both — and a
+ * content that does not read back as one template's text is read with its
+ * interpolations taken out.
+ */
+function labelVariants(inner: string): string[] {
+  if (!inner.includes('${')) return [plainLabel(inner)];
+  const sf = ts.createSourceFile('label.js', `\`${inner}\``, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const [stmt] = sf.statements;
+  const parsed = (sf as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics;
+  if (sf.statements.length !== 1 || !ts.isExpressionStatement(stmt) || !ts.isTemplateExpression(stmt.expression)
+    || !parsed || parsed.length > 0) return [plainLabel(inner)];
+  return [...new Set(variantsOf(stmt.expression).map(plainLabel))];
+}
+
+/** A label pieced together by `+` from code ('<button>' + label + '</button>'): no one label to read. */
+function joinedByCode(label: string): boolean {
+  return /['"`]\s*\+|\+\s*['"`]/.test(label);
+}
+
 /** Every button's and every modal heading's label in `code`, markup or script, but a label built by `+` from code. */
 function labelsIn(code: string): string[] {
   const out: string[] = [];
   for (const m of code.matchAll(/<(button|h3)\b[^>]*>([\s\S]*?)<\/\1>/g)) {
-    const label = plainLabel(m[2]);
-    if (!label || /['"`]\s*\+|\+\s*['"`]/.test(label)) continue; // pieces joined by code: no one label to read
-    out.push(label);
+    for (const label of labelVariants(m[2])) if (label && !joinedByCode(label)) out.push(label);
   }
   return out;
+}
+
+/** The ids of the page's buttons and modal headings, as its markup writes them. */
+function labelIds(page: string): Set<string> {
+  return new Set([...markupOf(page).matchAll(/<(?:button|h3)\b[^>]*\sid="([^"]+)"/g)].map((m) => m[1]));
+}
+
+/**
+ * The labels the page's scripts write into a button or a modal heading by
+ * its id — `$('confirmTitle').innerHTML = icon('trash', 18) + 'Move to
+ * Trash?'`, `$('confirmOk').innerHTML = …` — and the `title` and `ok` handed
+ * to askText and watchJob, which write them into the ask sheet's heading and
+ * OK button and the progress sheet's heading. A label passed on through a
+ * variable from anywhere else is not followed.
+ */
+function assignedLabels(page: string): string[] {
+  const ids = labelIds(page);
+  const out: string[] = [];
+  for (const code of scriptsOf(page)) {
+    const sf = ts.createSourceFile('page.js', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    const visit = (n: ts.Node): void => {
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken
+        && ts.isPropertyAccessExpression(n.left) && /^(?:innerHTML|textContent)$/.test(n.left.name.text)) {
+        const target = n.left.expression;
+        if (ts.isCallExpression(target) && ts.isIdentifier(target.expression) && target.expression.text === '$'
+          && target.arguments.length === 1 && ts.isStringLiteral(target.arguments[0]) && ids.has(target.arguments[0].text)) {
+          out.push(...variantsOf(n.right));
+        }
+      }
+      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && /^(?:askText|watchJob)$/.test(n.expression.text)
+        && n.arguments.length > 0 && ts.isObjectLiteralExpression(n.arguments[0])) {
+        for (const prop of n.arguments[0].properties) {
+          if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name) && /^(?:title|ok)$/.test(prop.name.text)) out.push(...variantsOf(prop.initializer));
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  return [...new Set(out.map(plainLabel))].filter((label) => label && !joinedByCode(label));
 }
 
 /** Where `label` capitalises a word that is no proper name: Title Case, or a stray capital. */
@@ -192,7 +281,7 @@ function titleCased(label: string, proper: readonly string[]): string | null {
 /** Each label in the page that is Title Case where it should be sentence case, with the word that gives it away. */
 function titleCaseLabels(page: string): string[] {
   const proper = [...PROPER_NAMES, ...sidebarNames(page)];
-  const labels = [...labelsIn(markupOf(page)), ...scriptsOf(page).flatMap(labelsIn)];
+  const labels = [...labelsIn(markupOf(page)), ...scriptsOf(page).flatMap(labelsIn), ...assignedLabels(page)];
   return labels.flatMap((label) => {
     const word = titleCased(label, proper);
     return word ? [`"${label}" (${word})`] : [];
@@ -230,6 +319,24 @@ test('the label reader judges buttons and modal headings, markup or script, by t
   assert.deepEqual(labelsIn(code), ['Remove Budget', 'Keyboard Shortcuts'], 'an interpolation is not part of the label, and a label joined by code is skipped');
 });
 
+test('the label reader reads the words an interpolation gives, and the labels the scripts write by id (G18 review F1.3, F1.4)', () => {
+  // The right-click menu's cart entry is all interpolation; read with its
+  // interpolations taken out it had no label, so "Add to Cart" passed unseen.
+  const menu = '`<button data-act="cart">${icon(inCart ? \'check\' : \'cart\', 15)}${inCart ? \'Remove from Cart\' : \'Add to Cart\'}</button>`';
+  assert.deepEqual(labelsIn(menu), ['Remove from Cart', 'Add to Cart'], 'each arm is a label; an icon\'s name is not words');
+  assert.deepEqual(labelsIn('`<button>${n ? `Move ${n} to Trash` : \'Move to Trash\'} ${x || \'Now\'}</button>`'),
+    ['Move to Trash', 'Move to Trash Now'], 'a template arm keeps its words, and either side of || is read');
+  const page = [
+    '<h3 id="confirmTitle">Move to Trash?</h3><button id="confirmOk">OK</button><div id="note">x</div>',
+    "<script>$('confirmTitle').innerHTML = icon('trash', 18) + 'Forget This Copy?';",
+    "$('confirmOk').innerHTML = icon(r ? 'refresh' : 'stop', 15) + (r ? 'Restart It' : 'Quit it');",
+    "$('note').textContent = 'Not A Label'; $('confirmOk').textContent = label;",
+    "askText({ title: 'Save View', label: 'Name This View', ok: 'Save view' }); watchJob({ title: n === 1 ? 'Putting It Back…' : 'Putting everything back…', cancelUrl: u });</script>",
+  ].join('\n');
+  assert.deepEqual(assignedLabels(page), ['Forget This Copy?', 'Restart It', 'Quit it', 'Save View', 'Save view', 'Putting It Back…', 'Putting everything back…'],
+    'a heading\'s and a button\'s, by id, and askText\'s and watchJob\'s; not another element\'s, not a field label, not a name');
+});
+
 /* ══════════════ The page ══════════════ */
 
 test('the page names the feature "Clean Up" — never "Cleanup", never "the cleanup cart" — wherever a person reads it (G18)', () => {
@@ -242,6 +349,11 @@ test('every button and modal title of the page is in sentence case, but for prop
   const labels = [...labelsIn(markupOf(INDEX)), ...scriptsOf(INDEX).flatMap(labelsIn)];
   assert.ok(labels.length > 150, `control: the page's labels are read, markup and script (${labels.length})`);
   assert.ok(labels.includes('Remove budget') && labels.includes('Keyboard shortcuts'), 'control: a script\'s button and a modal heading are among them');
+  assert.ok(labels.includes('Edit budget…') && labels.includes('Set budget…'), 'control: both arms of an interpolated label are among them');
+  const assigned = assignedLabels(INDEX);
+  for (const label of ['Move to Trash?', 'Forget this copy?', 'Copy, verify, then trash', 'Save view', 'Restoring…', 'New policy']) {
+    assert.ok(assigned.includes(label), `control: a label written by id, or through askText or watchJob, is read: ${label} (${assigned.length} read)`);
+  }
   assert.deepEqual(titleCaseLabels(INDEX), []);
 });
 
@@ -250,6 +362,8 @@ test('the Clean Up cart, its Settings target and the Clean Up tabs say it in the
   assert.ok(/<div class="set-h"[^>]*><span data-icon="cart"><\/span>Clean Up target<\/div>/.test(INDEX), 'the Settings heading');
   assert.ok(/\{ name: 'Clean Up target', hint: '[^']+'/.test(INDEX), 'the palette\'s Settings row, the heading\'s own words');
   assert.ok(/\{ label: 'Empty the Clean Up cart', /.test(INDEX), 'the palette\'s action');
+  assert.ok(INDEX.includes("<button data-act=\"cart\">${icon(inCart ? 'check' : 'cart', 15)}${inCart ? 'Remove from Clean Up cart' : 'Add to Clean Up cart'}</button>"),
+    'the right-click menu\'s cart entry, as every cart toggle says it (review F1.3)');
   for (const tab of ['Custom rules', 'Smart Suggestions', 'Empty folders', 'Shrink video', 'Cloud-safe']) {
     assert.ok(new RegExp(`data-pane="\\w+"(?: id="\\w+" hidden)?><span data-icon="[\\w-]+"></span>${tab}</button>`).test(INDEX), `the Clean Up tab "${tab}"`);
   }

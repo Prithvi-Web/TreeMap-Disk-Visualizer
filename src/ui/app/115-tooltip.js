@@ -321,11 +321,13 @@ function showCtxMenu(x, y, node) {
   }
   const inCart = cartHas(node.path);
   const hasBudget = node.type === 'dir' && !!budgetFor(node.path);
+  // The cart entry names the feature as every cart toggle does (cartButtonTitle), in sentence
+  // case; it said "Add to Cart" (G18 review F1.3). Written out, so the copy guard reads each arm.
   ctxMenuShow(menu, { label: `Actions for ${node.name || node.path}`, x, y, html: `
     <button data-act="open">${icon('external', 15)}Open in ${fm}</button>
     ${node.type === 'file' ? `<button data-act="preview">${icon('search', 15)}Quick Look</button>` : ''}
     <button data-act="copy">${icon('copy', 15)}Copy path</button>
-    <button data-act="cart">${icon(inCart ? 'check' : 'cart', 15)}${inCart ? 'Remove from Cart' : 'Add to Cart'}</button>
+    <button data-act="cart">${icon(inCart ? 'check' : 'cart', 15)}${inCart ? 'Remove from Clean Up cart' : 'Add to Clean Up cart'}</button>
     <button data-act="score">${icon('help', 15)}Why this reclaim score?</button>
     ${node.isTrash ? '' : `<button data-act="offload">${icon('archive', 15)}Offload…</button>`}
     ${node.type === 'dir' ? `<div class="div"></div>
