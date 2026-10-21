@@ -50,6 +50,13 @@ export interface SecurityPattern {
    */
   expectedIn: string[];
   /**
+   * Directories where this file is expected too, matched as `expectedIn` is — unless a folder above the
+   * file syncs to the cloud or is easy to share (SYNC_FOLDERS, EXPOSED_FOLDERS). A folder named certs is
+   * where certificates and keys are kept on purpose, but one a downloaded zip unpacked into ~/Downloads,
+   * or one in ~/Dropbox, gives a private key no pass (review F1.5).
+   */
+  expectedInPrivate?: string[];
+  /**
    * Where it should live, shown as the suggested destination. Only an SSH-key
    * pattern names `.ssh`: offering to move anything else there (a certificate,
    * a TLS key, a Keynote presentation) puts a person's file somewhere it does
@@ -148,10 +155,12 @@ export const SECURITY_PATTERNS: SecurityPattern[] = [
     severity: 'high',
     severityFor: pemSeverity,
     extensions: ['pem'],
-    // Where certificates and keys are kept on purpose: a folder named certs anywhere (ssl/certs among
-    // them) or ca-certificates, as well as the hidden ones (eighth browser pass K54: "In “certs”, which
-    // is not where this kind of file belongs" was said of a CA bundle in a folder named certs).
-    expectedIn: ['.ssh', '.certs', '.config/certs', 'certs', 'ca-certificates'],
+    expectedIn: ['.ssh', '.certs', '.config/certs'],
+    // Where certificates and keys are kept on purpose: a folder named certs (ssl/certs among them) or
+    // ca-certificates (eighth browser pass K54: "In “certs”, which is not where this kind of file
+    // belongs" was said of a CA bundle in a folder named certs) — but not inside a folder that syncs to
+    // the cloud or is easy to share, where a private key was dropped from the panel (review F1.5).
+    expectedInPrivate: ['certs', 'ca-certificates'],
     // No suggested home: a .pem is as often a TLS key or a certificate as an
     // SSH key, and ~/.ssh is not where either of those belongs.
   },
@@ -450,11 +459,12 @@ function ownedPlaceReason(where: string, place: OwnedPlace | null): string {
 /**
  * Is `filePath` inside one of the pattern's expected directories?
  * `expectedIn` entries may be nested (`.config/gcloud`), matched as a
- * consecutive run of ancestor segments.
+ * consecutive run of ancestor segments. `expectedInPrivate` counts only where
+ * no folder above the file syncs to the cloud or is easy to share (`exposed`).
  */
-function inExpectedLocation(filePath: string, pattern: SecurityPattern, homeDir: string): boolean {
+function inExpectedLocation(filePath: string, pattern: SecurityPattern, homeDir: string, exposed: boolean): boolean {
   const dirSegments = segments(path.dirname(filePath));
-  for (const expected of pattern.expectedIn) {
+  for (const expected of exposed ? pattern.expectedIn : [...pattern.expectedIn, ...(pattern.expectedInPrivate ?? [])]) {
     const want = segments(expected);
     for (let i = 0; i + want.length <= dirSegments.length; i++) {
       if (want.every((w, k) => dirSegments[i + k] === w)) return true;
@@ -536,11 +546,12 @@ export function collectSecurityFindings(
       // A public key is not a secret, and flagging it teaches people to ignore
       // the whole panel.
       if (name.toLowerCase().endsWith('.pub')) continue;
-      if (inExpectedLocation(childPath, pattern, homeDir)) continue;
 
       const dirs = segments(path.dirname(childPath));
       const exposedFolder = dirs.find((d) => EXPOSED_FOLDERS.includes(d));
       const syncFolder = dirs.find((d) => SYNC_FOLDERS.some((s) => d === s || d.startsWith(s)));
+      // Judged with the synced and exposed folders known: a folder named certs inside one gives no pass (review F1.5).
+      if (inExpectedLocation(childPath, pattern, homeDir, Boolean(syncFolder || exposedFolder))) continue;
       const where = path.basename(path.dirname(childPath)) || path.dirname(childPath);
 
       // Being inside a synced or shared folder raises the stakes, never lowers

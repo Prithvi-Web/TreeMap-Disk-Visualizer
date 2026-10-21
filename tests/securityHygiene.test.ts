@@ -516,6 +516,28 @@ test('a .pem whose name suggests public certificates is minor, never badged seri
   assert.equal(findingsFor([file('cacert.pem', path.join(HOME, 'mycerts-backup'))]).length, 1, 'control: a folder that is not named certs gives no pass');
 });
 
+test('a folder named certs or ca-certificates gives a .pem no pass inside a folder that syncs to the cloud or is easy to share — a private key in Downloads/certs, Dropbox/certs or Desktop/ca-certificates is listed, serious, as anywhere there (review F1.5)', () => {
+  // K54 made any folder named certs an expected place, judged before the synced and exposed folders were: a
+  // downloaded zip that unpacks to certs/privkey.pem, or a key in ~/Dropbox/certs, was dropped from the panel.
+  for (const [dir, reason] of [
+    [path.join(HOME, 'Downloads', 'certs'), /easy to share/],
+    [path.join(HOME, 'Dropbox', 'certs'), /syncs to the cloud/],
+    [path.join(HOME, 'Desktop', 'ca-certificates'), /easy to share/],
+    [path.join(HOME, 'Dropbox', 'Documents', 'certs'), /syncs to the cloud/],
+    [path.join(HOME, 'Documents', 'site', 'ssl', 'certs'), /easy to share/],
+  ] as const) {
+    const found = findingsFor([file('privkey.pem', dir), file('server-key.pem', dir), file('cacert.pem', dir)]);
+    assert.deepEqual(Object.fromEntries(found.map((f) => [f.name, f.severity])), { 'privkey.pem': 'high', 'server-key.pem': 'high', 'cacert.pem': 'low' },
+      `${dir}: listed — a name that suggests a key serious, one that suggests certificates minor`);
+    for (const f of found) {
+      assert.equal(f.exposed, true, `${dir}/${f.name}: marked as in a synced or exposed folder`);
+      assert.match(f.reason, reason, `${dir}/${f.name}: and its reason says which (${f.reason})`);
+    }
+  }
+  // A certs folder in no synced or exposed folder still gives its pass.
+  assert.deepEqual(findingsFor([file('privkey.pem', path.join(HOME, 'Projects', 'certs'))]), [], 'control: a certs folder in no synced or exposed folder is where a .pem belongs');
+});
+
 test('the 500 cap keeps the most serious findings, and the counts describe every finding (D77)', () => {
   // QA's corpus: 951 ".key" documents walked before Misc/keys-in-wrong-place, so the cap
   // (applied in walk order) dropped the real keys, and the counts described the slice.
