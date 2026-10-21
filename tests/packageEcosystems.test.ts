@@ -128,7 +128,7 @@ test('an orphan\'s reason says only what TreeMap found — no project file besid
   for (const name of ['.venv', 'node_modules']) {
     const e = find(entries, path.join(ROOT, 'scripts', name));
     assert.equal(e?.kind, 'orphan', `control: ${name} beside run.py and tool.js, with no project file, is called orphaned`);
-    assert.match(e!.reason, /^No [^ ]+ beside it — TreeMap finds no project that owns it\.$/, `${name}: the reason is what TreeMap found, and nothing about a project being gone`);
+    assert.match(e!.reason, /^No .+ beside it — TreeMap finds no project that owns it\.$/, `${name}: the reason is what TreeMap found, and nothing about a project being gone`);
   }
 });
 
@@ -142,6 +142,24 @@ test('an orphaned virtualenv is flagged and an active one is not', () => {
   assert.equal(orphan.kind, 'orphan');
   assert.equal(orphan.ecosystem, 'python');
   assert.equal(find(entries, path.join(ROOT, 'live-py', '.venv'))!.kind, 'active');
+});
+
+test('an orphan\'s reason names every project file that would have owned it — a .venv lacks requirements.txt, pyproject.toml, a Pipfile, setup.py, setup.cfg and .python-version alike, not requirements.txt alone (eighth browser pass K55)', () => {
+  const entries = run(tree([
+    dir('dead-py', [dir('.venv', [file('pyvenv.cfg'), file('lib', 4000)])]),
+    dir('dead-gradle', [dir('build', [dir('intermediates', [file('x.bin', 10)])])]),
+  ]));
+  assert.equal(find(entries, path.join(ROOT, 'dead-py', '.venv'))?.reason,
+    'No requirements.txt, pyproject.toml, Pipfile, setup.py, setup.cfg or .python-version beside it — TreeMap finds no project that owns it.',
+    'each Python project file the pack names, as it writes them');
+  // Each of those files, beside the .venv, owns it: the sentence names no file that would not.
+  for (const owner of ['requirements.txt', 'pyproject.toml', 'Pipfile', 'setup.py', 'setup.cfg', '.python-version']) {
+    const owned = run(tree([dir('py', [file(owner), dir('.venv', [file('pyvenv.cfg'), file('lib', 4000)])])]));
+    assert.equal(find(owned, path.join(ROOT, 'py', '.venv'))?.kind, 'active', `control: ${owner} beside it owns it`);
+  }
+  assert.equal(find(entries, path.join(ROOT, 'dead-gradle', 'build'))?.reason,
+    'No build.gradle, build.gradle.kts, settings.gradle or settings.gradle.kts beside it — TreeMap finds no project that owns it.',
+    'a Gradle build names its four build files');
 });
 
 test('a folder named env beside requirements.txt that holds no pyvenv.cfg is no virtualenv: it is listed for no ecosystem (BQL-b1 review F1.4)', () => {

@@ -1447,7 +1447,7 @@ test('an orphaned folder\'s row names no command as putting it back — no proje
   // Each with the reason and command GET /api/packages/orphans sends for it (packageEcosystemScanner).
   const rows = [
     orphan('npm', 'node_modules', '/corpus/old/node_modules', 'No package.json beside it — TreeMap finds no project that owns it.', 'npm install'),
-    orphan('python', '.venv', '/corpus/gone/.venv', 'No requirements.txt beside it — TreeMap finds no project that owns it.', 'python3 -m venv .venv, then reinstall the packages it held'),
+    orphan('python', '.venv', '/corpus/gone/.venv', 'No requirements.txt, pyproject.toml, Pipfile, setup.py, setup.cfg or .python-version beside it — TreeMap finds no project that owns it.', 'python3 -m venv .venv, then reinstall the packages it held'),
     orphan('python', '.venv', '/corpus/Projects/py/.venv', 'Its Python interpreter is gone (/old/py/bin) — this environment cannot run.', 'python3 -m venv .venv, then reinstall the packages it held', 'py'),
     orphan('cargo', 'target', '/corpus/rusty-old/target', 'No Cargo.toml beside it — TreeMap finds no project that owns it.', 'cargo build'),
     orphan('homebrew', 'ripgrep 13.0.0', '/opt/homebrew/Cellar/ripgrep/13.0.0', 'Superseded — ripgrep has 2 versions installed and only the newest is linked.', 'brew cleanup ripgrep', 'ripgrep'),
@@ -1469,7 +1469,7 @@ test('an orphaned folder\'s row names no command as putting it back — no proje
   assert.deepEqual(said, {
     '/corpus/old/node_modules': 'No package.json beside it — TreeMap finds no project that owns it.',
     '/home/u/.npm/_cacache': 'npm’s shared download cache. · <code>npm cache clean --force</code> to clear',
-    '/corpus/gone/.venv': 'No requirements.txt beside it — TreeMap finds no project that owns it.',
+    '/corpus/gone/.venv': 'No requirements.txt, pyproject.toml, Pipfile, setup.py, setup.cfg or .python-version beside it — TreeMap finds no project that owns it.',
     '/corpus/Projects/py/.venv': 'Its Python interpreter is gone (/old/py/bin) — this environment cannot run.',
     '/corpus/rusty-old/target': 'No Cargo.toml beside it — TreeMap finds no project that owns it.',
     '/opt/homebrew/Cellar/ripgrep/13.0.0': 'Superseded — ripgrep has 2 versions installed and only the newest is linked.',

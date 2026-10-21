@@ -295,10 +295,14 @@ export function scanPackageEcosystems(
         // Owner gone. Only claim it for an ecosystem we can actually recognise.
         const identified = candidates.find((r) => r.evidence.some((e) => kids().has(e)) && !refused(r));
         if (identified) {
-          // Named as the pack writes it ("Cargo.toml"); the lowercased lists are match keys.
-          const missing = identified.ownerManifest
-            ? (identified.ownerManifestLabels ?? identified.ownerManifest)[0]
-            : (identified.siblingLabels ?? identified.requiresSibling ?? [])[0];
+          // Every file that would have owned it, named as the pack writes them ("Cargo.toml"); the lowercased
+          // lists are match keys. The first alone was untrue: a .venv was said to lack requirements.txt
+          // when pyproject.toml, a Pipfile, setup.py, setup.cfg or .python-version would each have
+          // claimed it too (eighth browser pass K55).
+          const owners = identified.ownerManifest
+            ? (identified.ownerManifestLabels ?? identified.ownerManifest)
+            : (identified.siblingLabels ?? identified.requiresSibling ?? []);
+          const missing = owners.length > 1 ? `${owners.slice(0, -1).join(', ')} or ${owners[owners.length - 1]}` : owners[0];
           push({
             ecosystem: identified.ecosystem,
             kind: 'orphan',
