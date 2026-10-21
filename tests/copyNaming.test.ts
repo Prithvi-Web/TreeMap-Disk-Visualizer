@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import ts from 'typescript';
-import { INDEX } from './fixtures/liftFrontend';
+import { INDEX, lift } from './fixtures/liftFrontend';
+
+const ROOT = path.join(__dirname, '..');
 
 /**
  * Design pass G18 (BQL item 13): the page named one feature three ways —
@@ -48,6 +52,41 @@ function literalsOf(code: string): string[] {
     ts.forEachChild(n, visit);
   };
   visit(sf);
+  return out;
+}
+
+/** Every TypeScript file under `dir` (relative to the repository), in path order. */
+function tsFilesUnder(dir: string): string[] {
+  const out: string[] = [];
+  const walk = (at: string): void => {
+    for (const entry of fs.readdirSync(at, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = path.join(at, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.ts$/.test(entry.name) && !/\.d\.ts$/.test(entry.name)) out.push(full);
+    }
+  };
+  walk(path.join(ROOT, dir));
+  return out;
+}
+
+/**
+ * Each string literal and template piece of the TypeScript under `dirs`, with
+ * the file and line it is on. Comments are not strings, so they are left out,
+ * as the page's are.
+ */
+function sourceStrings(dirs: string[]): { at: string; text: string }[] {
+  const out: { at: string; text: string }[] = [];
+  for (const file of dirs.flatMap(tsFilesUnder)) {
+    const sf = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const visit = (n: ts.Node): void => {
+      if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)
+        || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) {
+        out.push({ at: `${path.relative(ROOT, file)}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}`, text: n.text });
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
   return out;
 }
 
@@ -213,6 +252,30 @@ test('the Clean Up cart, its Settings target and the Clean Up tabs say it in the
     assert.ok(new RegExp(`data-pane="\\w+"(?: id="\\w+" hidden)?><span data-icon="[\\w-]+"></span>${tab}</button>`).test(INDEX), `the Clean Up tab "${tab}"`);
   }
   assert.ok(/data-dupmode="near"><span data-icon="image"><\/span>Near-duplicate images<\/button>/.test(INDEX), 'the Duplicates mode');
+});
+
+/* ══════════════ What the server writes for the page ══════════════ */
+
+test('every sentence the server writes names the feature "Clean Up" — never "Cleanup", never "the cleanup cart" (G18 review F1.1)', () => {
+  // The page prints some of the server's sentences as they come: the Undo
+  // Vault tab's "Deleted because it …" is the reason the cart stamped on the
+  // copy (cartCommit.ts), which read "staged in the cleanup cart".
+  const strings = sourceStrings(['src/services']);
+  assert.ok(strings.length > 5000, `control: the services' strings are read (${strings.length})`);
+  assert.ok(strings.some((s) => s.at.startsWith('src/services/cartCommit.ts:')), 'control: the cart\'s commit is among them');
+  assert.deepEqual(strings.flatMap((s) => cleanupNamings(s.text).map((hit) => `${s.at}: ${hit}`)), []);
+});
+
+test('the Undo Vault tab prints a copy\'s reason in the cart\'s words, and an older copy\'s "staged in the cleanup cart" as the cart says it now (G18 review F1.1)', () => {
+  // A copy keeps the reason it was stored with (timecapsule.json), so a copy
+  // the cart made before the name was settled still holds the old words.
+  const capsuleReason = lift<(reason: string) => string>(['capsuleReason'], 'capsuleReason');
+  assert.equal(capsuleReason('staged in the cleanup cart'), 'was staged in the Clean Up cart', 'a copy an earlier build stored');
+  assert.equal(capsuleReason('was staged in the Clean Up cart'), 'was staged in the Clean Up cart', 'a copy the cart makes now');
+  for (const reason of ['matched your query: size>1gb', 'matched “Xcode DerivedData” — build output Xcode rebuilds', 'staged in the cleanup cart, and more']) {
+    assert.equal(capsuleReason(reason), reason, `any other reason is printed as it was stored: ${reason}`);
+  }
+  assert.ok(INDEX.includes('<div class="why">Deleted because it ${escapeHtml(capsuleReason(e.reason))}</div>'), 'the tab reads every reason through it');
 });
 
 test('what a program reads keeps its name: ids, the setting key, the routes', () => {

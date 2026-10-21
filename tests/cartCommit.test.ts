@@ -22,6 +22,7 @@ import { updateSettings } from '../src/services/settings';
 import { peekScan } from '../src/services/diskScanner';
 import { CommandStopped, setTrashStepForTests } from '../src/services/cleaner';
 import { waitFor } from './fixtures/waitFor';
+import { lift } from './fixtures/liftFrontend';
 
 const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
@@ -438,6 +439,28 @@ test('a second undo of a commit that is already back answers ALREADY_UNDONE, not
       assert.match(err.message, /already been undone/);
       return true;
     });
+  } finally {
+    setTrashStepForTests(null);
+    await fsp.rm(dir, { recursive: true, force: true });
+    await fsp.rm(trash, { recursive: true, force: true });
+  }
+});
+
+test('a copy the cart protects says it "was staged in the Clean Up cart", the words the Undo Vault tab prints after "Deleted because it" (G18 review F1.1)', async () => {
+  const dir = await fixture('reason', 1, 1024);
+  const trash = await fsp.mkdtemp(path.join(os.tmpdir(), 'tm-cart-reason-trash-'));
+  setTrashStepForTests(async (p) => fsp.rename(p, path.join(trash, path.basename(p))));
+  try {
+    const file = path.join(dir, 'f0.bin');
+    const committed = await commitCart([file]);
+    assert.deepEqual(committed.trashed, [file], JSON.stringify(committed));
+    const entry = (await getCapsuleIndex()).entries.find((e) => e.runId === committed.runId);
+    assert.equal(entry?.reason, 'was staged in the Clean Up cart', 'the reason stored with the copy names the feature as the page does');
+    // The tab prints it through capsuleReason, which leaves it as it is and
+    // reads a copy an earlier build stored, in the cart's old words, the same.
+    const capsuleReason = lift<(reason: string) => string>(['capsuleReason'], 'capsuleReason');
+    assert.equal(capsuleReason(entry?.reason ?? ''), entry?.reason, 'printed as stored');
+    assert.equal(capsuleReason('staged in the cleanup cart'), entry?.reason, 'an older copy reads the same');
   } finally {
     setTrashStepForTests(null);
     await fsp.rm(dir, { recursive: true, force: true });

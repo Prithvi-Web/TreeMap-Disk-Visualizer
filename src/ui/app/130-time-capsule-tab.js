@@ -54,6 +54,18 @@ async function loadCapsule() {
   renderCapsule();
 }
 
+/**
+ * What a copy was deleted for, as "Deleted because it …" prints it: the
+ * deleting rule's own words, stored with the copy (Autopilot's "matched your
+ * query: …", the cart's "was staged in the Clean Up cart"). A copy keeps the
+ * words it was stored with, and the cart of an earlier build wrote "staged in
+ * the cleanup cart" — the feature's old name, and no sentence after "it" — so
+ * that one is read as the cart writes it now (G18 review F1.1).
+ */
+function capsuleReason(reason) {
+  return /^staged in the cleanup cart$/.test(reason) ? 'was staged in the Clean Up cart' : reason;
+}
+
 function renderCapsule() {
   const idx = state.capsule.index;
   const host = $('capsuleBody');
@@ -142,7 +154,7 @@ function renderCapsule() {
         <div class="meta" style="flex:1;min-width:0;">
           <div class="nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(e.name)} ${state6}</div>
           <div class="pth" title="${escapeHtml(e.originalPath)}">${escapeHtml(e.originalPath)}</div>
-          ${e.reason ? `<div class="why">Deleted because it ${escapeHtml(e.reason)}</div>` : ''}
+          ${e.reason ? `<div class="why">Deleted because it ${escapeHtml(capsuleReason(e.reason))}</div>` : ''}
         </div>
         <span class="dt num" title="Protected ${escapeHtml(formatDate(e.capturedAt))}">${
           gone ? '' : (expiresInDays > 0 ? `${expiresInDays}d left` : 'expiring')}</span>

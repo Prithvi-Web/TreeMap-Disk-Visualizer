@@ -192,11 +192,14 @@ export async function planCartCommit(
  * Protect, verify, then trash — as one run.
  *
  * `reason` is stamped onto every capsule entry so the Undo Vault tab can say
- * where an item came from months later, the way an Autopilot run does.
+ * where an item came from months later, the way an Autopilot run does: the
+ * tab prints "Deleted because it was staged in the Clean Up cart", naming the
+ * feature as the page does (G18). A copy an earlier build stored keeps its
+ * own words, "staged in the cleanup cart", which the tab reads as these.
  */
 export async function commitCart(paths: string[], runId?: string): Promise<CartCommitResult> {
   const result = await protectAndTrash(
-    paths.map((path) => ({ path, reason: 'staged in the cleanup cart' })),
+    paths.map((path) => ({ path, reason: 'was staged in the Clean Up cart' })),
     // Passing the run through is what makes a chunked commit one run: every
     // capsule entry carries the same id, so `undoCartRun` gathers all of them.
     runId ? { runId } : {},
