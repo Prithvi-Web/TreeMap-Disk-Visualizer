@@ -1969,12 +1969,17 @@ function armScanExpiry() {
 }
 subscribe(TOPIC.scan, (scanId) => { if (scanId) armScanExpiry(); });
 
-function scanResultsExpired(err, url) {
+function scanResultsExpired(err, url, body) {
   // The results of the tree on screen (treeScanId): during a rescan the
   // older scan's, which every view asks, and which can expire while the
   // rescan runs — said then as the raw "Unknown or expired scanId" (review F2.13).
   const scanId = treeScanId();
-  if (!state.root || !scanId || !String(url).includes(scanId)) return;
+  // A request names its scan in its URL, or — a POST: the highlight box's
+  // query, opening an archive, a fact — as `scanId` in its JSON body. Judged
+  // by the URL alone, those kept the raw words, at rest too (review F3.2).
+  let named = null;
+  if (typeof body === 'string') { try { named = JSON.parse(body).scanId; } catch { /* not JSON: it names no scan */ } }
+  if (!state.root || !scanId || !(String(url).includes(scanId) || named === scanId)) return;
   if (state.scanning) {
     // A scan is under way: Scan again is not offered over it.
     err.message = 'These results have expired — the scan under way replaces them when it finishes.';

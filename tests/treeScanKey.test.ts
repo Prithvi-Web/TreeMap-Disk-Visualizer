@@ -1312,6 +1312,39 @@ test('the older scan\'s results expiring during a rescan read as a sentence — 
   assert.deepEqual(offers, ['These results have expired — scan the folder again to refresh them.'], 'and offers it once, however many calls fail');
 });
 
+test('the tree\'s scan expiring reads as a sentence when a request names it in its body — the highlight box\'s query and opening an archive POST their scan, and api() judged the URL alone, leaving "Unknown or expired scanId" under the box, during a rescan and at rest (review F3.2)', async () => {
+  const DURING = 'These results have expired — the scan under way replaces them when it finishes.';
+  const AT_REST = 'These results have expired — scan the folder again to refresh them.';
+  const RAW = 'Unknown or expired scanId';
+  const offers: string[] = [];
+  const state: Record<string, unknown> = { root: TREE, ...HELD, expiredOffered: null };
+  // The server, as it answers a scan it no longer holds (POST /api/query, execute.ts; every scanId-keyed route).
+  const fetch = async () => ({ status: 404, ok: false, text: async () => JSON.stringify({ error: RAW, code: 'SCAN_NOT_FOUND' }) });
+  const { fns } = page<{ api: (url: string, init?: unknown) => Promise<unknown> }>(['async function api(url', 'function scanResultsExpired('], {
+    state, fetch, setTimeout, toastAction: (m: string) => { offers.push(m); }, startScan: noop,
+  }, '{ api }');
+  /** What the page says of a request the server answered 404 SCAN_NOT_FOUND: its URL, and its POST body when it has one. */
+  const said = async (url: string, body?: unknown): Promise<string> => {
+    try {
+      await fns.api(url, body === undefined ? undefined : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: typeof body === 'string' ? body : JSON.stringify(body) });
+    } catch (e) { return (e as Error).message; }
+    return assert.fail(`${url} answered`);
+  };
+  // During a rescan over the older scan's tree: the views ask that scan, and it expired.
+  assert.equal(await said('/api/query', { scanId: 'scan-old', q: 'size>1gb' }), DURING, 'the highlight box\'s query, its scan in the body, reads as what it means');
+  assert.equal(await said('/api/container/expand', { scanId: 'scan-old', path: '/r/a.zip' }), DURING, 'and opening an archive on the map');
+  assert.equal(await said('/api/apps?scanId=scan-old'), DURING, 'control: a scan named in the URL, as before');
+  assert.equal(await said('/api/query', { scanId: 'scan-new', q: 'size>1gb' }), RAW, 'a body naming another scan is not the tree\'s: its 404 is not rewritten');
+  assert.equal(await said('/api/facts', { paths: ['/r/scan-old'], providers: ['size'] }), RAW, 'nor a body that names no scan, whatever its paths spell');
+  assert.equal(await said('/api/query', 'scan-old'), RAW, 'nor a body that is not JSON');
+  assert.deepEqual(offers, [], 'no Scan again is offered over the scan under way');
+  // At rest, after a Stop: the older tree's scan, and Scan again offered once.
+  Object.assign(state, STOPPED);
+  assert.equal(await said('/api/query', { scanId: 'scan-old', q: 'size>1gb' }), AT_REST, 'at rest the query\'s 404 says to scan again');
+  assert.equal(await said('/api/container/expand', { scanId: 'scan-old', path: '/r/a.zip' }), AT_REST, 'and the archive\'s');
+  assert.deepEqual(offers, [AT_REST], 'Scan again is offered once, however many fail');
+});
+
 /* ───────────────────────────── Live mode ───────────────────────────── */
 
 test('Live: the toggle watches the scan the tree on screen came from once it has landed — never a scan still walking, which answers its watch 409 — and pressed while a scan runs says Live starts once the scan finishes, and finishScan starts it; over the saved index\'s tree it says what would make the folder watchable', () => {

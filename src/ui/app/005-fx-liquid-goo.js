@@ -1008,8 +1008,9 @@ async function api(url, options, opts = {}) {
       // with a way forward (a Scan again offer) before any caller prints it.
       // `typeof` because api() is the page's floor: it is lifted on its own by
       // several test harnesses, and a missing optional collaborator must not
-      // turn a 404 into a ReferenceError that swallows the real error.
-      if (err.code === 'SCAN_NOT_FOUND' && typeof scanResultsExpired === 'function') scanResultsExpired(err, url);
+      // turn a 404 into a ReferenceError that swallows the real error. The
+      // request's body goes with its URL: a POST names its scan there.
+      if (err.code === 'SCAN_NOT_FOUND' && typeof scanResultsExpired === 'function') scanResultsExpired(err, url, options && options.body);
       throw err;
     }
 
