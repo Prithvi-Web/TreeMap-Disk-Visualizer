@@ -38991,10 +38991,12 @@ $('browseDrives').addEventListener('click', (e) => {
 /** The folders the server will not open, refused by their own name: the
     blocklists of src/utils/pathSanitizer.ts, and on macOS the second names at
     the root (/.vol, /.nofollow, /.resolve). A drive's root holds some — /dev;
-    C:\$Recycle.Bin — and GET /api/fs/list lists them as it lists any folder,
-    so a row for one, on the first thing the first-run chooser offers, opened
-    only an error toast (G26 review F3.1). tests/folderPicker.test.ts reads
-    the server's lists and fails on one this page does not leave out. */
+    C:\$Recycle.Bin — and a row for one, on the first thing the first-run
+    chooser offers, opened only an error toast (G26 review F3.1). GET
+    /api/fs/list leaves them out now (eighth browser pass K53, review F1.2);
+    this list is the fallback, for an answer that holds one all the same.
+    tests/folderPicker.test.ts reads the server's lists and fails on one this
+    page does not leave out. */
 const BROWSE_REFUSED_UNIX = ['/proc', '/sys', '/dev', '/run', '/private/var/db', '/System/Volumes/VM'];
 const BROWSE_REFUSED_WIN32 = ['c:\\windows\\system32', 'c:\\windows\\syswow64', 'c:\\windows\\winsxs', 'c:\\$recycle.bin', 'c:\\system volume information'];
 /** Whether the server refuses the folder at `p` by its name, on `platform`'s rules. */

@@ -10,6 +10,7 @@ isolatedDataDir('treemap-fsListOrder-data-');
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { buildOpenApiDocument } from '../src/api/openapi';
+import { refusedChildren } from '../src/utils/pathSanitizer';
 
 /**
  * GET /api/fs/list — the folder picker's listing (POL item 2, 6 Oct 2026).
@@ -174,6 +175,33 @@ test('a folder the path rules refuse is not listed, by its name or by where it l
     assert.ok(!names(await listing('/private/var')).includes('db'), 'nor does /private/var, by its name');
     assert.ok(names(await listing('/var')).includes('folders'), 'control: /var still lists its other folders');
   }
+});
+
+test('on macOS the root lists none of the second names the system gives every file — /.vol, /.nofollow, /.resolve, refused by their spelling — where the listing kept all three and each row opened only that refusal (review F1.2)', { skip: process.platform !== 'darwin' }, async () => {
+  const SECOND = ['.nofollow', '.resolve', '.vol'];
+  const there = fs.readdirSync('/', { withFileTypes: true }).filter((e) => SECOND.includes(e.name) && e.isDirectory() && !e.isSymbolicLink()).map((e) => e.name);
+  assert.ok(there.length > 0, `control: the root holds at least one of them as a folder the listing would show (${there.join(', ')})`);
+  const root = await listing('/');
+  assert.equal(root.status, 200, JSON.stringify(root.body));
+  const listed = root.body.dirs.map((d: { name: string }) => d.name);
+  assert.deepEqual(listed.filter((n: string) => SECOND.includes(n.toLowerCase())), [], `none of them is listed (${listed.join(', ')})`);
+  assert.ok(listed.includes('Users'), 'control: the root still lists its other folders');
+  assert.equal(root.body.total, root.body.dirs.length, 'and total counts what is listed, not them');
+  for (const n of there) assert.equal((await listing(`/${n}`)).status, 400, `control: /${n}, asked for, is refused`);
+});
+
+test('which entries of a folder are refused by a second name is judged on macOS\'s rules wherever the tests run — the root\'s .vol, .nofollow and .resolve, in any case, and nothing of the same names deeper down (review F1.2)', () => {
+  const real = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  let atRoot: Set<string>; let deeper: Set<string>;
+  Object.defineProperty(process, 'platform', { ...real, value: 'darwin' });
+  try {
+    atRoot = refusedChildren('/', ['.vol', '.nofollow', '.Resolve', '.VOL', 'Users', '.volumes', 'vol']);
+    deeper = refusedChildren('/Users', ['.vol', '.nofollow', '.resolve']);
+  } finally {
+    Object.defineProperty(process, 'platform', real);
+  }
+  assert.deepEqual([...atRoot].sort(), ['.Resolve', '.VOL', '.nofollow', '.vol'], 'the root\'s second names, by their spelling in any case — and no other name');
+  assert.deepEqual([...deeper], [], 'a folder of the same name deeper down is no second name');
 });
 
 test('judging which folders a listing may show asks nothing of the file system per folder where none can be refused — 520 subfolders of an ordinary folder cost no stat, lstat or realpath of one of them (eighth browser pass K53)', async () => {

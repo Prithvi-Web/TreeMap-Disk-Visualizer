@@ -672,9 +672,10 @@ test('the whole drive is offered only where the picker scans — not for an Auto
  * folders the server will not open: /dev (and /proc, /sys and /run on Linux),
  * and on macOS /.vol, /.nofollow and /.resolve once hidden folders are shown;
  * C:\$Recycle.Bin and C:\System Volume Information on Windows. GET
- * /api/fs/list lists them as it lists any folder, and a row for one opened
+ * /api/fs/list listed them as it listed any folder, and a row for one opened
  * only an error toast (then `Scanning "/dev" is not allowed`) — on the first
- * thing the first-run chooser offers (G26 review F3.1). The picker leaves out
+ * thing the first-run chooser offers (G26 review F3.1). The server leaves them
+ * out now (K53, review F1.2: tests/fsListOrder.test.ts); the picker leaves out
  * exactly the folders the server refuses by their name: its own blocklists,
  * read below from src/utils/pathSanitizer.ts, so one added there and not to
  * the page goes RED.
