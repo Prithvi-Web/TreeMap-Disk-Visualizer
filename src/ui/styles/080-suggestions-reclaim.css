@@ -171,7 +171,8 @@
    buttons (review F1.12). One place, so the two cannot part again. --tour-b
    is its offset from the window's bottom, 86 px at rest; the page moves it
    where the card would cover a control on screen (tourPlace, seventh browser
-   pass J04: at 1024 × 700 it lay over the Dashboard's Browse… and Scan). */
+   pass J04: at 1024 × 700 it lay over the Dashboard's Browse… and Scan), or
+   the map's match bar or footer (ninth browser pass M02). */
 body { --tour-r: 18px; --tour-w: min(360px, calc(100vw - 32px)); --tour-b: 86px; }
 .tour-card { pointer-events: auto; position: absolute; right: var(--tour-r); bottom: var(--tour-b);
   width: var(--tour-w); padding: 15px 16px;

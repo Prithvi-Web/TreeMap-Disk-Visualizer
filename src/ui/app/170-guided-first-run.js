@@ -337,11 +337,17 @@ function refusedFolderWords() {
    which the stylesheet reads. Never lower than its rest: the window's
    bottom-right corner is the cart pill's and the toasts'. Where nothing is in
    the way, or nowhere is clear (a column full of controls), it rests. A
-   canvas is the view's surface, not a control: over the map the card rests. */
+   canvas is the view's surface, not a control: over the map alone the card
+   rests. Two lines on the map are read, not pressed, and it stands clear of
+   them too: the match bar while it says something, and the map's footer —
+   at 1024 × 700 and 1440 × 900 it covered the end of the bar's sentence and
+   the size key (ninth browser pass M02). Idle, the bar is only its saved
+   chips, which are controls, and the rest of its row is the map's. */
 const TOUR_REST_BOTTOM = 86; // --tour-b at rest (080-suggestions-reclaim.css)
 const TOUR_GAP = 12; // between the card and the control it stands clear of
 const TOUR_EDGE = 8; // the least room kept between it and the window's top
-const TOUR_CONTROLS = '.view.active button, .view.active input, .view.active select, .view.active textarea, .view.active summary, .view.active [tabindex="0"], #emptyState button';
+const TOUR_CONTROLS = '.view.active button, .view.active input, .view.active select, .view.active textarea, .view.active summary, .view.active [tabindex="0"], #emptyState button'
+  + ', .view.active .tm-querybar:not(.idle), .view.active .tm-foot'; // what the map says (M02)
 
 function tourPlace() {
   if (!tour.active || $('tourOverlay').hidden) return;

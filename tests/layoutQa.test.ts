@@ -938,7 +938,34 @@ test('while the cart is open the welcome tour\'s card covers none of it — at e
 /* ══════════════ J04 — the coach card covers no control (seventh browser pass) ══════════════ */
 
 /** A box on screen, in CSS px from the window's top-left; `tag` its element's (a canvas is a surface, not a control). */
-type Box = { left: number; top: number; right: number; bottom: number; tag?: string };
+type Box = { left: number; top: number; right: number; bottom: number; tag?: string; is?: Is };
+
+/**
+ * What an element is, for a selector to find it: its tag, id and classes, and whether it lies in the view that is up
+ * (`.view.active`). A box without one is found by every selector, as each control here always was.
+ */
+type Is = { tag: string; id?: string; classes?: string[]; inActiveView?: boolean };
+/** Whether `is` matches one compound selector: a tag, `#id`, `.class`es and `:not(.class)`es; an attribute matches none of these. */
+function compoundMatches(is: Is, compound: string): boolean {
+  const nots = [...compound.matchAll(/:not\(\.([\w-]+)\)/g)].map((m) => m[1]);
+  let rest = compound.replace(/:not\(\.[\w-]+\)/g, '');
+  if (/[[:]/.test(rest)) return false;
+  const tag = /^[a-z]+/i.exec(rest)?.[0] ?? '';
+  rest = rest.slice(tag.length);
+  const has = new Set(is.classes ?? []);
+  return (!tag || tag.toUpperCase() === is.tag)
+    && [...rest.matchAll(/#([\w-]+)/g)].every((m) => m[1] === is.id)
+    && [...rest.matchAll(/\.([\w-]+)/g)].every((m) => has.has(m[1]))
+    && nots.every((c) => !has.has(c));
+}
+/** Whether `is` matches a selector list: in each piece the last compound is the element, and `.view.active` before it the view that is up. */
+function selectorMatches(is: Is, list: string): boolean {
+  return list.split(',').some((piece) => {
+    const parts = piece.trim().split(/\s+/);
+    const own = parts.pop()!;
+    return parts.every((p) => p === '.view.active' && !!is.inActiveView) && compoundMatches(is, own);
+  });
+}
 
 /**
  * The page's tourPlace over a W × H window, the card `cardH` px tall in its
@@ -954,14 +981,14 @@ function placeTour(W: number, H: number, cardH: number, controls: Box[]) {
   const restPx = sheetPx(body.get('--tour-b'), '--tour-b');
   const bottom = () => (props['--tour-b'] ? sheetPx(props['--tour-b'], 'the --tour-b set') : restPx);
   const box = () => ({ left: right - width, right, width, height: cardH, top: H - bottom() - cardH, bottom: H - bottom() });
-  const els = controls.map((c) => ({ tagName: c.tag ?? 'BUTTON', getClientRects: () => [c], getBoundingClientRect: () => c }));
+  const els = controls.map((c) => ({ tagName: c.tag ?? 'BUTTON', is: c.is, getClientRects: () => [c], getBoundingClientRect: () => c }));
   let asked = '';
   const fns = runPageDecls<{ tourPlace(): void }>(['TOUR_REST_BOTTOM', 'TOUR_GAP', 'TOUR_EDGE', 'TOUR_CONTROLS', 'tourPlace'], {
     tour: { active: true },
     $: (id: string) => (id === 'tourCard' ? { getBoundingClientRect: box } : id === 'tourOverlay' ? { hidden: false } : null),
     document: {
       body: { style: { setProperty: (k: string, v: string) => { props[k] = v; }, removeProperty: (k: string) => { delete props[k]; } } },
-      querySelectorAll: (sel: string) => { asked = sel; return els; },
+      querySelectorAll: (sel: string) => { asked = sel; return els.filter((e) => !e.is || selectorMatches(e.is, sel)); },
     },
     window: { innerHeight: H },
   }, '{ tourPlace }');
@@ -1077,6 +1104,60 @@ test('the tour card is placed at the next frame, once however often that is aske
   fns.tourPlaceSoon();
   for (const fn of listeners['window:resize'] ?? []) fn();
   assert.equal(frames.length, 0, 'with the tour down, no frame is asked for');
+});
+
+/* ══════════════ M02 — the coach card leaves the map's match bar and footer readable (ninth browser pass) ══════════════ */
+
+/** The Treemap's match bar while it says something, and its idle form: only its chips, which are controls of their own. */
+const matchBar = (b: Omit<Box, 'tag' | 'is'>, idle = false): Box =>
+  ({ ...b, tag: 'DIV', is: { tag: 'DIV', id: 'tmQueryBar', classes: idle ? ['tm-querybar', 'idle'] : ['tm-querybar'], inActiveView: true } });
+/** The map's footer: the size key, the status line and the hint. */
+const mapFoot = (b: Omit<Box, 'tag' | 'is'>): Box => ({ ...b, tag: 'DIV', is: { tag: 'DIV', classes: ['tm-foot'], inActiveView: true } });
+
+test('the welcome tour\'s card leaves the map\'s match bar and its footer readable — at 1024 × 700 and 1440 × 900 it covered the end of the bar\'s sentence and the size key — and stands clear of each as it does of a control (ninth browser pass M02)', () => {
+  // BQA's ninth pass, Step 2 of 4 (195 px) on the Treemap with a query: at 1024 × 700 the bar is y 475–562 (x 288–966)
+  // and the footer's three lines y 590–655; the card at rest, x 646–1006, y 419–614, covered about 320 px of the bar.
+  const tm1024: Box[] = [
+    { left: 433, top: 20, right: 746, bottom: 50 }, { left: 766, top: 20, right: 952, bottom: 50, tag: 'INPUT' }, { left: 973, top: 20, right: 1005, bottom: 50 }, // view switch, the box, ✦
+    { left: 712, top: 58, right: 778, bottom: 88 }, { left: 785, top: 58, right: 837, bottom: 88 }, { left: 897, top: 58, right: 989, bottom: 88 }, // Live, Lens, Export
+    { left: 345, top: 115, right: 770, bottom: 131, tag: 'INPUT' }, // the time slider
+    { left: 268, top: 196, right: 988, bottom: 580, tag: 'CANVAS' }, // the map: a surface, not a control
+    { left: 310, top: 483, right: 390, bottom: 511 }, { left: 400, top: 483, right: 493, bottom: 511 }, // Save view, Stage 4 files: left of the card's column
+  ];
+  const bar1024 = matchBar({ left: 288, top: 475, right: 966, bottom: 562 });
+  const foot1024 = mapFoot({ left: 268, top: 590, right: 1004, bottom: 655 });
+  // 1440 × 900 (BQA's shot): the bar y 739–784 (x 590–1183), the footer y 812–856; the card at rest x 1062–1422, y 619–814.
+  const bar1440 = matchBar({ left: 590, top: 739, right: 1183, bottom: 784 });
+  const foot1440 = mapFoot({ left: 268, top: 812, right: 1404, bottom: 856 });
+  const placed = ([
+    ['1024 × 700', placeTour(1024, 700, 195, [...tm1024, bar1024, foot1024]), bar1024, foot1024],
+    ['1440 × 900', placeTour(1440, 900, 195, [{ left: 268, top: 162, right: 1404, bottom: 790, tag: 'CANVAS' }, bar1440, foot1440]), bar1440, foot1440],
+  ] as const).map(([size, at, bar, foot]) => ({ size, readable: !overlaps(at.card, bar) && !overlaps(at.card, foot), bottom: at.bottom, card: `y ${at.card.top}–${at.card.bottom}` }));
+  assert.deepEqual(placed.map(({ size, readable, bottom }) => ({ size, readable, bottom })),
+    [{ size: '1024 × 700', readable: true, bottom: 700 - 475 + 12 }, { size: '1440 × 900', readable: true, bottom: 900 - 739 + 12 }],
+    `the card leaves the bar and the footer readable, 12 px above the bar — the place nearest its rest that is clear of both (${placed.map((p) => `${p.size}: ${p.card}`).join('; ')})`);
+  // With nothing said in the bar it is hidden — not on screen — and the card stands clear of the footer alone.
+  const quiet = placeTour(1024, 700, 195, [...tm1024, foot1024]);
+  assert.equal(quiet.bottom, 700 - 590 + 12, 'the bar hidden: 12 px above the footer');
+  // The idle bar (saved chips only) draws no card over the map: its chips are controls, found as controls, and the rest
+  // of its row is the map's. Over it, with the footer below the card, the card rests.
+  const chipsOnly = placeTour(1440, 900, 195, [matchBar({ left: 590, top: 739, right: 1183, bottom: 784 }, true), mapFoot({ left: 268, top: 830, right: 1404, bottom: 870 })]);
+  assert.equal(chipsOnly.bottom, 86, 'over the idle bar\'s empty row, with nothing else under it, it rests');
+});
+
+test('the match bar coming, going or changing its words asks for the coach card to be placed again — the bar grows and shrinks under a card already placed (ninth browser pass M02)', () => {
+  let asked = 0;
+  const el = (o: Record<string, unknown> = {}) => ({ hidden: true, value: '', childElementCount: 0, classList: { toggle: () => {} }, ...o });
+  const els: Record<string, ReturnType<typeof el>> = { tmQueryBar: el(), tmSavedViews: el(), tmQueryErr: el({ hidden: false }), tmStageMatches: el(), tmSearch: el({ value: 'size>1gb' }), tmSaveView: el() };
+  const sync = runPageDecls<() => void>(['tmSyncQueryBar'], { $: (id: string) => els[id], state: { view: 'treemap' }, tourPlaceSoon: () => { asked++; } }, 'tmSyncQueryBar');
+  sync();
+  assert.equal(els.tmQueryBar.hidden, false, 'control: the bar is up, saying something');
+  assert.equal(asked, 1, 'and the card is placed again');
+  els.tmQueryErr.hidden = true;
+  els.tmSearch.value = '';
+  sync();
+  assert.equal(els.tmQueryBar.hidden, true, 'control: with nothing to say, the bar goes');
+  assert.equal(asked, 2, 'and the card is placed again as it goes');
 });
 
 /* ══════════════ B26 — the map refits when a row around it changes height ══════════════ */

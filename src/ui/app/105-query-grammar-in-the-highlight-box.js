@@ -223,6 +223,10 @@ function tmSyncQueryBar() {
   // Idle — saved chips and nothing else — the bar draws no card over the
   // map and lets the pointer through around its chips (review F1.15).
   bar.classList.toggle('idle', !typed && !hasMessage && !hasStage);
+  // The welcome tour's card stands clear of the bar (ninth browser pass M02),
+  // and the bar has just come, gone or changed its words under it. Guarded: a
+  // page reader may lift this function without the placement.
+  if (typeof tourPlaceSoon === 'function') tourPlaceSoon();
 }
 
 /**
