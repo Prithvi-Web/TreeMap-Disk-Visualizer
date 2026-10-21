@@ -16,7 +16,8 @@ import { INDEX, lift } from './fixtures/liftFrontend';
 /** The sidebar's navigation entries: every view tab, then the Clean Up button. */
 function sidebarEntries(): { name: string; icon: string }[] {
   const nav = INDEX.slice(INDEX.indexOf('<nav class="tabbar"'), INDEX.indexOf('</nav>', INDEX.indexOf('<nav class="tabbar"')));
-  const tabs = [...nav.matchAll(/data-view="([\w-]+)" title="[^"]*"><span data-icon="(\w+)">/g)]
+  // Whatever attributes the tab carries after its view's id (its aria-label and title, K51).
+  const tabs = [...nav.matchAll(/data-view="([\w-]+)"[^>]*><span data-icon="(\w+)">/g)]
     .map((m) => ({ name: m[1], icon: m[2] }));
   assert.ok(tabs.length >= 15, `found the sidebar's view tabs (${tabs.length})`);
   const clean = /id="cleanupBtn"[^>]*><span data-icon="(\w+)">/.exec(INDEX);

@@ -515,7 +515,11 @@ function applyCapabilitiesToTabs() {
     if (!btn) continue;
     const reason = viewBlockedReason(view);
     btn.classList.toggle('tab-unavailable', Boolean(reason));
-    if (reason) btn.title = reason; else btn.removeAttribute('title');
+    // Its tooltip: why it is unavailable, or its view's name — taken away, an available tab had no tooltip,
+    // and in the collapsed rail, whose labels are hidden, no name either (eighth browser pass K51). Its
+    // accessible name is its view's name in both, the reason then its description.
+    btn.title = reason || view.label;
+    btn.setAttribute('aria-label', view.label);
   }
   // A blocked view that is currently open must re-render into its notice.
   if (state.view) switchView(state.view);

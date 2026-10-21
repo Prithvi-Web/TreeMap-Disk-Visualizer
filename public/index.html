@@ -3988,21 +3988,21 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
   </div>
 
   <nav class="tabbar" role="tablist" aria-label="Views" aria-orientation="vertical">
-    <button role="tab" aria-selected="true" data-view="dashboard" title="Dashboard"><span data-icon="dashboard"></span><span class="side-label">Dashboard</span></button>
-    <button role="tab" aria-selected="false" data-view="treemap" title="Treemap"><span data-icon="treemap"></span><span class="side-label">Treemap</span></button>
-    <button role="tab" aria-selected="false" data-view="city" title="Disk City"><span data-icon="city"></span><span class="side-label">Disk City</span></button>
-    <button role="tab" aria-selected="false" data-view="grid" title="Grid"><span data-icon="grid"></span><span class="side-label">Grid</span></button>
-    <button role="tab" aria-selected="false" data-view="apps" title="Apps"><span data-icon="box"></span><span class="side-label">Apps</span></button>
-    <button role="tab" aria-selected="false" data-view="games" title="Libraries"><span data-icon="play"></span><span class="side-label">Libraries</span></button>
-    <button role="tab" aria-selected="false" data-view="security" title="Security"><span data-icon="shield"></span><span class="side-label">Security</span></button>
-    <button role="tab" aria-selected="false" data-view="fleet" title="Fleet"><span data-icon="globe"></span><span class="side-label">Fleet</span></button>
-    <button role="tab" aria-selected="false" data-view="missing" title="Missing GB"><span data-icon="pie"></span><span class="side-label">Missing GB</span></button>
-    <button role="tab" aria-selected="false" data-view="duplicates" title="Duplicates"><span data-icon="copy"></span><span class="side-label">Duplicates</span></button>
-    <button role="tab" aria-selected="false" data-view="trends" title="Trends"><span data-icon="trendUp"></span><span class="side-label">Trends</span></button>
-    <button role="tab" aria-selected="false" data-view="history" title="History"><span data-icon="calendar"></span><span class="side-label">History</span></button>
-    <button role="tab" aria-selected="false" data-view="offloaded" title="Offloaded"><span data-icon="archive"></span><span class="side-label">Offloaded</span></button>
-    <button role="tab" aria-selected="false" data-view="capsule" title="Undo Vault"><span data-icon="clock"></span><span class="side-label">Undo Vault</span></button>
-    <button role="tab" aria-selected="false" data-view="autopilot" title="Autopilot"><span data-icon="autopilot"></span><span class="side-label">Autopilot</span></button>
+    <button role="tab" aria-selected="true" data-view="dashboard" aria-label="Dashboard" title="Dashboard"><span data-icon="dashboard"></span><span class="side-label">Dashboard</span></button>
+    <button role="tab" aria-selected="false" data-view="treemap" aria-label="Treemap" title="Treemap"><span data-icon="treemap"></span><span class="side-label">Treemap</span></button>
+    <button role="tab" aria-selected="false" data-view="city" aria-label="Disk City" title="Disk City"><span data-icon="city"></span><span class="side-label">Disk City</span></button>
+    <button role="tab" aria-selected="false" data-view="grid" aria-label="Grid" title="Grid"><span data-icon="grid"></span><span class="side-label">Grid</span></button>
+    <button role="tab" aria-selected="false" data-view="apps" aria-label="Apps" title="Apps"><span data-icon="box"></span><span class="side-label">Apps</span></button>
+    <button role="tab" aria-selected="false" data-view="games" aria-label="Libraries" title="Libraries"><span data-icon="play"></span><span class="side-label">Libraries</span></button>
+    <button role="tab" aria-selected="false" data-view="security" aria-label="Security" title="Security"><span data-icon="shield"></span><span class="side-label">Security</span></button>
+    <button role="tab" aria-selected="false" data-view="fleet" aria-label="Fleet" title="Fleet"><span data-icon="globe"></span><span class="side-label">Fleet</span></button>
+    <button role="tab" aria-selected="false" data-view="missing" aria-label="Missing GB" title="Missing GB"><span data-icon="pie"></span><span class="side-label">Missing GB</span></button>
+    <button role="tab" aria-selected="false" data-view="duplicates" aria-label="Duplicates" title="Duplicates"><span data-icon="copy"></span><span class="side-label">Duplicates</span></button>
+    <button role="tab" aria-selected="false" data-view="trends" aria-label="Trends" title="Trends"><span data-icon="trendUp"></span><span class="side-label">Trends</span></button>
+    <button role="tab" aria-selected="false" data-view="history" aria-label="History" title="History"><span data-icon="calendar"></span><span class="side-label">History</span></button>
+    <button role="tab" aria-selected="false" data-view="offloaded" aria-label="Offloaded" title="Offloaded"><span data-icon="archive"></span><span class="side-label">Offloaded</span></button>
+    <button role="tab" aria-selected="false" data-view="capsule" aria-label="Undo Vault" title="Undo Vault"><span data-icon="clock"></span><span class="side-label">Undo Vault</span></button>
+    <button role="tab" aria-selected="false" data-view="autopilot" aria-label="Autopilot" title="Autopilot"><span data-icon="autopilot"></span><span class="side-label">Autopilot</span></button>
   </nav>
 
   <div class="side-foot">
@@ -8438,7 +8438,11 @@ function applyCapabilitiesToTabs() {
     if (!btn) continue;
     const reason = viewBlockedReason(view);
     btn.classList.toggle('tab-unavailable', Boolean(reason));
-    if (reason) btn.title = reason; else btn.removeAttribute('title');
+    // Its tooltip: why it is unavailable, or its view's name — taken away, an available tab had no tooltip,
+    // and in the collapsed rail, whose labels are hidden, no name either (eighth browser pass K51). Its
+    // accessible name is its view's name in both, the reason then its description.
+    btn.title = reason || view.label;
+    btn.setAttribute('aria-label', view.label);
   }
   // A blocked view that is currently open must re-render into its notice.
   if (state.view) switchView(state.view);

@@ -830,6 +830,40 @@ test('capabilities are fetched and applied to the tab bar', () => {
   assert.match(code, /tab-unavailable/, 'an unavailable view is dimmed, not deleted');
 });
 
+test('every sidebar tab names its view — as its tooltip, or why it is unavailable, and as its accessible name, which the collapsed rail needs: it hides the labels (eighth browser pass K51)', () => {
+  const nav = INDEX.slice(INDEX.indexOf('<nav class="tabbar"'), INDEX.indexOf('</nav>', INDEX.indexOf('<nav class="tabbar"')));
+  const tabs = [...nav.matchAll(/<button ([^>]*)>([\s\S]*?)<\/button>/g)].map((m) => ({
+    attrs: Object.fromEntries([...m[1].matchAll(/([\w-]+)="([^"]*)"/g)].map((a) => [a[1], a[2]])),
+    label: /<span class="side-label">([^<]*)<\/span>/.exec(m[2])?.[1] ?? '',
+  }));
+  assert.equal(tabs.length, 15, 'control: the fifteen views');
+  for (const t of tabs) {
+    assert.ok(t.label, `${t.attrs['data-view']}: control: a label`);
+    assert.equal(t.attrs['aria-label'], t.label, `${t.attrs['data-view']}: its accessible name is its label's words, whatever hides the label`);
+    assert.equal(t.attrs.title, t.label, `${t.attrs['data-view']}: and so is its tooltip`);
+  }
+  // The premise: the collapsed rail hides every label, leaving a tab with no words of its own (K51).
+  assert.match(INDEX, /#sideNav\.collapsed \.side-label \{ display: none; \}/, 'control: the rail hides the labels');
+  // Capabilities applied: an available tab keeps its view's name as its tooltip, an unavailable one says why.
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function applyCapabilitiesToTabs'), code.indexOf('\n}\n', code.indexOf('function applyCapabilitiesToTabs')) + 3);
+  const mk = (view: string) => {
+    const attrs: Record<string, string> = { title: 'stale' };
+    const cls = new Set<string>();
+    return { dataset: { view }, attrs, cls, classList: { toggle: (c: string, on: boolean) => { if (on) cls.add(c); else cls.delete(c); } },
+      get title() { return attrs.title; }, set title(v: string) { attrs.title = v; },
+      setAttribute: (k: string, v: string) => { attrs[k] = v; }, removeAttribute: (k: string) => { delete attrs[k]; } };
+  };
+  const btns = [mk('capsule'), mk('missing')];
+  const VIEWS = [{ id: 'capsule', label: 'Undo Vault' }, { id: 'missing', label: 'Missing GB' }];
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function('VIEWS', 'tabs', 'viewBlockedReason', 'state', 'switchView', `${fn}\napplyCapabilitiesToTabs();`)(
+    VIEWS, btns, (v: { id: string }) => (v.id === 'missing' ? 'Needs the volume statistics this system does not report.' : null), { view: null }, () => {});
+  assert.equal(btns[0].attrs.title, 'Undo Vault', 'an available tab\'s tooltip is its view\'s name — never taken away');
+  assert.equal(btns[1].attrs.title, 'Needs the volume statistics this system does not report.', 'an unavailable tab\'s tooltip says why');
+  assert.deepEqual([btns[0].attrs['aria-label'], btns[1].attrs['aria-label']], ['Undo Vault', 'Missing GB'], 'and each keeps its view\'s name as its accessible name');
+});
+
 test('an unavailable view explains itself instead of rendering blank', () => {
   // §3.5 state 5, and §10's ban on "silent capability failures — a blank panel
   // with no explanation".
