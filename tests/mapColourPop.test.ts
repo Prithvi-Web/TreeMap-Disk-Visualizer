@@ -2619,49 +2619,91 @@ function subFloorFolder(w: number, h: number): { tiles: Tile[]; W: number; H: nu
   };
 }
 
-test('owner\'s refinement: where tiles are too small for lines, a faint texture — a folder of tiny files reads as many files, never one flat slab and never a mesh: texture over a fifth of its pixels, no pixel past 1.6:1 from its own fill, none near-black, and its mean lightness (L*) within a tenth of the solid fill\'s — for leaves 2 to 7 px and for a folder\'s own fill (J51), whose seams stand 1.2:1 or more from it, on the size ramp, Reclaim\'s "not scored" grey and an Age band, in both themes, at device pixel ratios 1 and 2 (review F1.7)', () => {
+/**
+ * How the raster shows the folder `f`'s own fill (J51) and its texture, on the device's pixels clear of its band (bandOf):
+ * the share of them that stand apart from the fill by more than 1.05:1 (`apart`), the seams' `ink` — each pixel counted by
+ * how far it lies from the fill toward the seam's shade on its row, so a pixel a seam covers by half counts a half (as
+ * tileLook) — the weakest pixel a seam the painter recorded laying (r.tex) covers whole (`weakest`, over `whole` of them),
+ * the strongest pixel, the share under luminance 0.03, and the mean CIE L* less the fill's (`dL`) with the fill's own (`L`).
+ */
+function folderLook(raster: ReturnType<typeof rasterCtx>, f: Painted, dpr: number) {
+  const lw = bandOf(f);
+  const x0 = Math.ceil((f.x + lw) * dpr - 1e-6), y0 = Math.ceil((f.y + lw) * dpr - 1e-6);
+  const x1 = Math.floor((f.x + f.w - lw) * dpr + 1e-6), y1 = Math.floor((f.y + f.h - lw) * dpr + 1e-6);
+  const whole = new Uint8Array(raster.W * raster.H);
+  for (const [x, y, w, h] of f.tex!.rects) {
+    for (let yy = Math.ceil(y * dpr - 1e-6); yy < Math.floor((y + h) * dpr + 1e-6); yy++) {
+      for (let xx = Math.ceil(x * dpr - 1e-6); xx < Math.floor((x + w) * dpr + 1e-6); xx++) whole[yy * raster.W + xx] = 1;
+    }
+  }
+  let total = 0, apart = 0, ink = 0, black = 0, dL = 0, L = 0, strongest = 1, weakest = Infinity, wholes = 0;
+  for (let y = y0; y < y1; y++) {
+    const t = Math.max(0, Math.min(1, ((y + 0.5) / dpr - f.y) / f.h));
+    const fill = lerp(f.bg![0], f.bg![1], t), seam = lerp(f.tex!.stops[0] as RGB, f.tex!.stops[1] as RGB, t);
+    const d = seam.map((v, i) => v - fill[i]), n = d.reduce((a, v) => a + v * v, 0);
+    for (let x = x0; x < x1; x++) {
+      const p = raster.at(x, y), k = contrast(p, fill);
+      total++;
+      if (luminance(p) < 0.03) black++;
+      if (k > 1.05) apart++;
+      ink += Math.max(0, Math.min(1, d.reduce((a, v, i) => a + v * (p[i] - fill[i]), 0) / n));
+      if (whole[y * raster.W + x]) { wholes++; weakest = Math.min(weakest, k); }
+      strongest = Math.max(strongest, k); dL += lab(p).L - lab(fill).L; L += lab(fill).L;
+    }
+  }
+  return { total, apart: apart / total, ink: ink / total, weakest, whole: wholes, strongest, black: black / total, dL: dL / total, L: L / total };
+}
+
+test('owner\'s refinement: where tiles are too small for lines, a faint texture — a folder of tiny files reads as many files, never one flat slab and never a mesh: texture over a fifth of its pixels, no pixel past 1.6:1 from its own fill, none near-black, and its mean lightness (L*) within a tenth of the solid fill\'s — for leaves 2 to 7 px and for a folder\'s own fill (J51), whose seams stand 1.2:1 or more from it and cover as much of it at every ratio as at 100 %, on the size ramp, Reclaim\'s "not scored" grey and an Age band, in both themes, at device pixel ratios 1, 1.25, 1.5, 1.75 and 2 (review F1.7, F3.3, F3.4)', () => {
   // Lightness is CIE L*, as a person sees it, for every colour. Relative luminance is no measure of how bright a dark tile
   // looks: the lighter texture on Reclaim's "not scored" grey (L* 27) raises its luminance by a fifth (117-121%) — about
   // 0.01 — and its L* by 2.5, under a tenth; the size ramp's darker texture lowers its L* by under 3 of 60-76.
-  const runs = [...TAPER_COLOURS.map((c) => ({ c, dpr: 1 })), { c: TAPER_COLOURS[1], dpr: 2 }];
+  // At 125, 150 and 175 % a texture's 1 px row covers a device pixel and part of the next; the share it covers is held as
+  // its ink (tileLook, folderLook), each pixel counted by how much of it the texture covers. A painter that laid no texture
+  // at those ratios left Wide folder one flat slab there with every test green (review F3.3).
+  const grey = TAPER_COLOURS.find((c) => c.name === 'Reclaim not scored')!;
+  const runs = [...TAPER_COLOURS.map((c) => ({ c, dpr: 1 })), { c: TAPER_COLOURS[1], dpr: 2 },
+    ...[1.25, 1.5, 1.75].map((dpr) => ({ c: TAPER_COLOURS[1], dpr })), { c: grey, dpr: 1.5 }];
   for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
     for (const { c, dpr } of runs) {
       for (let s = 2; s < OUTLINED_PX; s++) {
+        // 2 css px is a whole number of device pixels only at 100, 150 and 200 %: at 125 and 175 % a grid of 2 px tiles
+        // lies on tiles of 2 and 3 device px, and those of 2 (1.6 and 1.14 css px) are under the texture step.
+        if (s === 2 && !Number.isInteger(s * dpr)) continue;
         const n = Math.ceil(60 / s), g = uniformGrid(s, n, 4e8);
         const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, () => c.rgb, undefined, false, dpr);
         const inner = (r: Painted) => { const [i, j] = /g(\d+)\.(\d+)$/.exec(r.n.path)!.slice(1).map(Number); return i > 0 && j > 0 && i < n - 1 && j < n - 1; };
         const t = tileLook(raster, px, inner, dpr);
         const where = `${theme}, ${c.name}, ${s} px tiles, dpr ${dpr}`;
         assert.ok(t.apart > 0.2, `${where}: a texture shows — ${(t.apart * 100).toFixed(1)}% of the pixels stand apart from the fill`);
+        assert.ok(t.ink > 0.2, `${where}: a texture shows — it covers ${(t.ink * 100).toFixed(1)}% of the tiles' area`);
         assert.ok(t.strongest <= 1.6, `${where}: a texture, not a line — at most ${fmt(t.strongest)}:1 from the fill`);
         assert.equal(t.black, 0, `${where}: nothing near-black`);
         assert.ok(Math.abs(t.dL) <= 0.1 * t.L, `${where}: mean lightness ${t.dL.toFixed(2)} L* from the solid fill's ${t.L.toFixed(1)}`);
       }
     }
     // A folder of files all under the floor, as Wide folder (20×21 px in the corpus map) and a larger one, on the size ramp
-    // and in Reclaim's "not scored" grey.
-    const grey = OTHER_COLOURS.find((c) => c.name === 'Reclaim not scored')!;
+    // and in Reclaim's "not scored" grey, on the device's pixels. Its seams are 1 css px every 4 px at every ratio, so they
+    // cover as much of it as at 100 % — within an eighth: they keep a device pixel clear beside the band, which is less of
+    // the folder as the ratio rises (Wide folder's seams cover 33.9% of it at 100 %, 36.3-36.8% at the others). Laid one
+    // device pixel thick, they covered 19.3% of it at 2x and 25.3% at 150 % (review F3.4).
     for (const [w, h, colour] of [[20, 21, undefined], [200, 120, undefined], [200, 120, grey]] as const) {
-      const g = subFloorFolder(w, h);
-      const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, colour ? () => colour.rgb : undefined);
-      const f = px.find((r) => r.n.path === '/c/Wide folder')!;
-      const lw = bandOf(f), x0 = f.x + lw, y0 = f.y + lw, x1 = f.x + f.w - lw, y1 = f.y + f.h - lw;
-      let total = 0, apart = 0, black = 0, dL = 0, L = 0, strongest = 1, weakest = Infinity;
-      for (let y = y0; y < y1; y++) {
-        const fill = lerp(f.bg![0], f.bg![1], (y + 0.5 - f.y) / f.h);
-        for (let x = x0; x < x1; x++) {
-          const p = raster.at(x, y), k = contrast(p, fill);
-          total++; if (luminance(p) < 0.03) black++;
-          if (k > 1.05) { apart++; weakest = Math.min(weakest, k); }
-          strongest = Math.max(strongest, k); dL += lab(p).L - lab(fill).L; L += lab(fill).L;
-        }
+      let atOne = 0;
+      for (const dpr of [1, 1.25, 1.5, 1.75, 2]) {
+        const g = subFloorFolder(w, h);
+        const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, colour ? () => colour.rgb : undefined, undefined, false, dpr);
+        const f = px.find((r) => r.n.path === '/c/Wide folder')!;
+        const t = folderLook(raster, f, dpr);
+        if (dpr === 1) atOne = t.ink;
+        const where = `${theme}, a ${w}×${h} px folder of files under the floor${colour ? `, ${colour.name}` : ''}, dpr ${dpr}`;
+        assert.ok(t.whole > 0.1 * t.total, `${where}: control — ${t.whole} of its ${t.total} device pixels lie wholly under a seam the painter recorded`);
+        assert.ok(t.apart > 0.2, `${where}: a texture shows — ${(100 * t.apart).toFixed(1)}% of its pixels`);
+        assert.ok(Math.abs(t.ink - atOne) <= atOne / 8, `${where}: its seams cover ${(100 * t.ink).toFixed(1)}% of it, where at 100 % they cover ${(100 * atOne).toFixed(1)}%`);
+        assert.ok(t.weakest >= 1.2, `${where}: its seams stand ${fmt(t.weakest)}:1 or more from its fill — faint, and seen`);
+        assert.ok(t.strongest <= 1.6, `${where}: a texture, not a mesh — at most ${fmt(t.strongest)}:1 from its fill`);
+        assert.equal(t.black, 0, `${where}: nothing near-black`);
+        assert.ok(Math.abs(t.dL) <= 0.1 * t.L, `${where}: mean lightness ${t.dL.toFixed(2)} L* from the solid fill's ${t.L.toFixed(1)}`);
       }
-      const where = `${theme}, a ${w}×${h} px folder of files under the floor${colour ? `, ${colour.name}` : ''}`;
-      assert.ok(apart / total > 0.2, `${where}: a texture shows — ${(100 * apart / total).toFixed(1)}% of its pixels`);
-      assert.ok(weakest >= 1.2, `${where}: its seams stand ${fmt(weakest)}:1 or more from its fill — faint, and seen`);
-      assert.ok(strongest <= 1.6, `${where}: a texture, not a mesh — at most ${fmt(strongest)}:1 from its fill`);
-      assert.equal(black, 0, `${where}: nothing near-black`);
-      assert.ok(Math.abs(dL / total) <= 0.1 * (L / total), `${where}: mean lightness ${(dL / total).toFixed(2)} L* from the solid fill's ${(L / total).toFixed(1)}`);
     }
   }
 });
