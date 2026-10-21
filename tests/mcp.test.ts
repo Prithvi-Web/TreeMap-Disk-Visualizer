@@ -360,6 +360,12 @@ test('trash_paths dryRun never reads as an all-clear over a check that could not
     const held = await openHandles();
     assert.deepEqual([held.inUse, held.complete], [true, false], 'a holder found by a check that was not complete says it was not complete');
     assert.ok(String(held.note).includes('Preview') && String(held.note).includes(why), `naming the holder and why: ${JSON.stringify(held)}`);
+    // The commonest case: a whole check that found a holder (review F2.5).
+    answer({ handles: [{ path: bigPath, pid: process.pid + 1, processName: 'Preview' }], complete: true });
+    const wholeHeld = await openHandles();
+    assert.deepEqual([wholeHeld.inUse, wholeHeld.complete], [true, true], 'a holder found by a whole check says the check was whole');
+    assert.ok(String(wholeHeld.note).includes('Preview') && !/undefined/.test(String(wholeHeld.note)) && !String(wholeHeld.note).includes(why),
+      `naming the holder, with no reason the check left nothing unseen to give: ${JSON.stringify(wholeHeld)}`);
     answer({ handles: [], complete: true });
     assert.deepEqual(await openHandles(), { inUse: false, checked: true, complete: true }, 'a whole check that found nothing is the all-clear');
     answer(new Error('the probe did not answer (a test)'));
