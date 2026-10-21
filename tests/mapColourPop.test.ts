@@ -1506,12 +1506,14 @@ function edgesOf(painted: Painted[], W: number, H: number, dpr = 1) {
  * a pixel within 2 px of it, on one side or the other, stands out from the cushion of the leaf it lies in (r.seen) by
  * `EDGE_BAR`:1, as a line laid there does.
  * Two leaves meet at one line, laid in either; a leaf beside anything else has its own, unless the two tiles already
- * differ by the bar (the painter then lays none: no shade stands out from both). Measured along each side of
+ * differ by the bar on the screen — the pixels on each side as the raster shows them, a smaller leaf's texture or a
+ * folder's seam beside the edge included (review F1.5) — and the painter then lays none: no shade stands out from
+ * both. Measured along each side of
  * each such leaf. A side along its folder's
  * edge counts the folder's band. Four pixels are left out at each end, where lines meet lines. Returns the places looked
- * at and the first that are not parted.
+ * at and the first that are not parted. `bar` is EDGE_BAR, or the painter's own TM_EDGE_MIN where a test holds it to that.
  */
-function partings(raster: ReturnType<typeof rasterCtx>, painted: Painted[], dpr = 1) {
+function partings(raster: ReturnType<typeof rasterCtx>, painted: Painted[], dpr = 1, bar = EDGE_BAR) {
   // OUTLINED_PX and up on the device's pixels, as the painter takes the step (review F1.1): at 150 % a snapped width can
   // fall a hair under 8 css px.
   const lined = (r: Painted) => Math.min(Math.round(r.w * dpr), Math.round(r.h * dpr)) >= OUTLINED_PX * dpr;
@@ -1530,7 +1532,7 @@ function partings(raster: ReturnType<typeof rasterCtx>, painted: Painted[], dpr 
   const unparted: string[] = [];
   // Whether the pixel p stands out from the cushion the leaf r was painted with, as the screen shows it (r.seen), on p's row.
   const cushion = (r: Painted, y: number) => lerp(r.seen![0], r.seen![1], Math.max(0, Math.min(1, ((y + 0.5) / dpr - r.y) / r.h)));
-  const stands = (p: [number, number], r: Painted) => contrast(raster.at(...p), cushion(r, p[1])) >= EDGE_BAR - 0.01;
+  const stands = (p: [number, number], r: Painted) => contrast(raster.at(...p), cushion(r, p[1])) >= bar - 0.01;
   for (const r of leaves) {
     const i = painted.indexOf(r), d = boxes[i];
     const sides: Array<[string, number, number, number, number, number, number]> = [
@@ -1552,10 +1554,9 @@ function partings(raster: ReturnType<typeof rasterCtx>, painted: Painted[], dpr 
         const other = j >= 0 ? painted[j] : null;
         // On the other side, a leaf of OUTLINED_PX and up whose own line lies there.
         if (other && other.seen && lined(other) && near(qx, 1).some((p) => stands(p, other))) continue;
-        // Or the two tiles already part themselves, by the bar: no line is needed there — against the other leaf's cushion,
-        // or what the screen shows beyond (a folder's own fill).
-        const beyond = other && other.seen ? cushion(other, qx[1]) : raster.at(...qx);
-        if (contrast(cushion(r, px[1]), beyond) >= EDGE_BAR - 0.01) continue;
+        // Or the two tiles already part themselves, by the bar: no line is needed there — as the screen shows them, the
+        // pixel on each side: the other's cushion or its texture, a folder's own fill or its seam (review F1.5).
+        if (contrast(raster.at(...px), raster.at(...qx)) >= bar - 0.01) continue;
         if (unparted.length < 8) unparted.push(`${r.n.path} ${side} side at ${px}: ${raster.at(...px).map(Math.round)} beside ${raster.at(...qx).map(Math.round)}${other ? ` (${other.n.path})` : ''}`);
       }
     }
@@ -2918,6 +2919,51 @@ test('owner\'s refinement: a folder\'s texture lies inside its own box — its l
         const d = rasterPaint(dense, palette, DENSE_PX, DENSE_PX, undefined, undefined, false, dpr).px;
         assert.ok(d.filter((r) => r.frame && r.tex).length > 200, `${where}: control — the dense corner's folders are textured`);
         assert.deepEqual(texOutside(d).slice(0, 6), [], `${where}: the dense corner's texture seams past their own box`);
+      }
+    }
+  }
+});
+
+/**
+ * A file A of 8 px and up beside a tile whose texture runs along the edge they share, the two parting by a little over
+ * 3.3:1 on their cushions (review F1.5): `above`, A over a 5 px file B (its texture's top row along A's bottom: the
+ * review's case); `beside`, A left of a 5 px file B (its texture's left column along A's right side, low on A, where
+ * its cushion is darker); `folder`, A in a folder F of nothing else drawn, whose own fill is seamed every 4 px from its
+ * corner — a seam along A's bottom, and seams crossing its top. A is a Reclaim yellow, B and F Reclaim's dark "not
+ * scored" grey.
+ */
+function besideTexture(kind: 'above' | 'beside' | 'folder') {
+  const W = 80, H = 60, pct = (v: number, of: number) => (v / of) * 100;
+  const score = (s: number) => OTHER_COLOURS.find((c) => c.name === `Reclaim score ${s}`)!.rgb;
+  const yellow: RGB = kind === 'above' ? [186, 167, 50] : kind === 'beside' ? score(30) : score(40);
+  const dark = OTHER_COLOURS.find((c) => c.name === 'Reclaim not scored')!.rgb;
+  const file = (path: string, depth: number, x: number, y: number, w: number, h: number): Tile =>
+    ({ name: path.slice(path.lastIndexOf('/') + 1), path, size: 1e9, type: 'file', depth, expanded: false, x: pct(x, W), y: pct(y, H), w: pct(w, W), h: pct(h, H) });
+  const tiles = kind === 'above' ? [file('/A', 1, 10, 10, 60, 30), file('/B', 1, 10, 40, 60, 5)]
+    : kind === 'beside' ? [file('/A', 1, 10, 10, 40, 30), file('/B', 1, 50, 30, 5, 5)]
+    : [{ ...file('/F', 1, 0, 0, 80, 60), type: 'dir', expanded: true }, file('/F/A', 2, 10, 4, 60, 8)];
+  return { tiles, W, H, colour: (n: Tile) => (/\/A$/.test(n.path) ? yellow : dark) };
+}
+
+/** The painter's own bar for a leaf's line against the tile on each of its sides, and for leaving one out (TM_EDGE_MIN). */
+const PAINTER_EDGE = load<number>(['TM_EDGE_MIN'], {}, 'TM_EDGE_MIN');
+
+test('owner\'s refinement: a leaf\'s line is left out only where the tiles part by the painter\'s 3.3:1 as the screen shows them — the far tile\'s texture beside the edge counted, a smaller file\'s or a folder\'s seams — so every leaf of 8 px and up is parted by 3.3:1 from what lies beside it on the device\'s pixels: above and beside a file too small for lines, and in a folder whose own fill is seamed along its sides, at device pixel ratios 1, 1.5 and 2, in both themes (review F1.5)', () => {
+  // The line was left out where the two cushions parted by 3.3:1, and the far tile's lighter texture then lay along the
+  // edge: A's yellow bottom row stood 2.64:1 from the 5 px file's texture under it, with no line between them — under
+  // the owner's 3:1. Beside a folder's seams (1.21:1) it stood 3.09:1, under the painter's own 3.3.
+  assert.equal(PAINTER_EDGE, 3.3, 'control: the painter leaves a line out where the tiles part by 3.3:1');
+  for (const kind of ['above', 'beside', 'folder'] as const) {
+    const m = besideTexture(kind);
+    for (const dpr of [1, 1.5, 2]) {
+      for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+        const where = `${kind}, ${theme}, dpr ${dpr}`;
+        const { raster, px } = rasterPaint(m.tiles, palette, m.W, m.H, m.colour, undefined, false, dpr);
+        const a = px.find((r) => /\/A$/.test(r.n.path))!, far = kind === 'folder' ? px.find((r) => r.frame)! : px.find((r) => r.n.path === '/B')!;
+        assert.ok(a.lines && far.tex && far.tex.rects.length > 0, `${where}: control — A has lines of its own, and what lies beside it a texture`);
+        const p = partings(raster, px, dpr, PAINTER_EDGE);
+        assert.ok(p.looked > 40 * dpr, `${where}: control — ${p.looked} places along A's sides`);
+        assert.deepEqual(p.unparted, [], `${where}: A not parted by ${PAINTER_EDGE}:1 from what lies beside it`);
       }
     }
   }

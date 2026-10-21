@@ -13534,12 +13534,14 @@ function tmBaseOf(c, folder) {
  * What the folder `f` shows where nothing is drawn in it: its own fill, or the
  * ground (the top level's too, and a folder's an online-only file is hidden
  * in). A folder its contents tile shows nothing between them but a sliver of
- * a device pixel, which asks nothing of a line.
+ * a device pixel, which asks nothing of a line. A folder's own fill carries
+ * its seams' shades (`grain`), which run along a leaf's edge where it has no
+ * line (review F1.5).
  */
 function tmFillShown(f, g) {
   if (!f) return { line: false, base: null, beside: [g.ground] };
   if (f.showsGround) return { line: false, base: f.ownRgb || null, beside: f.groundSeen || [g.ground] };
-  if (f.bgSeen) return { line: false, base: f.bgBase, beside: f.bgSeen };
+  if (f.bgSeen) return { line: false, base: f.bgBase, beside: f.bgSeen, grain: f.texSeen || [] };
   return { line: true };
 }
 /** Whether the rectangle `c` lies wholly under its folder `f`'s band, along one of its sides: unseen, the band seen in its place. */
@@ -13566,7 +13568,8 @@ function tmClip(segs, lo, hi) {
  * What the rectangle `c` shows on its own `side`, one pixel in, along the
  * stretch that faces `facing`: a line ({ line: true }) — a folder's band, a
  * leaf's own top or left line, or its right or bottom line where it draws one
- * — or a tile ({ line: false, base, beside }). A leaf with lines shares its
+ * — or a tile ({ line: false, base, beside, grain }: `grain` the shades its
+ * texture lays along its edge, a smaller leaf's). A leaf with lines shares its
  * right or bottom edge with a leaf with lines beyond it (tmShareOk), whose own
  * line lies there; its top and left lines are `shared` by it with whatever
  * faces them. A folder too small for a band shows what lies inside its edge;
@@ -13581,11 +13584,11 @@ function tmEdgeOf(c, side, facing, g) {
     const drawn = !(facing && !facing.frame && tmLeafKind(facing) === 'edged' && tmShareOk(c, facing, g));
     return [drawn ? { ...all, line: true } : { ...all, line: false, base: c.fillRgb, beside: tmShown(c) }];
   }
-  return [{ ...all, line: false, base: tmBaseOf(c, g.folderOf.get(c)), beside: tmShown(c) }];
+  return [{ ...all, line: false, base: tmBaseOf(c, g.folderOf.get(c)), beside: tmShown(c), grain: c.texSeen || [] }];
 }
 /**
  * What lies just beyond `side` of the rectangle `r`, stretch by stretch along
- * it ({ lo, hi, line, covered, shared, base, beside }): nothing past the map's
+ * it ({ lo, hi, line, covered, shared, base, beside, grain }): nothing past the map's
  * own edge; along its folder's edge, the folder's band, laid over it
  * (`covered`) — or, where the folder is too small for a band, what lies beyond
  * the folder; else each neighbour's own edge (tmEdgeOf), and the folder's own
@@ -13691,7 +13694,10 @@ function tmOverlay(one, two, from, to) {
  *   - a leaf's line (`optional`) whose tiles on its two sides already differ
  *     by TM_EDGE_MIN — a light tile beside the dark theme's ground, or beside
  *     Reclaim's dark "not scored" grey — is left out: the tiles part
- *     themselves, and no shade stands out from both;
+ *     themselves, and no shade stands out from both. The far tile's texture
+ *     (`grain`: a smaller leaf's, a folder's seams) is judged with it, since
+ *     with no line there it runs along the edge — judged on its cushion alone,
+ *     a 3.31:1 parting showed 2.64:1 against the texture (review F1.5);
  *   - a 1 px line takes the nearest shade that reaches TM_EDGE_MIN on both
  *     sides, if one does;
  *   - else two parts: the outer pixel toned against what lies beyond, the
@@ -13703,7 +13709,7 @@ function tmOverlay(one, two, from, to) {
  * An empty side asks nothing; a line with neither side stands out from its
  * own colour.
  */
-function tmSeamParts(base, inside, outside, width, deeper, optional = false) {
+function tmSeamParts(base, inside, outside, width, deeper, optional = false, grain = []) {
   if (!base) return [{ inset: 0, width, rgb: [0, 0, 0] }];
   const single = (rgb) => [{ inset: 0, width, rgb }];
   const asked = (groups) => groups.filter(([cols]) => cols.length);
@@ -13715,7 +13721,8 @@ function tmSeamParts(base, inside, outside, width, deeper, optional = false) {
   if (one.ok) return single(one.rgb);
   const best = tmToneFor(base, alone);
   if (!best.ok && tmMeets(best.rgb, [[outside, TM_EDGE_MIN]])) return single(best.rgb);
-  if (optional && within.every(([cols]) => cols.every((c) => outside.every((o) => tmContrast(c, o) >= TM_EDGE_MIN)))) return [];
+  const far = [...outside, ...grain];
+  if (optional && within.every(([cols]) => cols.every((c) => far.every((o) => tmContrast(c, o) >= TM_EDGE_MIN)))) return [];
   if (width === 1) {
     const eased = tmToneFor(base, all.map(([cols]) => [cols, TM_EDGE_MIN]));
     if (eased.ok) return single(eased.rgb);
@@ -13755,10 +13762,14 @@ function tmMergeRuns(rects) {
  * left or top edge it shares (tmShareOk) — nothing along its folder's own
  * edge, which the folder's band covers. Each stretch is toned against r's own
  * tile and the tile beyond it, and left out where those two already part
- * themselves and no shade stands out from both (tmSeamParts).
+ * themselves and no shade stands out from both (tmSeamParts). The outer pixel
+ * of a line laid in two parts, toned against the tile beyond it alone, is laid
+ * first, so at a corner the line across keeps its pixel: laid over it, a side
+ * line's outer pixel broke the line between r and a tile above it where r's
+ * corner meets that tile's edge (review F1.5).
  */
 function tmLeafLines(r, g) {
-  const own = tmShown(r), out = [];
+  const own = tmShown(r), out = [], under = [];
   for (const side of ['top', 'left', 'right', 'bottom']) {
     const [p, s] = TM_SIDES[side];
     // Each runs its side's whole length: where the top line is left out, the side line still closes the corner.
@@ -13768,11 +13779,12 @@ function tmLeafLines(r, g) {
       if ((side === 'right' || side === 'bottom') && seg.shared && tmShareOk(r, seg.shared, g)) continue;
       const a = Math.max(from, seg.lo), b = Math.min(to, seg.hi);
       if (b <= a + 1e-6) continue;
-      const beyond = seg.line ? [] : seg.beside;
-      for (const part of tmSeamParts(r.fillRgb, [[own, TM_EDGE_MIN]], beyond, 1, null, true)) out.push(tmPartRect(r, side, a, b, part));
+      const beyond = seg.line ? [] : seg.beside, grain = seg.line ? [] : seg.grain || [];
+      const parts = tmSeamParts(r.fillRgb, [[own, TM_EDGE_MIN]], beyond, 1, null, true, grain);
+      for (const part of parts) (parts.length > 1 && part.inset === 0 ? under : out).push(tmPartRect(r, side, a, b, part));
     }
   }
-  return tmMergeRuns(out);
+  return [...tmMergeRuns(under), ...tmMergeRuns(out)];
 }
 /**
  * The folder `r`'s frame as the filled bands that draw it, { x, y, w, h, rgb }:
@@ -13884,12 +13896,12 @@ function tmFolderTexture(r, kids, mask, mw, mh, dpr) {
   };
   seams('x', 'w', 'y', 'h', (x, a, b, thick) => [x, a, thick, b - a]);
   seams('y', 'h', 'x', 'w', (y, a, b, thick) => [a, y, b - a, thick]);
-  return { stops: tmTextureStops(r.bg, r.bgBase, tmTextureContrast(TM_TEXTURE_PITCH)), rects };
+  return { stops: r.texStops, rects };
 }
 /** A small leaf's texture (tmLeafKind 'textured'): its top row and its left column below that, clear of every line (`mask`). */
 function tmLeafTexture(r, mask, mw, mh, dpr) {
   return {
-    stops: tmTextureStops(r.stops, r.fillRgb, tmTextureContrast(Math.min(r.w, r.h))),
+    stops: r.texStops,
     rects: [[r.x, r.y, r.w, 1], [r.x, r.y + 1, 1, r.h - 1]].flatMap((q) => tmClearRuns(q, mask, mw, mh, dpr)),
   };
 }
@@ -14179,6 +14191,9 @@ function drawTreemap() {
     r.bgBase = r.ownRgb;
     r.bg = tmLeafStops(r.bgBase, r.h, null);
     r.bgSeen = tmSeenThrough(r.bg, tmWashesOver(r, washes));
+    // Its texture's shades (pass 2.4), which a line beside its fill weighs (review F1.5).
+    r.texStops = tmTextureStops(r.bg, r.bgBase, tmTextureContrast(TM_TEXTURE_PITCH));
+    r.texSeen = tmSeenThrough(r.texStops, tmWashesOver(r, washes));
     ctx.fillStyle = tmLeafFill(ctx, r.bg, r.y, r.h);
     ctx.fillRect(r.x, r.y, r.w, r.h);
   }
@@ -14256,6 +14271,11 @@ function drawTreemap() {
     ctx.fillRect(r.x, r.y, r.w, r.h); // edge to edge: a leaf's outline lies inside its own box
     r.fillRgb = base; // the colour itself; r.stops is the cushion painted here
     r.seen = tmSeenThrough(r.stops, washedBy); // and as pass 4 writes the label on it, through pass 2.5 (G09, F2.1)
+    if (tmLeafKind(r) === 'textured') {
+      // Its texture's shades (pass 2.4, tmLeafTexture), which a line beside it weighs (review F1.5).
+      r.texStops = tmTextureStops(r.stops, base, tmTextureContrast(Math.min(r.w, r.h)));
+      r.texSeen = tmSeenThrough(r.texStops, washedBy);
+    }
     if (tmLeafEdged(r)) {
       // Lines of its own (pass 2.6, tmLeafLines). Where the shade of its own
       // colour that stands out from it is a dark one (tmTone), a highlight
