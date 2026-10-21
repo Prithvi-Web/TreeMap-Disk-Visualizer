@@ -586,6 +586,79 @@ test('inside a folder that syncs to the cloud or is easy to share no folder give
   assert.deepEqual(findingsFor([file('credentials', path.join(HOME, '.aws'))]), [], 'control: ~/.aws/credentials is where it belongs');
 });
 
+test('every folder name a synced folder goes by is known — OneDrive and "OneDrive - <organisation>", Google Drive and its My Drive, Box Sync and Box Drive\'s ~/Box, iCloud Drive, "Dropbox (Personal)" — and a name that merely holds one of the words is not one (review F3.2, F3.4)', () => {
+  // SYNC_FOLDERS spelled Google Drive's own folder "mydrive", so G:\My Drive (and ~/My Drive, where mirror mode puts it)
+  // gave a key in .ssh its pass; Box Drive's ~/Box was unknown; and only Dropbox and iCloudDrive were pinned by a test.
+  for (const dir of [
+    path.join(HOME, 'OneDrive', 'certs'),
+    path.join(HOME, 'OneDrive - Contoso', 'certs'),
+    path.join(HOME, 'Google Drive', 'certs'),
+    path.join(HOME, 'GoogleDrive', 'certs'),
+    path.join(HOME, 'Box Sync', 'certs'),
+    path.join(HOME, 'Box', '.ssh'),
+    path.join(HOME, 'My Drive', '.ssh'),
+    path.join(HOME, 'MyDrive', 'certs'),
+    path.join(HOME, 'iCloud Drive', 'certs'),
+    path.join(HOME, 'Dropbox (Personal)', 'certs'),
+  ]) {
+    const found = findingsFor([file('privkey.pem', dir)]);
+    assert.equal(found.length, 1, `${dir}: a private key there is listed`);
+    assert.deepEqual([found[0].severity, found[0].exposed], ['high', true], `${dir}: serious, and marked as in a synced folder`);
+    assert.match(found[0].reason, /syncs to the cloud/, `${dir}: and its reason says it syncs (${found[0].reason})`);
+  }
+  // Google Drive for desktop's drive on Windows (G:\My Drive), outside the home folder: its .ssh gives no pass either.
+  const drive = path.resolve('/mnt/g');
+  for (const dir of [path.join(drive, 'My Drive', '.ssh'), path.join(drive, 'My Drive', 'keys')]) {
+    const found = findingsFor([file('id_rsa', dir)], drive);
+    assert.deepEqual(found.map((f) => [f.severity, f.exposed]), [['high', true]], `${dir}: listed, serious, as in a synced folder`);
+    assert.match(found[0].reason, /syncs to the cloud/, `${dir}: and says it syncs (${found[0].reason})`);
+  }
+  // A longer word, a name that only holds one, or "box" anywhere but Box Drive's own folder, is no synced folder.
+  for (const dir of [
+    path.join(HOME, 'My Drivers', '.ssh'),
+    path.join(HOME, 'Dropboxes', 'certs'),
+    path.join(HOME, 'notes-onedrive', 'certs'),
+    path.join(HOME, 'Projects', 'box', '.ssh'),
+    path.join(HOME, 'Boxes', 'certs'),
+  ]) {
+    assert.deepEqual(findingsFor([file('privkey.pem', dir)]), [], `control: ${dir} is not a synced folder, so its folder gives its pass`);
+  }
+});
+
+test('for a file in the home folder only the folders below it say whether it is easy to share — a home that is itself inside a folder named shared, public or documents leaves ~/.ssh, ~/.aws and a certs folder where they belong; a file outside home is judged by every folder above it (review F3.1)', () => {
+  // ce289d53 let an exposed folder cancel every pass, judged on the whole path: with the home folder at /home/shared/tester
+  // the user's own ~/.ssh/id_rsa was listed as serious, "In “.ssh”, a folder that is easy to share", and offered a move to ~/.ssh.
+  for (const home of [path.resolve('/home/shared/tester'), path.resolve('/Volumes/Public/Users/tester'), path.resolve('/srv/Documents/tester')]) {
+    const at = (...p: string[]) => path.join(home, ...p);
+    const report = collectSecurityFindings(treeWith(home, [
+      file('id_rsa', at('.ssh')), file('credentials', at('.aws')), file('privkey.pem', at('Projects', 'certs')), file('id_ed25519', at('keys')),
+      file('id_ecdsa', at('Downloads')),
+    ]), [], home);
+    const by = Object.fromEntries(report.findings.map((f) => [f.name, f]));
+    assert.deepEqual(Object.keys(by).sort(), ['id_ecdsa', 'id_ed25519'], `${home}: only the keys outside their places are listed`);
+    assert.deepEqual([by.id_ed25519.exposed, by.id_ed25519.reason], [false, 'In “keys”, which is not where this kind of file belongs.'],
+      `${home}: a key in ~/keys is in the wrong place, not in a folder easy to share`);
+    assert.deepEqual([by.id_ecdsa.exposed, by.id_ecdsa.reason], [true, 'In “Downloads”, a folder that is easy to share or hand over by accident.'],
+      `${home}: ~/Downloads still is one`);
+  }
+  // Outside the home folder every folder above the file counts: /home/shared/other is in a folder named shared.
+  const shared = path.resolve('/home/shared');
+  const outside = collectSecurityFindings(treeWith(shared, [file('id_rsa', path.join(shared, 'other', '.ssh'))]), [], path.join(shared, 'tester')).findings;
+  assert.deepEqual(outside.map((f) => [f.name, f.exposed]), [['id_rsa', true]], 'a key outside home, under a folder named shared, is listed as exposed');
+  assert.match(outside[0].reason, /easy to share/);
+  // A synced folder's names are its own: a home kept inside one syncs with it, so its .ssh gives no pass.
+  const synced = path.resolve('/srv/Dropbox/tester');
+  const inSynced = collectSecurityFindings(treeWith(synced, [file('id_rsa', path.join(synced, '.ssh'))]), [], synced).findings;
+  assert.deepEqual(inSynced.map((f) => [f.name, f.exposed]), [['id_rsa', true]], 'a home inside a Dropbox folder syncs with it');
+  assert.match(inSynced[0].reason, /syncs to the cloud/);
+  // AGENTS.md says both, as the scanner judges them (review F3.1, F3.2).
+  const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8');
+  const flat = agents.slice(agents.indexOf('`GET /api/security/findings`'), agents.indexOf('`GET /api/provenance?path=`')).replace(/\s+/g, ' ');
+  assert.match(flat, /Google Drive and its `My Drive`, Box Sync and Box Drive's `~\/Box`, iCloud Drive/, 'AGENTS.md names the synced folders the scanner knows');
+  assert.match(flat, /For a file in the home folder only the folders below it say whether it is easy to share, so a home folder that is itself inside one named Shared keeps `~\/\.ssh` and `~\/\.aws` where they belong;/,
+    'and that a file in the home folder is judged by the folders below it');
+});
+
 test('the 500 cap keeps the most serious findings, and the counts describe every finding (D77)', () => {
   // QA's corpus: 951 ".key" documents walked before Misc/keys-in-wrong-place, so the cap
   // (applied in walk order) dropped the real keys, and the counts described the slice.

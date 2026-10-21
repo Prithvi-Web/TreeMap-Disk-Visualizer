@@ -47,10 +47,11 @@ export interface SecurityPattern {
    * Directories where this file is expected and therefore NOT a finding, as
    * path segments relative to home (`.ssh`, `.aws`). Matched against any
    * ancestor directory of the file — unless a folder above the file syncs to
-   * the cloud or is easy to share (`syncsToCloud`, EXPOSED_FOLDERS), where no
-   * folder gives a pass: a key in ~/Dropbox/.ssh or ~/Dropbox/certs leaves the
-   * computer, and a downloaded zip may unpack to certs/ or .ssh/ in Downloads
-   * (review F1.5, F2.7).
+   * the cloud or is easy to share (`syncsToCloud`, EXPOSED_FOLDERS; for a file
+   * in the home folder, easy to share is judged by the folders below home,
+   * review F3.1), where no folder gives a pass: a key in ~/Dropbox/.ssh or
+   * ~/Dropbox/certs leaves the computer, and a downloaded zip may unpack to
+   * certs/ or .ssh/ in Downloads (review F1.5, F2.7).
    */
   expectedIn: string[];
   /**
@@ -273,8 +274,15 @@ export const SECURITY_PATTERNS: SecurityPattern[] = [
  * synced, or routinely handed to someone else.
  */
 const EXPOSED_FOLDERS = ['downloads', 'desktop', 'public', 'shared', 'documents'];
-/** A folder of one of these names, or a name beginning with one, syncs to the cloud. */
-const SYNC_FOLDERS = ['dropbox', 'google drive', 'googledrive', 'onedrive', 'icloud drive', 'iclouddrive', 'box sync', 'mydrive'];
+/**
+ * A folder of one of these names syncs to the cloud, and so does one whose name goes on from one past a
+ * space or a mark ("OneDrive - Contoso", "Dropbox (Personal)") — never a longer word ("Dropboxes", "My
+ * Drivers"). "My Drive" is Google Drive for desktop's own folder: G:\My Drive, and ~/My Drive in mirror mode
+ * (review F3.2).
+ */
+const SYNC_FOLDERS = ['dropbox', 'google drive', 'googledrive', 'onedrive', 'icloud drive', 'iclouddrive', 'box sync', 'my drive', 'mydrive'];
+/** Box Drive's folder, directly in the home folder (Windows, and macOS before File Provider): a word too common to count anywhere else. */
+const HOME_SYNC_FOLDERS = ['box'];
 /**
  * Where macOS keeps the folders that sync, as consecutive segments: iCloud Drive and the apps' iCloud
  * folders under Library/Mobile Documents, and every File Provider folder (Box, Google Drive, OneDrive,
@@ -282,9 +290,18 @@ const SYNC_FOLDERS = ['dropbox', 'google drive', 'googledrive', 'onedrive', 'icl
  */
 const SYNC_RUNS = [['library', 'mobile documents'], ['library', 'cloudstorage']];
 
-/** Does a folder above the file, given as lowercased segments, sync to the cloud? */
-function syncsToCloud(dirs: string[]): boolean {
-  return dirs.some((d) => SYNC_FOLDERS.some((s) => d === s || d.startsWith(s))) || SYNC_RUNS.some((want) => hasRun(dirs, want));
+/** Is `name` (lowercased) one of SYNC_FOLDERS, or one of them followed by a space or a mark? */
+function isSyncName(name: string): boolean {
+  return SYNC_FOLDERS.some((s) => name === s || (name.startsWith(s) && !/[\p{L}\p{N}]/u.test(name[s.length])));
+}
+
+/**
+ * Does a folder above the file sync to the cloud? `dirs` are the lowercased segments of every folder above it,
+ * `belowHome` those below the home folder when the file is inside it (else null).
+ */
+function syncsToCloud(dirs: string[], belowHome: string[] | null): boolean {
+  if (belowHome && HOME_SYNC_FOLDERS.includes(belowHome[0] ?? '')) return true;
+  return dirs.some(isSyncName) || SYNC_RUNS.some((want) => hasRun(dirs, want));
 }
 
 export interface SecurityFinding {
@@ -550,8 +567,13 @@ export function collectSecurityFindings(
       if (name.toLowerCase().endsWith('.pub')) continue;
 
       const dirs = segments(path.dirname(childPath));
-      const exposedFolder = dirs.find((d) => EXPOSED_FOLDERS.includes(d));
-      const syncFolder = syncsToCloud(dirs);
+      // For a file in the home folder only the folders below it say it is easy to share: a home inside a folder
+      // named shared, public or documents (a team account's /home/shared/<name>, a profile on a drive called
+      // Public) is not where its owner put the file, and its ~/.ssh is where a key belongs (review F3.1). A synced
+      // folder's names are its own, so a home kept inside one syncs with it.
+      const belowHome = isInside(homeDir, childPath) ? segments(path.relative(homeDir, path.dirname(childPath))) : null;
+      const exposedFolder = (belowHome ?? dirs).find((d) => EXPOSED_FOLDERS.includes(d));
+      const syncFolder = syncsToCloud(dirs, belowHome);
       // Judged with the synced and exposed folders known: no folder inside one gives a pass (review F1.5, F2.7).
       if (inExpectedLocation(childPath, pattern, homeDir, Boolean(syncFolder || exposedFolder))) continue;
       const where = path.basename(path.dirname(childPath)) || path.dirname(childPath);

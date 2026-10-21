@@ -193,10 +193,13 @@ OpenAPI 3 spec).
      named `certs` or `ca-certificates` is where it belongs, so not listed.
      No folder gives a key that pass — not `certs`, nor `.ssh` or `.aws` —
      inside a folder that syncs to the cloud (Dropbox, OneDrive, Google
-     Drive, iCloud Drive and the other folders macOS keeps under
-     `Library/Mobile Documents` and `Library/CloudStorage`, …) or is easy to
-     share (Downloads, Desktop, Documents, …): there it is listed as anywhere
-     else in that folder;
+     Drive and its `My Drive`, Box Sync and Box Drive's `~/Box`, iCloud
+     Drive and the other folders macOS keeps under `Library/Mobile Documents`
+     and `Library/CloudStorage`, …) or is easy to share (Downloads, Desktop,
+     Documents, …): there it is listed as anywhere else in that folder. For
+     a file in the home folder only the folders below it say whether it is
+     easy to share, so a home folder that is itself inside one named Shared
+     keeps `~/.ssh` and `~/.aws` where they belong;
      files inside program bundles, frameworks, a program's data folders
      (`Library/Application Support`, `Library/Containers`, `AppData`), package
      folders (`node_modules`, `site-packages`) and the operating system's own
