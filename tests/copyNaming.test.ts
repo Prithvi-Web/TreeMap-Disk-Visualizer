@@ -449,11 +449,14 @@ function handedLabels(call: ts.CallExpression, sinks: Map<string, Set<string>>):
 /**
  * Which arguments of which page functions end up as a button's or a modal
  * heading's label: one the function writes there by id
- * (`setConfirmButton(label)` writes `$('confirmOk')`), or hands on to a
- * function that does (`watchOffloadJob(jobId, title)` hands `title` to
- * watchJob, which writes the progress sheet's heading). Read until nothing
- * more is found, so a function that hands a label on is found wherever it is
- * declared.
+ * (`setConfirmButton(label)` writes `$('confirmOk')`), one it builds into a
+ * button or a heading of its own, by + or in a template
+ * (`toastAction(msg, label)` builds `'<button class="pill">' +
+ * escapeHtml(label) + '</button>'`; an argument in a tag's attribute is not
+ * its label), or one it hands on to a function that does
+ * (`watchOffloadJob(jobId, title)` hands `title` to watchJob, which writes
+ * the progress sheet's heading). Read until nothing more is found, so a
+ * function that hands a label on is found wherever it is declared.
  */
 function labelSinks(page: string): Map<string, Set<string>> {
   const ids = labelIds(page);
@@ -472,13 +475,14 @@ function labelSinks(page: string): Map<string, Set<string>> {
           found = true;
         }
       };
-      const visit = (n: ts.Node): void => {
+      if (!fn.body) continue;
+      visitBuilding(fn.body, (n) => {
         const written = labelWrite(n, ids);
         if (written) reach(written);
         if (ts.isCallExpression(n)) handedLabels(n, sinks).forEach(reach);
-        ts.forEachChild(n, visit);
-      };
-      if (fn.body) visit(fn.body);
+      }, (pieces) => {
+        for (const { parts } of contentsOf(pieces)) for (const part of parts) if (typeof part !== 'string') reach(part);
+      });
     }
   }
   return sinks;
@@ -488,9 +492,10 @@ function labelSinks(page: string): Map<string, Set<string>> {
  * The labels the page's scripts write into a button or a modal heading by
  * its id — `$('confirmTitle').innerHTML = icon('trash', 18) + 'Move to
  * Trash?'`, `$('confirmOk').innerHTML = …` — and every label handed to a
- * function that writes one (labelSinks): `setConfirmButton('Empty the
- * Trash')`, openBrowse's title and button label, askText's `title` and `ok`,
- * and a default such a function gives one (`ok = 'OK'`). A label held in a
+ * function that writes or builds one (labelSinks): `setConfirmButton('Empty
+ * the Trash')`, openBrowse's title and button label, askText's `title` and
+ * `ok`, toastAction's button, and a default such a function gives one
+ * (`ok = 'OK'`, offerMeant's `label = 'Use that folder'`). A label held in a
  * variable of its own is not followed.
  */
 function assignedLabels(page: string): string[] {
@@ -573,6 +578,7 @@ test('the readers read a name wrapped across lines as the name, and two strings 
   assert.equal(cleanupNamings(pageText('<script>toast(`${n} left in your cleanup ` + "cart");</script>')).length, 1, 'a template\'s last piece and the string after it');
   assert.equal(oldTabNamings(pageText("<script>const s = 'Open Empty ' + ('Folders' + ' now');</script>")).length, 1, 'parenthesised');
   assert.equal(cleanupNamings(pageText("<script>const s = f(1 + 2, 'the cleanup ' + 'cart');</script>")).length, 1, 'beside a sum of numbers');
+  assert.equal(cleanupNamings(pageText("<script>const s = `${n ? 'Staged in the cleanup ' + 'cart' : ''} now`;</script>")).length, 1, 'a string inside a part code computes is read too');
   assert.deepEqual(cleanupNamings(pageText("<script>const s = 'the cleanup ' + kind + ' cart'; const t = `the cleanup ${kind} cart`;</script>")), [],
     'a part code computes stands between the pieces either side of it, as a template\'s ${} does');
   assert.deepEqual(fileStrings(path.join(ROOT, 'src', 'x.ts'), "const a = 'Your cleanup ' +\n  'cart is empty';\nconst b = `two ${c} pieces`;"),
@@ -686,6 +692,31 @@ test('the label reader follows a label handed to a page function that writes it 
   ].sort(), 'every label handed to a function that writes it, directly, destructured, as a property or handed on; its default, a plain parameter\'s or a destructured one\'s; what escapeHtml is handed — not a field label, an icon\'s name or a name');
 });
 
+test('the label reader follows a label a page function builds into a button or a heading it makes (G18 review F3.2)', () => {
+  // toastAction(msg, label, …) builds its button as '<button class="pill"…>'
+  // + escapeHtml(label) + '</button>' and writes it into an element of its
+  // own, not one the page names by id: its labels — "Scan again", "Undo",
+  // offerMeant's "Use that folder" — passed unseen.
+  const page = [
+    '<script>',
+    "function toastish(msg, label, fn) { const el = document.createElement('div'); el.innerHTML = icon('alert', 16) + `<span>` + escapeHtml(msg) + '</span>' +",
+    "  `<button class=\"pill\" type=\"button\">` + escapeHtml(label) + '</button>'; }",
+    "function offer(p, label = 'Use That Folder') { toastish(`No folder is named ${p}`, label, () => {}); }",
+    'function chip(id, name) { return `<button class="chip" data-id="${id}">${escapeHtml(name)}</button>`; }',
+    "function heading(title) { return '<h3>' + icon('x', 18) + title + '</h3>'; }",
+    'function row(item) { return `<div class="row">${escapeHtml(item)}</div>`; }',
+    "function wrapped(t) { return `<div>${toastish('Not A Label', t)}</div>`; }", // handed on from inside a template
+    '</script>',
+    "<script>toastish('Not A Label', 'Scan Again', go); toastish(m, 'Undo It'); offer(p); offer(p, 'Open That Folder'); chip('Not An Id Label', 'Pick Me');",
+    "heading('Old Files'); row('Not A Label Either'); wrapped('Try Again');</script>",
+  ].join('\n');
+  const sinks = Object.fromEntries([...labelSinks(page)].map(([name, keys]) => [name, [...keys].sort()]));
+  assert.deepEqual(sinks, { toastish: ['1'], offer: ['1'], chip: ['1'], heading: ['0'], wrapped: ['0'] },
+    'an argument a function builds into a button or a heading it makes, by + or in a template, or hands on to one that does; not one in a tag\'s attribute, not one outside a button');
+  assert.deepEqual([...assignedLabels(page)].sort(), ['Scan Again', 'Undo It', 'Use That Folder', 'Open That Folder', 'Pick Me', 'Old Files', 'Try Again'].sort(),
+    'every label handed to such a function, and its default');
+});
+
 /* ══════════════ The page ══════════════ */
 
 test('the page names the feature "Clean Up" — never "Cleanup", never "the cleanup cart" — wherever a person reads it (G18)', () => {
@@ -704,12 +735,14 @@ test('every button and modal title of the page is in sentence case, but for prop
   assert.ok(labels.includes('Edit budget…') && labels.includes('Set budget…'), 'control: both arms of an interpolated label are among them');
   assert.ok(scriptsOf(INDEX).flatMap(builtLabels).includes('Undo this run'), 'control: the cart\'s "Undo this run", a label a + joins from two templates, is read (review F3.3)');
   const sinks = labelSinks(INDEX);
-  for (const [fn, key] of [['setConfirmButton', '0'], ['openBrowse', '2'], ['openBrowse', '3'], ['watchOffloadJob', '1'], ['askText', '0.title'], ['askText', '0.ok'], ['watchJob', '0.title']]) {
+  for (const [fn, key] of [['setConfirmButton', '0'], ['openBrowse', '2'], ['openBrowse', '3'], ['watchOffloadJob', '1'], ['askText', '0.title'], ['askText', '0.ok'], ['watchJob', '0.title'],
+    ['toastAction', '1'], ['offerMeant', '3']]) {
     assert.ok(sinks.get(fn)?.has(key), `control: ${fn}'s argument ${key} is known to end up as a label (${[...sinks.keys()].join(', ')})`);
   }
   const assigned = assignedLabels(INDEX);
   for (const label of ['Move to Trash?', 'Forget this copy?', 'Copy, verify, then trash', 'Save view', 'Restoring…', 'New policy',
-    'Purge snapshots', 'Forget this copy', 'Folder this policy cleans', 'Offload to this folder', 'Offloading…', 'Use this folder', 'OK', 'Show all']) {
+    'Purge snapshots', 'Forget this copy', 'Folder this policy cleans', 'Offload to this folder', 'Offloading…', 'Use this folder', 'OK', 'Show all',
+    'Scan again', 'Undo', 'Use that folder', 'Open that folder']) {
     assert.ok(assigned.includes(label), `control: a label written by id, or handed to a function that writes one, is read: ${label} (${assigned.length} read)`);
   }
 });
