@@ -1,7 +1,7 @@
 # Rule packs
 
-The known-offenders catalog behind **Smart Suggestions** (Clean Up ▸ Smart
-Suggestions). Adding an offender is a JSON edit — no code change, no rebuild of
+The known-offenders catalog behind **Smart suggestions** (Clean Up ▸ Smart
+suggestions). Adding an offender is a JSON edit — no code change, no rebuild of
 the matching logic. The loader and schema live in `../rulePacks.ts`; the matcher
 that walks a scan lives in `../cleanupRules.ts`.
 
@@ -10,7 +10,7 @@ that walks a scan lives in `../cleanupRules.ts`.
 
 Exactly two packs load on any machine: `common` plus the one for the current
 platform. A malformed pack fails the whole catalog with a reason — Smart
-Suggestions then reports itself unavailable and says why, while the rest of the
+suggestions then reports itself unavailable and says why, while the rest of the
 app boots normally. Half a catalog would silently stop suggesting things people
 rely on, which is the worse failure.
 
@@ -68,13 +68,13 @@ rule either.
 ### Ecosystem tagging (§C6)
 
 A rule may carry `ecosystem` (`npm`, `cargo`, `python`, …). Only the orphan
-scanner reads it — Smart Suggestions ignores it entirely, so tagging a rule can
+scanner reads it — Smart suggestions ignores it entirely, so tagging a rule can
 never change what the Clean Up list shows. A tagged `project-directory` rule
 must also carry:
 
 - `ownerManifest` — the file that proves the owning project still exists.
   Defaults to `requiresSibling`, which is the same thing for every rule that
-  has one; `node_modules` states it separately because Smart Suggestions flags
+  has one; `node_modules` states it separately because Smart suggestions flags
   it with or without a manifest.
 - `evidence` — child names that identify the directory once its owner is
   already gone. **Required for any ecosystem-tagged rule**, and the load fails

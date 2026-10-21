@@ -510,7 +510,7 @@ test('a cloud scan keeps the dialog\'s own cloud delete: its files go to the pro
 /**
  * The Clean Up sheet's tabs, from the page's own setCleanPane, the footer's
  * summary and button (activeCleanSelection, updateCleanSummary) and its click
- * (confirmCleanTrash), in one scope over stubs: a Smart Suggestions row is
+ * (confirmCleanTrash), in one scope over stubs: a Smart suggestions row is
  * ticked — 5 GB of node_modules — and the Smart pane, when another tab shows,
  * is only hidden, its ticks still in the page.
  */
@@ -543,8 +543,8 @@ function cleanPanes() {
   return { page, footer, hidden, confirmed };
 }
 
-test('the Clean Up footer\'s Move to Trash belongs to the pane on screen: Shrink Video and Cloud-safe offer nothing ticked on Smart Suggestions (review F2.6 of QA third pass D03)', async () => {
-  // Smart Suggestions, a row ticked, then the Shrink Video tab: the footer
+test('the Clean Up footer\'s Move to Trash belongs to the pane on screen: Shrink Video and Cloud-safe offer nothing ticked on Smart suggestions (review F2.6 of QA third pass D03)', async () => {
+  // Smart suggestions, a row ticked, then the Shrink Video tab: the footer
   // read "1 item · up to 5 GB, freed when you empty the Trash" beside an
   // enabled "Move 1 to Trash", and its click opened the Trash sheet for a
   // row the pane on screen does not show — D03's flaw inside the sheet.
@@ -560,7 +560,7 @@ test('the Clean Up footer\'s Move to Trash belongs to the pane on screen: Shrink
     await h.page.click();
     assert.deepEqual(h.confirmed, [], `and a click there opens no Trash sheet for the Smart pane's hidden rows (${pane})`);
   }
-  // Back on Smart Suggestions, the tick it kept is offered again.
+  // Back on Smart suggestions, the tick it kept is offered again.
   h.page.show('smart');
   assert.match(h.footer().summary, /^1 item/, 'the tick was kept, only not offered elsewhere');
   await h.page.click();
@@ -1391,7 +1391,7 @@ test('no sentence in the docs, in what an agent is told or in a result the serve
 /* ═══════ 7. Package leftovers: what a person can act on leads, and "in use" is an open file's word (G05) ═══════ */
 
 /*
- * Smart Suggestions opened on "Package leftovers — no orphans; shared caches
+ * Smart suggestions opened on "Package leftovers — no orphans; shared caches
  * only — 0 B" over six grey IN USE rows (rusty/target, webapp/node_modules,
  * .venv, dist, .next, a Gradle build), and further down the same sheet offered
  * those very folders for removal ("Rust build target · 78.8 MB · To put it
@@ -1461,9 +1461,9 @@ async function renderPackages(data: unknown, dom: Record<string, { innerHTML: st
 /** The rows a host holds, each as its own HTML. */
 const pkgRows = (html: string) => html.split('<div class="clean-item pkg-item').slice(1);
 
-test('a sheet whose package folders all still have their project does not open on a 0 B "Package leftovers" header: those folders are listed after Smart Suggestions, folded (G05)', async () => {
+test('a sheet whose package folders all still have their project does not open on a 0 B "Package leftovers" header: those folders are listed after Smart suggestions, folded (G05)', async () => {
   const { shown, lead, projects } = await renderPackages(CORPUS);
-  assert.equal(lead, '', 'the panel above Smart Suggestions is empty: no "Package leftovers … 0 B" leads the sheet');
+  assert.equal(lead, '', 'the panel above Smart suggestions is empty: no "Package leftovers … 0 B" leads the sheet');
   assert.equal(shown, true, 'yet it listed package folders, in the fold, so the suggestions never also say nothing matched (G05 review F2.3)');
   assert.match(projects, /^\s*<details class="pkg-projects"/, 'the six folders are in a fold of their own');
   assert.doesNotMatch(projects, /<details[^>]*\bopen\b/, 'which opens closed');
@@ -1706,7 +1706,7 @@ async function loadSuggestions(orphans: unknown, suggestions: unknown, notes: Ar
  * common-junk rules." directly above a fold listing that folder, which a
  * common-junk rule (regen-node-modules) does match (G05 review F2.3).
  */
-test('Smart Suggestions never says nothing in the scan matches the common-junk rules above a fold that lists folders they match (G05 review F2.3)', async () => {
+test('Smart suggestions never says nothing in the scan matches the common-junk rules above a fold that lists folders they match (G05 review F2.3)', async () => {
   const project = '/corpus/Projects/webapp';
   const live = owned('npm', 'webapp', 'node_modules', 20_700_000, 'npm install');
   const paused = await loadSuggestions(pkgReport([pkgGroup('npm', [live])]), { available: true, groups: [] }, [{ path: project, suppress: true }]);
@@ -1719,9 +1719,9 @@ test('Smart Suggestions never says nothing in the scan matches the common-junk r
   assert.match(none.smart, /^Nothing in this scan matches the common-junk rules\.$/, 'a scan with nothing to suggest says so');
 });
 
-test('the fold of folders whose project is still here sits after Smart Suggestions; the leftovers a person can act on, before them (G05)', () => {
+test('the fold of folders whose project is still here sits after Smart suggestions; the leftovers a person can act on, before them (G05)', () => {
   const pane = INDEX.slice(INDEX.indexOf('<div id="cleanPaneSmart"'), INDEX.indexOf('<div id="cleanPaneVideo"'));
-  assert.ok(pane.length > 0, 'the Smart Suggestions pane is in the page');
+  assert.ok(pane.length > 0, 'the Smart suggestions pane is in the page');
   const at = (id: string) => pane.indexOf(`<div id="${id}"></div>`);
   assert.ok(at('packageOrphans') !== -1 && at('smartResults') !== -1 && at('packageProjects') !== -1, 'control: all three hosts are in the pane');
   assert.ok(at('packageOrphans') < at('smartResults'), 'orphans and caches come before the suggestions');

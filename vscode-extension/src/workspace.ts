@@ -94,7 +94,7 @@ async function needsBuild(dir: string): Promise<boolean> {
       if (st.mtimeMs > built) return true;
     }
     // The rule packs are copied by the build, not emitted by tsc — a dist
-    // without them starts fine and then reports Smart Suggestions as broken.
+    // without them starts fine and then reports Smart suggestions as broken.
     return !(await exists(path.join(dir, 'dist', 'services', 'rulepacks')));
   } catch {
     return true; // unreadable is a reason to rebuild, not to guess

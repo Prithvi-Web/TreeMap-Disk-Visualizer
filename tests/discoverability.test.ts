@@ -240,7 +240,7 @@ test('capabilities marks exactly the destructive endpoints as destructive', asyn
     assert.deepEqual(destructive, [
       'DELETE /api/files',
       // Deleting a note also deletes the protection it carried: a suppressing
-      // note is what keeps Smart Suggestions and Autopilot out of that folder,
+      // note is what keeps Smart suggestions and Autopilot out of that folder,
       // so removing one re-arms automation the user had paused (v4 §9.5).
       'DELETE /api/notes',
       // Forgetting a capsule entry destroys a backup copy, so it is declared

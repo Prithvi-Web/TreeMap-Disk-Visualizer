@@ -13,7 +13,7 @@ import { compileIgnoreList, CompiledIgnore } from '../src/utils/glob';
 import { buildStoreFromTree } from '../src/services/scanStore';
 
 /**
- * Smart Suggestions — one explicit regression test per shipped rule.
+ * Smart suggestions — one explicit regression test per shipped rule.
  *
  * §C8 requires these to exist BEFORE the rules move into JSON packs: the whole
  * acceptance criterion for that refactor is "every existing suggestion fires

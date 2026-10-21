@@ -327,7 +327,7 @@ test('a matched group carries its confidence and its reason', () => {
 
 /* ───────────────────── QA D55: prose for people, not routes ───────────────────── */
 
-test('no shipped rule speaks in API routes — its title and description are shown verbatim in Smart Suggestions (QA D55)', () => {
+test('no shipped rule speaks in API routes — its title and description are shown verbatim in Smart suggestions (QA D55)', () => {
   const packs = fs.readdirSync(SHIPPED).filter((f) => f.endsWith('.json'));
   assert.ok(packs.length >= 4, `every pack is read (${packs.join(', ')})`);
   let rules = 0;

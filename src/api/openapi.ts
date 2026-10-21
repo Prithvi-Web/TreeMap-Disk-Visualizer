@@ -214,7 +214,7 @@ const schemas: Json = {
     {
       path: str('Sanitized absolute path of the noted folder'),
       text: str('The note text, stored and returned verbatim — the UI renders it as plain text only, never HTML'),
-      suppress: bool('When true (the default), Smart Suggestions and Autopilot skip this folder and everything under it'),
+      suppress: bool('When true (the default), Smart suggestions and Autopilot skip this folder and everything under it'),
       createdMs: int(),
       updatedMs: int(),
     },
@@ -1968,7 +1968,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/notes',
-    summary: 'Notes pinned to folders. A suppressing note excludes its whole subtree from Smart Suggestions and Autopilot matching',
+    summary: 'Notes pinned to folders. A suppressing note excludes its whole subtree from Smart suggestions and Autopilot matching',
     tag: 'notes',
     destructive: false,
     responses: { '200': jsonResponse('Every folder note', obj({ notes: arr(ref('FolderNote')) }, ['notes'])) },
@@ -1983,7 +1983,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       {
         path: str('The folder to note (sanitized, not required to be inside a scanned root — notes outlive scans, like budgets)'),
         text: str('Up to 2000 characters, stored verbatim'),
-        suppress: bool('Pause Smart Suggestions and Autopilot for this subtree'),
+        suppress: bool('Pause Smart suggestions and Autopilot for this subtree'),
       },
       ['path', 'text'],
     )),

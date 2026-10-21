@@ -125,7 +125,7 @@ export async function computeRuleClaims(store: ScanStore): Promise<RuleClaims> {
   // the Reclaim Score's `regenerable` component, and the score explains and
   // sorts — it never selects anything for deletion (§3.2). A noted folder
   // still deserves a truthful "this rebuilds itself" in its breakdown; what
-  // the note pauses is the surfaces that SUGGEST — Smart Suggestions, the
+  // the note pauses is the surfaces that SUGGEST — Smart suggestions, the
   // agent summary, MCP cleanup_suggestions and every Autopilot match.
   // The claims come from the cleanup memo (U-16): every non-advisory match,
   // uncapped, in walk order, walked in slices and once per scan version.

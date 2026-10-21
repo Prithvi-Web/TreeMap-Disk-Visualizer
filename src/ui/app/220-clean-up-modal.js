@@ -10,9 +10,9 @@ let cleanOnDisk = new Map();
  */
 let cleanTrashing = false;
 let emptyFolders = [];   // Empty Folders pane — { name, path }
-let smartGroups = [];    // Smart Suggestions pane — rule groups from the API
+let smartGroups = [];    // Smart suggestions pane — rule groups from the API
 /**
- * How the Smart Suggestions items are ordered (v4 §3.3).
+ * How the Smart suggestions items are ordered (v4 §3.3).
  *
  * 'size' is the order the rules produce and the one people have learned to
  * read; 'reclaim' re-ranks within each group by the score. Not persisted: it
@@ -491,7 +491,7 @@ function wireSelectAll(host, allId, rowClass, onChange) {
 }
 wireSelectAll($('emptyResults'), 'emptyAll', 'empty-ck', updateCleanSummary);
 
-/* ── Smart Suggestions pane ── */
+/* ── Smart suggestions pane ── */
 /* Feature 13 — git repositories section + git gc. */
 async function renderGitRepos() {
   const host = $('gitRepos');
@@ -539,13 +539,13 @@ document.addEventListener('click', (e) => {
 /* ── Package-manager orphans (§C6) ──────────────────────────────────────────
    Grouped by ecosystem, and wired into the SAME selection the rest of the
    Clean Up modal uses — this is not a fourth delete surface. Orphans and
-   caches get checkboxes; active artifacts are context only (Smart Suggestions
+   caches get checkboxes; active artifacts are context only (Smart suggestions
    below already offers those, and this panel exists for the things nobody is
    going to miss).
 
    G05: the two halves sit apart. Orphans and caches — what a person can act
    on here — lead the sheet in #packageOrphans. A folder whose project is
-   still here (the server's `active`) is listed after Smart Suggestions, in a
+   still here (the server's `active`) is listed after Smart suggestions, in a
    fold of its own (#packageProjects), and is called what the server knows of
    it: its project is still here. "In use" is the open-file guard's word for
    a file a program has open, and over these rows it read as "do not delete"
@@ -564,7 +564,7 @@ function ecosystemLabel(id) { return ECOSYSTEM_LABEL[id] || id; }
 
 let packageOrphans = [];
 
-/** Render the ecosystem panel and the fold after Smart Suggestions. Returns
+/** Render the ecosystem panel and the fold after Smart suggestions. Returns
     true if it listed any package folder, above the suggestions or in the
     fold: either way "nothing in this scan matches" would be false beside it —
     a folder whose project is still here matches a rule too, and one a note
@@ -586,7 +586,7 @@ async function renderPackageOrphans() {
   try { data = await api('/api/packages/orphans?scanId=' + scanId); } catch { if (scanId === treeScanId()) host.innerHTML = ''; return false; }
   if (scanId !== treeScanId()) return false;
   if (data.available === false) {
-    // Same honesty rule as Smart Suggestions: a broken catalog is "unknown",
+    // Same honesty rule as Smart suggestions: a broken catalog is "unknown",
     // never "you have no leftovers".
     host.innerHTML = `<div class="muted" style="display:flex;align-items:flex-start;gap:8px;padding:10px 2px;">${icon('alert', 15)}
       <span>Package leftovers could not be checked — a cleanup rule pack failed to load.<br>
@@ -848,7 +848,7 @@ function fillFolder(command, names) {
 }
 
 /**
- * Paint the Smart Suggestions groups.
+ * Paint the Smart suggestions groups.
  *
  * Extracted from `loadSmartSuggestions` so the Reclaim ordering can repaint
  * without re-fetching: the groups are already in `smartGroups`, and asking
@@ -967,7 +967,7 @@ function renderSmartGroups(catalog) {
   updateCleanSummary();
 }
 
-/** Each load of Smart Suggestions takes the next number, and only the latest paints. */
+/** Each load of Smart suggestions takes the next number, and only the latest paints. */
 let loadSmartSeq = 0;
 async function loadSmartSuggestions() {
   const host = $('smartResults');
@@ -1002,7 +1002,7 @@ async function loadSmartSuggestions() {
     if (data.available === false) {
       smartGroups = [];
       host.innerHTML = `<div class="muted" style="display:flex;align-items:flex-start;gap:8px;padding:12px 2px;">${icon('alert', 15)}
-        <span>Smart Suggestions are unavailable because a cleanup rule pack could not be loaded.<br>
+        <span>Smart suggestions are unavailable because a cleanup rule pack could not be loaded.<br>
         <span class="smart-why-line">${escapeHtml(data.reason || 'No reason was given.')}</span></span></div>`;
       updateCleanSummary();
       return;
@@ -1451,7 +1451,7 @@ function activeCleanSelection() {
   // the pane on screen does not show (review F2.6 of QA third pass D03).
   if (cleanPane !== 'smart') return { paths: [], bytes: 0, noun: 'item', sizes: new Map() };
   // The Smart pane has three sources that can name the SAME path — an orphaned
-  // node_modules is both a package leftover (§C6) and a Smart Suggestion. Keyed
+  // node_modules is both a package leftover (§C6) and a Smart suggestion. Keyed
   // by path so selecting it in both places counts its bytes once.
   const chosen = new Map();
   document.querySelectorAll('#smartResults .smart-ck').forEach(ck => {

@@ -38,7 +38,7 @@ import { CompiledIgnore } from '../src/utils/glob';
  * A note is the user telling the machine "this folder means something" —
  * "client archive, keep until 2027". The tests that matter are therefore not
  * the CRUD (though it is covered) but the promise attached to it: a noted
- * folder is excluded from Smart Suggestions and from Autopilot matching by
+ * folder is excluded from Smart suggestions and from Autopilot matching by
  * default, and the exclusion is toggleable per note. A note must also survive
  * exactly as typed — it is rendered with textContent, never as HTML, so the
  * server must not "helpfully" alter or interpret it — and in a read-only
@@ -254,7 +254,7 @@ test('isUnderAny respects path boundaries — /a/bc is not under /a/b', () => {
 
 /* ══════════════════════ Suggestion suppression ══════════════════════ */
 
-test('a suppressing note removes a folder and everything under it from Smart Suggestions', () => {
+test('a suppressing note removes a folder and everything under it from Smart suggestions', () => {
   // Without the note: node_modules under projects/site is suggested.
   const fixture = () => tree([dir('projects', [dir('site', [pkg('node_modules')])])]);
   const before = collectCleanupSuggestions(fixture(), NO_IGNORE, undefined, undefined, []);
@@ -638,7 +638,7 @@ test('a suppressing note pauses Autopilot whichever spelling of the folder the p
   }
 });
 
-test('a suppressing note typed through a link silences Smart Suggestions for the folder the scan lists by its own path (the final review, F1.13)', { skip: process.platform === 'win32' && 'making a link needs a privilege the runner may not hold' }, async () => {
+test('a suppressing note typed through a link silences Smart suggestions for the folder the scan lists by its own path (the final review, F1.13)', { skip: process.platform === 'win32' && 'making a link needs a privilege the runner may not hold' }, async () => {
   const fx = fs.realpathSync(await mkTmp());
   try {
     await fsp.mkdir(path.join(fx, 'real', 'proj'), { recursive: true });

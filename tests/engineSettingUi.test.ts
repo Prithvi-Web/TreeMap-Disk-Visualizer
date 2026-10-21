@@ -579,5 +579,5 @@ test('the Ignore list says that a pattern that skips folders sends every scan to
   const blurb = words(slice('Ignore list</div>', 'id="ignoreList"'));
   assert.doesNotMatch(blurb, /faster scans/);
   assert.match(blurb, /While any pattern is set to Don't scan or Both, every scan uses the built-in walker, which is slower than the native engine\./);
-  assert.match(blurb, /Don't scan skips them entirely; Don't suggest keeps them out of Smart Suggestions only\./, 'the two scopes are still explained');
+  assert.match(blurb, /Don't scan skips them entirely; Don't suggest keeps them out of Smart suggestions only\./, 'the two scopes are still explained');
 });

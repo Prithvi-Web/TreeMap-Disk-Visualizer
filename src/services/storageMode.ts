@@ -115,7 +115,7 @@ export const FEATURES = {
     classified: 'an offload of files reads one row a file; only a whole folder is off (§S.5.7)',
   },
   // Row 4: full passes, which run in the FullPassRunner in spill and are off in aggregate.
-  cleanupSuggestions: { ...FULL_PASS, label: 'the Smart Suggestions list' },
+  cleanupSuggestions: { ...FULL_PASS, label: 'the Smart suggestions list' },
   customRules: { ...FULL_PASS, label: 'matching the custom Clean Up rules' },
   query: { ...FULL_PASS, label: 'the query search' },
   calendar: { ...FULL_PASS, label: 'the calendar view' },

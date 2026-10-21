@@ -198,7 +198,7 @@ function cleanupNamings(text: string): string[] {
  * macOS's Privacy & Security settings, TreeMap's Settings sheet.
  */
 const PROPER_NAMES = [
-  'Undo Vault', 'Clean Up', 'Finder', 'Full Disk Access', 'Autopilot', 'Smart Suggestions', 'Disk City', 'Treemap', 'Sunburst', 'Voronoi',
+  'Undo Vault', 'Clean Up', 'Finder', 'Full Disk Access', 'Autopilot', 'Disk City', 'Treemap', 'Sunburst', 'Voronoi',
   'TreeMap', 'Trash', 'Recycle Bin', 'Settings', 'Terminal', 'Quick Look', 'Privacy',
 ];
 
@@ -754,7 +754,7 @@ test('the Clean Up cart, its Settings target and the Clean Up tabs say it in the
   assert.ok(/\{ label: 'Empty the Clean Up cart', /.test(INDEX), 'the palette\'s action');
   assert.ok(INDEX.includes("<button data-act=\"cart\">${icon(inCart ? 'check' : 'cart', 15)}${inCart ? 'Remove from Clean Up cart' : 'Add to Clean Up cart'}</button>"),
     'the right-click menu\'s cart entry, as every cart toggle says it (review F1.3)');
-  for (const tab of ['Custom rules', 'Smart Suggestions', 'Empty folders', 'Shrink video', 'Cloud-safe']) {
+  for (const tab of ['Custom rules', 'Smart suggestions', 'Empty folders', 'Shrink video', 'Cloud-safe']) {
     assert.ok(new RegExp(`data-pane="\\w+"(?: id="\\w+" hidden)?><span data-icon="[\\w-]+"></span>${tab}</button>`).test(INDEX), `the Clean Up tab "${tab}"`);
   }
   assert.ok(/data-dupmode="near"><span data-icon="image"><\/span>Near-duplicate images<\/button>/.test(INDEX), 'the Duplicates mode');
@@ -795,6 +795,16 @@ test('README, SECURITY and AGENTS name the feature "Clean Up" as the page does: 
     assert.ok(text.includes('Clean Up'), `control: ${doc} is read, and names the feature`);
     assert.deepEqual(cleanupNamings(text), [], doc);
   }
+});
+
+test('the Clean Up tab "Smart suggestions" is said in sentence case, as its sibling tabs are, wherever a person reads it: the page, every string the server writes, README, SECURITY, AGENTS and the rule packs\' README (BQR-1 item 13)', () => {
+  const page = pageText(INDEX);
+  assert.ok(page.includes('Smart suggestions'), 'control: the page names the tab');
+  // One name or several, and wrapped across a line as a paragraph of Markdown or a comment wraps it.
+  const titled = (text: string) => (text.replace(/\n[ \t]*(?:\*|\/\/)?/g, ' ').replace(/\s+/g, ' ').match(/Smart Suggestion/g) ?? []).length;
+  assert.equal(titled(page), 0, 'the page says "Smart suggestions", never "Smart Suggestions"');
+  assert.deepEqual(sourceStrings(['src']).filter((s) => /Smart\s+Suggestion/.test(s.text)).map((s) => s.at), [], 'and so does every string the server writes');
+  for (const doc of [...DOCS, 'src/services/rulepacks/README.md']) assert.equal(titled(fs.readFileSync(path.join(ROOT, doc), 'utf8')), 0, doc);
 });
 
 /**

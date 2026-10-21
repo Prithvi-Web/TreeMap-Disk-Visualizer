@@ -301,7 +301,7 @@ insightRouter.get('/git/repos', storageModeGate, (req: Request, res: Response) =
  * Orphaned (no project file owns it, its interpreter is gone, or a superseded
  * Homebrew keg — packageEcosystemScanner), active (context only), and shared
  * caches. Rules come from the §C8 packs, so a malformed pack makes this feature
- * report itself unavailable exactly like Smart Suggestions rather than
+ * report itself unavailable exactly like Smart suggestions rather than
  * answering "no orphans", which would read as good news.
  */
 insightRouter.get('/packages/orphans', storageModeGate, async (req: Request, res: Response) => {

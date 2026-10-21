@@ -201,7 +201,7 @@ test('a refusal says the feature, the mode, why, and what a person can do', () =
   assert.match(spill, /holds something in memory for every file/);
   assert.match(spill, /Scan a smaller folder/);
   const aggregate = refusalSentence('cleanupSuggestions', 'aggregate');
-  assert.match(aggregate, /^The Smart Suggestions list is off for this scan\./);
+  assert.match(aggregate, /^The Smart suggestions list is off for this scan\./);
   assert.match(aggregate, /aggregate mode, which keeps a summary/);
   assert.match(aggregate, /needs every file/);
   assert.match(refusalSentence('liveMode', 'spill'), /a spill scan cannot be changed once it is walked, and Live mode changes it/);

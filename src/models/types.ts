@@ -1135,7 +1135,7 @@ export interface SnapshotRestoreOutcome {
  * What a policy is allowed to delete.
  *
  * Two kinds, because Clean Up has two kinds and Autopilot must not invent a
- * third vocabulary: the Smart Suggestions groups (`node_modules`, caches,
+ * third vocabulary: the Smart suggestions groups (`node_modules`, caches,
  * junk — each carrying the reason and the command that regenerates it), and
  * the custom age/size/extension rules.
  */

@@ -191,7 +191,7 @@ test('Games offers a cart button on the shader cache only', () => {
   assert.ok(!games.includes('data-cart-add') && !games.includes('cartButtonHtml('), 'the title rows themselves carry no cart button');
 });
 
-test('advisory Smart Suggestion groups get no cart button at all — not a disabled one', () => {
+test('advisory Smart suggestion groups get no cart button at all — not a disabled one', () => {
   const start = INDEX.indexOf('function renderSmartGroups');
   assert.notEqual(start, -1);
   const body = INDEX.slice(start, INDEX.indexOf('smartSortPills', start));

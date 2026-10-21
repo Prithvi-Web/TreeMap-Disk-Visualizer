@@ -294,7 +294,7 @@ function reclaimBadge(path, fact) {
 }
 
 /**
- * The breakdown, in the same shape as Smart Suggestions' "why is this
+ * The breakdown, in the same shape as Smart suggestions' "why is this
  * suggested" panel — §3.2 asks for that reuse by name.
  *
  * Components that answered come first with what each contributed, then the

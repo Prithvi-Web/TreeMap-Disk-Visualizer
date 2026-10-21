@@ -2439,9 +2439,9 @@ test('the Highlight box shows a whole placeholder at every width — never one c
   assert.equal(box.placeholder, before, 'a field that is not laid out keeps its placeholder');
 });
 
-/* ══════════════ E03 — a Smart Suggestion's description and remedy are drawn inside the Clean Up sheet ══════════════ */
+/* ══════════════ E03 — a Smart suggestion's description and remedy are drawn inside the Clean Up sheet ══════════════ */
 
-/** Every Smart Suggestion group the shipped rule packs can produce, on every OS, shaped as the server serves it (cleanupRules.ts). */
+/** Every Smart suggestion group the shipped rule packs can produce, on every OS, shaped as the server serves it (cleanupRules.ts). */
 function shippedSmartGroups(): Array<Record<string, unknown>> {
   const dir = path.join(__dirname, '..', 'src', 'services', 'rulepacks');
   const byId = new Map<string, Record<string, unknown>>();
@@ -2512,7 +2512,7 @@ function smartGroupsHtml(groups: Array<Record<string, unknown>>): string {
   return host.innerHTML;
 }
 
-test('a Smart Suggestion\'s description and its remedy are drawn inside the Clean Up sheet, wrapping as they need — never squeezed to nothing or run past its edge (QA fourth pass E03)', () => {
+test('a Smart suggestion\'s description and its remedy are drawn inside the Clean Up sheet, wrapping as they need — never squeezed to nothing or run past its edge (QA fourth pass E03)', () => {
   // QA fourth pass E03 (shots/041, 1440×900): "Final Cut / iMovie render
   // files" — an advisory group, whose advice is the ONLY thing a person can
   // do with it (AGENTS.md) — drew its header 1,201 px wide in a 586 px box:

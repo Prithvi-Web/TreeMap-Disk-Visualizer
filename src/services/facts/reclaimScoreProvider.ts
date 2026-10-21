@@ -282,7 +282,7 @@ function regenerableOf(
   // stop, and several rule titles are just the folder name — joining them
   // with a dash produced "node_modules - A folder named node_modules.,
   // restored with npm install". Sentences, in the same voice the Smart
-  // Suggestions "why" panel already uses ("To put it back:").
+  // suggestions "why" panel already uses ("To put it back:").
   const restore = claim.restoreCommand ? restoreClause(claim.restoreCommand, path.basename(claim.claimedPath)) : '';
   // Relative to the scan root, because the absolute form wrapped over three
   // lines of the breakdown panel and buried the sentence that matters. The

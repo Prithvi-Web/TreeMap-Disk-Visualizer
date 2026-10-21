@@ -3,7 +3,7 @@
  * Copy non-TypeScript runtime assets from src/ into dist/.
  *
  * `tsc` emits .js and nothing else, so the rule-pack JSON that Smart
- * Suggestions loads at runtime would simply not exist in a built app. This
+ * suggestions loads at runtime would simply not exist in a built app. This
  * runs after tsc (see the `build` script) and mirrors those files across.
  *
  * Kept as a plain copy rather than a JSON import: the packs are meant to be

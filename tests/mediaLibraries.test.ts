@@ -444,7 +444,7 @@ test('the media rulepack entries defer to this surface — the two must tell one
     return (raw.rules ?? []).filter((r: { id?: string }) => (r.id ?? '').startsWith('media-'));
   });
   assert.ok(packs.length >= 4, 'the media entries exist');
-  // By the names the page shows (fifth browser pass F12b): Smart Suggestions
+  // By the names the page shows (fifth browser pass F12b): Smart suggestions
   // sent people to "the Media Libraries view", but the sidebar calls the view
   // "Libraries" and Media Libraries is a card inside it — a view nobody could
   // find. Both names are read from the shipped page, not restated here.

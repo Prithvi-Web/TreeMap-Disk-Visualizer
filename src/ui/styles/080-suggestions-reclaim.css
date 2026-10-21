@@ -1,4 +1,4 @@
-/* ── Smart Suggestions: category cards + regenerable badge (Feature 14) ── */
+/* ── Smart suggestions: category cards + regenerable badge (Feature 14) ── */
 .smart-filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 14px; }
 /* The Smart pane's funnel: suggested → staged → projected free. Lives above
    the results and disappears with them. */
@@ -45,7 +45,7 @@
 /* ══ Phase 3 (v4 §3.3) — the Reclaim Score badge, breakdown and legend ══
    The breakdown deliberately reuses .smart-why's markup and styling: §3.2
    requires every score to be one click from its components, and Smart
-   Suggestions already answers "why is this suggested" in exactly that shape.
+   suggestions already answers "why is this suggested" in exactly that shape.
    A second panel that said the same thing differently would be worse than
    reuse even if it looked better. */
 .rc-badge { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11px;

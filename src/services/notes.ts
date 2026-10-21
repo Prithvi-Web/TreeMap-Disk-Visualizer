@@ -10,7 +10,7 @@ import { AppError } from '../middleware/errorHandler';
  *
  * A note is more than a label. "Client archive, keep until 2027" should mean
  * something to the machine, not just to the human reading it later — so a
- * noted folder (and everything under it) is excluded from Smart Suggestions
+ * noted folder (and everything under it) is excluded from Smart suggestions
  * and from Autopilot matching by default. The exclusion is per note and
  * toggleable: `suppress: false` keeps the words and lifts the guard.
  *
@@ -30,7 +30,7 @@ export interface FolderNote {
   path: string;
   /** The user's own words, verbatim. Rendered with textContent only. */
   text: string;
-  /** When true (the default), Smart Suggestions and Autopilot skip this subtree. */
+  /** When true (the default), Smart suggestions and Autopilot skip this subtree. */
   suppress: boolean;
   createdMs: number;
   updatedMs: number;
@@ -151,7 +151,7 @@ export async function deleteNote(rawPath: string): Promise<boolean> {
 }
 
 /**
- * The paths whose notes suppress — read by Smart Suggestions, the agent
+ * The paths whose notes suppress — read by Smart suggestions, the agent
  * summary, MCP cleanup_suggestions and Autopilot. (The Reclaim Score, the
  * custom Clean Up rules and the browser/cloud caches deliberately do NOT
  * read it: the score explains and never selects, and those lists are the

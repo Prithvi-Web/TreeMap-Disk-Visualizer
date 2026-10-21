@@ -11,7 +11,7 @@
 .pkg-tag.orphan { background: color-mix(in srgb, var(--danger) 8%, var(--bg-1)); color: var(--danger); }
 .pkg-tag.cache { background: color-mix(in srgb, var(--accent) 8%, var(--bg-1)); color: var(--accent-ink); }
 /* G05: a folder whose project is still here is listed in a fold after Smart
-   Suggestions, at full ink — dimmed, the rows read as "do not touch" beside a
+   suggestions, at full ink — dimmed, the rows read as "do not touch" beside a
    suggestion offering the same folder. Its "has project" tag keeps the
    neutral chip but not its --text-3 ink, which measured 4.30:1 (dark) and
    4.34:1 (light) on the sheet: --text-2 clears 4.5:1 in both (G05 review

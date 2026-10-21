@@ -2282,7 +2282,7 @@ test('cart buttons are only rewritten when their state actually changed', () => 
   assert.match(fn, /if \(b\.dataset\.cartin === want\) return;/, 'an already-correct button is skipped entirely');
 });
 
-/* ══════════════ Smart Suggestions are rule-pack sourced (§C8) ══════════════ */
+/* ══════════════ Smart suggestions are rule-pack sourced (§C8) ══════════════ */
 
 /**
  * The suggestion markup lives in `renderSmartGroups`, which v4 §3.3 split out
@@ -2330,7 +2330,7 @@ test('a broken rule pack is reported as unavailable, with its reason', () => {
   const fn = code.slice(start, code.indexOf("$('cleanFindBtn')", start));
   assert.ok(fn.length > 0, 'the loadSmartSuggestions slice must not be empty');
   assert.match(fn, /data\.available === false/, 'the unavailable state is handled');
-  assert.match(fn, /Smart Suggestions are unavailable/, 'and named as unavailable, not as "nothing found"');
+  assert.match(fn, /Smart suggestions are unavailable/, 'and named as unavailable, not as "nothing found"');
   assert.match(fn, /escapeHtml\(data\.reason/, 'carrying the specific reason from the server');
 });
 
@@ -2371,7 +2371,7 @@ test('the package panel feeds the one Clean Up selection, deduped by path', () =
   const fn = code.slice(code.indexOf('function activeCleanSelection'), code.indexOf('function updateCleanSummary'));
   assert.ok(fn.length > 0, 'activeCleanSelection must be findable');
   // An orphaned node_modules is offered by BOTH the package panel and Smart
-  // Suggestions; selecting it twice must not count its bytes twice.
+  // suggestions; selecting it twice must not count its bytes twice.
   assert.match(fn, /const chosen = new Map\(\)/, 'the selection is keyed by path');
   assert.match(fn, /#packageOrphans \.pkg-ck/, 'the package panel contributes to it');
   assert.match(fn, /paths: \[\.\.\.chosen\.keys\(\)\]/, 'and the result is the deduped key set');

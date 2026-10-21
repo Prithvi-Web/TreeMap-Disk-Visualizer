@@ -151,7 +151,7 @@ function copyGroups(groups: CleanupSuggestionGroup[]): CleanupSuggestionGroup[] 
 }
 
 /**
- * Smart Suggestions for a store: what `collectCleanupSuggestions(store,
+ * Smart suggestions for a store: what `collectCleanupSuggestions(store,
  * ignore, catalog, undefined, suppressedRoots)` answers, walked in slices and
  * at most once per scan version for the same arguments.
  */

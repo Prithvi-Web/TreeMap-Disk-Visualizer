@@ -25,7 +25,7 @@ import { PackageCacheRule, ProjectDirRule, RuleCatalog, fillFolder, loadRuleCata
  *    What is found is all that is said: a folder of scripts with no project
  *    file may still use the `.venv` beside it (review F1.2).
  *  - **active** — the owner is right there. Still deletable via Smart
- *    Suggestions, but listed here only as context, never with a checkbox: this
+ *    suggestions, but listed here only as context, never with a checkbox: this
  *    panel's job is the stuff nobody is going to miss.
  *  - **cache** — a shared package cache. Never "orphaned"; calling it that
  *    would be a lie. Always reclaimable, with the command that clears it
@@ -188,7 +188,7 @@ function supersededKegs(store: ScanStore, cellarId: number, cellarPath: string):
  * Classify every package-manager artifact in a completed scan.
  *
  * Throws `RulePackError` if the catalog is malformed, exactly like Smart
- * Suggestions — the caller reports the feature unavailable with the reason.
+ * suggestions — the caller reports the feature unavailable with the reason.
  */
 export function scanPackageEcosystems(
   source: TreeSource,

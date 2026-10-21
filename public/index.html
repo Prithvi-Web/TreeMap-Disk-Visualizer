@@ -2199,7 +2199,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .pill:hover { color: var(--text-1); border-color: var(--accent); box-shadow: inset 0 1px 0 var(--shine), 0 0 14px var(--accent-soft); }
 .pill:active { transform: scale(0.95); }
 
-/* ── Smart Suggestions: category cards + regenerable badge (Feature 14) ── */
+/* ── Smart suggestions: category cards + regenerable badge (Feature 14) ── */
 .smart-filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 14px; }
 /* The Smart pane's funnel: suggested → staged → projected free. Lives above
    the results and disappears with them. */
@@ -2246,7 +2246,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 /* ══ Phase 3 (v4 §3.3) — the Reclaim Score badge, breakdown and legend ══
    The breakdown deliberately reuses .smart-why's markup and styling: §3.2
    requires every score to be one click from its components, and Smart
-   Suggestions already answers "why is this suggested" in exactly that shape.
+   suggestions already answers "why is this suggested" in exactly that shape.
    A second panel that said the same thing differently would be worse than
    reuse even if it looked better. */
 .rc-badge { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
@@ -2462,7 +2462,7 @@ body.preview-open.cart-open:has(#sideNav.collapsed) { --tour-w: min(360px, calc(
 .pkg-tag.orphan { background: color-mix(in srgb, var(--danger) 8%, var(--bg-1)); color: var(--danger); }
 .pkg-tag.cache { background: color-mix(in srgb, var(--accent) 8%, var(--bg-1)); color: var(--accent-ink); }
 /* G05: a folder whose project is still here is listed in a fold after Smart
-   Suggestions, at full ink — dimmed, the rows read as "do not touch" beside a
+   suggestions, at full ink — dimmed, the rows read as "do not touch" beside a
    suggestion offering the same folder. Its "has project" tag keeps the
    neutral chip but not its --text-3 ink, which measured 4.30:1 (dark) and
    4.34:1 (light) on the sheet: --text-2 clears 4.5:1 in both (G05 review
@@ -4862,7 +4862,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           <button role="tab" aria-selected="false" data-apmatch="query">A query</button>
         </div>
         <div id="apMatchSuggestion">
-          <div class="muted" style="margin-bottom:8px;">The same things Clean Up's Smart Suggestions find — each one safe to delete and rebuildable.</div>
+          <div class="muted" style="margin-bottom:8px;">The same things Clean Up's Smart suggestions find — each one safe to delete and rebuildable.</div>
           <div id="apGroupList"></div>
         </div>
         <!-- v4 §4.5 — the same grammar the treemap box and saved views use.
@@ -4972,7 +4972,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
     <div class="modal-body">
       <div class="seg seg-fit" id="cleanSeg" role="tablist" aria-label="Clean Up modes" style="margin-bottom:12px;">
         <button role="tab" aria-selected="true" data-pane="rules"><span data-icon="search"></span>Custom rules</button>
-        <button role="tab" aria-selected="false" data-pane="smart"><span data-icon="sparkles"></span>Smart Suggestions</button>
+        <button role="tab" aria-selected="false" data-pane="smart"><span data-icon="sparkles"></span>Smart suggestions</button>
         <button role="tab" aria-selected="false" data-pane="empty"><span data-icon="folder"></span>Empty folders</button>
         <button role="tab" aria-selected="false" data-pane="video"><span data-icon="video"></span>Shrink video</button>
         <button role="tab" aria-selected="false" data-pane="cloud" id="cleanTabCloud" hidden><span data-icon="cloud"></span>Cloud-safe</button>
@@ -5178,7 +5178,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 
 <!-- ═══════════ Folder note modal (v4 §9.5) ═══════════
      The note is the user's own words, rendered as plain text everywhere. A
-     suppressing note also pauses Smart Suggestions and Autopilot for the
+     suppressing note also pauses Smart suggestions and Autopilot for the
      whole subtree — words for the human, a matching pause for the machine. -->
 <div class="modal-backdrop" id="noteModal" role="dialog" aria-modal="true" aria-labelledby="noteTitle">
   <div class="modal" style="width:460px;">
@@ -5198,7 +5198,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <textarea id="noteText" maxlength="2000" rows="4" style="width:100%;resize:vertical;" placeholder="e.g. client archive, keep until 2027" aria-label="Note text"></textarea>
       <label class="rule-row" style="margin-top:12px;cursor:var(--cur-hand);">
         <input type="checkbox" id="noteSuppress" checked>
-        <span>Pause Smart Suggestions and Autopilot here</span>
+        <span>Pause Smart suggestions and Autopilot here</span>
       </label>
       <div class="muted" style="margin-top:6px;font-size:12px;">While this is on, nothing inside this folder is ever suggested for cleanup or matched by an Autopilot rule. You can still delete things here by hand.</div>
     </div>
@@ -5437,7 +5437,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div id="cloudAccounts"></div>
 
       <div class="set-h" style="margin-top:22px;"><span data-icon="ban"></span>Ignore list</div>
-      <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely; <b>Don't suggest</b> keeps them out of Smart Suggestions only. While any pattern is set to Don't scan or Both, every scan uses the built-in walker, which is slower than the native engine. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/&#42;&#42;/dist</b><!-- the stars as entities: the build's banner check counts comment openers and closers in each part -->.</div>
+      <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely; <b>Don't suggest</b> keeps them out of Smart suggestions only. While any pattern is set to Don't scan or Both, every scan uses the built-in walker, which is slower than the native engine. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/&#42;&#42;/dist</b><!-- the stars as entities: the build's banner check counts comment openers and closers in each part -->.</div>
       <div id="ignoreList"></div>
       <button class="btn" id="ignoreAddBtn"><span data-icon="plus"></span>Add pattern</button>
 
@@ -35409,7 +35409,7 @@ function reclaimBadge(path, fact) {
 }
 
 /**
- * The breakdown, in the same shape as Smart Suggestions' "why is this
+ * The breakdown, in the same shape as Smart suggestions' "why is this
  * suggested" panel — §3.2 asks for that reuse by name.
  *
  * Components that answered come first with what each contributed, then the
@@ -39330,9 +39330,9 @@ let cleanOnDisk = new Map();
  */
 let cleanTrashing = false;
 let emptyFolders = [];   // Empty Folders pane — { name, path }
-let smartGroups = [];    // Smart Suggestions pane — rule groups from the API
+let smartGroups = [];    // Smart suggestions pane — rule groups from the API
 /**
- * How the Smart Suggestions items are ordered (v4 §3.3).
+ * How the Smart suggestions items are ordered (v4 §3.3).
  *
  * 'size' is the order the rules produce and the one people have learned to
  * read; 'reclaim' re-ranks within each group by the score. Not persisted: it
@@ -39811,7 +39811,7 @@ function wireSelectAll(host, allId, rowClass, onChange) {
 }
 wireSelectAll($('emptyResults'), 'emptyAll', 'empty-ck', updateCleanSummary);
 
-/* ── Smart Suggestions pane ── */
+/* ── Smart suggestions pane ── */
 /* Feature 13 — git repositories section + git gc. */
 async function renderGitRepos() {
   const host = $('gitRepos');
@@ -39859,13 +39859,13 @@ document.addEventListener('click', (e) => {
 /* ── Package-manager orphans (§C6) ──────────────────────────────────────────
    Grouped by ecosystem, and wired into the SAME selection the rest of the
    Clean Up modal uses — this is not a fourth delete surface. Orphans and
-   caches get checkboxes; active artifacts are context only (Smart Suggestions
+   caches get checkboxes; active artifacts are context only (Smart suggestions
    below already offers those, and this panel exists for the things nobody is
    going to miss).
 
    G05: the two halves sit apart. Orphans and caches — what a person can act
    on here — lead the sheet in #packageOrphans. A folder whose project is
-   still here (the server's `active`) is listed after Smart Suggestions, in a
+   still here (the server's `active`) is listed after Smart suggestions, in a
    fold of its own (#packageProjects), and is called what the server knows of
    it: its project is still here. "In use" is the open-file guard's word for
    a file a program has open, and over these rows it read as "do not delete"
@@ -39884,7 +39884,7 @@ function ecosystemLabel(id) { return ECOSYSTEM_LABEL[id] || id; }
 
 let packageOrphans = [];
 
-/** Render the ecosystem panel and the fold after Smart Suggestions. Returns
+/** Render the ecosystem panel and the fold after Smart suggestions. Returns
     true if it listed any package folder, above the suggestions or in the
     fold: either way "nothing in this scan matches" would be false beside it —
     a folder whose project is still here matches a rule too, and one a note
@@ -39906,7 +39906,7 @@ async function renderPackageOrphans() {
   try { data = await api('/api/packages/orphans?scanId=' + scanId); } catch { if (scanId === treeScanId()) host.innerHTML = ''; return false; }
   if (scanId !== treeScanId()) return false;
   if (data.available === false) {
-    // Same honesty rule as Smart Suggestions: a broken catalog is "unknown",
+    // Same honesty rule as Smart suggestions: a broken catalog is "unknown",
     // never "you have no leftovers".
     host.innerHTML = `<div class="muted" style="display:flex;align-items:flex-start;gap:8px;padding:10px 2px;">${icon('alert', 15)}
       <span>Package leftovers could not be checked — a cleanup rule pack failed to load.<br>
@@ -40168,7 +40168,7 @@ function fillFolder(command, names) {
 }
 
 /**
- * Paint the Smart Suggestions groups.
+ * Paint the Smart suggestions groups.
  *
  * Extracted from `loadSmartSuggestions` so the Reclaim ordering can repaint
  * without re-fetching: the groups are already in `smartGroups`, and asking
@@ -40287,7 +40287,7 @@ function renderSmartGroups(catalog) {
   updateCleanSummary();
 }
 
-/** Each load of Smart Suggestions takes the next number, and only the latest paints. */
+/** Each load of Smart suggestions takes the next number, and only the latest paints. */
 let loadSmartSeq = 0;
 async function loadSmartSuggestions() {
   const host = $('smartResults');
@@ -40322,7 +40322,7 @@ async function loadSmartSuggestions() {
     if (data.available === false) {
       smartGroups = [];
       host.innerHTML = `<div class="muted" style="display:flex;align-items:flex-start;gap:8px;padding:12px 2px;">${icon('alert', 15)}
-        <span>Smart Suggestions are unavailable because a cleanup rule pack could not be loaded.<br>
+        <span>Smart suggestions are unavailable because a cleanup rule pack could not be loaded.<br>
         <span class="smart-why-line">${escapeHtml(data.reason || 'No reason was given.')}</span></span></div>`;
       updateCleanSummary();
       return;
@@ -40771,7 +40771,7 @@ function activeCleanSelection() {
   // the pane on screen does not show (review F2.6 of QA third pass D03).
   if (cleanPane !== 'smart') return { paths: [], bytes: 0, noun: 'item', sizes: new Map() };
   // The Smart pane has three sources that can name the SAME path — an orphaned
-  // node_modules is both a package leftover (§C6) and a Smart Suggestion. Keyed
+  // node_modules is both a package leftover (§C6) and a Smart suggestion. Keyed
   // by path so selecting it in both places counts its bytes once.
   const chosen = new Map();
   document.querySelectorAll('#smartResults .smart-ck').forEach(ck => {

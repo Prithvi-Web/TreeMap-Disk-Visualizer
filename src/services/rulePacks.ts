@@ -7,7 +7,7 @@ import { winLocalAppData } from '../utils/osPaths';
 /**
  * rulePacks — the versioned, maintained known-offenders catalog (§C8).
  *
- * Smart Suggestions used to be three hand-written arrays in cleanupRules.ts.
+ * Smart suggestions used to be three hand-written arrays in cleanupRules.ts.
  * They now live in JSON packs beside this file, so a new offender is a data
  * edit rather than a code change. The catalog is loaded once, validated in
  * full, and either succeeds completely or fails with a reason — a partially
@@ -44,7 +44,7 @@ interface RuleBase {
   adviceCommand?: string;
   /**
    * Which package ecosystem this belongs to (§C6). Read only by the orphan
-   * scanner — Smart Suggestions ignores it entirely, so tagging a rule cannot
+   * scanner — Smart suggestions ignores it entirely, so tagging a rule cannot
    * change what the Clean Up list shows.
    */
   ecosystem?: string;
@@ -65,7 +65,7 @@ export interface ProjectDirRule extends RuleBase {
    * itself must hold one. For a rule whose folder name is also a person's word
    * — `env`, `coverage` — a manifest beside it is not enough: a folder of
    * settings named env sits beside requirements.txt as readily as a
-   * virtualenv does (BQL-b1 review F1.4). Read by Smart Suggestions and by the
+   * virtualenv does (BQL-b1 review F1.4). Read by Smart suggestions and by the
    * orphan scanner's "has project" check alike.
    */
   requiresChild?: string[];
@@ -79,7 +79,7 @@ export interface ProjectDirRule extends RuleBase {
    * GRADLE_USER_HOME at the project's own `.gradle`; only the user home holds
    * gradle.properties, init scripts, caches, wrapper and daemon, and no build
    * writes the first two again (BQL-b1 review F2.2). Read by Smart
-   * Suggestions, and by the orphan scanner for a folder beside its manifest
+   * suggestions, and by the orphan scanner for a folder beside its manifest
    * and for an orphan alike.
    */
   forbidsChild?: string[];
@@ -90,7 +90,7 @@ export interface ProjectDirRule extends RuleBase {
    * §C6: the manifest that OWNS this directory. Missing ⇒ the parent project is
    * gone and the directory is an orphan. Defaults to `requiresSibling`, which
    * is the same thing for every rule that has one; `node_modules` needs it
-   * stated separately because Smart Suggestions flags it with or without one.
+   * stated separately because Smart suggestions flags it with or without one.
    */
   ownerManifest?: string[];
   /** The owner manifest as the pack writes it, for prose ("Gemfile", not "gemfile"). */
@@ -159,7 +159,7 @@ export interface RuleCatalog {
   file: FileRule[];
   location: LocationRule[];
   staleFiles: StaleFilesRule[];
-  /** §C6 only. cleanupRules never reads this, so Smart Suggestions is unchanged. */
+  /** §C6 only. cleanupRules never reads this, so Smart suggestions is unchanged. */
   packageCache: PackageCacheRule[];
 }
 
