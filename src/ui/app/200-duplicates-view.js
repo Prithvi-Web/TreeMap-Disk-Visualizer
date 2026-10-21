@@ -70,8 +70,11 @@ async function loadDuplicates(force = false) {
   fxOrbShow('dup', $('dupBody').querySelector('.fx-orb-well'), 'solving');
   fxHuntBeamSync('dupBody', true);
 
+  // A newer request superseded this one, or another tree is on screen: the
+  // search is its tree's scan's, whatever resets the finder (review F3.7).
+  const superseded = () => state.dup.loadedFor !== key || treeScanId() !== scanId;
   const poll = async () => {
-    if (state.dup.loadedFor !== key) return; // a newer request superseded this one
+    if (superseded()) return;
     try {
       // `pending: 'return'` because this loop exists to PAINT the 202 body:
       // the wrapper's own poll can wait, but it cannot draw a progress bar.
@@ -80,7 +83,7 @@ async function loadDuplicates(force = false) {
       // A poll out when the rescan landed answers for the older scan:
       // finishScan reset the finder, and the new tree's own search paints
       // it — Auto-select and Compare are not offered over the older groups (review F2.3).
-      if (state.dup.loadedFor !== key) return;
+      if (superseded()) return;
       if (data.status === 'running') {
         const t = $('dupProgText'), f = $('dupProgFill');
         if (t) t.textContent = dupProgressText(data);
@@ -101,7 +104,7 @@ async function loadDuplicates(force = false) {
       for (const g of data.groups) seedNodes(g.files.map((f) => ({ ...f, size: g.size, type: 'file' })));
       renderDuplicates();
     } catch (e) {
-      if (state.dup.loadedFor !== key) return; // the older scan's failure, said over no tree of its own
+      if (superseded()) return; // the older scan's failure, said over no tree of its own
       fxOrbHide('dup');
       fxHuntBeamSync('dupBody', false); // the error rewrite below destroys the card
       state.dup.status = 'error';
@@ -446,13 +449,18 @@ async function loadNearDupes(force = false) {
     <span id="ndProgText" class="fx-shimmer-text">Finding image files…</span>
     <div class="track"><div class="fill" id="ndProgFill"></div></div></div>`;
 
+  // As the exact finder's — and only this check holds it: nothing resets
+  // state.near when the tree changes. Another folder opened from its saved
+  // index, or the rescan landing, put the older scan's similar images, or
+  // its failure, over the tree on screen (review F3.7).
+  const superseded = () => state.near.loadedFor !== key || treeScanId() !== scanId;
   const poll = async () => {
-    if (state.near.loadedFor !== key) return; // a newer request superseded this one
+    if (superseded()) return;
     try {
       // Same reason as the exact finder: the 202 body IS this loop's progress.
       const data = await api(`/api/near-duplicates?scanId=${scanId}&threshold=${$('ndThreshold').value}`,
         undefined, { pending: 'return' });
-      if (state.near.loadedFor !== key) return; // as the exact finder: the older scan's answer (review F2.3)
+      if (superseded()) return; // as the exact finder: the older scan's answer (review F2.3)
       if (data.status === 'running') {
         const t = $('ndProgText'), f = $('ndProgFill');
         if (t) t.textContent = data.toHash
@@ -475,7 +483,7 @@ async function loadNearDupes(force = false) {
       state.near.unreadableTypes = data.unreadableTypes;
       renderNearDupes();
     } catch (e) {
-      if (state.near.loadedFor !== key) return;
+      if (superseded()) return;
       state.near.status = 'error';
       $('ndSummary').textContent = '';
       $('ndBody').innerHTML = `<div class="card glass"><div class="muted">Image scan failed: ${escapeHtml(e.message)}</div></div>`;

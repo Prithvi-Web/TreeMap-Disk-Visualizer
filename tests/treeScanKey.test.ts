@@ -589,6 +589,59 @@ test('Duplicates: an answer either finder\'s search gets from the older scan onc
   }
 });
 
+test('Duplicates: a search belongs to the scan the tree on screen came from — once another tree is on screen without a new search (another folder opened from its saved index, or the rescan landing while its lists load), the older scan\'s groups, failure or progress are not installed and its poll asks no more, though nothing reset the finder (review F3.7)', async () => {
+  const OTHER = { path: '/b', name: 'b', size: 5 };
+  // finishScan's index paint resets the exact finder and never the similar-image one ("state.near outlives a
+  // scan"); its landing reaches the view only after the lists answer. Here neither finder is reset.
+  const changes = [
+    ['another folder opened from its saved index', STOPPED, { ...INDEX_RUNNING, root: OTHER }],
+    ['the rescan landing, before the view is re-entered', HELD, LANDED],
+  ] as const;
+  for (const finder of ['exact', 'near'] as const) {
+    for (const [how, from, to] of changes) {
+      for (const kind of ['groups', 'failure', 'progress', 'a poll due'] as const) {
+        const state: Record<string, unknown> = { root: TREE, dupMode: finder, dup: freshDup(), near: freshNear(), ...from };
+        const held: Array<() => void> = [];
+        const timers: Array<() => void> = [];
+        let painted = 0;
+        const progress = { status: 'running', hashed: 1, toHash: 4 };
+        let polls = 0;
+        const { fns, asks, $ } = dupPage(state, () => {
+          polls++;
+          if (kind === 'a poll due' && polls === 1) return progress; // answered at once: still hashing
+          return new Promise((resolve, reject) => {
+            held.push(() => (kind === 'failure' ? reject(new Error('Could not reach the server'))
+              : resolve(kind === 'progress' ? progress
+                : { status: 'complete', available: true, groups: [{ size: 1, files: [{ path: '/r/a' }, { path: '/r/b' }] }], clusters: [{ files: [{ path: '/r/x' }, { path: '/r/y' }] }] })));
+          });
+        }, { renderDuplicates: () => { painted++; }, renderNearDupes: () => { painted++; }, setTimeout: (fn: () => void) => { timers.push(fn); return 1; } });
+        const label = `${finder}, ${how}, ${kind}`;
+        const body = finder === 'exact' ? 'dupBody' : 'ndBody';
+        await fns[finder]();
+        await turns();
+        assert.deepEqual(asks.map((a) => a.scanId), ['scan-old'], `${label}: control: the search asked the older scan, the tree's`);
+        if (kind === 'a poll due') {
+          assert.equal(timers.length, 1, `${label}: control: still hashing, its next poll is due`);
+          Object.assign(state, to); // the tree changes before that poll
+          timers[0]();
+          await turns();
+          assert.equal(asks.length, 1, `${label}: the poll due asks the older scan nothing once another tree is on screen`);
+          continue;
+        }
+        Object.assign(state, to); // the tree changes while the poll is out
+        $(body).innerHTML = '<i>the pane now</i>';
+        held[0]();
+        await turns();
+        const pane = (finder === 'exact' ? state.dup : state.near) as { groups?: unknown[]; clusters?: unknown[] };
+        assert.equal(painted, 0, `${label}: the older scan's answer is not painted over the tree on screen`);
+        assert.equal((pane.groups ?? pane.clusters)!.length, 0, `${label}: nor kept — Auto-select and Compare are not offered over it`);
+        assert.equal($(body).innerHTML, '<i>the pane now</i>', `${label}: nor its failure said there`);
+        assert.equal(timers.length, 0, `${label}: and the search polls the older scan no more`);
+      }
+    }
+  }
+});
+
 test('Duplicates: the similar-image Auto-select and Trash buttons act on nothing over the saved index\'s tree — the groups are an earlier scan\'s — even pressed past the toolbar', () => {
   const clicks: Record<string, () => void> = {};
   const els = stubDom();
