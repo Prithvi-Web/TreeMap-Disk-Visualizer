@@ -190,10 +190,13 @@ OpenAPI 3 spec).
      minor with no move, because on a Mac it is usually a Keynote document;
      a `.pem` whose name suggests public certificates (`roots.pem`,
      `cacert.pem`, `ca-bundle.pem`) is minor too, and a `.pem` in a folder
-     named `certs` or `ca-certificates` is where it belongs, so not listed —
-     unless a folder above it syncs to the cloud or is easy to share
-     (Dropbox, Downloads, Desktop, Documents, …), where it is listed as
-     anywhere there;
+     named `certs` or `ca-certificates` is where it belongs, so not listed.
+     No folder gives a key that pass — not `certs`, nor `.ssh` or `.aws` —
+     inside a folder that syncs to the cloud (Dropbox, OneDrive, Google
+     Drive, iCloud Drive and the other folders macOS keeps under
+     `Library/Mobile Documents` and `Library/CloudStorage`, …) or is easy to
+     share (Downloads, Desktop, Documents, …): there it is listed as anywhere
+     else in that folder;
      files inside program bundles, frameworks, a program's data folders
      (`Library/Application Support`, `Library/Containers`, `AppData`), package
      folders (`node_modules`, `site-packages`) and the operating system's own

@@ -538,6 +538,54 @@ test('a folder named certs or ca-certificates gives a .pem no pass inside a fold
   assert.deepEqual(findingsFor([file('privkey.pem', path.join(HOME, 'Projects', 'certs'))]), [], 'control: a certs folder in no synced or exposed folder is where a .pem belongs');
 });
 
+test('a folder that syncs to the cloud is known where macOS keeps it too — iCloud Drive under Library/Mobile Documents, and the File Provider folders under Library/CloudStorage (Box, Google Drive, OneDrive, Dropbox) — so a certs folder there gives a private key no pass, and a medium finding there is serious (review F2.1)', () => {
+  // SYNC_FOLDERS knew "iCloud Drive", a name Finder shows but no path holds, and no Box Drive: a private key in
+  // ~/Library/Mobile Documents/com~apple~CloudDocs/certs was dropped from the panel, the failure F1.5 closed elsewhere.
+  for (const dir of [
+    path.join(HOME, 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'certs'),
+    path.join(HOME, 'Library', 'Mobile Documents', 'iCloud~md~obsidian', 'Documents', 'vault', 'certs'),
+    path.join(HOME, 'Library', 'CloudStorage', 'Box-Box', 'certs'),
+    path.join(HOME, 'Library', 'CloudStorage', 'GoogleDrive-me@example.com', 'My Drive', 'ssl', 'certs'),
+    path.join(HOME, 'iCloudDrive', 'certs'),
+  ]) {
+    const found = findingsFor([file('privkey.pem', dir), file('cacert.pem', dir)]);
+    assert.deepEqual(Object.fromEntries(found.map((f) => [f.name, f.severity])), { 'privkey.pem': 'high', 'cacert.pem': 'low' },
+      `${dir}: listed — the key serious, the certificates minor`);
+    for (const f of found) {
+      assert.equal(f.exposed, true, `${dir}/${f.name}: marked as in a synced folder`);
+      assert.match(f.reason, /syncs to the cloud/, `${dir}/${f.name}: and its reason says it syncs (${f.reason})`);
+    }
+  }
+  const env = findingsFor([file('.env', path.join(HOME, 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'app'))])[0];
+  assert.deepEqual([env?.severity, env?.exposed], ['high', true], 'a .env in iCloud Drive is serious, as in Dropbox: it leaves the machine');
+  // Only where the system keeps them: a folder merely named like one is no synced folder.
+  for (const dir of [path.join(HOME, 'Projects', 'CloudStorage', 'certs'), path.join(HOME, 'Mobile Documents', 'certs')]) {
+    assert.deepEqual(findingsFor([file('privkey.pem', dir)]), [], `control: ${dir} is not a synced folder, so its certs folder gives its pass`);
+  }
+});
+
+test('inside a folder that syncs to the cloud or is easy to share no folder gives a key a pass — not .ssh, .certs or .config/certs either: a private key in ~/Dropbox/.ssh leaves the computer as surely as one in ~/Dropbox/certs, and is listed (review F2.7)', () => {
+  for (const [dir, names, reason] of [
+    [path.join(HOME, 'Dropbox', '.ssh'), ['id_rsa', 'privkey.pem'], /syncs to the cloud/],
+    [path.join(HOME, 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'dotfiles', '.ssh'), ['id_ed25519'], /syncs to the cloud/],
+    [path.join(HOME, 'Dropbox', 'dotfiles', '.aws'), ['credentials'], /syncs to the cloud/],
+    [path.join(HOME, 'Downloads', '.certs'), ['privkey.pem'], /easy to share/],
+    [path.join(HOME, 'Desktop', '.config', 'certs'), ['privkey.pem'], /easy to share/],
+  ] as const) {
+    const found = findingsFor(names.map((n) => file(n, dir)));
+    assert.deepEqual(found.map((f) => f.name).sort(), [...names].sort(), `${dir}: every key in it is listed`);
+    for (const f of found) {
+      assert.deepEqual([f.severity, f.exposed], ['high', true], `${dir}/${f.name}: serious, and marked as in a synced or exposed folder`);
+      assert.match(f.reason, reason, `${dir}/${f.name}: and its reason says which (${f.reason})`);
+    }
+  }
+  // The same places in no synced or exposed folder are where a key belongs, as before.
+  for (const dir of [path.join(HOME, '.ssh'), path.join(HOME, '.certs'), path.join(HOME, '.config', 'certs'), path.join(HOME, 'code', 'site', '.ssh')]) {
+    assert.deepEqual(findingsFor([file('privkey.pem', dir)]), [], `control: ${dir} is where a key is kept on purpose`);
+  }
+  assert.deepEqual(findingsFor([file('credentials', path.join(HOME, '.aws'))]), [], 'control: ~/.aws/credentials is where it belongs');
+});
+
 test('the 500 cap keeps the most serious findings, and the counts describe every finding (D77)', () => {
   // QA's corpus: 951 ".key" documents walked before Misc/keys-in-wrong-place, so the cap
   // (applied in walk order) dropped the real keys, and the counts described the slice.
