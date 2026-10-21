@@ -18,13 +18,32 @@ const SETTLE_LIMIT_MS = 10_000;
 
 /** The folders this test file made through the fixture, removed when its tests are done. */
 const madeForThisFile: string[] = [];
+/** Those already removed: a hook of the file's own that runs later can write one again. */
+const removedForThisFile: string[] = [];
 
 // Registered once, as this module loads, before any test runs: so a folder
 // made inside a test is removed with the file's, on every Node version,
 // instead of by a hook whose owner depends on where it was called from.
 after(async () => {
   for (const dir of madeForThisFile.splice(0)) {
+    removedForThisFile.push(dir);
     for (const note of await cleanUpDataDir(dir)) console.warn(note);
+  }
+});
+
+// The file's own after() hooks run after the one above — node:test runs a
+// file's hooks in the order they were registered, and the import registered
+// this one first — and one that saves the settings back (updateSettings)
+// wrote the data folder again: emptyFolders, fastRescanEngine, scanRootLink
+// and engineReasonClauses each left one, holding settings.json, on every run
+// (BQR-1 item 18). As the file's process ends, after every hook, any folder
+// that came back goes. Synchronous, as an exit handler must be; what it could
+// not remove is said on stderr, written at once.
+process.once('exit', () => {
+  for (const dir of removedForThisFile) {
+    if (!fs.existsSync(dir)) continue;
+    const left = removeTempDir(dir);
+    if (left !== null) fs.writeSync(2, `${left}\n`);
   }
 });
 

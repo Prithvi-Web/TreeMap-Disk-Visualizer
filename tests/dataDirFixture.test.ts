@@ -101,6 +101,40 @@ test('a test file leaves no folder behind when it ends: its app data, and a fold
   }
 });
 
+test('a file\'s own after hook that writes its data folder again once the fixture has removed it - as updateSettings does - leaves no folder behind either: the hook runs after the fixture\'s, which the import registered first (BQR-1 item 18)', () => {
+  // emptyFolders, fastRescanEngine, scanRootLink and engineReasonClauses each left their data folder, holding
+  // only settings.json, on every run: their own after() saves the settings back, and runs after the fixture's.
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-fixture-child-'));
+  try {
+    const report = path.join(work, 'report.json');
+    const child = path.join(work, 'child.test.ts');
+    fs.writeFileSync(child, [
+      "import { after, test } from 'node:test';",
+      "import fs from 'node:fs';",
+      `import { isolatedDataDir } from ${JSON.stringify(path.join(__dirname, 'fixtures', 'dataDir'))};`,
+      "const dir = isolatedDataDir('treemap-fixture-late-hook-data-');",
+      "after(() => {",
+      "  const there = fs.existsSync(dir);",
+      "  fs.mkdirSync(dir, { recursive: true });",
+      "  fs.writeFileSync(dir + '/settings.json', '{}');",
+      "  fs.writeFileSync(process.env.REPORT_FILE as string, JSON.stringify({ dir, there }));",
+      "});",
+      "test('runs', () => { fs.writeFileSync(dir + '/snapshots.json', '{}'); });",
+    ].join('\n'));
+    const tsxCli = path.join(path.dirname(require.resolve('tsx/package.json')), 'dist', 'cli.mjs');
+    const r = spawnSync(process.execPath, [tsxCli, '--test', child], { encoding: 'utf8', timeout: 120_000, env: { ...nestedRunEnv(), REPORT_FILE: report } });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const { dir, there } = JSON.parse(fs.readFileSync(report, 'utf8')) as { dir: string; there: boolean };
+    assert.match(path.basename(dir), /^treemap-fixture-late-hook-data-/);
+    assert.equal(there, false, 'control: the fixture\'s cleanup ran first, and the file\'s own hook wrote the folder again');
+    assert.equal(fs.existsSync(dir), false, `${dir} outlived the file that made it`);
+  } finally {
+    // Whatever the child made goes too, so a run that fails here leaves nothing of its own behind.
+    try { fs.rmSync((JSON.parse(fs.readFileSync(path.join(work, 'report.json'), 'utf8')) as { dir: string }).dir, { recursive: true, force: true, maxRetries: 3 }); } catch { /* no report: nothing was made */ }
+    fs.rmSync(work, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
 test('fileTempDir makes a new, empty folder under the system temp folder and leaves TREEMAP_DATA_DIR alone', () => {
   const before = process.env.TREEMAP_DATA_DIR;
   const dir = fileTempDir('treemap-fixture-own-');
