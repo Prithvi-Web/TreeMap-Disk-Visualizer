@@ -3642,7 +3642,7 @@ test('tmSnap lays a coordinate on the nearest whole device pixel — at device p
  * The review's map (F3.1): a folder F that grew, laid to 99.99999999999999 % of the map's width and height, holding a file A
  * that grew and a file B that is new, and along its bottom two files too short for lines, C (a 2 MB file's light green) and
  * D (a 6 GB file's red) — B and D laid to 100 % across, C and D to 100 % down: the float noise a layout carries at its far
- * edge (buildTreemap rounds nothing). On a map 333 by 241 css px at 150 % F's right and bottom edges are 499.49999999999994
+ * edge (buildTreemap rounds nothing). On a map 333 by 241 css px at 150 % F's right and bottom edges are 499.4999999999999
  * and 361.49999999999994 device px, its files' 499.5 and 361.5 (and on one 334 by 242 css px, at 125 and 175 %, half a
  * device pixel too): a bare Math.round put B, C and D a device pixel past their folder, beside its band, which was toned
  * against the map's ground beyond it. On a page zoomed out the same: at 50 % on 333 by 241 css px F's edges are
