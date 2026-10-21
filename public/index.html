@@ -39266,14 +39266,17 @@ $('browseUseBtn').addEventListener('click', async () => {
     // an offload's held pick below, finding the button without focus, gave
     // none back (as K02 found of Scan). It is given back as the button is —
     // only from the page, as the held pick does, and only to a button that
-    // had it.
+    // had it: by this press's own listing, or by a newer one that overtook it
+    // and handed the button back — a folder clicked in the list, which in
+    // Safari focuses nothing (BQR-1 item 12d) — while the picker is open (a
+    // button a newer press holds takes no focus).
     const heldFocus = document.activeElement === btn;
     btn.disabled = true;
     const opened = await opening;
-    if (mine === browseSeq) {
-      btn.disabled = false;
-      const at = document.activeElement;
-      if (heldFocus && (!at || at === document.body)) btn.focus({ preventScroll: true });
+    if (mine === browseSeq) btn.disabled = false;
+    const at = document.activeElement;
+    if (heldFocus && $('browseModal').classList.contains('open') && (!at || at === document.body)) {
+      btn.focus({ preventScroll: true });
     }
     // Not opened, or overtaken while it opened, by a newer listing or by the
     // picker closing: nothing is acted on.

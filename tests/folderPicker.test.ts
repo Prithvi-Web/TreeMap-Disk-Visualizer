@@ -57,7 +57,7 @@ function gate() {
 type FakeEl = {
   id: string; value: string; textContent: string; innerHTML: string; disabled: boolean; checked: boolean; hidden: boolean;
   title: string; scrollLeft: number; scrollTop: number; readonly scrollWidth: number;
-  classList: { add(c: string): void; remove(c: string): void; toggle(c: string, on?: boolean): void };
+  classList: { add(c: string): void; remove(c: string): void; toggle(c: string, on?: boolean): void; contains(c: string): boolean };
   /** The classes the page set — read to tell whether a sheet is open. */
   cls: Set<string>;
   attrs: Record<string, string>;
@@ -80,6 +80,7 @@ function fakeEl(id: string): FakeEl {
       add(c) { el.cls.add(c); },
       remove(c) { el.cls.delete(c); },
       toggle(c, on) { if (on ?? !el.cls.has(c)) el.cls.add(c); else el.cls.delete(c); },
+      contains(c) { return el.cls.has(c); },
     },
     cls: new Set<string>(),
     attrs: {},
@@ -1729,6 +1730,44 @@ test('the picker\'s Use keeps focus while a typed path opens — held disabled, 
     g.open();
     await pending;
     assert.notEqual(document.activeElement, $('browseUseBtn'), 'focus is not pulled into the closed picker');
+  }
+});
+
+test('a keyboard press of Use on a typed path, overtaken by a folder clicked in the list — which in Safari focuses nothing — gives focus back to Use once its own answer comes, the picker still open; a newer press holding the button gets none from it (BQR-1 item 12d, BQF note)', async () => {
+  {
+    const g = gate();
+    const { rt, $, click, document } = boxesRuntime(slowGone(g));
+    await rt.openBrowse(null);
+    $('browseCurrent').value = SLOW_GONE;
+    $('browseUseBtn').focus(); // Tab to "Scan this folder", then Enter
+    const pending = click('browseUseBtn');
+    assert.equal(document.activeElement, document.body, 'control: focus falls from the held button');
+    await rt.browseTo('/home/u'); // a folder clicked in the list with the mouse: a newer listing, and no focus moves
+    assert.deepEqual([$('browseUseBtn').disabled, document.activeElement === document.body], [false, true],
+      'control: the newer listing handed the button back, and nothing holds focus');
+    g.open();
+    await pending;
+    assert.equal(rt.path(), '/home/u', 'control: the folder clicked is the one shown; the overtaken press acted on nothing');
+    assert.equal(document.activeElement, $('browseUseBtn'), 'focus is on Use again — the press held it — never left on <body>');
+  }
+  // Overtaken by a newer press that holds the button now: that press gives focus back itself, not this one.
+  {
+    const g = gate();
+    const h = gate();
+    const { rt, $, click, document } = boxesRuntime((p: string) => (p === SLOW ? h.opened.then(() => ({ path: SLOW, parent: '/Volumes/NAS', dirs: [] })) : slowGone(g)(p)));
+    await rt.openBrowse(null);
+    $('browseCurrent').value = SLOW_GONE;
+    $('browseUseBtn').focus();
+    const first = click('browseUseBtn');
+    await rt.browseTo('/home/u');
+    $('browseCurrent').value = SLOW;
+    const second = click('browseUseBtn'); // pressed with the mouse in Safari: focus stays on <body>
+    assert.equal($('browseUseBtn').disabled, true, 'control: the newer press holds the button');
+    g.open();
+    await first;
+    assert.equal(document.activeElement, document.body, 'the overtaken press does not put focus on a button a newer press holds');
+    h.open();
+    await second;
   }
 });
 
