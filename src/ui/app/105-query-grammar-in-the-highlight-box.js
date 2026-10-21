@@ -1257,7 +1257,8 @@ function exportTreemapSVG() {
       cushion(`tm-c${i}`, r.stops, r);
       parts.push(`<rect ${at(r.x, r.y, r.w, r.h)} fill="url(#tm-c${i})">${title}</rect>`);
       if (r.lit) {
-        parts.push(`<line x1="${(r.x + 1).toFixed(2)}" y1="${(r.y + 1.5).toFixed(2)}" x2="${(r.x + r.w - 1).toFixed(2)}" y2="${(r.y + 1.5).toFixed(2)}" stroke="rgba(255,255,255,${tmLitAlpha(r)})" stroke-width="1"/>`);
+        const lit = tmLitLine(r);
+        parts.push(`<line x1="${lit.x0.toFixed(2)}" y1="${lit.y.toFixed(2)}" x2="${lit.x1.toFixed(2)}" y2="${lit.y.toFixed(2)}" stroke="rgba(255,255,255,${tmLitAlpha(r)})" stroke-width="${+lit.width.toFixed(4)}"/>`);
       }
       if (r.tex) texture(`tm-t${i}`, r);
     } else if (r.n.freed) {

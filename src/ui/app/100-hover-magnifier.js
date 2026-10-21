@@ -153,11 +153,12 @@ function lensPaint(ctx, cssW, cssH) {
         ctx.fillStyle = l.rgb;
         ctx.fillRect(l.x, l.y, l.w, l.h);
       }
-      ctx.lineWidth = 1;
       if (s.lit) {
+        const lit = tmLitLine(s);
+        ctx.lineWidth = lit.width;
         ctx.strokeStyle = `rgba(255,255,255,${tmLitAlpha(s)})`;
         ctx.beginPath();
-        ctx.moveTo(b.x0 + 1, b.y0 + 1.5); ctx.lineTo(b.x1 - 1, b.y0 + 1.5);
+        ctx.moveTo(lit.x0, lit.y); ctx.lineTo(lit.x1, lit.y);
         ctx.stroke();
       }
     } else {

@@ -141,7 +141,7 @@ const GREEN = [48, 209, 88];
 /** What the real drawTreemap needs from the page. */
 const MAP_NAMES = ['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'tmDiffWashes', 'tmWashesOver', 'tmSeenThrough', 'TM_DIFF_WASH', 'mix', 'containerListable',
   // The outline rules the passes read (the owner's outline decision, 20 Oct 2026, and its refinement; J51).
-  'tmLeafEdged', 'tmReaches', 'TM_DENSE_PX', 'tmSnap', 'tmTone', 'TM_EDGE_MIN', 'TM_LIT', 'tmKidsOf', 'tmParentPath', 'tmFramesDeepestFirst',
+  'tmLeafEdged', 'tmReaches', 'TM_DENSE_PX', 'tmSnap', 'tmPxScale', 'tmLinePx', 'tmLitLine', 'tmTone', 'TM_EDGE_MIN', 'TM_LIT', 'tmKidsOf', 'tmParentPath', 'tmFramesDeepestFirst',
   'tmFrameBands', 'tmTouches', 'TM_SIDES', 'TM_FRAME_MIN',
   'tmToneFor', 'tmLumCache', 'tmLitAlpha', 'tmLeafKind', 'tmBandWidth', 'TM_TEXTURE_PX', 'TM_TEXTURE_PITCH', 'tmTextureContrast', 'tmTextureStops',
   'tmFolderPathOf', 'TM_OPPOSITE', 'tmSideAt', 'tmNeighbourhood', 'tmShown', 'tmBaseOf', 'tmFillShown', 'tmUnderBand', 'tmShareOk', 'tmClip',
@@ -155,7 +155,7 @@ const MAP_NAMES = ['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT
 
 /** What the real lensPaint needs from the page — the map's outline rules among them (review F1.2). */
 const LENS_NAMES = ['lensPaint', 'lensActive', 'lensShapes', 'LENS_SCALE', 'LENS_RADIUS', 'Canvas2D', 'mix', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'tmSeenThrough', 'TM_DIFF_WASH',
-  'tmTone', 'tmToneFor', 'tmLumCache', 'TM_EDGE_MIN', 'TM_LIT', 'tmLitAlpha', 'tmFramesDeepestFirst', 'lensTexture'];
+  'tmTone', 'tmToneFor', 'tmLumCache', 'TM_EDGE_MIN', 'TM_LIT', 'tmLitAlpha', 'tmLitLine', 'tmLinePx', 'tmPxScale', 'tmFramesDeepestFirst', 'lensTexture'];
 
 /** The fillStyle the real drawTreemap gives `tile`'s rectangle, and the pixel rect it drew. */
 function mapFill(tile: typeof TILE = TILE, colour: number[] = GREEN) {
