@@ -858,13 +858,29 @@ test('the highlight box\'s query typed over the saved index\'s tree is said agai
   Object.assign(state, LANDED);
   fns.mount();
   assert.deepEqual(reasked, ['size>1gb'], 'once a scan lands, the query typed over the saved index is asked of it');
-  // A query an earlier scan of this folder answered, its tree now behind the saved index's paint: its answer stands,
-  // for a Stop puts that scan's tree back, and "it runs once the scan finishes" would then be untrue of it.
-  Object.assign(state, INDEX_RUNNING);
-  Object.assign(state.treemap as object, { queryMode: 'grammar', queryScanId: 'scan-old' });
-  const said = messages.length;
-  fns.mount();
-  assert.equal(messages.length, said, 'a query an earlier scan answered keeps its answer over the saved index\'s paint');
+  // A query an earlier scan of this folder answered, when a rescan paints the folder from its saved index (TOPIC.scan,
+  // null): its matches are of the older scan, not the tree on screen. They stayed painted for the whole scan — "6
+  // matches", the footer's count, Stage 3 files — with no query sent (eighth browser pass K03). They go, and the box says
+  // the search runs once the scan finishes; the scan that lands asks again, and so does a Stop that puts the older tree back.
+  for (const after of ['lands', 'is stopped, the older tree back'] as const) {
+    Object.assign(state, INDEX_RUNNING, { scanningPath: '/r' });
+    const t = state.treemap as Record<string, unknown>;
+    Object.assign(t, { query: 'size>1gb', queryRoot: '/r', queryMode: 'grammar', queryScanId: 'scan-old', matchedPaths: new Set(['/r/big']), matchTotal: 6 });
+    const before: number = reasked.length;
+    fns.changed();
+    assert.deepEqual([t.queryScanId, t.matchedPaths], [null, null], `${after}: the older scan's matches go when the saved index's tree is painted`);
+    assert.equal(messages.at(-1), 'The search runs on a finished scan — it runs once the scan finishes.', `${after}: and the box says the search waits for the scan`);
+    assert.deepEqual(reasked.slice(before), [], `${after}: nothing is asked of the running scan`);
+    Object.assign(state, after === 'lands' ? LANDED : STOPPED);
+    fns.mount();
+    assert.deepEqual(reasked.slice(before), ['size>1gb'], `${after}: the query is asked once, of the scan behind the tree now`);
+  }
+  // A scan of the same folder over its older scan's tree, with no index paint: those matches are the tree's still.
+  Object.assign(state, HELD);
+  const t = state.treemap as Record<string, unknown>;
+  Object.assign(t, { queryMode: 'grammar', queryScanId: 'scan-old', matchedPaths: new Set(['/r/big']) });
+  fns.changed();
+  assert.equal(t.queryScanId, 'scan-old', 'control: over the older scan\'s own tree its answer stands');
 });
 
 test('the highlight box\'s query asked of the older scan during a rescan is not installed over the new tree when it answers after the rescan landed — the new scan is asked — and a scan of the same folder landing stops it on the server', async () => {

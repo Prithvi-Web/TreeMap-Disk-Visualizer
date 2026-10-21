@@ -498,6 +498,18 @@ function tmQueryScanChanged() {
     // the tree before, so it stops, here and on the server — the text being
     // typed, debounced, still runs (review F1.6).
     if (tmQueryAbort) { tmQuerySeq++; tmQueryAbort.abort(); tmQueryAbort = null; }
+    // Painted from its saved index, which no scan stands behind: an older
+    // scan's matches are not this tree's. They stayed painted for the whole
+    // rescan — highlights, "N matches", the Stage offer — with no query sent
+    // (eighth browser pass K03). They go, the box says the search waits for
+    // the scan, and the scan that lands asks again (tmRejudgeQuery), as a Stop
+    // that puts the older tree back does.
+    if (!treeScanId() && state.treemap.queryMode === 'grammar' && state.treemap.queryScanId !== null) {
+      state.treemap.queryScanId = null;
+      state.treemap.matchedPaths = null;
+      tmClearHits();
+      tmSetQueryMessage(tmNoScanQueryWords(), false);
+    }
     return;
   }
   tmCancelQueries();
