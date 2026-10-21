@@ -190,7 +190,11 @@ test('on macOS the root lists none of the second names the system gives every fi
   for (const n of there) assert.equal((await listing(`/${n}`)).status, 400, `control: /${n}, asked for, is refused`);
 });
 
-test('which entries of a folder are refused by a second name is judged on macOS\'s rules wherever the tests run — the root\'s .vol, .nofollow and .resolve, in any case, and nothing of the same names deeper down (review F1.2)', () => {
+test('which entries of a folder are refused by a second name is judged on macOS\'s rules on every POSIX runner, Linux included — the root\'s .vol, .nofollow and .resolve, in any case, and nothing of the same names deeper down (review F1.2)', {
+  // Standing in macOS's platform does not stand in its path module: on Windows path.join('/', '.vol') is
+  // "\\.vol", a spelling no macOS rule reads, so there the test would judge a path no Mac can hold (review F2.2).
+  skip: process.platform === 'win32' && 'a macOS path cannot be spelled with the Windows path module',
+}, () => {
   const real = Object.getOwnPropertyDescriptor(process, 'platform')!;
   let atRoot: Set<string>; let deeper: Set<string>;
   Object.defineProperty(process, 'platform', { ...real, value: 'darwin' });
