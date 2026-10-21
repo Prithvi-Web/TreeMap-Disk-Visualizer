@@ -156,12 +156,16 @@ test('treeScanId names the scan behind the tree on screen through a rescan, a la
   state.system = { platform: 'darwin', homeDir: '/Users/x' };
   state.root = { path: '/Users/x/Documents', name: 'Documents', size: 1 };
   const comingFor = (typed: string) => { state.scanningPath = typed; return treeScanComing(); };
-  for (const typed of ['~/Documents', '/Users/x/Documents/', '/Users/x//Documents', '/Users/x/Pictures/../Documents', '/Users/x/./Documents', '/users/X/documents']) {
-    assert.equal(comingFor(typed), true, `"${typed}" is a scan of the folder on screen (macOS folds case)`);
+  for (const typed of ['~/Documents', '/Users/x/Documents/', '/Users/x//Documents', '/Users/x/Pictures/../Documents', '/Users/x/./Documents', '/users/X/documents',
+    '  /Users/x/Documents', '\t~/Documents']) {
+    assert.equal(comingFor(typed), true, `"${typed}" is a scan of the folder on screen (macOS folds case; leading whitespace off, review F3.6)`);
   }
-  for (const typed of ['/Users/x/Desktop', '~/Desktop', 'Documents', '/Users/x/Documents/sub', '/Users/x/Documents ']) {
+  for (const typed of ['/Users/x/Desktop', '~/Desktop', 'Documents', '/Users/x/Documents/sub', '/Users/x/Documents ', '  /Users/x/Desktop']) {
     assert.equal(comingFor(typed), false, `"${typed}" is not`);
   }
+  state.root = { path: '/Users/x', name: 'x', size: 1 };
+  assert.equal(comingFor('~'), true, '"~" alone is the home folder: a scan of it over the home folder\'s saved index is a scan of the folder on screen (review F3.6)');
+  state.root = { path: '/Users/x/Documents', name: 'Documents', size: 1 };
   state.system = { platform: 'linux', homeDir: '/home/x' };
   state.root = { path: '/home/x/Documents', name: 'Documents', size: 1 };
   assert.equal(comingFor('~/Documents/'), true, 'Linux: the home folder and a trailing separator');
@@ -787,8 +791,10 @@ test('the highlight box\'s query typed over the saved index\'s tree is said agai
   fns.mount();
   assert.equal(messages.at(-1), 'The search runs on a finished scan — it runs once the scan finishes.', 'once a scan of the folder starts, the box says the search waits for it — not "scan this folder"');
   Object.assign(state, INDEX_RUNNING); // the index painted, its scan answered
+  const before = messages.length; // the step before said the same words: what this mount says is counted from here (review F3.3)
   fns.mount();
-  assert.equal(messages.at(-1), 'The search runs on a finished scan — it runs once the scan finishes.');
+  assert.deepEqual(messages.slice(before), ['The search runs on a finished scan — it runs once the scan finishes.'],
+    'the map entered once the scan\'s request has answered — its id on hand, no scan behind the tree — says again what the search waits for');
   assert.deepEqual(asks, [], 'and nothing is asked of the running scan');
   // Stopped: stopScan re-enters the view.
   Object.assign(state, INDEX_STOPPED);
@@ -1043,6 +1049,36 @@ test('a folder budget the person saved stays known over the saved index\'s tree 
   await out;
   await turns();
   assert.equal(slow.fns.budgetFor('/elsewhere'), null, 'a saved list asked for over the saved index\'s tree, answering once a scan landed, is not kept');
+  // Each half of that guard on its own (review F3.4): the settings reads answered out of order, by hand.
+  const pending: Array<(v: unknown) => void> = [];
+  const held = page<{ load: () => Promise<void>; budgetFor: (p: string) => { maxBytes: number } | null }>(
+    ['function budgetFor(', 'async function loadBudgets(', 'async function currentSavedBudgets(', 'function renderBudgetWidget(', 'function paintBudgetWidget(', 'function fxBudgetGaugesDrop('], {
+      state, $, document: { activeElement: null, body: null }, loadBudgetsSeq: 0, budgetGauges: [], seedNodes: noop, isSun: () => false, presentView: noop,
+      formatBytes: (n: number) => `${n} B`, escapeHtml: esc, icon: () => '', budgetProjectionLine: () => '', FxCharts: { gauge: () => ({ destroy: noop }), ramp: noop },
+    }, '{ load: loadBudgets, budgetFor }',
+    (url) => (url === '/api/settings' ? new Promise((resolve) => { pending.push(resolve); }) : url.includes('budget-gauges') ? { gauges: [] } : { budgets: [measured] }));
+  // Two loads over the saved index's tree (beginScanChrome's re-entry, then the index paint), a budget
+  // removed between them: the newer read answers first, the older last.
+  Object.assign(state, INDEX_RUNNING);
+  const older = held.fns.load();
+  await turns();
+  const newer = held.fns.load();
+  await turns();
+  pending[1]({ budgets: [{ path: '/r/mail', maxBytes: 5_000_000_000 }] }); // /elsewhere removed since
+  await newer;
+  pending[0]({ budgets: SAVED });
+  await older;
+  await turns();
+  assert.deepEqual([held.fns.budgetFor('/r/mail')?.maxBytes, held.fns.budgetFor('/elsewhere')], [5_000_000_000, null],
+    'the newest load\'s answer is kept, and the older one answering last is not: the menu offers no "Remove budget" for a budget removed since');
+  // A Stop puts the older tree back with its scan while the settings read is out, and no load follows here.
+  const lone = held.fns.load();
+  await turns();
+  Object.assign(state, STOPPED);
+  pending[2]({ budgets: SAVED });
+  await lone;
+  await turns();
+  assert.equal(held.fns.budgetFor('/elsewhere'), null, 'a saved list answering once a scan stands behind the tree is not kept over it, though no newer load was made');
 });
 
 test('the Dashboard\'s cards keep no answer the older scan gives once the rescan has landed — folder budgets, cost to keep and drive health asked during a rescan and answered after it are not put over the new tree, nor their failures said there', async () => {
