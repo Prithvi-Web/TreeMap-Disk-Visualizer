@@ -3116,3 +3116,26 @@ test('K01: a relaunch with history puts focus on the start screen\'s "Scan <last
   await turns();
   assert.equal(own.dom.activeElement, own.dom.get('helpLink'), 'focus the person placed before the restore answered stays where it is');
 });
+
+test('K01: a relaunch whose last scan was a cloud account\'s — one the server still holds, or the newest in the history — puts focus on "Choose a folder…", never <body>: no folder is offered from a cloud account, and the tour waits for someone who has scanned before (review F2.10)', async () => {
+  const CLOUD_ROUTES = [
+    ['the newest in the history', () => server({ roots: [{ rootPath: 'cloud://gdrive/', count: 1, latestAt: 1, latestSize: 1 }] })],
+    ['a scan the server holds', () => server({ scans: [{ scanId: 'c1', rootPath: 'cloud://gdrive', totalSize: 1, finishedAt: 1 }] })],
+  ] as const;
+  for (const [label, route] of CLOUD_ROUTES) {
+    const h = page({ route: route() });
+    await boot(h);
+    assert.equal(h.state.scannedBefore, true, `${label}: control: this person has scanned before, so the tour places no focus`);
+    assert.ok(!h.$('startChoices').children.some((b) => b.id === 'startAgainBtn'), `${label}: control: no folder is offered from a cloud account`);
+    assert.equal(h.dom.activeElement, h.$('emptyBrowseBtn'), `${label}: focus is on "Choose a folder…" (on #${h.dom.activeElement.id || 'body'})`);
+    assert.equal(h.state.startFocusDue, false, `${label}: and nothing more is waited for`);
+    // Focus the person put elsewhere before the restore answered is theirs.
+    const own = page({ route: route() });
+    own.switchView('dashboard');
+    own.$('startLast').parent = own.$('emptyState');
+    own.dom.get('helpLink').focus();
+    await own.restoreLastSession();
+    await turns();
+    assert.equal(own.dom.activeElement, own.dom.get('helpLink'), `${label}: focus the person placed before the restore answered stays where it is`);
+  }
+});

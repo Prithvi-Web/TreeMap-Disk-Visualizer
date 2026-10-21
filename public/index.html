@@ -43256,6 +43256,13 @@ function requestedPath() {
 }
 
 async function restoreLastSession() {
+  // A relaunch whose last scan was a cloud account's offers no folder from it: "Choose a folder…" takes focus,
+  // as it does for a folder the rules refuse — never left on <body> (K01, review F2.10) — unless the person moved first.
+  const focusStartWithNoFolder = () => {
+    if (state.root || state.scanning) return;
+    state.startFocusDue = true;
+    startFocusAtBoot();
+  };
   try {
     const wanted = requestedPath();
     if (wanted) {
@@ -43269,7 +43276,7 @@ async function restoreLastSession() {
     let last;
     if (held && held.rootPath) {
       state.scannedBefore = true;
-      if (held.rootPath.startsWith('cloud://')) return;  // sign-in may be gone
+      if (held.rootPath.startsWith('cloud://')) { focusStartWithNoFolder(); return; } // sign-in may be gone
       if (state.root || state.scanning) return;          // the user beat us to it
       const reopen = held.scanId ? await reopenScan(held) : { outcome: 'gone' };
       if (reopen.outcome === 'reopened' || reopen.outcome === 'superseded') return;
@@ -43286,7 +43293,7 @@ async function restoreLastSession() {
       const newest = history && Array.isArray(history.roots) ? history.roots[0] : null;
       if (!newest || !newest.rootPath) return;          // true first run
       state.scannedBefore = true;
-      if (newest.rootPath.startsWith('cloud://')) return; // a cloud account is not offered from here
+      if (newest.rootPath.startsWith('cloud://')) { focusStartWithNoFolder(); return; } // a cloud account is not offered from here
       last = { path: newest.rootPath, size: newest.latestSize, at: newest.latestAt, outcome: 'history', reason: '' };
     }
     // Offered only where the server can open it — the picker's own listing
