@@ -41,7 +41,7 @@ import { AutopilotPolicy, AutopilotRun, CleanupSuggestionGroup } from '../src/mo
 import { AppError } from '../src/middleware/errorHandler';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { buildOpenApiDocument } from '../src/api/openapi';
-import { loadRuleCatalog } from '../src/services/rulePacks';
+import { loadRuleCatalog, resetRuleCatalog, ruleCatalogStatus } from '../src/services/rulePacks';
 import http from 'node:http';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
@@ -299,6 +299,39 @@ test('GET /api/autopilot/policies serves every id a suggestion policy can name o
   const doc = buildOpenApiDocument() as { paths: Record<string, Record<string, { responses: Record<string, { content: { 'application/json': { schema: { properties: Record<string, unknown>; required: string[] } } } }> }>> };
   const schema = doc.paths['/api/autopilot/policies'].get.responses['200'].content['application/json'].schema;
   assert.ok(schema.properties.knownGroupIds && schema.required.includes('knownGroupIds'), 'the spec declares it');
+});
+
+test('where the rule packs cannot be read nothing is known of the kinds a policy may name: knownGroupIds is null, a policy naming a kind no rule had is saved, and its run never says the kind is one TreeMap does not have (BQL-b1 ccec3b12, review F2.6)', async () => {
+  // Read as "no kinds" instead, every suggestion policy would be refused POLICY_MATCH_UNKNOWN on save, and
+  // every run would say it names only kinds TreeMap does not have, on a machine whose packs fail to load.
+  const packs = fileTempDir('treemap-autopilot-bad-packs-');
+  fs.writeFileSync(path.join(packs, 'common.json'), '{ "schemaVersion": 1, "rules": [ not json');
+  const dir = fileTempDir('treemap-autopilot-bad-packs-folder-');
+  fs.writeFileSync(path.join(dir, 'a.bin'), Buffer.alloc(64, 1));
+  const was = process.env.TREEMAP_RULEPACK_DIR;
+  const trashed: string[] = [];
+  setTrashStepForTests(async (p) => { trashed.push(p); });
+  process.env.TREEMAP_RULEPACK_DIR = packs;
+  resetRuleCatalog();
+  try {
+    assert.equal(ruleCatalogStatus().ok, false, 'control: the packs cannot be read');
+    const got = await call('GET', '/api/autopilot/policies', {}) as unknown as { status: number; body: { knownGroupIds: unknown } };
+    assert.deepEqual([got.status, got.body.knownGroupIds], [200, null], 'GET /api/autopilot/policies serves knownGroupIds null — unknown, not an empty list');
+    const policy = { id: 'unread', name: 'Unread packs', path: dir, match: { kind: 'suggestion' as const, groupIds: ['cache-general'] }, dryRunFirst: false, enabled: true };
+    const saved = await call('PUT', '/api/autopilot/policies', { policies: [policy] });
+    assert.equal(saved.status, 200, `a policy naming a kind no rule had is saved, nothing being known to judge it by: ${saved.body.code} ${saved.body.error}`);
+    await approvePolicyForTests('unread');
+    const run = await runPolicy((await listPolicies()).find((p) => p.id === 'unread')!);
+    assert.ok(!/TreeMap does not have/.test(run.blockedReason ?? ''), `its run says nothing of kinds TreeMap does not have: ${run.blockedReason}`);
+    assert.deepEqual([run.items, trashed], [[], []], 'control: it selects nothing and reaches no Trash step');
+  } finally {
+    if (was === undefined) delete process.env.TREEMAP_RULEPACK_DIR;
+    else process.env.TREEMAP_RULEPACK_DIR = was;
+    resetRuleCatalog();
+    setTrashStepForTests(null);
+    await savePolicies([]);
+  }
+  assert.equal(ruleCatalogStatus().ok, true, 'control: the packs read again once the folder is restored');
 });
 
 test('the editor\'s Preview judges a saved policy as Save does', async () => {
