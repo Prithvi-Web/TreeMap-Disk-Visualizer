@@ -164,8 +164,9 @@ pub struct AnonRows<T: Zeroable> {
     len: usize,
     /// The rows of room: every one of them mapped, and committed unless `lazy`.
     capacity: usize,
-    /// The bytes mapped: what is released. At least `capacity` rows of them, and more
-    /// once [`AnonRows::settle`] has narrowed the room.
+    /// The bytes mapped: what is released. At least `capacity` rows of them: on POSIX, once
+    /// [`AnonRows::settle`] has narrowed the room, the whole pages that hold it; on Windows,
+    /// which frees a region only whole, the region it was reserved with.
     bytes: usize,
     /// Whether the room's pages are committed only as rows are handed out (Windows, for
     /// a column made by [`AnonRows::reserve`]); always false elsewhere.
@@ -281,9 +282,9 @@ impl<T: Zeroable> AnonRows<T> {
     }
 
     /// Makes the first `len` rows the column's rows and the first `room` its room: rows
-    /// past `room` are never lent again, though they stay mapped until the column is
-    /// dropped. Where the room is committed lazily, its pages are committed through `room`
-    /// first, so every row lent afterwards reads as a `T`: written, or zero.
+    /// past `room` are never lent again, and the whole pages past it go back to the OS
+    /// (`release_past_room`). Where the room is committed lazily, its pages are committed
+    /// through `room` first, so every row lent afterwards reads as a `T`: written, or zero.
     pub(crate) fn settle(&mut self, len: usize, room: usize) -> Result<(), ColumnError> {
         if room > self.capacity {
             return Err(ColumnError::RowsPastRoom {
@@ -303,7 +304,47 @@ impl<T: Zeroable> AnonRows<T> {
         self.capacity = room;
         // Every row of the room is committed now.
         self.lazy = false;
+        self.release_past_room();
         Ok(())
+    }
+
+    /// Gives the OS back the whole pages of the mapping past the room, where it takes part
+    /// of a mapping back (POSIX). They were never resident, but a mapping is address space
+    /// the OS charges for: on Linux a `fork` weighs each private writable region of the
+    /// process whole against memory and swap, and the reservations of stores kept one after
+    /// another sit side by side as one region, so a process that kept the default room
+    /// (1.1 GB a store) of 25 scans was refused `spawn ENOMEM` (BQR-1 A1). Windows keeps
+    /// the region: it frees a region only whole, and the pages past the room were never
+    /// committed, so they charge nothing. A release the OS refuses leaves the mapping as it
+    /// was, released whole when the column is dropped.
+    fn release_past_room(&mut self) {
+        let Some(page) = sys::page_bytes() else {
+            return;
+        };
+        // `capacity` rows fit the mapping, so their bytes do not overflow.
+        let room = self.capacity * size_of::<T>();
+        let Some(keep) = room.div_ceil(page).checked_mul(page) else {
+            return;
+        };
+        if keep >= self.bytes {
+            return;
+        }
+        if keep == 0 {
+            // SAFETY: `start` and `bytes` are the live mapping this value owns, and with no
+            // room no row of it is lent again; nothing borrows it (`settle` takes `&mut`).
+            unsafe { unmap(self.start.cast::<u8>(), self.bytes) };
+            self.start = NonNull::dangling();
+            self.bytes = 0;
+            return;
+        }
+        // SAFETY: `start..start + bytes` is the live mapping this value owns; `keep` is a
+        // whole number of pages from its page-aligned start, below `bytes`; and the rows at
+        // and past `keep` lie past the room, which nothing lends again and nothing borrows
+        // now (`settle` takes `&mut`).
+        if unsafe { sys::release_tail(self.start.cast::<u8>(), keep, self.bytes) } {
+            tally_part(self.bytes - keep);
+            self.bytes = keep;
+        }
     }
 
     fn as_slice(&self) -> &[T] {
@@ -400,11 +441,12 @@ unsafe impl<T: Zeroable + Send + Sync> Sync for AnonRows<T> {}
 pub struct AnonTally {
     /// Mappings made.
     pub maps: u64,
-    /// Mappings released.
+    /// Mappings released: each once, when the last of its bytes go back.
     pub unmaps: u64,
     /// Bytes asked for by the mappings made (the OS maps whole pages).
     pub bytes_mapped: u64,
-    /// Bytes asked for by the mappings released.
+    /// Bytes given back: those of the mappings released, and the pages past a room that a
+    /// settle gave back before its mapping was released (`AnonRows::settle`).
     pub bytes_unmapped: u64,
 }
 
@@ -439,6 +481,17 @@ fn tally(bytes: usize, released: bool) {
             now.maps = now.maps.saturating_add(1);
             now.bytes_mapped = now.bytes_mapped.saturating_add(bytes);
         }
+        cell.set(now);
+    });
+}
+
+/// Adds `bytes` given back from a mapping that stays (the pages past a room) to this
+/// thread's tally: bytes released, and no mapping.
+fn tally_part(bytes: usize) {
+    let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+    let _ = TALLY.try_with(|cell| {
+        let mut now = cell.get();
+        now.bytes_unmapped = now.bytes_unmapped.saturating_add(bytes);
         cell.set(now);
     });
 }
@@ -657,6 +710,68 @@ mod tests {
             4_000,
             "the whole reservation is released, not the settled room"
         );
+        Ok(())
+    }
+
+    /// A settle gives back the whole pages past its room at once (POSIX), counted as bytes
+    /// given back and no mapping; the drop releases the rest, and the mapping is counted
+    /// released once, every byte of it given back. A room of no rows gives back the whole
+    /// mapping at the settle, and the drop releases nothing more (BQR-1 A1).
+    #[cfg(unix)]
+    #[test]
+    fn a_settle_gives_back_the_pages_past_its_room_and_the_drop_the_rest() -> TestResult {
+        let page = sys::page_bytes().ok_or(ColumnError::TooLarge {
+            rows: 0,
+            row_bytes: 0,
+        })?;
+        let rows_a_page = page / size_of::<u32>();
+        let before = anon_tally();
+        let mut rows = AnonRows::<u32>::reserve(rows_a_page * 8)?;
+        rows.settle(10, rows_a_page + 1)?;
+        let settled = anon_tally();
+        let bytes = u64::try_from(page * 8).unwrap_or(u64::MAX);
+        let kept = u64::try_from(page * 2).unwrap_or(u64::MAX);
+        assert_eq!(
+            (settled.maps - before.maps, settled.unmaps - before.unmaps),
+            (1, 0),
+            "one mapping, still held"
+        );
+        assert_eq!(
+            settled.bytes_unmapped - before.bytes_unmapped,
+            bytes - kept,
+            "the six whole pages past a room of one page and one row are given back"
+        );
+        assert_eq!(
+            rows.bytes,
+            page * 2,
+            "the two pages holding the room are kept"
+        );
+        assert!(
+            rows.with_headroom().iter().all(|&r| r == 0),
+            "the room still reads"
+        );
+        drop(rows);
+        let dropped = anon_tally();
+        assert_eq!(dropped.unmaps - before.unmaps, 1, "released once");
+        assert_eq!(
+            dropped.bytes_unmapped - before.bytes_unmapped,
+            bytes,
+            "every byte mapped is given back"
+        );
+
+        let mut none = AnonRows::<u32>::reserve(rows_a_page * 4)?;
+        none.settle(0, 0)?;
+        let emptied = anon_tally();
+        assert_eq!(
+            (
+                emptied.unmaps - dropped.unmaps,
+                emptied.bytes_unmapped - dropped.bytes_unmapped
+            ),
+            (1, u64::try_from(page * 4).unwrap_or(u64::MAX)),
+            "a room of no rows gives the whole mapping back at the settle"
+        );
+        drop(none);
+        assert_eq!(anon_tally(), emptied, "and the drop releases nothing more");
         Ok(())
     }
 

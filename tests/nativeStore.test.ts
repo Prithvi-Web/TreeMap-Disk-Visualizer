@@ -3,6 +3,7 @@ import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import type * as NativeCore from '../native/index';
 
 import { isolatedDataDir } from './fixtures/dataDir';
@@ -131,6 +132,36 @@ test('a memory-mode scan hands its sealed store over at capacity length, as adop
   assert.equal(s.sparseTermIds.length, s.sparseTermBytes.length);
   assert.equal(s.extOverflowIds.length, s.extOverflowTexts.length);
   assert.equal(s.extDict[0], '', 'the dictionary\'s first extension is none');
+});
+
+/** The address space this process has mapped, in bytes: VmSize on Linux, ps's vsz on macOS. */
+function addressSpaceBytes(): number {
+  if (process.platform === 'linux') {
+    const kb = /^VmSize:\s+(\d+) kB$/m.exec(fs.readFileSync('/proc/self/status', 'utf8'))?.[1];
+    if (kb === undefined) assert.fail('/proc/self/status names no VmSize');
+    return Number(kb) * 1024;
+  }
+  return Number(execFileSync('ps', ['-o', 'vsz=', '-p', String(process.pid)]).toString().trim()) * 1024;
+}
+
+test('a store taken and kept maps its room, not the whole reservation its walk wrote into: on Linux a fork is refused ENOMEM once kept reservations side by side pass memory and swap, as CI\'s Autopilot spawn was after 25 scans (BQR-1 A1)', { skip: process.platform === 'win32' && 'Windows reserves a room without charging it, and starts a child without a fork' }, async (t) => {
+  // The app's default room (src/services/scan/nativeMemory.ts: 1.25 x 5,000,000 rows, 128 name bytes a row).
+  const room = { capRows: 6_250_000, nameBytes: 800_000_000 };
+  const KEPT = 4;
+  const core = loadCore(t);
+  if (!core) return;
+  const kept: NativeCore.NativeStore[] = [];
+  const before = addressSpaceBytes();
+  for (let i = 0; i < KEPT; i++) {
+    const handle = core.scanStart(rootFor(core, `kept-${String(i)}`), options({ store: storeOptions(room) }));
+    await done(core, handle);
+    kept.push(await core.storeTake(handle));
+  }
+  const grew = addressSpaceBytes() - before;
+  for (const s of kept) {
+    assert.deepEqual([s.n, s.capacity, s.parent.length, s.parent[0]], [ENTRIES + 1, ENTRIES + 1 + HEADROOM, ENTRIES + 1 + HEADROOM, -1], 'control: each kept store has its rows and headroom, the root first');
+  }
+  assert.ok(grew < room.nameBytes, `${String(KEPT)} stores taken and kept grew the address space by ${String(grew)} bytes, more than one room's name pool (${String(room.nameBytes)}): each still maps the reservation its walk wrote into`);
 });
 
 test('scanTake frees a memory-mode scan and throws: its rows are in its store', async (t) => {

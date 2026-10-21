@@ -1587,10 +1587,19 @@ fn a_sealed_store_is_released_when_a_later_sink_fails_to_finish() -> TestResult 
     }
     assert_eq!(watch.aborts.load(Ordering::SeqCst), 1, "aborted once");
     // Every column the sink made went into the sealed store (the walk reads access
-    // times, so none was dropped at the seal), and the abort releases them all.
+    // times, so none was dropped at the seal), the seal gave back the pages past each
+    // column's room and released none whole, and the abort releases the rest of them all.
     let released = (*lock(&watch.released)).ok_or("no abort measured")?;
+    let sealed = (*lock(&watch.sealed)).ok_or("no seal measured")?;
+    assert!(
+        sealed.unmaps == 0 && sealed.bytes_unmapped > 0,
+        "the seal gives back the pages past the rooms, and keeps every mapping: {sealed:?}"
+    );
     assert_eq!(
-        (released.unmaps, released.bytes_unmapped),
+        (
+            released.unmaps,
+            released.bytes_unmapped + sealed.bytes_unmapped
+        ),
         (made.maps, made.bytes_mapped),
         "the sealed store's mappings are released by the abort"
     );
@@ -1632,11 +1641,13 @@ fn since(before: AnonTally, after: AnonTally) -> AnonTally {
 }
 
 /// A sink that hands every call to a `MemorySink` and measures, on the thread that
-/// aborts it, what the abort released.
+/// aborts it, what the abort released, and on the thread that finishes it what the seal
+/// gave back: the pages past each column's room (BQR-1 A1).
 struct AbortWatch {
     inner: Arc<MemorySink>,
     aborts: AtomicU64,
     released: Mutex<Option<AnonTally>>,
+    sealed: Mutex<Option<AnonTally>>,
 }
 
 impl AbortWatch {
@@ -1645,6 +1656,7 @@ impl AbortWatch {
             inner,
             aborts: AtomicU64::new(0),
             released: Mutex::new(None),
+            sealed: Mutex::new(None),
         }
     }
 }
@@ -1674,7 +1686,10 @@ impl ListingSink for AbortWatch {
     }
 
     fn finish(&self, ending: &Finishing<'_>) -> Result<(), String> {
-        self.inner.finish(ending)
+        let before = anon_tally();
+        let finished = self.inner.finish(ending);
+        *lock(&self.sealed) = Some(since(before, anon_tally()));
+        finished
     }
 }
 

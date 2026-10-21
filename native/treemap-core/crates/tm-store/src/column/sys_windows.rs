@@ -61,6 +61,22 @@ pub(super) unsafe fn commit(start: *mut u8, bytes: usize) -> Result<(), i32> {
     }
 }
 
+/// `None`: Windows frees a region only whole (`MEM_RELEASE` takes its base and the size
+/// 0), so nothing past a column's room is given back before the column is dropped. Its
+/// pages past the room were reserved and never committed, so they charge nothing.
+pub(super) fn page_bytes() -> Option<usize> {
+    None
+}
+
+/// Never called: [`page_bytes`] gives no page, so no column asks to keep part of a region.
+///
+/// # Safety
+///
+/// As on POSIX; it touches nothing.
+pub(super) unsafe fn release_tail(_start: NonNull<u8>, _keep: usize, _bytes: usize) -> bool {
+    false
+}
+
 /// Releases the region; whether the OS did.
 ///
 /// # Safety

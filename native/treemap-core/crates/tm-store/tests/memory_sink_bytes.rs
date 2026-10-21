@@ -1,8 +1,9 @@
 //! What the memory sink's store holds in memory (Phase 4, T7a; design §S.3), counted, not
-//! timed: every column's pages asked of the kernel (`mincore`, POSIX), against the room
-//! each was reserved with. The sink reserves `cap_rows` rows (and a name pool) up front;
-//! only the pages its blocks write may be resident (decision P4-11), so a store of `n`
-//! rows costs its rows, not its reservation.
+//! timed: every column's pages asked of the kernel (`mincore` and `msync`, POSIX), against
+//! the room each was reserved with. The sink reserves `cap_rows` rows (and a name pool) up
+//! front; only the pages its blocks write may be resident (decision P4-11), and once the
+//! store is sealed the pages past each column's room are no longer mapped at all, so a
+//! store of `n` rows costs its rows, not its reservation — in memory or in address space.
 //!
 //! The test prints the bytes per row of the sink's columns beside those of `build`'s
 //! columns for the same walk (their allocations' capacities). `TM_T7A_ROWS` sets the
@@ -27,15 +28,6 @@ impl Pacer for OpenPacer {
     fn worker_limit(&self) -> u32 {
         MAX_WORKERS
     }
-}
-
-/// The kernel's transparent huge page setting, for a failure's message: the sink's mappings
-/// refuse huge pages (Linux), which is what keeps a page resident only where a block wrote.
-fn huge_pages() -> String {
-    std::fs::read_to_string("/sys/kernel/mm/transparent_hugepage/enabled").map_or_else(
-        |_| "this kernel has no transparent huge pages".to_owned(),
-        |setting| format!("transparent huge pages: {}", setting.trim()),
-    )
 }
 
 fn page_size() -> Result<usize, String> {
@@ -65,14 +57,26 @@ fn resident_pages(start: *const u8, bytes: usize) -> Result<Vec<bool>, String> {
     Ok(vec.iter().map(|&state| state & 1 != 0).collect())
 }
 
-/// One column's residency: bytes resident, and bytes resident past the room it was
-/// settled with.
-struct Residency {
-    resident: usize,
-    past_room: usize,
+/// Whether the page at `address` is mapped: `msync` answers `ENOMEM` for a range holding a
+/// page that is not, and 0 for a mapped anonymous one.
+fn page_mapped(address: *const u8, page: usize) -> bool {
+    // SAFETY: `msync` only asks the kernel about the range; it reads and writes no memory,
+    // and a page that is no longer mapped is answered with an error, not touched.
+    unsafe { libc::msync(address.cast_mut().cast(), page, libc::MS_ASYNC) == 0 }
 }
 
-/// `column`'s residency, over the whole mapping it was reserved with (`reserved` rows).
+/// One column's residency: bytes resident in the room it was settled with, and bytes of
+/// the mapping it was reserved with still mapped past that room.
+struct Residency {
+    resident: usize,
+    mapped_past_room: usize,
+}
+
+/// `column`'s residency: its room's pages asked of `mincore`, and every page of the rest of
+/// the mapping it was reserved with (`reserved` rows) asked of `msync`. On Linux a `fork`
+/// weighs each private writable region of the process whole against memory and swap, and
+/// reservations made one after another sit side by side as one region: a process that kept
+/// 25 stores' reservations was refused `spawn ENOMEM` on CI's Linux legs (BQR-1 A1).
 fn residency<T: Zeroable>(column: &Column<T>, reserved: usize) -> Result<Residency, String> {
     let Column::Anon(_) = column else {
         return Err("the sink's column is not an anonymous mapping".to_owned());
@@ -81,13 +85,16 @@ fn residency<T: Zeroable>(column: &Column<T>, reserved: usize) -> Result<Residen
     let start = column.as_slice().as_ptr().cast::<u8>();
     let bytes = reserved * size_of::<T>();
     let room = column.capacity() * size_of::<T>();
-    let pages = resident_pages(start, bytes)?;
     let allowed = room.div_ceil(page);
+    let pages = resident_pages(start, allowed * page)?;
     let resident = pages.iter().filter(|&&r| r).count() * page;
-    let past_room = pages.iter().skip(allowed).filter(|&&r| r).count() * page;
+    let mapped_past_room = (allowed..bytes.div_ceil(page))
+        .filter(|&p| page_mapped(start.wrapping_add(p * page), page))
+        .count()
+        * page;
     Ok(Residency {
         resident,
-        past_room,
+        mapped_past_room,
     })
 }
 
@@ -165,7 +172,7 @@ fn the_sinks_store_is_resident_only_where_its_rows_are() -> TestResult {
                 Some(column) => residency(column, reserved)?,
                 None => Residency {
                     resident: 0,
-                    past_room: 0,
+                    mapped_past_room: 0,
                 },
             },
             bfs.atime.as_ref().map_or(0, allocated),
@@ -216,10 +223,8 @@ fn the_sinks_store_is_resident_only_where_its_rows_are() -> TestResult {
             *built as f64 / rows
         );
         assert_eq!(
-            seen.past_room,
-            0,
-            "{name}: pages past the rows and headroom are resident ({})",
-            huge_pages()
+            seen.mapped_past_room, 0,
+            "{name}: bytes of the reservation past the rows and headroom are still mapped"
         );
         sink_total += seen.resident;
         build_total += built;

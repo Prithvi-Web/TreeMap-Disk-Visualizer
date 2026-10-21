@@ -62,6 +62,29 @@ pub(super) unsafe fn commit(_start: *mut u8, _bytes: usize) -> Result<(), i32> {
     Ok(())
 }
 
+/// The bytes in a page, or `None` where the OS does not say (and nothing is given back
+/// before a column is dropped).
+pub(super) fn page_bytes() -> Option<usize> {
+    // SAFETY: `sysconf` reads a configuration value and touches no memory.
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    usize::try_from(page).ok().filter(|&page| page > 0)
+}
+
+/// Releases the end of a mapping, from `keep` bytes on, and keeps the start; whether the
+/// OS did.
+///
+/// # Safety
+///
+/// `start` and `bytes` are a mapping `map` made that has not been released, `keep` is a
+/// whole number of pages less than `bytes`, and nothing reads or writes the mapping past
+/// `keep` any more.
+pub(super) unsafe fn release_tail(start: NonNull<u8>, keep: usize, bytes: usize) -> bool {
+    // SAFETY: `keep < bytes`, so the address lies inside the mapping, on a page boundary
+    // (the mapping starts on one and `keep` is whole pages); the caller hands over the
+    // pages from it to the mapping's end, which nothing uses.
+    unsafe { libc::munmap(start.as_ptr().add(keep).cast(), bytes - keep) == 0 }
+}
+
 /// Releases the mapping; whether the OS did.
 ///
 /// # Safety

@@ -308,7 +308,14 @@ hold for it. Phase 4's S2 and S5 measure it.
   freed blocks resident for more than 23 s. So a scan's peak is its largest
   stage, not the sum of its stages. **Built 25 September 2026 (T5):**
   `tm_store::Column::Anon` and `PackedScanStore.release()`; no producer uses
-  them until T7 and T17.
+  them until T7 and T17. The memory sink reserves each column whole for the
+  walk, and the seal gives back the whole pages past each column's room on
+  POSIX (`AnonRows::settle`; Windows frees a region only whole, and never
+  committed those pages): a kept store maps its room, not its reservation.
+  Before 21 Oct 2026 every store a scan kept still mapped its whole default
+  reservation (1.09 GB), and on Linux a `fork` weighs each private writable
+  region whole against memory and swap, so a process that kept 25 scans was
+  refused `spawn ENOMEM` (CI's Linux legs; BQR-1 A1).
 * **A row costs 46 B plus its name** (`parent` 4, `size`, `mtime` and `atime`
   8 each, `flags` and `ext` 2 each, `container` and `cloudProv` 1 each,
   `nameOff`, `childStart` and `childCnt` 4 each): 64 B at a mean name of
