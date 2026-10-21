@@ -141,6 +141,46 @@ async function loadTreemap(rootPath, animate = false) {
       // and therefore the only thing the eye can follow across the change.
       if (state.treemap.mode === 'circles' && wasAt) altBeginZoom(shared, wasAt);
     } else {
+      // A map answer onto the screen: its folder, its nodes, the floor it was
+      // asked with (TM_MIN_SIZE, or 1 for a folder of small files) and the scan
+      // it came from (null: laid out here from a tree with no scan behind it).
+      const land = (data, floor, scanId) => {
+        state.treemap.rootPath = data.root.path;
+        state.treemap.rootName = data.root.name;
+        state.treemap.rootSize = data.root.size;
+        state.treemap.nodes = data.nodes;
+        // Which scan and folder these rectangles are, and which array: Disk City
+        // reuses them only while this very array is the one on the map (C03 —
+        // loadCity says why). The folder's size and the floor ride with them:
+        // they are what the city's line and size say of a city built from them.
+        // A null scan is a map laid out here from the saved index's tree (J05),
+        // which the footer says (updateTmStatus).
+        state.treemap.nodesFor = { scanId, path: data.root.path, nodes: data.nodes, size: data.root.size, minSize: floor };
+        state.treemap.minSize = floor; // what tmNodeCapNote may say this map leaves out
+        state.treemap.hover = null;
+        renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
+        $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
+        maybeInjectTrash();
+        exitHistoryState();
+        refreshTimebar();
+        drawView(); // the scores follow the drawn set — see the branch above
+      };
+      // The older folder's map, back at once (ninth browser pass, item 19): a
+      // Stop that puts back the tree an index paint stood over (putBackHeldTree,
+      // J06) has the view ask that tree's scan for the map of the folder it was
+      // in, and the stopped folder's drawing stood under that folder's crumbs
+      // for the 70–130 ms the answer took. That map is the last one a scan
+      // answered here (`scanMap`), so it is drawn again in this same turn, and
+      // the scan's own answer is drawn over it when it lands. Only while the map
+      // on screen is not of that scan: within one scan a load draws its answer
+      // alone — a refresh, a depth, an archive opened are the scan's to say.
+      const memo = state.treemap.scanMap;
+      if (scanAtRequest && memo && memo.scanId === scanAtRequest && memo.maxDepth === state.treemap.maxDepth
+        && (memo.ask === rootPath || memo.data.root.path === rootPath)
+        && !(state.treemap.nodesFor && state.treemap.nodesFor.scanId === scanAtRequest)
+        && !state.treemap.history.scrubbing) {
+        land(memo.data, memo.floor, scanAtRequest);
+      }
       let floor = TM_MIN_SIZE; // the floor the map on screen will have been asked with
       // No scan behind the tree on screen: its map is laid out here, from it (J05).
       const held = scanAtRequest ? null : await tmHeldTreemap(rootPath);
@@ -158,25 +198,9 @@ async function loadTreemap(rootPath, animate = false) {
         if (seq !== tmLoadSeq) return;
       }
       if (state.treemap.history.scrubbing) return; // same rule as above: a scrub in flight owns the map
-      state.treemap.rootPath = data.root.path;
-      state.treemap.rootName = data.root.name;
-      state.treemap.rootSize = data.root.size;
-      state.treemap.nodes = data.nodes;
-      // Which scan and folder these rectangles are, and which array: Disk City
-      // reuses them only while this very array is the one on the map (C03 —
-      // loadCity says why). The folder's size and the floor ride with them:
-      // they are what the city's line and size say of a city built from them.
-      // A null scan is a map laid out here from the saved index's tree (J05),
-      // which the footer says (updateTmStatus).
-      state.treemap.nodesFor = { scanId: scanAtRequest, path: data.root.path, nodes: data.nodes, size: data.root.size, minSize: floor };
-      state.treemap.minSize = floor; // what tmNodeCapNote may say this map leaves out
-      state.treemap.hover = null;
-      renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
-      $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
-      maybeInjectTrash();
-      exitHistoryState();
-      refreshTimebar();
-      drawView(); // the scores follow the drawn set — see the branch above
+      // The last map a scan answered, for the Stop above.
+      if (scanAtRequest) state.treemap.scanMap = { scanId: scanAtRequest, ask: rootPath, maxDepth: state.treemap.maxDepth, data, floor };
+      land(data, floor, scanAtRequest);
     }
   } catch (e) {
     // Through reportError: the scan's results expiring is said as its sentence, never as "Treemap failed" (K05).

@@ -133,6 +133,91 @@ test('D28: with Size or Age colouring a load asks for no scores at all', async (
   }
 });
 
+/* ══════════════ J06 — a Stop puts the older folder's map back at once ══════════════ */
+
+/**
+ * The real `loadTreemap` and `drawView` over a server whose map answers wait until the test lets each one land:
+ * `answer()` lands the oldest still out. `draws` holds each map drawn — the folder it names, the scan its nodes came
+ * from (null: laid out here from a tree with no scan behind it) and how many rectangles.
+ */
+function stopHarness() {
+  const MAIL = '/Users/x/Mail', CORPUS = '/Users/x/corpus';
+  const file = (p: string, size: number) => ({ name: p.slice(p.lastIndexOf('/') + 1), path: p, size, type: 'file', extension: 'emlx' });
+  const mailTree = { name: 'Mail', path: MAIL, size: 300, type: 'dir', children: [file(`${MAIL}/a.emlx`, 200), file(`${MAIL}/b.emlx`, 100)] };
+  const corpusTree = { name: 'corpus', path: CORPUS, size: 9000, type: 'dir', children: [file(`${CORPUS}/v.mov`, 9000)] };
+  const mailMap = { root: { name: 'Mail', path: MAIL, size: 300 }, nodes: [
+    { name: 'a.emlx', path: `${MAIL}/a.emlx`, size: 200, type: 'file', depth: 1, expanded: false, x: 0, y: 0, w: 66.7, h: 100 },
+    { name: 'b.emlx', path: `${MAIL}/b.emlx`, size: 100, type: 'file', depth: 1, expanded: false, x: 66.7, y: 0, w: 33.3, h: 100 },
+  ] };
+  const el = () => ({ classList: { add() {}, remove() {} }, disabled: false, innerHTML: '' });
+  const els: Record<string, ReturnType<typeof el>> = {};
+  const state: Record<string, any> = {
+    scanning: false, scanId: 'scan-mail', settledScanId: 'scan-mail', root: mailTree, pathIndex: new Map(),
+    treemap: { mode: 'treemap', colorMode: 'size', rootPath: MAIL, maxDepth: 4, nodes: [], nodesFor: null, hover: null, kbSel: null, history: { scrubbing: false, active: false } },
+  };
+  const out: Array<{ url: string; land: () => void }> = [];
+  const draws: Array<{ rootPath: string; scanId: unknown; nodes: number }> = [];
+  const deps = {
+    state, $: (id: string) => (els[id] ||= el()), REDUCED: true,
+    isSun: () => false, isCells: () => false, exitCartPreview() {}, renderCrumbs() {}, exitHistoryState() {}, refreshTimebar() {},
+    tmSetEmpty() {}, maybeInjectTrash() {}, altBeginZoom() {}, altCircleFor: () => null, requestAnimationFrame: (f: () => void) => f(),
+    toast: (m: string) => { throw new Error('loadTreemap reported a failure: ' + m); },
+    reportError: (e: Error) => { throw e; },
+    // The saved index's tree is whole here: nothing was withheld for the index to answer for.
+    ensureSubtree: async (p: string) => (state.root && state.root.path === p ? state.root : null),
+    api: (url: string) => new Promise((resolve) => {
+      assert.match(url, /^\/api\/scan\/scan-mail\/treemap\?/, 'a map is asked of the scan behind the tree on screen');
+      out.push({ url, land: () => resolve(JSON.parse(JSON.stringify(mailMap))) });
+    }),
+    drawTreemap: () => draws.push({ rootPath: state.treemap.rootPath, scanId: state.treemap.nodesFor ? state.treemap.nodesFor.scanId : undefined, nodes: state.treemap.nodes.length }),
+    drawSunburst() {}, drawCells() {}, fetchScoresForTreemap() {},
+  };
+  const loadTreemap = load<(p: string, animate?: boolean) => Promise<void>>(
+    ['treeScanId', 'loadTreemap', 'drawView', 'TM_MIN_SIZE', 'TM_SERVER_NODE_CAP', 'tmHeldTreemap', 'tmLayoutTree', 'tmSquarify', 'tmWorstRatio'],
+    deps, 'loadTreemap', 'let tmLoadSeq = 0;');
+  const answer = async () => { out.shift()!.land(); for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+  return { MAIL, CORPUS, mailTree, corpusTree, state, out, draws, loadTreemap, answer };
+}
+
+test('J06: a Stop that puts the older folder back paints its map at once, in the same turn as the load — never the stopped folder\'s drawing under it until the older scan\'s map answers — and still asks the scan for it', async () => {
+  // Ninth browser pass, item 19: 70–130 ms after a Stop the map still showed the stopped folder's drawing (corpus, from
+  // its saved index) before the older folder (Mail) repainted, because its map is asked of its scan again and drawn
+  // only when that answers. The older folder's map was on screen a moment before; it is drawn again at once.
+  const h = stopHarness();
+  // Mail's scan is on screen: its map is asked of its scan and drawn when that answers.
+  const first = h.loadTreemap(h.MAIL);
+  assert.equal(h.out.length, 1, 'control: Mail\'s map is asked of its scan');
+  assert.equal(h.draws.length, 0, 'control: and nothing is drawn before it answers');
+  await h.answer();
+  await first;
+  assert.deepEqual(h.draws.at(-1), { rootPath: h.MAIL, scanId: 'scan-mail', nodes: 2 }, 'control: Mail\'s map is drawn from its scan');
+  // A rescan of corpus paints corpus's saved index over it, with no scan behind it yet (J05).
+  Object.assign(h.state, { scanning: true, scanId: null, settledScanId: null, root: h.corpusTree });
+  h.state.treemap.rootPath = h.CORPUS;
+  await h.loadTreemap(h.CORPUS);
+  assert.deepEqual(h.draws.at(-1), { rootPath: h.CORPUS, scanId: null, nodes: 1 }, 'control: corpus is drawn from its saved index');
+  assert.equal(h.out.length, 0, 'control: and nothing is asked of a scan for it');
+  // Stop: the older tree is back with its scan (putBackHeldTree), and the view asks for Mail's map again.
+  Object.assign(h.state, { scanning: false, scanId: 'scan-mail', settledScanId: 'scan-mail', root: h.mailTree });
+  h.state.treemap.rootPath = h.MAIL;
+  const drawn = h.draws.length;
+  const again = h.loadTreemap(h.MAIL);
+  assert.deepEqual(h.draws.slice(drawn), [{ rootPath: h.MAIL, scanId: 'scan-mail', nodes: 2 }],
+    'Mail\'s map is drawn in the same turn as the load that asks for it — corpus\'s drawing is not left on screen under Mail while its scan is asked');
+  assert.equal(h.out.length, 1, 'and its scan is still asked for Mail\'s map');
+  await h.answer();
+  await again;
+  assert.deepEqual(h.draws.at(-1), { rootPath: h.MAIL, scanId: 'scan-mail', nodes: 2 }, 'whose answer is drawn when it lands');
+  // Within one scan nothing is drawn ahead of its answer: a refresh, a depth change, an archive opened — what changed
+  // there is the scan's to say.
+  const before = h.draws.length;
+  const refresh = h.loadTreemap(h.MAIL);
+  assert.equal(h.draws.length, before, 'a load within the scan on screen draws only when its answer lands');
+  await h.answer();
+  await refresh;
+  assert.equal(h.draws.length, before + 1, 'control: and draws then');
+});
+
 /** The coverage sentence for `drawn` cells of which the first `scored` are scored and the next `pending` are in flight. */
 function coverage(drawn: number, scored: number, pending: number, unscorable = 0): string {
   const cells = Array.from({ length: drawn }, (_, i) => ({ n: { path: `/r/f${i}` } }));
