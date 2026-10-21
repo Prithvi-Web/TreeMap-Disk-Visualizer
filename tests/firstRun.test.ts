@@ -722,6 +722,32 @@ test('a scan started from a button its own chrome then hides moves focus on — 
   assert.equal(pick({ html: scanning, active: false }), null, 'the tour is over: nothing');
 });
 
+test('a repaint that took the focused control away and put focus on its replacement itself — a budget\'s Edit button drawn again — keeps it there: withFocusKept moves on only focus nothing on screen holds (BQR-1 item 12c, BQJ-1b note)', () => {
+  // renderBudgetWidget replaces the budget rows and gives focus back to the same budget's new Edit button; finishScan
+  // runs it inside withFocusKept (switchView), which read the old button, gone, and moved focus to the view's landing.
+  const kept = pageFn('function withFocusKept(');
+  const landing = `${pageFn('function startLanding(')} ${pageFn('function focusLanding(')}`;
+  const run = (o: { refocus: boolean }) => {
+    const old = tel(1); const replacement = tel(1); const body = tel(0); const control = tel(); const tab = tel();
+    let active: TEl = old;
+    replacement.focus = () => { replacement.focused++; active = replacement; };
+    control.focus = () => { control.focused++; active = control; };
+    const doc = { body, get activeElement() { return active; }, querySelector: (sel: string) => (sel === '.tabbar button[aria-selected="true"]' ? tab : null) };
+    new Function('document', '$', 'tourCardControl', 'activeViewControl', `'use strict'; ${landing} ${kept} withFocusKept(arguments[4]);`)(
+      doc, () => null, () => null, () => control,
+      () => {
+        // The rows are drawn again: the old button leaves the page, and the browser puts focus on <body>.
+        old.rects = 0; active = body;
+        if (o.refocus) replacement.focus();
+      });
+    return { replacement: replacement.focused, control: control.focused, tab: tab.focused, at: active === replacement ? 'replacement' : active === control ? 'control' : 'other' };
+  };
+  assert.deepEqual(run({ refocus: true }), { replacement: 1, control: 0, tab: 0, at: 'replacement' },
+    'the repaint put focus on the new Edit button: it stays there');
+  assert.deepEqual(run({ refocus: false }), { replacement: 0, control: 1, tab: 0, at: 'control' },
+    'control: a repaint that put focus nowhere still moves it on, to the view\'s first control');
+});
+
 /* ══════════════ Review F2.6 — a scan that ends never leaves focus on <body> ══════════════ */
 
 /**

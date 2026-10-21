@@ -8428,12 +8428,17 @@ function focusStartScreen() {
  * button (review F1.11); a scan that fails or is stopped puts the welcome
  * back over the Dashboard's path box and Stop, and one that paints or lands
  * hides the welcome or repaints the view under focus (review F2.6).
- * Focus on a control still on screen, or on nothing, is left where it is.
+ * Focus on a control still on screen, or on nothing, is left where it is;
+ * and so is focus the change itself put on another control on screen, as
+ * renderBudgetWidget gives it to the same budget's new Edit button (BQR-1
+ * item 12c).
  */
 function withFocusKept(change) {
   const had = document.activeElement;
   change();
   if (!had || had === document.body || had.getClientRects().length > 0) return;
+  const now = document.activeElement;
+  if (now && now !== had && now !== document.body && now.getClientRects().length > 0) return;
   const to = focusLanding();
   if (to) to.focus({ preventScroll: true });
 }
