@@ -3018,7 +3018,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     destructive: false,
     responses: { '200': jsonResponse('Configured policies', obj({
       policies: arr(ref('AutopilotPolicy')),
-      knownGroupIds: nullable(arr(str(), 'Every id a suggestion policy\'s groupIds can name on this computer: the rule ids its packs ship, advice-only ones included (a new or changed policy naming one of those is refused, POLICY_MATCH_ADVISORY). A saved policy naming an id not in this list matches nothing of it, and its runs say so; a new or changed one is refused, POLICY_MATCH_UNKNOWN. Null when the rule packs cannot be read.')),
+      knownGroupIds: nullable(arr(str(), 'Every id the rule packs on this computer ship, advice-only ones included, which a new or changed policy still may not name (POLICY_MATCH_ADVISORY). A saved policy naming an id not in this list matches nothing of it, and its runs say so; a new or changed one is refused, POLICY_MATCH_UNKNOWN. Null when the rule packs cannot be read.')),
     }, ['policies', 'knownGroupIds'])) },
   },
   {

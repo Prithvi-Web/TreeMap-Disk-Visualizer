@@ -226,9 +226,9 @@ function catalogRules(): Rule[] | null {
 }
 
 /**
- * Every id a suggestion policy's `groupIds` can name on this computer: the rule ids its packs ship,
- * advice-only ones included (a save refuses those, POLICY_MATCH_ADVISORY, and a run leaves them alone,
- * saying so). Null when the packs cannot be read, when nothing is known. Served beside the policies
+ * Every id this computer's packs ship: the rule ids, advice-only ones included, which a suggestion
+ * policy's `groupIds` still may not name (a save refuses those, POLICY_MATCH_ADVISORY, and a run leaves
+ * them alone, saying so; review F3.3). Null when the packs cannot be read, when nothing is known. Served beside the policies
  * (`GET /api/autopilot/policies`), so the page can say which named kinds no rule has (BQL-b1 review
  * F3.1, F3.5).
  */

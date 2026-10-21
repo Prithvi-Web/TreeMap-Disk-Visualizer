@@ -144,8 +144,9 @@ OpenAPI 3 spec).
      suggestion policy may not name one (`400 POLICY_MATCH_ADVISORY`), and a
      run never selects its items, listing them in `skipped`. Nor may it name
      an id no rule on this computer has (`400 POLICY_MATCH_UNKNOWN`, naming
-     the ids it may); `GET /api/autopilot/policies` lists them as
-     `knownGroupIds`. A policy an earlier build saved with such an id is kept
+     the ids it may); `GET /api/autopilot/policies` lists every id the packs
+     ship as `knownGroupIds`, advice-only ones too, which a policy still may
+     not name (`POLICY_MATCH_ADVISORY`). A policy an earlier build saved with such an id is kept
      while unchanged and matches nothing of it, and each run's
      `blockedReason` says so, as a preview's (`POST /api/autopilot/simulate`)
      `wouldBlockReason` does. If a pack is

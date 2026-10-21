@@ -826,3 +826,19 @@ test('PLATFORM_NOTES\' macOS SMART row says what the app says when smartctl is m
   assert.doesNotMatch(row, /install instructions/, 'the row no longer promises instructions');
   assert.match(row, /Not installed → names smartmontools \(smartmontools\.org\), with no install command \|$/);
 });
+
+test('AGENTS.md and the OpenAPI document say knownGroupIds is every id the packs ship, advice-only ones too, which a policy still may not name - never that it lists the ids a policy may name (review F3.3)', () => {
+  // ccec3b12's sentence read "... (`400 POLICY_MATCH_UNKNOWN`, naming the ids it may); `GET /api/autopilot/policies` lists them as
+  // `knownGroupIds`": an agent naming an advice-only id from that list is refused POLICY_MATCH_ADVISORY.
+  const autopilot = read('src', 'services', 'autopilot.ts');
+  assert.match(between(autopilot, 'export function knownGroupIds()', '\n}\n'), /rules\.map\(\(rule\) => rule\.id\)/, 'the list is every rule id, advice-only ones included');
+  assert.match(between(autopilot, 'function refuseUnknownKinds(', '\n}\n'), /rules\.filter\(\(rule\) => rule\.action !== 'advice'\)/, 'while the 400 names only the ids a policy may name');
+  const flat = from(read('AGENTS.md'), 'Nor may it name').split('If a pack is')[0].replace(/\s+/g, ' ');
+  assert.doesNotMatch(flat, /lists them as `knownGroupIds`/, 'AGENTS.md does not call the list the ids a policy may name');
+  assert.match(flat, /`GET \/api\/autopilot\/policies` lists every id the packs ship as `knownGroupIds`, advice-only ones too, which a policy still may not name \(`POLICY_MATCH_ADVISORY`\)\./,
+    'AGENTS.md says what the list holds');
+  const spec = ENDPOINTS.find((e) => e.path === '/api/autopilot/policies' && e.method === 'get');
+  const said = JSON.stringify(spec?.responses ?? {});
+  assert.doesNotMatch(said, /can name on this computer/, 'the spec does not call the list the ids a policy can name');
+  assert.match(said, /Every id the rule packs on this computer ship, advice-only ones included, which a new or changed policy still may not name \(POLICY_MATCH_ADVISORY\)/, 'the spec says what the list holds');
+});
