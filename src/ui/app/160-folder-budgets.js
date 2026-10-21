@@ -129,11 +129,16 @@ function renderBudgetWidget() {
   const had = document.activeElement;
   const inList = !!(list && had && had !== document.body && list.contains(had));
   const path = inList ? had.getAttribute('data-budget-edit') : null;
+  const at = inList ? [...list.querySelectorAll('[data-budget-edit]')].indexOf(had) : -1;
   paintBudgetWidget();
   if (!inList || had.getClientRects().length > 0) return;
-  const again = path === null ? null
-    : [...list.querySelectorAll('[data-budget-edit]')].find((b) => b.getAttribute('data-budget-edit') === path);
-  const to = again || focusLanding();
+  const edits = [...list.querySelectorAll('[data-budget-edit]')];
+  const again = path === null ? null : edits.find((b) => b.getAttribute('data-budget-edit') === path);
+  // Its row gone: the budget now in its place, else the one before it, else the Dashboard's own first
+  // control — never the welcome tour card's, whose "Add to cart" a next Enter pressed (eighth browser
+  // pass K06: focusLanding prefers the card while it is up).
+  const near = edits.length ? edits[Math.min(Math.max(at, 0), edits.length - 1)] : null;
+  const to = again || near || activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
   if (to) to.focus({ preventScroll: true });
 }
 

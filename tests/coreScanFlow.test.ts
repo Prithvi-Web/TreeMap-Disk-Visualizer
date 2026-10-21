@@ -2289,6 +2289,10 @@ test('BQJ-1b review F3.8: a folder budget saved or removed by keyboard leaves fo
   await h.loadBudgets!();
   assert.equal(row.detached, true, 'control: the reload rewrote the rows');
   assert.equal(h.dom.activeElement, h.$('pathInput'), 'focus on a control outside the card is left where it is');
+  // The welcome tour's card is up, at a quick win: its own control is "Add to cart", whose next Enter
+  // would stage files (eighth browser pass K06). A removal never lands there.
+  const tourAdd = h.$('tourAddToCart');
+  h.given.tourCardControl = () => tourAdd;
   // Remove V10 by keyboard: its row goes.
   opener = editFor(MAIL_V10)!;
   opener.focus();
@@ -2296,6 +2300,7 @@ test('BQJ-1b review F3.8: a folder budget saved or removed by keyboard leaves fo
   await turns();
   assert.equal(editFor(MAIL_V10), undefined, 'control: the removed budget\'s row is gone');
   assert.ok(focusOnControl(h), `after Remove, focus moves on to a control on screen — not <body> (on #${h.dom.activeElement.id})`);
+  assert.equal(h.dom.activeElement, editFor(MAIL_V9), 'onto the budget now in its place — never the tour card\'s "Add to cart" (K06)');
   // The last one removed: the card goes with it.
   opener = editFor(MAIL_V9)!;
   opener.focus();
@@ -2303,6 +2308,7 @@ test('BQJ-1b review F3.8: a folder budget saved or removed by keyboard leaves fo
   await turns();
   assert.equal(h.$('budgetCard').hidden, true, 'control: no budgets, no card');
   assert.ok(focusOnControl(h), `the card gone, focus moves on to a control on screen — not <body> (on #${h.dom.activeElement.id})`);
+  assert.ok(DASHBOARD_CONTROLS.includes(h.dom.activeElement.id), `onto one of the Dashboard's own controls — never the tour card's "Add to cart" (on #${h.dom.activeElement.id}; K06)`);
 });
 
 /* BQJ-1b review F1.12: the Dashboard's Cost to keep, Drive health and folder
