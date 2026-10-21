@@ -837,6 +837,10 @@ test('AGENTS.md and the OpenAPI document say knownGroupIds is every id the packs
   assert.doesNotMatch(flat, /lists them as `knownGroupIds`/, 'AGENTS.md does not call the list the ids a policy may name');
   assert.match(flat, /`GET \/api\/autopilot\/policies` lists every id the packs ship as `knownGroupIds`, advice-only ones too, which a policy still may not name \(`POLICY_MATCH_ADVISORY`\)\./,
     'AGENTS.md says what the list holds');
+  // The next sentence names its own antecedent: after that one, "such an id" read as an advice-only id, whose runs list
+  // its items in `skipped` rather than saying so in blockedReason.
+  assert.match(flat, /A policy an earlier build saved with an id no rule here has is kept while unchanged and matches nothing of it, and each run's `blockedReason` says so/,
+    'AGENTS.md says which saved policies are kept and matched by nothing');
   const spec = ENDPOINTS.find((e) => e.path === '/api/autopilot/policies' && e.method === 'get');
   const said = JSON.stringify(spec?.responses ?? {});
   assert.doesNotMatch(said, /can name on this computer/, 'the spec does not call the list the ids a policy can name');
