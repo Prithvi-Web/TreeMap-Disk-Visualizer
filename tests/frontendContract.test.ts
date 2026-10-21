@@ -3297,11 +3297,14 @@ function runTmStatus(treemap: Record<string, unknown>): string {
  * the answer there — so that sentence must stay exactly as it was.
  */
 test('a grammar query whose matches outrun the map says so in the status line', () => {
-  const partial = runTmStatus({ query: 'size>1gb', queryMode: 'grammar', matches: 1, matchTotal: 2, rootSize: 5 });
+  // An answered grammar query carries the paths it matched beside its total, as tmRunGrammarQuery sets them; one with
+  // none is still waiting for its answer, and counts nothing (ninth browser pass M01).
+  const answered = new Set(['/a/big', '/b/big']);
+  const partial = runTmStatus({ query: 'size>1gb', queryMode: 'grammar', matchedPaths: answered, matches: 1, matchTotal: 2, rootSize: 5 });
   assert.match(partial, /1 of 2 matches for “size>1gb”/,
     'the drawn count is named as a share of what the query actually matched');
 
-  const all = runTmStatus({ query: 'size>1gb', queryMode: 'grammar', matches: 2, matchTotal: 2, rootSize: 5 });
+  const all = runTmStatus({ query: 'size>1gb', queryMode: 'grammar', matchedPaths: answered, matches: 2, matchTotal: 2, rootSize: 5 });
   assert.match(all, /^2 matches for “size>1gb”/,
     'nothing to disclose when the map drew them all — no "2 of 2"');
 

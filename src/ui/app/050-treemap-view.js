@@ -2207,7 +2207,13 @@ function renderSearchOverlay() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, tmSearchBuffer.width, tmSearchBuffer.height);
 
-  const q = state.treemap.query.trim().toLowerCase();
+  // A grammar query with no answer for this tree yet dims nothing: over the
+  // saved index's tree while its scan runs (K03 took the older answer down),
+  // the bare-word rule below judged "ext:mov,mkv" against every name, dimmed
+  // the whole map and counted "0 matches" (ninth browser pass M01). The query
+  // waits, the box says so, and its answer draws the highlights.
+  const waiting = state.treemap.queryMode === 'grammar' && !state.treemap.matchedPaths;
+  const q = waiting ? '' : state.treemap.query.trim().toLowerCase();
   state.treemap.matches = 0;
   updateTmStatus();
   if (!q) return;
@@ -2301,7 +2307,9 @@ function renderSearchOverlay() {
 }
 
 function updateTmStatus() {
-  const q = state.treemap.query.trim();
+  // A grammar query with no answer yet counts nothing: the line is the map's
+  // own, not "0 matches" (M01, as renderSearchOverlay draws it).
+  const q = state.treemap.queryMode === 'grammar' && !state.treemap.matchedPaths ? '' : state.treemap.query.trim();
   if (state.treemap.history.active && !q) {
     const when = formatWhen(state.treemap.history.viewingAt); // the one dialect, memoised
     $('tmStatus').textContent = `Viewing ${when} · ${formatBytes(state.treemap.rootSize)} — drag the slider to Live to interact`;

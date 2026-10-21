@@ -920,7 +920,10 @@ function repaintCells() {
 function renderCellsStatus() {
   const st = $('tmStatus');
   if (!st || !isCells()) return;
-  if (state.treemap.query.trim() || state.treemap.history.active || tmPreview.on) return;
+  // A grammar query with no answer yet counts nothing, so the line is the
+  // shapes' own (M01, as renderSearchOverlay draws it).
+  const waiting = state.treemap.queryMode === 'grammar' && !state.treemap.matchedPaths;
+  if ((state.treemap.query.trim() && !waiting) || state.treemap.history.active || tmPreview.on) return;
   const cells = state.treemap.cells;
   const leaves = cells.reduce((k, c) => k + (c.leaf ? 1 : 0), 0);
   st.textContent =

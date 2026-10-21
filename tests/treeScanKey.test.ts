@@ -938,6 +938,105 @@ test('the older scan\'s matches go when a rescan paints the saved index\'s tree 
   }
 });
 
+/**
+ * The highlight box over a drawn map: the query's bookkeeping, as queryPage lifts it, with the page's own search
+ * overlay, map footer and shapes' footer drawing what each state says — the scrim laid over each rectangle or shape
+ * that did not match, and the line under the map. `cells` draws the map as circles (§6.2) instead of rectangles.
+ */
+function mapUnderQueryPage(state: Record<string, unknown>, answer: (url: string) => unknown, cells = false) {
+  const $ = stubDom();
+  const asks: Ask[] = [];
+  const reasked: string[] = [];
+  const messages: string[] = [];
+  /** What the overlay's last draw dimmed on the search buffer: each rectangle or circle laid under the scrim. */
+  const dimmed: string[] = [];
+  let style = '';
+  let path: string[] = [];
+  const isScrim = (s: string) => /^rgba\(\d+,\d+,\d+,0\.\d+\)$/.test(s);
+  const ctx = {
+    setTransform: noop, strokeRect: noop, stroke: noop, closePath: noop, lineTo: noop, moveTo: noop,
+    // Each draw of the overlay begins by clearing the whole buffer: what it dims is what that draw laid down.
+    clearRect: (x: number, y: number, w: number, h: number) => { if (x === 0 && y === 0 && w === 200 && h === 100) dimmed.length = 0; },
+    beginPath: () => { path = []; },
+    arc: (x: number) => { path.push(`circle at ${x}`); },
+    fillRect: (x: number) => { if (isScrim(style)) dimmed.push(`rect at ${x}`); },
+    fill: () => { if (isScrim(style)) dimmed.push(...path); },
+    set fillStyle(v: string) { style = v; }, get fillStyle() { return style; },
+    strokeStyle: '', lineWidth: 1,
+  };
+  const given: Record<string, unknown> = {
+    state, $, tmQuerySeq: 0, tmQueryAbort: null, tmQueryDeb: 0, tmLastHits: null, AbortController, clearTimeout: noop,
+    api: async (url: string, init: { body: string }) => { asks.push({ url, scanId: scanOf(url, init.body) }); return answer(url); },
+    tmSetQueryMessage: (m: string) => { messages.push(m); }, tmStageable: () => ({ paths: [] }), seedNodes: noop, tmSyncQueryBar: noop,
+    presentView: noop, formatCount: String, tmUndrawnMessage: () => '',
+    fxTmPillBeamsSync: noop, loadSavedViews: noop, refreshDock: noop,
+    // The overlay and the footers over a 200 × 100 map, the search buffer's context recorded.
+    tmSearchBuffer: { width: 200, height: 100 }, tmBuffer: { width: 200, height: 100 }, tmSearchCtx: ctx, window: { devicePixelRatio: 1 },
+    document: { documentElement: { dataset: { theme: 'dark' } } }, cssVar: () => '#0A84FF', tmKidsOf: () => new Map(), altCellPath: noop,
+    isSun: () => false, isCells: () => cells, tmPreview: { on: false }, formatWhen: String,
+    formatBytes: (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${(n / 1e3).toFixed(1)} KB`),
+  };
+  const { fns } = page<{ run: (q: string) => Promise<void>; mount: () => void; changed: () => void; paint: () => void }>(
+    ['async function tmRunGrammarQuery(', 'function tmRejudgeQuery(', 'function tmRejudgeQueryWait(', 'function tmNoScanQueryWords(', 'function tmQueryScanChanged(', 'function tmCancelQueries(',
+      'function tmClearHits(', 'function tmSyncStageButton(', 'function treemapMatch(', 'function renderSearchOverlay(', 'function updateTmStatus(', 'function renderCellsStatus('],
+    given, `{ run: tmRunGrammarQuery, mount: () => (${pageView('treemap')}).mount(), changed: tmQueryScanChanged,
+      paint: () => { renderSearchOverlay(); if (isCells()) renderCellsStatus(); } }`);
+  // A paint lays the map out afresh (loadTreemap → drawTreemap, or drawCells), then draws its overlay and footer over it.
+  given.loadTreemap = () => fns.paint();
+  // tmApplyQuery hands a grammar query to tmRunGrammarQuery (the bare-word path is mapColourPop's and indexSearch's).
+  given.tmApplyQuery = (q: string) => { reasked.push(q); void fns.run(q.trim()); };
+  return { fns, $, asks, reasked, messages, dimmed };
+}
+
+test('while a rescan paints the saved index\'s tree under a query in the highlight box, the map is drawn undimmed and its footer is the map\'s own line — never "0 matches": the query waits for the scan, and the box says so — and the scan that lands is asked once and dims the map again (ninth browser pass M01)', async () => {
+  // corpus scanned, `ext:mov,mkv` answered (266 matches), then Scan pressed again: the saved index's tree was painted
+  // while the scan ran, and K03 took the older scan's matches down, leaving the query in the box with no answer. The
+  // overlay then judged "ext:mov,mkv" by the bare-word rule, which matches no name: every rectangle got the scrim, and
+  // the footer read "0 matches for “ext:mov,mkv” · 9.5 GB in this folder", with no "· from the saved index".
+  for (const cells of [false, true]) {
+    const drawn = cells ? 'as circles' : 'as rectangles';
+    const nodes = [{ path: '/r/a.mov' }, { path: '/r/b.txt' }];
+    const a = { path: '/r/a.mov', name: 'a.mov', type: 'file', extension: 'mov', depth: 1 };
+    const b = { path: '/r/b.txt', name: 'b.txt', type: 'file', extension: 'txt', depth: 1 };
+    const state: Record<string, unknown> = { root: TREE, ...STOPPED, scanningPath: null, view: 'treemap',
+      treemap: { rootPath: '/r', query: 'ext:mov,mkv', queryRoot: '/r', queryMode: 'bare', queryScanId: null, matches: 0, matchedPaths: null, matchTotal: null,
+        mode: cells ? 'circles' : 'treemap', history: { active: false }, minSize: 4000, rootSize: 9.5e9, nodes, nodesFor: { scanId: 'scan-old', nodes },
+        pxRects: [{ n: a, x: 0, y: 0, w: 100, h: 100 }, { n: b, x: 100, y: 0, w: 100, h: 100 }],
+        cells: [{ n: { path: '/r' }, kind: 'circle', cx: 100, cy: 50, r: 50 }, { n: a, kind: 'circle', cx: 50, cy: 50, r: 40, leaf: true }, { n: b, kind: 'circle', cx: 150, cy: 50, r: 40, leaf: true }] } };
+    const t = state.treemap as Record<string, unknown>;
+    const c = mapUnderQueryPage(state, () => ({ hits: [{ path: '/r/a.mov', name: 'a.mov', size: 5e9 }], total: 266 }), cells);
+    const footer = () => c.$('tmStatus').textContent;
+    const answered = cells ? ['circle at 100', 'circle at 150'] : ['rect at 100']; // b.txt, and in circles the folder around both
+    // Control: the older scan's tree, the query answered — what it did not match is dimmed, and the footer counts it.
+    await c.fns.run('ext:mov,mkv');
+    assert.deepEqual(c.dimmed, answered, `${drawn}: control: the answer dims what it did not match`);
+    assert.equal(footer(), '1 of 266 matches for “ext:mov,mkv” · 9.5 GB in this folder', `${drawn}: control: the footer counts the answer`);
+    // Scan pressed again: the saved index's tree is painted (TOPIC.scan, null), and shown again as the scan chrome re-enters the view.
+    Object.assign(state, INDEX_RUNNING, { scanningPath: '/r' });
+    t.nodesFor = { scanId: null, nodes };
+    c.fns.changed();
+    c.fns.paint();
+    for (const when of ['painted', 're-entered']) {
+      if (when === 're-entered') c.fns.mount();
+      assert.deepEqual([t.queryMode, t.matchedPaths, t.matchTotal], ['grammar', null, null], `${drawn}, ${when}: control: the query waits, the older answer gone (K03)`);
+      assert.equal(c.messages.at(-1), 'The search runs on a finished scan — it runs once the scan finishes.', `${drawn}, ${when}: control: the box says the search waits for the scan`);
+      assert.deepEqual(c.dimmed, [], `${drawn}, ${when}: nothing is dimmed while the query waits`);
+      assert.equal(t.matches, 0, `${drawn}, ${when}: and nothing is counted as a match`);
+      assert.equal(footer(), cells ? '2 shapes · 2 without children · 9.5 GB total' : '2 items of 4.0 KB or more drawn · 9.5 GB in this folder · from the saved index',
+        `${drawn}, ${when}: the footer is the map's own line, with no match count`);
+    }
+    // The scan lands (finishScan re-enters the view): the query is asked once, of it — nothing was asked of the running
+    // scan — and its answer dims the map again and is counted under it.
+    Object.assign(state, LANDED);
+    t.nodesFor = { scanId: 'scan-new', nodes };
+    c.fns.mount();
+    await turns();
+    assert.deepEqual([c.reasked, c.asks.map((x) => x.scanId), c.dimmed, footer()],
+      [['ext:mov,mkv'], ['scan-old', 'scan-new'], answered, '1 of 266 matches for “ext:mov,mkv” · 9.5 GB in this folder'],
+      `${drawn}: the scan that lands is asked the query, once, and its answer dims the map and is counted again`);
+  }
+});
+
 test('the highlight box\'s query asked of the older scan during a rescan is not installed over the new tree when it answers after the rescan landed — the new scan is asked — and a scan of the same folder landing stops it on the server', async () => {
   const tm = () => ({ rootPath: '/r', query: 'used>1y', queryRoot: '/r', queryMode: 'bare', queryScanId: null, matches: 0, matchedPaths: null });
   let release: (v: unknown) => void = noop;
