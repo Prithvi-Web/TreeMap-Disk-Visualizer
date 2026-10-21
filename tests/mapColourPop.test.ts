@@ -1512,7 +1512,10 @@ function edgesOf(painted: Painted[], W: number, H: number, dpr = 1) {
  * at and the first that are not parted.
  */
 function partings(raster: ReturnType<typeof rasterCtx>, painted: Painted[], dpr = 1) {
-  const leaves = painted.filter((r) => !r.frame && r.stops && Math.min(r.w, r.h) >= OUTLINED_PX);
+  // OUTLINED_PX and up on the device's pixels, as the painter takes the step (review F1.1): at 150 % a snapped width can
+  // fall a hair under 8 css px.
+  const lined = (r: Painted) => Math.min(Math.round(r.w * dpr), Math.round(r.h * dpr)) >= OUTLINED_PX * dpr;
+  const leaves = painted.filter((r) => !r.frame && r.stops && lined(r));
   const dev = (r: Painted) => { const x = Math.round(r.x * dpr), y = Math.round(r.y * dpr); return { x, y, w: Math.round((r.x + r.w) * dpr) - x, h: Math.round((r.y + r.h) * dpr) - y }; };
   const owner = new Int32Array(raster.W * raster.H).fill(-1);
   const boxes = painted.map(dev);
@@ -1548,7 +1551,7 @@ function partings(raster: ReturnType<typeof rasterCtx>, painted: Painted[], dpr 
         const j = owner[qx[1] * raster.W + qx[0]];
         const other = j >= 0 ? painted[j] : null;
         // On the other side, a leaf of OUTLINED_PX and up whose own line lies there.
-        if (other && other.seen && Math.min(other.w, other.h) >= OUTLINED_PX && near(qx, 1).some((p) => stands(p, other))) continue;
+        if (other && other.seen && lined(other) && near(qx, 1).some((p) => stands(p, other))) continue;
         // Or the two tiles already part themselves, by the bar: no line is needed there — against the other leaf's cushion,
         // or what the screen shows beyond (a folder's own fill).
         const beyond = other && other.seen ? cushion(other, qx[1]) : raster.at(...qx);
@@ -2451,6 +2454,88 @@ test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 
         const dL = Math.abs(looks[k].dL - looks[k - 1].dL), bound = looks[k].s === OUTLINED_PX ? 7 : 2;
         assert.ok(dL <= bound, `${where}: from ${looks[k - 1].s} to ${looks[k].s} px the mean lightness steps ${dL.toFixed(1)} L*, over ${bound} — ${table}`);
       }
+    }
+  }
+});
+
+/**
+ * A `cols`×`rows` grid of leaves `s` css px square on a map of its own, its corner at (`ox`, `oy`) css px: at 125, 150 and
+ * 175 % each tile's edges lie on whole device pixels, and its width and height — differences of two snapped edges —
+ * carry float noise ((29 / 1.5) − (17 / 1.5) is 7.999999999999998).
+ */
+function offsetGrid(s: number, cols: number, rows: number, ox: number, oy: number) {
+  const W = Math.ceil(ox + s * cols + 1), H = Math.ceil(oy + s * rows + 1), tiles: Tile[] = [];
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j < cols; j++) {
+      tiles.push({ name: `g${i}.${j}`, path: `/g/g${i}.${j}`, size: 4e8, type: 'file', depth: 1, expanded: false,
+        x: ((ox + j * s) / W) * 100, y: ((oy + i * s) / H) * 100, w: (s / W) * 100, h: (s / H) * 100 });
+    }
+  }
+  return { tiles, W, H };
+}
+
+/**
+ * Folders exactly at the band steps, off whole css px: rows of top-level folders 8, 32 and 96 css px across their
+ * thinner side, and in a top-level folder of their own, rows of nested folders 8 and 48 css px across.
+ */
+function offsetFolders() {
+  const W = 302, H = 276, pct = (v: number, of: number) => (v / of) * 100, tiles: Tile[] = [];
+  const dir = (path: string, depth: number, x: number, y: number, w: number, h: number): Tile =>
+    ({ name: path.slice(path.lastIndexOf('/') + 1), path, size: 1e9, type: 'dir', depth, expanded: true, x: pct(x, W), y: pct(y, H), w: pct(w, W), h: pct(h, H) });
+  for (let j = 0; j < 20; j++) tiles.push(dir(`/b/s8-${j}`, 1, 0.7 + 8 * j, 0.3, 8, 24));
+  for (let j = 0; j < 8; j++) tiles.push(dir(`/b/s32-${j}`, 1, 0.7 + 32 * j, 24.3, 32, 40));
+  for (let j = 0; j < 3; j++) tiles.push(dir(`/b/s96-${j}`, 1, 0.7 + 96 * j, 64.3, 96, 110));
+  tiles.push(dir('/b/T', 1, 0.7, 174.3, 300, 100));
+  for (let j = 0; j < 6; j++) tiles.push(dir(`/b/T/n48-${j}`, 2, 3.7 + 48 * j, 177.3, 48, 60));
+  for (let j = 0; j < 30; j++) tiles.push(dir(`/b/T/n8-${j}`, 2, 3.7 + 8 * j, 240.3, 8, 20));
+  return { tiles, W, H };
+}
+
+test('owner\'s refinement at 125, 150 and 175 %: the 8 px step and the band steps are taken by size on the device\'s pixels — every one of a grid of identical 8 px tiles lined, and painted pixel for pixel as its neighbour, never some textured by the float noise in a snapped width; and every folder exactly 8, 32, 48 or 96 px across banded as that size asks, in both themes (review F1.1)', () => {
+  // A tile 12 device px wide at 150 % is 8 css px; its width as two snapped edges' difference was 7.999999999999998, and
+  // `>= 8` classed it textured: a 1.375:1 seam beside identical tiles parted by 3.3:1 lines — a speckle at exactly the
+  // step the owner asked to taper. The same noise took a band a step thinner.
+  const kindOf = (r: Painted) => (r.lines ? 'lined' : r.tex ? 'textured' : 'solid');
+  const onDevice = (r: Painted, dpr: number) => ({ ...r, w: Math.round(r.w * dpr) / dpr, h: Math.round(r.h * dpr) / dpr });
+  for (const dpr of [1.25, 1.5, 1.75]) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      const where = `${theme}, dpr ${dpr}`;
+      const cols = 40, rows = 12, d = 8 * dpr;
+      const g = offsetGrid(8, cols, rows, 0.7, 0.3);
+      const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, () => TAPER_COLOURS[1].rgb, undefined, false, dpr);
+      assert.ok(px.length === cols * rows && px.every((r) => Math.round(r.w * dpr) === d && Math.round(r.h * dpr) === d),
+        `${where}: control — ${px.length} tiles, each ${d} device px square`);
+      const under = px.filter((r) => Math.min(r.w, r.h) < 8).length;
+      assert.ok(under > 0, `${where}: control — ${under} of the snapped sizes fall a hair under 8 css px`);
+      const kinds: Record<string, number> = {};
+      for (const r of px) kinds[kindOf(r)] = (kinds[kindOf(r)] || 0) + 1;
+      assert.deepEqual(kinds, { lined: cols * rows }, `${where}: identical 8 px tiles, each lined`);
+      // Painted alike: each tile clear of the map's edge shows what the first such tile shows, pixel for pixel.
+      const box = (r: Painted) => [Math.round(r.x * dpr), Math.round(r.y * dpr)];
+      const ref = px.find((r) => r.n.path === '/g/g1.1')!, [rx, ry] = box(ref);
+      let worst = 0, at = '';
+      for (const r of px) {
+        const [i, j] = /g(\d+)\.(\d+)$/.exec(r.n.path)!.slice(1).map(Number);
+        if (i === 0 || j === 0 || i === rows - 1 || j === cols - 1) continue;
+        const [x0, y0] = box(r);
+        for (let v = 0; v < d; v++) {
+          for (let u = 0; u < d; u++) {
+            const p = raster.at(x0 + u, y0 + v), q = raster.at(rx + u, ry + v);
+            const diff = Math.max(...p.map((c, k) => Math.abs(c - q[k])));
+            if (diff > worst) { worst = diff; at = `${r.n.path} at +${u},+${v}: ${p.map(Math.round)} where ${ref.n.path} shows ${q.map(Math.round)}`; }
+          }
+        }
+      }
+      assert.ok(worst <= 1, `${where}: identical tiles painted alike — ${at}`);
+      // The band steps.
+      const f = offsetFolders();
+      const fp = rasterPaint(f.tiles, palette, f.W, f.H, undefined, undefined, false, dpr).px.filter((r) => r.frame);
+      assert.equal(fp.length, f.tiles.length, `${where}: control — every folder drawn`);
+      const hair = fp.filter((r) => Math.min(r.w, r.h) < Math.min(onDevice(r, dpr).w, onDevice(r, dpr).h)).length;
+      assert.ok(hair > 0, `${where}: control — ${hair} folders' snapped sizes fall a hair under their size on the device`);
+      const wrong = fp.filter((r) => r.lw !== bandOf(onDevice(r, dpr)))
+        .map((r) => `${r.n.path} (${Math.min(r.w, r.h)} css px): a ${r.lw} px band where its size asks ${bandOf(onDevice(r, dpr))}`);
+      assert.deepEqual(wrong.slice(0, 6), [], `${where}: ${wrong.length} folders banded off their size`);
     }
   }
 });

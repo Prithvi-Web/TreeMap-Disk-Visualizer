@@ -13297,9 +13297,21 @@ const TM_LIT = 0.18;        // the white of a leaf's top highlight, on a tile ta
 function tmSnap(v, dpr) {
   return Math.round(v * dpr) / dpr;
 }
+/**
+ * Whether a size of `m` css px reaches `px`. A rectangle's width and height are
+ * differences of two edges laid on whole device pixels (tmSnap), which at 125,
+ * 150 and 175 % carry float noise — (29 / 1.5) − (17 / 1.5) is
+ * 7.999999999999998 — and a bare >= put some of a grid of identical 8 px tiles
+ * under the step and the rest over it, lined beside textured, and took some
+ * folders' bands a step thinner (review F1.1). Two sizes on whole device pixels
+ * are a device pixel apart or the same, never a millionth of a px.
+ */
+function tmReaches(m, px) {
+  return m >= px - 1e-6;
+}
 /** Whether a leaf gets lines of its own (and, under a dark one, a top highlight): only one with room for them. */
 function tmLeafEdged(r) {
-  return Math.min(r.w, r.h) >= TM_DENSE_PX;
+  return tmReaches(Math.min(r.w, r.h), TM_DENSE_PX);
 }
 /**
  * The white of a leaf's top highlight, a share of TM_LIT as its cushion is of
@@ -13318,14 +13330,14 @@ function tmLitAlpha(r) {
 function tmLeafKind(r) {
   if (r.shows) return 'cell';
   const m = Math.min(r.w, r.h);
-  return m >= TM_DENSE_PX ? 'edged' : m >= TM_TEXTURE_PX ? 'textured' : 'solid';
+  return tmReaches(m, TM_DENSE_PX) ? 'edged' : tmReaches(m, TM_TEXTURE_PX) ? 'textured' : 'solid';
 }
 /** Folder `r`'s band, px wide: by its thinner side and its depth, and none when it is thinner than TM_DENSE_PX. */
 function tmBandWidth(r) {
   const m = Math.min(r.w, r.h);
-  if (m < TM_DENSE_PX) return 0;
-  if (r.n.depth <= 1) return m >= 96 ? 3 : m >= 32 ? 2 : 1;
-  return m >= 48 ? 2 : 1;
+  if (!tmReaches(m, TM_DENSE_PX)) return 0;
+  if (r.n.depth <= 1) return tmReaches(m, 96) ? 3 : tmReaches(m, 32) ? 2 : 1;
+  return tmReaches(m, 48) ? 2 : 1;
 }
 /** A texture's contrast against the tile it lies on, by the tile's thinner side `s` px: 1.1:1 at 2 px, rising to 1.375:1 at 7. */
 function tmTextureContrast(s) {
