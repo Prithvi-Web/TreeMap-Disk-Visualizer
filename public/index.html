@@ -12099,11 +12099,20 @@ function armScanExpiry() {
 subscribe(TOPIC.scan, (scanId) => { if (scanId) armScanExpiry(); });
 
 function scanResultsExpired(err, url) {
-  if (!state.root || state.scanning || !state.scanId || !String(url).includes(state.scanId)) return;
+  // The results of the tree on screen (treeScanId): during a rescan the
+  // older scan's, which every view asks, and which can expire while the
+  // rescan runs — said then as the raw "Unknown or expired scanId" (review F2.13).
+  const scanId = treeScanId();
+  if (!state.root || !scanId || !String(url).includes(scanId)) return;
+  if (state.scanning) {
+    // A scan is under way: Scan again is not offered over it.
+    err.message = 'These results have expired — the scan under way replaces them when it finishes.';
+    return;
+  }
   err.message = 'These results have expired — scan the folder again to refresh them.';
   // one toast per expired scan, however many calls fail under it
-  if (state.expiredOffered === state.scanId) return;
-  state.expiredOffered = state.scanId;
+  if (state.expiredOffered === scanId) return;
+  state.expiredOffered = scanId;
   const p = state.root.path;
   toastAction(err.message, 'Scan again', () => { void startScan(p); }, 'error', 15000);
 }

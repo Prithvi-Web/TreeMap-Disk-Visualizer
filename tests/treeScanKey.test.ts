@@ -1238,6 +1238,38 @@ test('the welcome tour started, or restarted from Settings, over a tree no scan 
   assert.equal(tour.step, 'map', 'and the card it restarts at is the map');
 });
 
+/* ───────────────────────────── expired results ───────────────────────────── */
+
+test('the older scan\'s results expiring during a rescan read as a sentence — the views ask that scan, and its 404 said "Unknown or expired scanId" — with no Scan again offered over the scan under way; at rest the sentence offers one, once', () => {
+  const offers: string[] = [];
+  const state: Record<string, unknown> = { root: TREE, ...HELD, expiredOffered: null };
+  const { fns } = page<{ expired: (e: { message: string }, url: string) => void }>(['function scanResultsExpired('], {
+    state, toastAction: (m: string) => { offers.push(m); }, startScan: noop,
+  }, '{ expired: scanResultsExpired }');
+  const notFound = () => ({ code: 'SCAN_NOT_FOUND', status: 404, message: 'Unknown or expired scanId' });
+  // During a rescan over the older scan's tree: every view asks that scan (treeScanId), and it expired.
+  const e1 = notFound();
+  fns.expired(e1, '/api/apps?scanId=scan-old');
+  assert.equal(e1.message, 'These results have expired — the scan under way replaces them when it finishes.',
+    'the older scan\'s 404 reads as what it means — not "Unknown or expired scanId"');
+  assert.deepEqual(offers, [], 'and no Scan again is offered over the scan already under way');
+  const e2 = notFound();
+  fns.expired(e2, '/api/scan/scan-new/stats');
+  assert.equal(e2.message, 'Unknown or expired scanId', 'control: an id that is not the tree\'s is not rewritten');
+  // The saved index's tree: no scan behind it, nothing of its own to expire.
+  Object.assign(state, INDEX_RUNNING);
+  const e3 = notFound();
+  fns.expired(e3, '/api/apps?scanId=scan-new');
+  assert.equal(e3.message, 'Unknown or expired scanId', 'over the saved index\'s tree the running scan\'s id is not the tree\'s');
+  // At rest — after a Stop, the older tree's: the sentence, and Scan again offered once.
+  Object.assign(state, STOPPED);
+  const e4 = notFound();
+  fns.expired(e4, '/api/apps?scanId=scan-old');
+  fns.expired(notFound(), '/api/media?scanId=scan-old');
+  assert.equal(e4.message, 'These results have expired — scan the folder again to refresh them.', 'at rest it says to scan again');
+  assert.deepEqual(offers, ['These results have expired — scan the folder again to refresh them.'], 'and offers it once, however many calls fail');
+});
+
 /* ───────────────────────────── Live mode ───────────────────────────── */
 
 test('Live: the toggle watches the scan the tree on screen came from once it has landed — never a scan still walking, which answers its watch 409 — and pressed while a scan runs says Live starts once the scan finishes, and finishScan starts it; over the saved index\'s tree it says what would make the folder watchable', () => {
