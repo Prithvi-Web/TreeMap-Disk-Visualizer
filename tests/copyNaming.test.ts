@@ -543,9 +543,10 @@ test('the label reader follows a label handed to a page function that writes it 
     "async function browse(start, pick, title, use) { $('browseTitle').innerHTML = icon('folder', 18) + (title || 'Choose A Folder'); $('browseUse').innerHTML = escapeHtml(use || (pick ? 'Use This Folder' : 'Scan this folder')); }",
     "function noted(text) { $('note').textContent = text; }",
     'const okLater = (text) => { setTimeout(() => setOk(text)); };',
+    'const okNow = function (text) { setOk(text); };',
     "function headed(n, name, fallback) { $('jobTitle').innerHTML = n ? `Open ${name}` : (fallback ?? 'Open it?'); }",
     '</script>',
-    "<script>setOk('Empty The Trash'); forward(1, 'Save Now'); relay(n ? 'Move It' : 'Keep it'); okLater('Approve All'); headed(2, 'Old Files', 'Open Them?');",
+    "<script>setOk('Empty The Trash'); forward(1, 'Save Now'); relay(n ? 'Move It' : 'Keep it'); okLater('Approve All'); okNow('Done Now'); headed(2, 'Old Files', 'Open Them?');",
     "ask({ title: 'Save View', hint: 'Not A Label', ok: 'Save view' }); jobFor(3, 'Offloading Files…'); jobNamed('Putting It Back…');",
     "job({ title: 'Restoring…', icon: 'Not Words' }); browse(s, cb, 'Folder This Policy Cleans', 'Offload To This Folder'); browse(s);",
     "noted('Not A Label Either'); setOk(label);</script>",
@@ -553,11 +554,11 @@ test('the label reader follows a label handed to a page function that writes it 
   const sinks = Object.fromEntries([...labelSinks(page)].map(([name, keys]) => [name, [...keys].sort()]));
   assert.deepEqual(sinks, {
     forward: ['1'], relay: ['0'], setOk: ['0'], ask: ['0.ok', '0.title'], job: ['0.title'], jobFor: ['1'], jobNamed: ['0'], browse: ['2', '3'], okLater: ['0'],
-    headed: ['1', '2'],
+    okNow: ['0'], headed: ['1', '2'],
   }, 'the arguments that end up as a label: written by id, or handed on, wherever declared; not an icon\'s name, not a field label');
   assert.deepEqual([...assignedLabels(page)].sort(), [
     'Got It', 'Choose A Folder', 'Use This Folder', 'Scan this folder', 'Empty The Trash', 'Save Now', 'Move It', 'Keep it', 'Approve All',
-    'Open', 'Open it?', 'Old Files', 'Open Them?',
+    'Done Now', 'Open', 'Open it?', 'Old Files', 'Open Them?',
     'Save View', 'Save view', 'Offloading Files…', 'Putting It Back…', 'Restoring…', 'Folder This Policy Cleans', 'Offload To This Folder',
   ].sort(), 'every label handed to a function that writes it, directly, destructured, as a property or handed on; its default; what escapeHtml is handed — not a field label, an icon\'s name or a name');
 });
