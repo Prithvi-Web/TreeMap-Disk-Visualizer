@@ -1090,6 +1090,9 @@ function cleanUpPage(state: Record<string, unknown>, answer: (url: string) => un
   const handlers: Record<string, () => Promise<void>> = {};
   ($('cleanFindBtn') as unknown as { addEventListener: (t: string, fn: () => Promise<void>) => void }).addEventListener =
     (t, fn) => { handlers[t] = fn; };
+  // The Clean Up button: the page's own handler opens the sheet (review F1.9).
+  ($('cleanupBtn') as unknown as { addEventListener: (t: string, fn: () => Promise<void>) => void }).addEventListener =
+    (_t, fn) => { handlers.open = fn; };
   // The Find knobs as a person leaves them: one rule ticked, "Larger than 100 MB".
   Object.assign($('ruleSizeOn'), { checked: true }); $('ruleSizeMb').value = '100';
   const cloud: unknown[] = [];
@@ -1106,20 +1109,21 @@ function cleanUpPage(state: Record<string, unknown>, answer: (url: string) => un
     whyLeftOut: () => '', MB: 1e6, cleanWaiting: new Set(), cleanFindWaiting: null, CLEAN_NO_SCAN: liftPage<Record<string, [string, string]>>(['CLEAN_NO_SCAN'], 'CLEAN_NO_SCAN'),
     emptyFolders: [], videoCandidates: [], smartGroups: [], packageOrphans: [], cleanMatches: [], cleanOnDisk: new Map(),
     loadEmptyFoldersSeq: 0, loadVideoSeq: 0, loadSmartSeq: 0, cleanRuleSource: 'simple', smartSort: 'size',
+    cleanUpWhereItGoes: () => '', cleanFunnelDrop: noop, setCleanRuleSource: noop, setCleanPane: noop,
   };
   const { fns, asks } = page<{ empty: () => Promise<void>; video: () => Promise<void>; smart: () => Promise<void>; byView: () => Promise<void>; changed: () => void }>([
     'function cleanNoScanHtml(', 'function cleanOpen(', 'function cleanAskAgain(', 'function cleanScanChanged(',
     'async function loadEmptyFolders(', 'async function loadVideoCandidates(', 'async function loadSmartSuggestions(',
     'async function renderGitRepos(', 'async function renderPackageOrphans(', 'async function renderBrowserProfiles(',
     'async function runCleanFind(', 'async function findBySavedView(', "$('cleanFindBtn').addEventListener('click', async () => {",
-    'subscribe(TOPIC.scan, (scanId) => {\n  cleanScanChanged();',
+    'subscribe(TOPIC.scan, (scanId) => {\n  cleanScanChanged();', "$('cleanupBtn').addEventListener('click', () => {",
   ], given, '{ empty: loadEmptyFolders, video: loadVideoCandidates, smart: loadSmartSuggestions, byView: () => runCleanFind(findBySavedView), changed: cleanScanChanged }',
   // A pane that asks again without end — its answer never the tree's — is stopped: the sheet closes, and the
   // assertions about what it asked say why (a hand mutant made one ask forever, and the run ran out of memory).
   (url) => { if (++answered > 200) { $('cleanModal').classList.remove('open'); throw new Error('asked without end'); } return answer(url); });
   /** TOPIC.scan, as finishScan emits it: a scan landed (its id), or the index painted a tree (null). */
   const emitScan = (scanId: string | null) => { for (const fn of subs) fn(scanId); };
-  return { fns, asks, $, given, cloud, toasts, find: () => handlers.click(), emitScan };
+  return { fns, asks, $, given, cloud, toasts, find: () => handlers.click(), open: () => handlers.open(), emitScan };
 }
 function cleanUpAnswer(url: string): unknown {
   if (url.startsWith('/api/compression/candidates')) return { available: false, reason: 'No ffmpeg here.' };
@@ -1293,6 +1297,51 @@ test('Clean Up (K04): Find asked again of the scan now on screen, after the olde
       assert.deepEqual(c.toasts, [], `${label}: nothing said as a failure`);
     }
   }
+});
+
+test('Clean Up (K04): with the sheet closed nothing is asked — not the panes a scan landing asks again, not an older answer\'s re-ask, not the cloud-safe list that walks the whole tree — and opening it starts every pane afresh, so a Find pressed over the saved index\'s tree in an earlier opening is not run on a later change (review F1.9)', async () => {
+  // A scan lands with the sheet closed (TOPIC.scan, finishScan): its subscriber asks nothing.
+  const state: Record<string, unknown> = { root: TREE, notes: new Map(), ...INDEX_RUNNING, scanningPath: TREE.path };
+  const c = cleanUpPage(state);
+  await c.fns.empty();
+  await turns();
+  assert.match(c.$('emptyResults').innerHTML, COMING, 'control: a pane waits for the scan');
+  c.$('cleanModal').classList.remove('open');
+  Object.assign(state, LANDED);
+  c.emitScan('scan-new');
+  await turns();
+  assert.deepEqual([c.asks.map((a) => a.url), c.cloud.length], [[], 0], 'a scan landing with the sheet closed asks nothing — no pane, nor the cloud-safe list');
+  // An older scan's answer arriving once the sheet has closed: not asked again (cleanAskAgain).
+  const state2: Record<string, unknown> = { root: TREE, notes: new Map(), ...HELD };
+  const held: Array<() => void> = [];
+  const c2 = cleanUpPage(state2, (url) => (url.includes('scan-old') ? new Promise((resolve) => { held.push(() => resolve(cleanUpAnswer(url))); }) : cleanUpAnswer(url)));
+  const out = c2.fns.empty();
+  await turns();
+  assert.deepEqual(c2.asks.map((a) => a.scanId), ['scan-old'], 'control: asked of the older scan');
+  c2.$('cleanModal').classList.remove('open');
+  Object.assign(state2, LANDED);
+  held.shift()!();
+  await out;
+  await turns();
+  assert.deepEqual(c2.asks.map((a) => a.scanId), ['scan-old'], 'its answer arriving once the sheet has closed is not asked again');
+  // Over the saved index's tree: a pane and Find wait; the sheet closes, the scan lands, the sheet opens again.
+  const state3: Record<string, unknown> = { root: TREE, notes: new Map(), ...INDEX_RUNNING, scanningPath: TREE.path };
+  const c3 = cleanUpPage(state3);
+  await c3.fns.empty();
+  await c3.find();
+  await turns();
+  assert.match(c3.$('cleanResults').innerHTML, COMING, 'control: Find waits for the scan');
+  c3.$('cleanModal').classList.remove('open');
+  Object.assign(state3, LANDED);
+  c3.emitScan('scan-new');
+  await turns();
+  assert.deepEqual(c3.asks.map((a) => a.url), [], 'control: nothing asked with the sheet closed');
+  await c3.open(); // the Clean Up button
+  assert.ok(c3.$('cleanModal').classList.contains('open'), 'control: the sheet is open again');
+  assert.equal(c3.cloud.length, 1, 'control: opening it asks the cloud-safe list');
+  c3.fns.changed(); // a later change: a scan of the folder starting, say (TOPIC.scan)
+  await turns();
+  assert.deepEqual(c3.asks.map((a) => a.url), [], 'what waited in the earlier opening is not asked — not the old Find with its old rules, nor its pane');
 });
 
 /* ───────────────────────────── the Dashboard's cards, the tour ───────────────────────────── */
