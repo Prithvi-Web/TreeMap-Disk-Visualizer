@@ -536,6 +536,7 @@ test('the label reader follows a label handed to a page function that writes it 
     'function forward(a, t) { relay(t); }', // handed on twice, by functions declared before the one that writes it
     'function relay(x) { setOk(x); }',
     "function setOk(label, iconName = 'trash') { $('confirmOk').innerHTML = icon(iconName, 15) + escapeHtml(label); }",
+    "function setOkOr(label = 'Delete Item') { $('confirmOk').textContent = label; }", // a plain parameter's default (review F3.1)
     "function ask({ title, hint, ok: okLabel = 'Got It' }) { $('confirmTitle').textContent = title; $('note').textContent = hint; $('confirmOk').textContent = okLabel; }",
     "function job(opts) { $('jobTitle').innerHTML = icon(opts.icon || 'x', 18) + opts.title; }",
     "function jobFor(id, title) { job({ title, icon: 'archive' }); }",
@@ -553,14 +554,14 @@ test('the label reader follows a label handed to a page function that writes it 
   ].join('\n');
   const sinks = Object.fromEntries([...labelSinks(page)].map(([name, keys]) => [name, [...keys].sort()]));
   assert.deepEqual(sinks, {
-    forward: ['1'], relay: ['0'], setOk: ['0'], ask: ['0.ok', '0.title'], job: ['0.title'], jobFor: ['1'], jobNamed: ['0'], browse: ['2', '3'], okLater: ['0'],
+    forward: ['1'], relay: ['0'], setOk: ['0'], setOkOr: ['0'], ask: ['0.ok', '0.title'], job: ['0.title'], jobFor: ['1'], jobNamed: ['0'], browse: ['2', '3'], okLater: ['0'],
     okNow: ['0'], headed: ['1', '2'],
   }, 'the arguments that end up as a label: written by id, or handed on, wherever declared; not an icon\'s name, not a field label');
   assert.deepEqual([...assignedLabels(page)].sort(), [
-    'Got It', 'Choose A Folder', 'Use This Folder', 'Scan this folder', 'Empty The Trash', 'Save Now', 'Move It', 'Keep it', 'Approve All',
+    'Got It', 'Delete Item', 'Choose A Folder', 'Use This Folder', 'Scan this folder', 'Empty The Trash', 'Save Now', 'Move It', 'Keep it', 'Approve All',
     'Done Now', 'Open', 'Open it?', 'Old Files', 'Open Them?',
     'Save View', 'Save view', 'Offloading Files…', 'Putting It Back…', 'Restoring…', 'Folder This Policy Cleans', 'Offload To This Folder',
-  ].sort(), 'every label handed to a function that writes it, directly, destructured, as a property or handed on; its default; what escapeHtml is handed — not a field label, an icon\'s name or a name');
+  ].sort(), 'every label handed to a function that writes it, directly, destructured, as a property or handed on; its default, a plain parameter\'s or a destructured one\'s; what escapeHtml is handed — not a field label, an icon\'s name or a name');
 });
 
 /* ══════════════ The page ══════════════ */
