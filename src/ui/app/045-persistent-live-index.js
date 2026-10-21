@@ -1951,10 +1951,12 @@ subscribe(TOPIC.scan, (scanId) => { if (scanId) setTimeout(drainScanQueue, 0); }
    two minutes before, and, once it has happened, a sentence that says what
    it means with a Scan again beside it. Older servers send no expiresAt and
    get the second answer only. */
-/* The timer handle and the "already offered" mark live on `state`, not in
-   module scope: they are per-scan facts, they are reset by the same thing
-   that resets the rest of the scan, and it keeps each function readable on
-   its own — which is also how the tests exercise them. */
+/* The timer handle and the Scan again offer made for an expired scan
+   (`expiredOffer`) live on `state`, not in module scope: they are per-scan
+   facts — the timer is re-armed as each scan lands, and the offer names the
+   scan it was made for, so another scan's expiry is offered anew — and it
+   keeps each function readable on its own, which is also how the tests
+   exercise them. */
 function armScanExpiry() {
   clearTimeout(state.scanExpiryTimer);
   state.scanExpiryTimer = 0;
@@ -1992,12 +1994,19 @@ function scanResultsExpired(err, url, body) {
     return;
   }
   err.message = 'These results have expired — scan the folder again to refresh them.';
-  err.offered = true;
-  // one toast per expired scan, however many calls fail under it
-  if (state.expiredOffered === scanId) return;
-  state.expiredOffered = scanId;
+  // One Scan again offer per expired scan, however many calls fail under it. While it is on screen it says
+  // the sentence, so whoever prints the error says nothing more (`offered`); once it has gone — timed out,
+  // dismissed or chosen — a later failure is said by its caller, plainly. Marked offered for good, a click
+  // on the map, or Clean Up's Find, after the offer had gone did nothing, with no word said (review F1.1, F1.6).
+  const offer = state.expiredOffer;
+  if (offer && offer.scanId === scanId) {
+    if (offer.isOpen()) err.offered = true;
+    return;
+  }
   const p = state.root.path;
-  toastAction(err.message, 'Scan again', () => { void startScan(p); }, 'error', 15000);
+  const shown = toastAction(err.message, 'Scan again', () => { void startScan(p); }, 'error', 15000);
+  state.expiredOffer = { scanId, isOpen: () => Boolean(shown && shown.isOpen()) };
+  err.offered = true;
 }
 /* ── end results expire ── */
 

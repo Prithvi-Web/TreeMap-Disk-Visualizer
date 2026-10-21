@@ -1039,7 +1039,8 @@ test('an "expired scanId" error becomes a plain sentence with a one-click Scan a
   const offers: Array<[string, string]> = [];
   const state = { root: { path: '/Users/x' }, scanning: false, scanId: 'abc123' };
   const run = new Function('state', 'toastAction', 'startScan', `'use strict'; ${braced('function treeScanId(')} ${fn} return scanResultsExpired;`)(
-    state, (m: string, label: string) => offers.push([m, label]), () => {}) as (err: Record<string, unknown>, url: string) => void;
+    // toastAction answers whether its offer is on screen (review F1.1, F1.6): this one still is.
+    state, (m: string, label: string) => { offers.push([m, label]); return { isOpen: () => true }; }, () => {}) as (err: Record<string, unknown>, url: string) => void;
   const err: Record<string, unknown> = { code: 'SCAN_NOT_FOUND', status: 404, message: 'Unknown or expired scanId' };
   run(err, '/api/scan/abc123/treemap?root=x');
   assert.match(String(err.message), /expired/i, 'the message is rewritten');

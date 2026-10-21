@@ -1919,7 +1919,8 @@ function toastRuntime() {
   )(doc, $, () => '<svg></svg>', escapeHtml, setTimeout, () => page.sheet,
     (sheet: { target?: PageStop }) => { page.into.push(sheet); return sheet.target; },
     (el: { visibility?: string }) => ({ visibility: el.visibility ?? 'visible' })) as {
-    toastAction: (msg: string, label: string, fn: () => unknown, kind?: string, ms?: number, opts?: { focus?: boolean; sheet?: string }) => void;
+    /** Answers whether the offer is still on screen (review F1.1, F1.6). */
+    toastAction: (msg: string, label: string, fn: () => unknown, kind?: string, ms?: number, opts?: { focus?: boolean; sheet?: string }) => { isOpen: () => boolean };
     /** A sheet closing (modalClosed): the offers made in it go. */
     toastsRetire: ((sheet: string) => void) | undefined;
   };
@@ -2156,6 +2157,28 @@ test('an offer\'s button acts once: a double-click, or a click while the toast f
   assert.ok(shown[1].cls.has('out'), 'control: an offer left alone fades when its time is up');
   shown[1].button!.click();
   assert.equal(ran, 1, 'and a click on it while it fades does nothing');
+});
+
+test('an offer says whether it is still on screen — until its time is up, it is dismissed or it is chosen — so a caller can tell a standing offer from one long gone (review F1.1, F1.6)', () => {
+  // An expired scan's Scan again offer says the sentence while it is up; a failure after it has gone must be
+  // said by its caller, and the page marked the scan offered for good: the map and Find went silent.
+  const rt = toastRuntime();
+  const map = rt.stop('treemapCanvas');
+  rt.page.stops.push(map);
+  map.focus();
+  const timed = rt.toastAction('These results have expired', 'Scan again', () => {}, 'error', 15000);
+  assert.equal(timed.isOpen(), true, 'on screen once made');
+  rt.fire(); // 15 s on
+  assert.equal(timed.isOpen(), false, 'gone once its time is up');
+  const held = rt.toastAction('These results have expired', 'Scan again', () => {}, 'error', 15000);
+  rt.shown[1].button!.focus(); // a keyboard on it: it waits for that
+  rt.fire();
+  assert.equal(held.isOpen(), true, 'still on screen while focus holds it past its time');
+  rt.key(rt.shown[1].button!, 'Escape');
+  assert.equal(held.isOpen(), false, 'gone once dismissed');
+  const chosen = rt.toastAction('These results have expired', 'Scan again', () => {}, 'error', 15000);
+  rt.shown[2].button!.click();
+  assert.equal(chosen.isOpen(), false, 'gone once chosen');
 });
 
 test('an offer says in words what the path ends with, its button is a short verb, and its message wraps inside the toast (final review F1.9, F1.13)', async () => {

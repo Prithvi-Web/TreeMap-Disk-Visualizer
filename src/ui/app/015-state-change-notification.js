@@ -263,6 +263,10 @@ function toastsRetire(sheet) {
  *
  * `sheet`: the id of the sheet the toast was made in; it goes when that sheet
  * closes (toastsRetire).
+ *
+ * Answers `isOpen()`: whether the offer is still on screen — false once it
+ * has timed out, been dismissed or chosen, or retired with its sheet — so a
+ * caller can tell a standing offer from one long gone (review F1.1, F1.6).
  */
 function toastAction(msg, label, fn, kind = 'success', ms = 12000, { focus = false, sheet = null } = {}) {
   const el = document.createElement('div');
@@ -338,4 +342,5 @@ function toastAction(msg, label, fn, kind = 'success', ms = 12000, { focus = fal
     gone();
   };
   setTimeout(expire, ms);
+  return { isOpen: () => !done };
 }

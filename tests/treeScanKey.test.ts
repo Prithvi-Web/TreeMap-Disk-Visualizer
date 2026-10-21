@@ -1520,7 +1520,7 @@ test('the welcome tour started, or restarted from Settings, over a tree no scan 
 
 test('the older scan\'s results expiring during a rescan read as a sentence — the views ask that scan, and its 404 said "Unknown or expired scanId" — with no Scan again offered over the scan under way; at rest the sentence offers one, once', () => {
   const offers: string[] = [];
-  const state: Record<string, unknown> = { root: TREE, ...HELD, expiredOffered: null };
+  const state: Record<string, unknown> = { root: TREE, ...HELD, expiredOffer: null };
   const { fns } = page<{ expired: (e: { message: string }, url: string) => void }>(['function scanResultsExpired('], {
     state, toastAction: (m: string) => { offers.push(m); }, startScan: noop,
   }, '{ expired: scanResultsExpired }');
@@ -1553,7 +1553,7 @@ test('the tree\'s scan expiring reads as a sentence when a request names it in i
   const AT_REST = 'These results have expired — scan the folder again to refresh them.';
   const RAW = 'Unknown or expired scanId';
   const offers: string[] = [];
-  const state: Record<string, unknown> = { root: TREE, ...HELD, expiredOffered: null };
+  const state: Record<string, unknown> = { root: TREE, ...HELD, expiredOffer: null };
   // The server, as it answers a scan it no longer holds (POST /api/query, execute.ts; every scanId-keyed route).
   const fetch = async () => ({ status: 404, ok: false, text: async () => JSON.stringify({ error: RAW, code: 'SCAN_NOT_FOUND' }) });
   const { fns } = page<{ api: (url: string, init?: unknown) => Promise<unknown> }>(['async function api(url', 'function scanResultsExpired('], {
@@ -1586,7 +1586,7 @@ test('the map\'s expired scan is said as the sentence alone — once at rest, wi
   const AT_REST = 'These results have expired — scan the folder again to refresh them.';
   const toasts: Array<[string, string | undefined]> = [];
   const offers: string[] = [];
-  const state: Record<string, unknown> = { root: TREE, ...STOPPED, expiredOffered: null,
+  const state: Record<string, unknown> = { root: TREE, ...STOPPED, expiredOffer: null,
     treemap: { mode: 'treemap', rootPath: '/r', maxDepth: 4, kbSel: null, history: { scrubbing: false } } };
   let answer = { status: 404, body: { error: 'Unknown or expired scanId', code: 'SCAN_NOT_FOUND' } };
   // The server, as it answers a map of a scan it no longer holds (a restart emptied its memory).
@@ -1594,19 +1594,57 @@ test('the map\'s expired scan is said as the sentence alone — once at rest, wi
   const { fns } = page<{ load: (p: string) => Promise<void> }>(['async function api(url', 'function scanResultsExpired(', 'function reportError(', 'async function loadTreemap('], {
     state, fetch, setTimeout, $: stubDom(), tmLoadSeq: 0, REDUCED: true, isSun: () => false, isCells: () => false, TM_MIN_SIZE: 4096,
     exitCartPreview: noop, altCircleFor: () => null,
-    toast: (m: string, k?: string) => { toasts.push([m, k]); }, toastAction: (m: string) => { offers.push(m); }, startScan: noop,
+    // The offer, still on screen (toastAction's handle): its going is the next test's.
+    toast: (m: string, k?: string) => { toasts.push([m, k]); }, toastAction: (m: string) => { offers.push(m); return { isOpen: () => true }; }, startScan: noop,
   }, '{ load: loadTreemap }');
   await fns.load('/r');
   await fns.load('/r');
   assert.deepEqual(offers, [AT_REST], 'at rest: the sentence, offered once with Scan again');
   assert.deepEqual(toasts, [], 'and nothing more — not "Treemap failed: …", not the sentence twice');
-  Object.assign(state, HELD, { expiredOffered: null });
+  Object.assign(state, HELD, { expiredOffer: null });
   await fns.load('/r');
   assert.deepEqual(toasts, [[DURING, 'success']], 'during a scan: the sentence alone, said plainly — not as a failure');
   assert.deepEqual(offers, [AT_REST], 'and no Scan again over the scan under way');
   answer = { status: 500, body: { error: 'The drive stopped answering.', code: 'INTERNAL' } };
   await fns.load('/r');
   assert.deepEqual(toasts.at(-1), ['Treemap failed: The drive stopped answering.', 'error'], 'control: a map that really failed says so');
+});
+
+test('an expired scan is said again once its Scan again offer has gone — a click on the map, or Clean Up\'s Find, after the offer timed out or was dismissed said nothing and did nothing — while the offer is on screen nothing more is said, and Scan again is offered once per scan (review F1.1, F1.6)', async () => {
+  const AT_REST = 'These results have expired — scan the folder again to refresh them.';
+  const toasts: Array<[string, string | undefined]> = [];
+  const offers: string[] = [];
+  /** Whether the Scan again offer is on screen (toastAction's handle): it goes after 15 s, on Escape, or when chosen. */
+  let offerUp = true;
+  const state: Record<string, unknown> = { root: TREE, ...STOPPED, expiredOffer: null,
+    treemap: { mode: 'treemap', rootPath: '/r', maxDepth: 4, kbSel: null, history: { scrubbing: false } } };
+  // The server, as it answers about a scan it no longer holds (a restart emptied its memory, or a long idle).
+  const fetch = async () => ({ status: 404, ok: false, text: async () => JSON.stringify({ error: 'Unknown or expired scanId', code: 'SCAN_NOT_FOUND' }) });
+  const { fns } = page<{ load: (p: string) => Promise<void>; api: (url: string) => Promise<unknown>; report: (e: unknown) => void }>(
+    ['async function api(url', 'function scanResultsExpired(', 'function reportError(', 'async function loadTreemap('], {
+      state, fetch, setTimeout, $: stubDom(), tmLoadSeq: 0, REDUCED: true, isSun: () => false, isCells: () => false, TM_MIN_SIZE: 4096,
+      exitCartPreview: noop, altCircleFor: () => null,
+      toast: (m: string, k?: string) => { toasts.push([m, k]); },
+      toastAction: (m: string) => { offers.push(m); return { isOpen: () => offerUp }; }, startScan: noop,
+    }, '{ load: loadTreemap, api, report: reportError }');
+  /** Clean Up's Custom rules › Find, as runCleanFind says what its request failed with. */
+  const find = async () => { try { await fns.api(`/api/cleanup/rules?scanId=${String(state.scanId)}&limit=500`); } catch (e) { fns.report(e); } };
+  await fns.load('/r');
+  assert.deepEqual([offers, toasts], [[AT_REST], []], 'control: the map\'s failure offers Scan again, and says nothing more');
+  await find();
+  assert.deepEqual(toasts, [], 'while the offer is on screen, Find says nothing more — the offer says it');
+  offerUp = false; // 15 s on: the offer has timed out, or was dismissed
+  await fns.load('/r');
+  assert.deepEqual(toasts, [[AT_REST, 'success']], 'once the offer has gone, a click on the map says the sentence, plainly — not nothing');
+  await find();
+  assert.deepEqual(toasts, [[AT_REST, 'success'], [AT_REST, 'success']], 'and so does Find');
+  assert.deepEqual(offers, [AT_REST], 'Scan again is offered once for the scan, however many calls fail under it');
+  // A later scan's results expiring are offered anew: the offer is the scan's.
+  Object.assign(state, LANDED);
+  offerUp = true;
+  await fns.load('/r');
+  assert.deepEqual(offers, [AT_REST, AT_REST], 'another scan\'s expiry offers Scan again for it');
+  assert.equal(toasts.length, 2, 'with nothing more said beside it');
 });
 
 /* ───────────────────────────── Live mode ───────────────────────────── */
