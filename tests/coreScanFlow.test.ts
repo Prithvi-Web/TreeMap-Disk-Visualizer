@@ -194,6 +194,26 @@ const LIFTED_MAP = ['async function loadTreemap(', 'async function tmHeldTreemap
  * that the tree on screen is the saved index (review F3.1, F3.4).
  */
 const LIFTED_CITY = ['async function loadCity(', 'function renderCityChrome('];
+/**
+ * Live mode, lifted whole for the pages that ask for it (`realLive`): its
+ * start and its stop, and the pill's press (LIVE_PRESS) — what startScan's
+ * `disableLive({ keepWanted: true })` keeps and finishScan's
+ * `enableLive()` starts (review F3.1, F3.5).
+ */
+const LIFTED_LIVE = ['function enableLive(', 'function disableLive('];
+const LIVE_PRESS = "$('tmLiveToggle').addEventListener('click', () => {";
+
+/** A top-level statement of the page by its opening text (an event handler's), brace-matched through its closing `;`. */
+function pageStatement(head: string): string {
+  const start = INDEX.indexOf(head);
+  assert.notEqual(start, -1, `${head} is in the page`);
+  let depth = 0;
+  for (let i = INDEX.indexOf('{', start); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, INDEX.indexOf(';', i) + 1);
+  }
+  return assert.fail(`${head} never closes`);
+}
 
 /** A view a page file registers itself (`registerView({ id: '…', … })`), its object brace-matched out of the page. */
 function pageRegisteredView(id: string): string {
@@ -243,7 +263,7 @@ async function turns(n = 30): Promise<void> {
 type Draw = { path: string; root: string | null; scanId: unknown;
   at: { scanning: unknown; indexScanDue: unknown; scanId: unknown; settledScanId: unknown; root: { path: string } | null; scanningPath: unknown } };
 
-function page(o: { route: Route; system?: unknown; search?: string; root?: unknown; settledScanId?: string | null; index?: boolean; realTreemap?: boolean; realCity?: boolean }) {
+function page(o: { route: Route; system?: unknown; search?: string; root?: unknown; settledScanId?: string | null; index?: boolean; realTreemap?: boolean; realCity?: boolean; realLive?: boolean }) {
   const dom = new Dom();
   const $ = (id: string) => dom.get(id);
   const requests: string[] = [];
@@ -394,22 +414,35 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     };
     if (!o.realTreemap) state.treemap = { rootPath: null, nodes: [], nodesFor: null, maxDepth: 4 };
   }
+  if (o.realLive) {
+    // The page's own Live mode: its watch is one of `streams`, its pill #tmLiveToggle (review F3.1, F3.5).
+    Object.assign(given, {
+      isCloudScan: () => false, fxTmPillBeamsSync: noop, fxLiveLineDrop: noop, cancelAnimationFrame: noop,
+      renderLiveFeed: noop, liveRelayout: noop, LIVE_RELAYOUT_MS: 1, setHistoryIndex: noop, presentView: noop,
+    });
+    state.live = { wanted: false, on: false, es: null, window: [], dirty: 0, pulses: new Set(), pulseRaf: 0, feedTimer: 0, relayoutTimer: 0 };
+    (state.treemap as Record<string, unknown>).history = { active: false };
+  }
   const own = new Set([...OWN, ...(o.index ? LIFTED_INDEX.map((d) => /function (\w+)\(/.exec(d)![1]) : []),
     ...(o.realTreemap ? LIFTED_MAP.map((d) => /function (\w+)\(/.exec(d)![1]) : []),
-    ...(o.realCity ? LIFTED_CITY.map((d) => /function (\w+)\(/.exec(d)![1]) : [])]);
+    ...(o.realCity ? LIFTED_CITY.map((d) => /function (\w+)\(/.exec(d)![1]) : []),
+    ...(o.realLive ? LIFTED_LIVE.map((d) => /function (\w+)\(/.exec(d)![1]) : [])]);
   const scope = new Proxy(given, {
     has: (t, k) => typeof k === 'string' && k in t && !own.has(k),
     get: (t, k) => (k === Symbol.unscopables ? undefined : t[k as string]),
     set: (t, k, v) => { t[k as string] = v; return true; },
   });
-  const src = [...LIFTED, ...(o.index ? LIFTED_INDEX : []), ...(o.realTreemap ? LIFTED_MAP : []), ...(o.realCity ? LIFTED_CITY : [])].map(pageFn).join('\n');
+  const src = [...LIFTED, ...(o.index ? LIFTED_INDEX : []), ...(o.realTreemap ? LIFTED_MAP : []), ...(o.realCity ? LIFTED_CITY : []), ...(o.realLive ? LIFTED_LIVE : [])].map(pageFn).join('\n')
+    + (o.realLive ? `\n${pageStatement(LIVE_PRESS)}` : '');
   // The real treemap view — and Disk City's — their unmounts aside (they tear down canvas machinery this page has none of).
   const views = (o.index ? `VIEW_BY_ID.set('treemap', { ...(${pageView('treemap')}), unmount() {} });` : '')
     + (o.realCity ? `\nVIEW_BY_ID.set('city', { ...(${pageRegisteredView('city')}), unmount() {} });` : '');
-  const fns = new Function('scope', `with (scope) { ${src}\n${views}\n return { switchView, restoreLastSession, startScan, stopScan, failScan, renderStartChoices, startCloudScan, loadSystem, startRejudgeRefused }; }`)(scope) as {
+  const fns = new Function('scope', `with (scope) { ${src}\n${views}\n return { switchView, restoreLastSession, startScan, stopScan, failScan, renderStartChoices, startCloudScan, loadSystem, startRejudgeRefused${o.realLive ? ', enableLive' : ''} }; }`)(scope) as {
     switchView: (v: string) => void; restoreLastSession: () => Promise<void>; startScan: (p: string, o?: unknown) => Promise<void>;
     stopScan: () => Promise<void>; failScan: (m: string, e?: unknown) => void; renderStartChoices: () => void;
     startCloudScan: (id: string, name: string) => Promise<void>; loadSystem: () => Promise<unknown>; startRejudgeRefused: () => void;
+    /** The page's own enableLive (`realLive` pages). */
+    enableLive?: () => void;
   };
   /** The start screen's choices as a person sees them: each button's words, in order. */
   const choices = () => $('startChoices').children.map((b) => b.textContent);
@@ -2133,6 +2166,59 @@ test('BQJ-1b review F2.6, F2.14: Live wished for during a rescan is started by t
     await pressStop(h);
     assert.deepEqual(calls, [{ scanning: false, tree: 'scan-mail' }], 'control: the older tree is back, and Live with it');
     assert.equal(liveOf(h).wanted, true, 'Live put back on with the older tree keeps its wish');
+  }
+});
+
+/* BQJ-1b review F3.1, F3.5: the same promise through the page's own Live
+   mode. Live on before a rescan: startScan turns it off and keeps the wish
+   (disableLive({ keepWanted: true })) — pinned by no test while every
+   harness stubbed disableLive — and the pill shows it waiting while the
+   rescan runs. The scan lands: finishScan ends the scan chrome first and
+   starts Live only once the landed scan's lists have answered (seconds on a
+   big scan). The pill kept its waiting look for that whole window, over a
+   scan that had landed, and a press there started Live where the person
+   meant to take the wish back. The waiting look now ends with the scan, so
+   the pill reads Live off until it starts, and a press reads as it shows. */
+
+/** The watches the page's own Live mode opened, in order. */
+const watches = (h: ReturnType<typeof page>) => h.streams.filter((s) => s.url.startsWith('/api/watch/')).map((s) => s.url);
+/** The Live pill as a person sees it: waiting (`queued`), running (`active`), and its pressed state. */
+const livePill = (h: ReturnType<typeof page>) => {
+  const pill = h.$('tmLiveToggle');
+  return { waiting: pill.cls.has('queued'), running: pill.cls.has('active'), pressed: pill.getAttribute('aria-pressed') };
+};
+
+test('BQJ-1b review F3.1, F3.5: Live on before a rescan is kept by the page\'s own startScan and shown waiting while the rescan runs; the waiting look ends with the scan, so while the landed scan\'s lists load the pill reads Live off and a press starts it, and finishScan starts it once', async () => {
+  const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
+  for (const pressed of [false, true]) {
+    const label = pressed ? 'pressed while the lists load' : 'left alone';
+    let releaseLists: () => void = () => {};
+    const h = page({ index: true, realLive: true, root: mail, settledScanId: 'scan-mail', route: server({ roots: [] }) });
+    h.given.loadDashboardLists = () => new Promise<boolean>((resolve) => { releaseLists = () => resolve(true); });
+    h.enableLive!(); // Live on over the scanned tree
+    assert.deepEqual(watches(h), ['/api/watch/scan-mail'], `${label}: control: Live watches the scan the tree came from`);
+    assert.deepEqual(livePill(h), { waiting: false, running: true, pressed: 'true' }, `${label}: control: the pill shows Live running`);
+    await h.startScan(MAIL);
+    await turns();
+    assert.equal(h.state.scanning, true, `${label}: control: the rescan runs`);
+    assert.deepEqual([liveOf(h).on, liveOf(h).wanted], [false, true], `${label}: startScan turns Live off for the rescan and keeps the wish (review F3.5)`);
+    assert.equal(h.streams.find((s) => s.url === '/api/watch/scan-mail')!.readyState, 2, `${label}: control: the older scan's watch is closed`);
+    assert.deepEqual(livePill(h), { waiting: true, running: false, pressed: 'true' }, `${label}: while the rescan runs the pill shows Live waiting for it — pressed, its dot lit`);
+    // It lands: finishScan, its lists still out.
+    h.streams.find((s) => s.url === '/api/scan/scan-1/progress')!.onmessage!({ data: JSON.stringify({ type: 'complete', root: mail, stats: { fileCount: 1, dirCount: 1 } }) });
+    await turns();
+    assert.equal(h.state.scanning, false, `${label}: control: the scan landed, its chrome ended`);
+    assert.deepEqual(watches(h), ['/api/watch/scan-mail'], `${label}: control: Live waits for the landed scan's lists`);
+    assert.deepEqual(livePill(h), { waiting: false, running: false, pressed: 'false' },
+      `${label}: while the landed scan's lists load the pill no longer shows Live waiting for a scan — it landed, and Live is not on yet (review F3.1)`);
+    if (pressed) {
+      h.$('tmLiveToggle').click();
+      assert.deepEqual(watches(h), ['/api/watch/scan-mail', '/api/watch/scan-1'], `${label}: the press does what the pill shows — Live starts, on the scan that landed`);
+    }
+    releaseLists();
+    await turns();
+    assert.deepEqual(watches(h), ['/api/watch/scan-mail', '/api/watch/scan-1'], `${label}: Live watches the scan that landed, once — finishScan starts it, or finds it started`);
+    assert.deepEqual(livePill(h), { waiting: false, running: true, pressed: 'true' }, `${label}: and the pill shows Live running`);
   }
 });
 

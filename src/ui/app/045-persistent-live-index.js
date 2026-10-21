@@ -737,6 +737,11 @@ function endScanChrome() {
   fxOrbHide('scan');
   fxScanHeroSync();
   $('scanStatus').classList.remove('fx-shimmer-text');
+  // The Live pill's waiting look is for a scan running, and ends with it:
+  // finishScan starts Live only once the landed scan's lists answer, and the
+  // pill said it waited for a scan that had landed — a press there started
+  // Live where the person meant to take the wish back (review F3.1).
+  liveQueuedSync();
 }
 
 /** Statuses with which the server refuses the folder itself — malformed or
