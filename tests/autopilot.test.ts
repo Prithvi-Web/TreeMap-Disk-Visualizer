@@ -339,7 +339,7 @@ test('the editor\'s Preview judges a saved policy as Save does', async () => {
   // build saved with a condition this build cannot answer is accepted by Save
   // while it stays unchanged; Preview refused it, so the one button meant to
   // show what it does said it could not be saved.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-autopilot-preview-'));
+  const dir = fileTempDir('treemap-autopilot-preview-'); // removed when the file ends (review F3.5)
   const old: AutopilotPolicy = {
     id: 'legacy', name: 'Old duplicates', path: dir, match: { kind: 'query', q: 'dupe:yes ext:jpg' },
     maxBytesPerRun: null, maxBytesPerWeek: null, cooldownDays: 7, dryRunFirst: true, requireConfirmationAbove: null, enabled: false,
@@ -361,7 +361,7 @@ test('a preview of a policy an earlier build saved with a kind no rule here has 
   // BQL-b1 put the sentence on Save's refusal, the card, the editor and the
   // run record; POST /api/autopilot/simulate still answered such a policy
   // with nothing but its other reasons, or none, and "Nothing matches".
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-autopilot-unknown-preview-')));
+  const dir = fs.realpathSync(fileTempDir('treemap-autopilot-unknown-preview-')); // removed when the file ends (review F3.5)
   fs.mkdirSync(path.join(dir, 'proj', 'node_modules', 'dep'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'proj', 'node_modules', 'dep', 'index.js'), Buffer.alloc(4096, 5));
   fs.writeFileSync(path.join(dir, 'proj', 'package.json'), '{}');
