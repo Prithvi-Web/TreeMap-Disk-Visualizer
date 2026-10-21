@@ -96,13 +96,25 @@ function sourceStrings(dirs: string[], p: path.PlatformPath = path): { at: strin
 /** What a person reads in `markup`: its text, and the words of its titles, aria-labels, placeholders and alt text. */
 function readableMarkup(markup: string): string {
   const attrs = [...markup.matchAll(/\s(?:title|aria-label|placeholder|alt)="([^"]*)"/g)].map((m) => m[1]);
-  return [markup.replace(/<[^>]*>/g, ' '), ...attrs].join('\n');
+  return [markup.replace(/<[^>]*>/g, ' '), ...attrs].join(APART);
 }
+
+/**
+ * What stands between two pieces of a page that are not one sentence — the
+ * markup's text and an attribute, two strings of a script: no white space, so
+ * no name is read across it.
+ */
+const APART = '\n\u0000\n';
 
 /** Everything a person can read on the page, as text: the markup's, and every string its scripts hold. */
 function pageText(page: string): string {
   const scripts = scriptsOf(page);
-  return [readableMarkup(markupOf(page)), ...scripts.flatMap(literalsOf)].join('\n');
+  return [readableMarkup(markupOf(page)), ...scripts.flatMap(literalsOf)].join(APART);
+}
+
+/** `text` with each run of white space read as one space: a document wrapped at 80 columns, or markup across lines, says the same words. */
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, ' ');
 }
 
 /**
@@ -113,10 +125,14 @@ function pageText(page: string): string {
  */
 const LEFT_TO_THE_MAP = 'In the cleanup cart — nothing is deleted until you move it to the Trash';
 
-/** Each place `text` names the feature as "Cleanup", "the cleanup cart" or "the cleanup target", with a little around it. */
+/**
+ * Each place `text` names the feature as "Cleanup", "the cleanup cart" or
+ * "the cleanup target", with a little around it — wherever a line break
+ * falls in the name.
+ */
 function cleanupNamings(text: string): string[] {
   const hits: string[] = [];
-  const said = text.split(LEFT_TO_THE_MAP).join(' ');
+  const said = oneLine(text).split(LEFT_TO_THE_MAP).join(' ');
   // "Cleanup" as one capitalised word ("Cleanup cart", "Cleanup target"), "the cleanup cart" and
   // "the cleanup target" (Settings' "Clean Up target"); the plain noun in lower case ("a cleanup
   // rule pack") is not the feature's name.
@@ -445,6 +461,20 @@ test('the readers find what a person reads, and leave out comments, ids and rout
   assert.equal(cleanupNamings(`${LEFT_TO_THE_MAP} Cleanup target`).length, 1, 'and nothing else beside it is');
 });
 
+test('the readers read a name wrapped across lines as the name, and two strings of a script as two (G18 review F2.3)', () => {
+  // AGENTS.md is wrapped at about 80 columns, its next line indented, and
+  // the markup runs across lines: a name split there is still the name.
+  assert.equal(cleanupNamings('A deletion staged in the cleanup\n  cart is trashed.').length, 1, 'a document\'s wrapped "cleanup cart"');
+  assert.equal(cleanupNamings('Settings\' cleanup\r\n\ttarget').length, 1, 'any white space between the words');
+  assert.equal(oldTabNamings('Clean Up\'s Empty\n  Folders tab never offers it.').length, 1, 'a document\'s wrapped "Empty Folders"');
+  assert.equal(cleanupNamings(pageText('<p class="hint">Staged in the cleanup\n      cart until you move it</p>')).length, 1, 'markup across lines');
+  assert.equal(oldTabNamings(pageText('<p>Open Shrink\n  Video</p>')).length, 1, 'markup across lines, an old tab name');
+  assert.deepEqual(cleanupNamings(pageText("<p>the cleanup</p><script>const a = 'it went to the cleanup'; const b = 'cart';</script>")), [],
+    'two strings of a script, or the markup and a script, are not one sentence');
+  assert.deepEqual(oldTabNamings(pageText("<b title=\"Folders\">Empty</b><script>const a = 'Shrink'; const b = 'Video';</script>")), [],
+    'nor are an element\'s text and its title');
+});
+
 test('the label reader judges buttons and modal headings, markup or script, by their words', () => {
   const proper = [...PROPER_NAMES, 'Missing GB'];
   for (const label of ['Custom Rules', 'Near-Duplicate Images', 'Empty Folders', 'Open the Cart', 'Keyboard Shortcuts']) {
@@ -598,12 +628,13 @@ test('README, SECURITY and AGENTS name the feature "Clean Up" as the page does: 
  */
 const OLD_TAB_NAMES = ['Custom Rules', 'Empty Folders', 'Shrink Video', 'Near-Duplicate Images'];
 
-/** Each place `text` names a Clean Up tab in its old Title Case, with a little around it. */
+/** Each place `text` names a Clean Up tab in its old Title Case, with a little around it — wherever a line break falls in the name. */
 function oldTabNamings(text: string): string[] {
   const hits: string[] = [];
-  for (const m of text.matchAll(new RegExp(OLD_TAB_NAMES.join('|'), 'g'))) {
+  const said = oneLine(text);
+  for (const m of said.matchAll(new RegExp(OLD_TAB_NAMES.join('|'), 'g'))) {
     const at = m.index ?? 0;
-    hits.push(JSON.stringify(text.slice(Math.max(0, at - 40), at + m[0].length + 30)));
+    hits.push(JSON.stringify(said.slice(Math.max(0, at - 40), at + m[0].length + 30)));
   }
   return hits;
 }
