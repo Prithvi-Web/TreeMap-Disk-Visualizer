@@ -3467,10 +3467,46 @@ function besideStaged(leaves: RGB[], s: number, nested: boolean) {
   return { tiles, W, H, colour: (t: Tile) => colourOf.get(t.path) ?? [10, 132, 255] as RGB };
 }
 
-test('owner\'s refinement: beside a staged block of "Preview after", a leaf\'s line is toned against what the block shows on its outermost device pixel — the ground laid over again inside its edge, its hatch and its dashed amber outline, each covering the share of that pixel it does at the page\'s own ratio — so every file of 8 px and up is parted by 3:1 from each staged block beside it, on the size ramp, Reclaim scores, "not scored" and the Age bands, at the top level and in a folder, at device pixel ratios 0.5, 0.667, 0.8, 0.9, 1, 1.25, 1.5 and 2, in both themes (review F1.4 of BQJ-2c-r)', () => {
+/**
+ * Each place a file with lines meets a staged block, as the raster shows it (review F2.2 of BQJ-2c-r): the file's outermost
+ * device pixel against the block's outermost one across their shared edge, along every side of every file, clear of the
+ * ends by more than the widest band and of the name tags. `under` holds the first places under `bar`. partings counts a place parted as soon as
+ * any pixel in the file's outer 2 px stands out from the file's own cushion, and edgesOf takes the block's outer 2 px for a
+ * line, so neither measures the file against the block itself.
+ */
+function stagedFacing(raster: ReturnType<typeof rasterCtx>, px: Painted[], dpr: number, bar = EDGE_BAR) {
+  const dev = (r: Painted) => { const x = Math.round(r.x * dpr), y = Math.round(r.y * dpr); return { x, y, w: Math.round((r.x + r.w) * dpr) - x, h: Math.round((r.y + r.h) * dpr) - y }; };
+  const blocks = px.filter((r) => (r.n as { freed?: boolean }).freed).map(dev);
+  const files = px.filter((r) => !r.frame && !(r.n as { freed?: boolean }).freed && r.lines);
+  const skip = Math.ceil(4 * Math.max(1, dpr));
+  let looked = 0, worst = Infinity;
+  const under: string[] = [];
+  for (const r of files) {
+    const d = dev(r);
+    const sides: Array<[string, number, number, number, number, number, number]> = [
+      ['top', d.x, d.y, 1, 0, 0, -1], ['bottom', d.x, d.y + d.h - 1, 1, 0, 0, 1], ['left', d.x, d.y, 0, 1, -1, 0], ['right', d.x + d.w - 1, d.y, 0, 1, 1, 0]];
+    for (const [side, sx, sy, ax, ay, ox, oy] of sides) {
+      for (let t = skip; t < (ax ? d.w : d.h) - skip; t++) {
+        const p: [number, number] = [sx + ax * t, sy + ay * t], q: [number, number] = [p[0] + ox, p[1] + oy];
+        if (!blocks.some((b) => q[0] >= b.x && q[0] < b.x + b.w && q[1] >= b.y && q[1] < b.y + b.h)) continue;
+        if (raster.tagged(...p) || raster.tagged(...q)) continue; // under a top-level folder's name tag no line is drawn
+        looked++;
+        const c = contrast(raster.at(...p), raster.at(...q));
+        worst = Math.min(worst, c);
+        if (c < bar && under.length < 6) under.push(`${r.n.path} ${side} side at ${p}: ${fmt(c)}:1 (${raster.at(...p).map(Math.round)} beside ${raster.at(...q).map(Math.round)})`);
+      }
+    }
+  }
+  return { looked, worst, under };
+}
+
+test('owner\'s refinement: beside a staged block of "Preview after", a leaf\'s line is toned against what the block shows on its outermost device pixel — from a ratio of 1 up the ground laid over again inside its edge, its hatch and its dashed amber outline, each covering the share of that pixel it does at the page\'s own ratio, and under 1 the map\'s ground alone — so every file of 8 px and up is parted by 3:1 from each staged block beside it, its outermost device pixel at 3:1 against the block\'s, on the size ramp, Reclaim scores, "not scored" and the Age bands, at the top level and in a folder, at device pixel ratios 0.5, 0.667, 0.8, 0.9, 1, 1.25, 1.5 and 2, in both themes (review F1.4, F2.2 of BQJ-2c-r)', () => {
   // The block's edge was reckoned as half its hatch's amber over the ground at every ratio. Its outline, 1 px wide and centred
   // 1 px in, covers 0.67, 0.6 and 0.55 of that pixel at 67, 80 and 90 %: a file stood 2.31:1 from the block beside it at
-  // 67 %, 2.60:1 at 80 % and 2.85:1 at 90 % in the light theme, and in a folder 2.06:1 at 67 % in the dark theme.
+  // 67 %, 2.60:1 at 80 % and 2.85:1 at 90 % in the light theme, and in a folder 2.06:1 at 67 % in the dark theme. Reckoned
+  // at the page's ratio, the dark theme's pixel there still blended the near-black ground, the hatch over it and the amber
+  // outline, and no one shade stood 3:1 from all three: a file's white line stood 2.31:1 from the block at 67 % (review F2.2
+  // of BQJ-2c-r); pass 1 now lays them from a whole device pixel in under a ratio of 1.
   const reclaim = (s: number) => OTHER_COLOURS.find((c) => c.name === `Reclaim score ${s}`)!.rgb;
   const others = OTHER_COLOURS.filter((c) => c.name.startsWith('Age band') || c.name === 'Reclaim not scored').map((c) => c.rgb);
   const leaves = [...RAMP_COLOURS.map((c) => c.rgb), ...Array.from({ length: 21 }, (_, k) => reclaim(5 * k)), ...others];
@@ -3487,12 +3523,16 @@ test('owner\'s refinement: beside a staged block of "Preview after", a leaf\'s l
         const p = partings(raster, px, dpr);
         assert.ok(p.looked > leaves.length * 4 * 6 * Math.max(1, dpr), `${where}: control — ${p.looked} places along the files' sides`);
         assert.deepEqual(p.unparted.slice(0, 6), [], `${where}: places a file is not parted by ${EDGE_BAR}:1 from the staged block beside it`);
+        // The file's outermost device pixel against the block's, which partings does not weigh (review F2.2 of BQJ-2c-r).
+        const f = stagedFacing(raster, px, dpr);
+        assert.ok(f.looked > leaves.length * 4 * 6 * Math.max(1, dpr), `${where}: control — ${f.looked} places a file meets a staged block`);
+        assert.deepEqual(f.under, [], `${where}: a file's outermost device pixel under ${EDGE_BAR}:1 against the staged block's beside it`);
       }
     }
   }
 });
 
-test('owner\'s refinement: a staged block shows on its outermost device pixel what the painter reckons a line beside it is toned against (tmStagedEdge) — where its dashed outline is on, the outline over the ground laid again, and over a hatch line, each covering the share of that pixel it does: the ground and the hatch 1 − dpr / 2 of it, the outline as a hollow cell\'s does — at device pixel ratios 0.5, 0.667, 0.8, 0.9, 1, 1.25, 1.5 and 2, in both themes (review F1.4 of BQJ-2c-r)', () => {
+test('owner\'s refinement: a staged block shows on its outermost device pixel what the painter reckons a line beside it is toned against (tmStagedEdge) — from a ratio of 1 up, where its dashed outline is on, the outline over the ground laid again, and over a hatch line, each covering the share of that pixel it does: the ground and the hatch 1 − dpr / 2 of it, the outline as a hollow cell\'s does; under a ratio of 1, the map\'s ground alone, as pass 1 lays all three from a whole device pixel in — at device pixel ratios 0.5, 0.667, 0.8, 0.9, 1, 1.25, 1.5 and 2, in both themes (review F1.4, F2.2 of BQJ-2c-r)', () => {
   // The raster lays the block's dashed outline without its gaps, so its edge shows the shades where the dash is on: between
   // the outline over the ground laid again (showsEdge[2]) and over a hatch line (showsEdge[3]), as the hatch crosses the pixel.
   for (const dpr of [0.5, 0.667, 0.8, 0.9, 1, 1.25, 1.5, 2]) {
@@ -3501,6 +3541,18 @@ test('owner\'s refinement: a staged block shows on its outermost device pixel wh
       const tiles = [{ name: 'c — freed', path: '/h/c — freed', parentPath: '/h', size: 2e9, type: 'dir', depth: 1, expanded: false, freed: true, x: 20, y: 20, w: 40, h: 40 } as Tile];
       const { raster, px } = rasterPaint(tiles, palette, 100 * k, 100 * k, () => [10, 132, 255], undefined, false, dpr);
       const r = px[0] as Painted & { shows?: RGB[]; showsEdge?: RGB[] };
+      if (dpr < 1) {
+        // Under a ratio of 1 the ground alone (review F2.2 of BQJ-2c-r): the map's ground, as the raster lays it, on every
+        // pixel of the block's outermost columns and rows.
+        assert.ok(r && !r.stops && r.shows && r.showsEdge, `${where}: control — the block is drawn as a staged block`);
+        const want = canvasGround(palette), d = { x: Math.round(r.x * dpr), y: Math.round(r.y * dpr), x1: Math.round((r.x + r.w) * dpr) - 1, y1: Math.round((r.y + r.h) * dpr) - 1 };
+        assert.ok(r.showsEdge!.length === 1 && contrast(r.showsEdge![0], want) < 1.01, `${where}: the painter reckons the block's outermost device pixel as the map's ground alone (${JSON.stringify(r.showsEdge)} against ${want.map(Math.round)})`);
+        const off: string[] = [];
+        for (let t = 0; t <= d.y1 - d.y; t++) for (const x of [d.x, d.x1]) if (contrast(raster.at(x, d.y + t), want) > 1.01) off.push(`${x},${d.y + t}: ${raster.at(x, d.y + t).map(Math.round)}`);
+        for (let t = 0; t <= d.x1 - d.x; t++) for (const y of [d.y, d.y1]) if (contrast(raster.at(d.x + t, y), want) > 1.01) off.push(`${d.x + t},${y}: ${raster.at(d.x + t, y).map(Math.round)}`);
+        assert.deepEqual(off.slice(0, 4), [], `${where}: the block's outermost device pixels show the map's ground, ${want.map(Math.round)} (${off.length} do not)`);
+        continue;
+      }
       assert.ok(r && !r.stops && r.shows && r.showsEdge && r.showsEdge.length === 4, `${where}: control — the block is drawn as a staged block, its edge reckoned with and without its outline and a hatch line`);
       const [lo, hi] = [r.showsEdge![2], r.showsEdge![3]];
       const off: string[] = [];

@@ -13524,9 +13524,13 @@ function tmHollowEdge(ground, base, dpr) {
  * the light theme where the outline covers more than half of it — 0.67 at
  * 67 %, 0.6 at 80 %, 0.55 at 90 % — and darker in the dark theme: a file of 8
  * px and up stood under 3:1 from a staged block beside it there (review F1.4
- * of BQJ-2c-r).
+ * of BQJ-2c-r). Under a ratio of 1 pass 1 lays all three from a whole device
+ * pixel in, and that pixel shows the `ground` alone: no one shade stood 3:1
+ * from the ground, the hatch over it and the amber outline it blended there
+ * (review F2.2 of BQJ-2c-r).
  */
 function tmStagedEdge(ground, inside, amber, hatched, dashed, dpr) {
+  if (dpr < 1) return [ground];
   const wash = Math.max(0, 1 - dpr / 2), dash = Math.max(0, Math.min(1, 1.5 * dpr) - dpr / 2);
   const off = mix(ground, inside, wash);
   const offs = hatched && amber ? [off, mix(off, amber, 0.5 * wash)] : [off];
@@ -14436,21 +14440,29 @@ function drawTreemap() {
       ctx.clearRect(r.x, r.y, r.w, r.h);
       ctx.fillStyle = cssVar('--tm-canvas-bg');
       ctx.fillRect(r.x, r.y, r.w, r.h); // the ground, as the map's first fill laid it
-      ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
+      // The ground again and the hatch from half a css px in, the outline 1 px
+      // wide centred 1 px in — and under a ratio of 1 from a whole device pixel
+      // in, the outline one device pixel wide inside that, so the block's
+      // outermost device pixel shows the ground alone: there no shade of a
+      // file's line stood 3:1 from the ground, the hatch and the amber outline
+      // that pixel blended (2.31:1 at 67 % in the dark theme, review F2.2 of
+      // BQJ-2c-r).
+      const inset = dpr < 1 ? tmLinePx(1, dpr) : 0.5, ring = dpr < 1 ? 1.5 * inset : 1;
+      ctx.fillRect(r.x + inset, r.y + inset, Math.max(1, r.w - 2 * inset), Math.max(1, r.h - 2 * inset));
       const hatch = tmHatchPattern(ctx);
       if (hatch) {
         ctx.save();
         ctx.globalAlpha = 0.5;
         ctx.fillStyle = hatch;
-        ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
+        ctx.fillRect(r.x + inset, r.y + inset, Math.max(1, r.w - 2 * inset), Math.max(1, r.h - 2 * inset));
         ctx.restore();
       }
       if (r.w > 6 && r.h > 6) {
         ctx.save();
         ctx.setLineDash([4, 3]);
-        ctx.lineWidth = 1;
+        ctx.lineWidth = dpr < 1 ? inset : 1;
         ctx.strokeStyle = cssVar('--warn') || '#FF9F0A';
-        ctx.strokeRect(r.x + 1, r.y + 1, Math.max(1, r.w - 2), Math.max(1, r.h - 2));
+        ctx.strokeRect(r.x + ring, r.y + ring, Math.max(1, r.w - 2 * ring), Math.max(1, r.h - 2 * ring));
         ctx.restore();
       }
       // What it shows inside its edge, for a folder's band beside it (F1.5):
