@@ -1287,7 +1287,11 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
    one to be dropped again, so there is deliberately none. */
 .legend-grad { width: 220px; height: 7px; border-radius: 4px; }
 .tm-legend { display: flex; align-items: center; gap: 9px; }
-.tm-legend .legend-grad { width: 170px; }
+/* 150px, from 170: at 1440 the footer held the key, "9,445 items of 4.0 KB or
+   more drawn · 44.9 GB in this folder" and the hint on one line, and a count
+   one digit longer ("10,106 items", whole-pixel snapping keeps slivers) wrapped
+   the hint to a second line and took 21 px from the map (BQA eighth pass). */
+.tm-legend .legend-grad { width: 150px; }
 /* The size key's ends stay whole: at 1024 in Preview, beside two markings,
    "1 MB" and "10 GB+" wrapped to two lines each (sixth browser pass H52). */
 .tm-legend .tm-legend-end { white-space: nowrap; }
