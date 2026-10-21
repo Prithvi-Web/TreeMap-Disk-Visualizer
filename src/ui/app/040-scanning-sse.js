@@ -67,10 +67,13 @@ function restoreDashboardPanels() {
   if (state.root) void renderGrowthProjection();
   // Cost to keep, Drive health and the budgets said the saved index's tree
   // filled in once its scan finished; nothing will land now (review F1.12).
+  // Focus on a control they take away — a budget's Edit button — moves on (review F2.5).
   if (fromIndex) {
-    void loadCostEstimate();
-    void loadDriveHealth();
-    void loadBudgets();
+    withFocusKept(() => {
+      void loadCostEstimate();
+      void loadDriveHealth();
+      void loadBudgets();
+    });
   }
   // The refused row too: a stopped or failed whole-disk scan's notice
   // ("their size will not be in this total") goes with it (Track U, U-11).
@@ -543,11 +546,14 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
       // Said again, as loading: the lists as on their way, and the view on
       // screen re-entered — its lines read the scan coming now. A Stop in
       // this window says the saved index again (stopScan re-enters it).
-      showListsPending();
-      void loadCostEstimate();
-      void loadDriveHealth();
-      void loadBudgets();
-      withFocusKept(() => { switchView(state.view); });
+      // Focus on a control any of them takes away moves on (review F2.5).
+      withFocusKept(() => {
+        showListsPending();
+        void loadCostEstimate();
+        void loadDriveHealth();
+        void loadBudgets();
+        switchView(state.view);
+      });
     }
     return;
   }

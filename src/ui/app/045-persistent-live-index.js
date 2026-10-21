@@ -982,17 +982,21 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0, afterStop =
     // The forecast on the card was the last folder's; the scan behind this
     // tree paints this one's, and Stop asks for it by this folder's path (B05).
     if ($('growthProj')) $('growthProj').hidden = true;
-    showListsPending();
     // The scan behind this tree is requested as this paint returns (startScan
     // → startScanRequest), and the views below are painted before it is, the
     // scan chrome ended above: it is due, for what says whether a scan will
     // draw the tree (review F3.1). The scan chrome's next end clears it.
     state.indexScanDue = true;
-    // Cost to keep, Drive health and the budgets are a scan's too: each says
-    // it fills in once the scan finishes, not the last folder's figures (review F1.12).
-    void loadCostEstimate();
-    void loadDriveHealth();
-    void loadBudgets();
+    // The lists, Cost to keep, Drive health and the budgets are a scan's
+    // too: each says it is on its way, not the last folder's figures (review
+    // F1.12). They rewrite cards under focus — a budget's Edit button —
+    // so focus they take away moves on (review F2.5).
+    withFocusKept(() => {
+      showListsPending();
+      void loadCostEstimate();
+      void loadDriveHealth();
+      void loadBudgets();
+    });
     emit(TOPIC.scan, null);
     // The first paint of a tree hides the welcome, whose "Choose a folder"
     // the folder browser handed focus back to (review F2.6).

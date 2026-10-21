@@ -1915,6 +1915,87 @@ test('BQJ-1b (2): a rescan pressed over a saved index\'s tree a Stop left on scr
   }
 });
 
+/* BQJ-1b review F2.5, F2.11: focus is never on <body> (the owner's rule).
+   The index paint, the quiet scan chrome over a saved index's tree and a
+   failed quiet rescan each repaint what is on screen — the Dashboard's
+   folder budgets card says it waits for the scan, the view on screen is
+   re-entered — and focus on a control they take away moves on to one on
+   screen (withFocusKept). */
+
+/** A control a repaint takes off screen: one button written into `host`, focused. */
+function focusIn(h: ReturnType<typeof page>, host: string): El {
+  h.$(host).innerHTML = '<button class="b-edit">Edit budget</button>';
+  const b = h.$(host).children[0];
+  b.focus();
+  assert.equal(h.dom.activeElement, b, `control: focus on the button in #${host}`);
+  return b;
+}
+/** Focus on a control on screen — never <body>. */
+const focusOnControl = (h: ReturnType<typeof page>) => h.dom.activeElement !== h.dom.body && h.dom.activeElement.painted();
+/** The treemap view's draw, made to repaint #tmHost under focus first, as a redraw of the map does. */
+function mapRepaints(h: ReturnType<typeof page>): void {
+  const draw = h.given.loadTreemap as (p: string) => void;
+  h.given.loadTreemap = (p: string) => { h.$('tmHost').innerHTML = ''; draw(p); };
+}
+
+test('BQJ-1b review F2.5, F2.11: focus on a control that the index paint, the quiet scan chrome over a saved index\'s tree or a failed quiet rescan takes off screen moves on to a control on screen — never <body>', async () => {
+  const indexed = () => server({ roots: [], indexed: [MAIL], indexTrees: { [MAIL]: indexTreeOf(MAIL, 37_700_000) } });
+  // The index paint (finishScan): the folder budgets card, said again as waiting for the scan, takes its Edit buttons down.
+  {
+    const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
+    const h = page({ index: true, root: mail, settledScanId: 'scan-mail', route: indexed() });
+    h.switchView('dashboard');
+    h.given.loadBudgets = () => { h.$('budgetList').innerHTML = ''; };
+    focusIn(h, 'budgetList');
+    await h.startScan(MAIL); // an unattended rescan — an offload's, the cart's undo — leaves focus where it was
+    await turns();
+    assert.deepEqual(h.emitted, [null], 'control: painted from the saved index');
+    assert.ok(focusOnControl(h), `the index paint moves focus on from the budget's Edit button it took away — not to <body> (on #${h.dom.activeElement.id})`);
+  }
+  // The quiet scan chrome over a saved index's tree a Stop left (beginScanChrome): its cards said again, the view re-entered.
+  for (const repaint of ['the budgets card', 'the map'] as const) {
+    const base = indexed();
+    const probe: { answer: (() => void) | null } = { answer: null };
+    const h = page({ index: true, root: indexTreeOf(MAIL, 37_700_000), route: (m, url, b) => {
+      if (url.startsWith('/api/index/status') && !probe.answer) return new Promise((resolve) => { probe.answer = () => resolve(base(m, url, b) as { status?: number; body?: unknown }); });
+      return base(m, url, b);
+    } });
+    if (repaint === 'the budgets card') {
+      h.switchView('dashboard');
+      h.given.loadBudgets = () => { h.$('budgetList').innerHTML = ''; };
+      focusIn(h, 'budgetList');
+    } else {
+      h.switchView('treemap');
+      mapRepaints(h);
+      focusIn(h, 'tmHost');
+    }
+    const started = h.startScan(MAIL);
+    await turns();
+    assert.ok(probe.answer, `${repaint}: control: the index is being asked about the folder`);
+    assert.ok(focusOnControl(h), `${repaint}: the scan chrome's repaint moves focus on from what it took away — not to <body> (on #${h.dom.activeElement.id})`);
+    await pressStop(h);
+    probe.answer!();
+    await started;
+  }
+  // The quiet rescan behind the index paint failing (quietRescanFailed): the view on screen is re-entered.
+  {
+    let answerScan: ((a: { status: number; body: unknown }) => void) | null = null;
+    const base = indexed();
+    const h = page({ index: true, root: indexTreeOf(MAIL, 37_700_000), route: (m, url, b) => (
+      m === 'POST' && url === '/api/scan' && !answerScan ? new Promise((r) => { answerScan = r; }) : base(m, url, b)) });
+    h.switchView('treemap');
+    await h.startScan(MAIL);
+    await turns();
+    assert.deepEqual(h.emitted, [null], 'control: painted from the saved index, its quiet request out');
+    mapRepaints(h);
+    focusIn(h, 'tmHost');
+    answerScan!({ status: 500, body: { error: 'The drive went away.', code: 'INTERNAL' } });
+    await turns();
+    assert.equal(h.state.scanning, false, 'control: its quiet rescan failed');
+    assert.ok(focusOnControl(h), `a failed quiet rescan re-enters the map and moves focus on from what it repainted — not to <body> (on #${h.dom.activeElement.id})`);
+  }
+});
+
 /* BQJ-1b: tests/treeScanKey.test.ts holds every view's requests to the scan
    the tree on screen came from through four phases, written as the
    (scanning, scanId, settledScanId) the page is in. These are those phases,

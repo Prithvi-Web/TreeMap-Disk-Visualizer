@@ -1074,13 +1074,19 @@ test('Cost to keep, waiting on a landed scan\'s list walk when another folder is
 test('a Stop or a failure that leaves the saved index\'s tree on screen says the Dashboard\'s scan-backed cards again — the saved index\'s now, not "fills in once the scan finishes" — and one that leaves a scanned tree asks nothing again', () => {
   const asked: string[] = [];
   const state: Record<string, unknown> = { root: TREE, ...INDEX_STOPPED, largest: [], bigFolders: [], types: [], scanStats: null, donut: {} };
-  const { fns } = page<{ restore: () => void }>(['function restoreDashboardPanels('], {
+  // Focus on a budget's Edit button, which the budgets card takes away as it says the saved index (review F2.5).
+  const landing = { focused: 0, focus() { this.focused++; }, getClientRects: () => [{}] };
+  const edit = { gone: false, getClientRects() { return this.gone ? [] : [{}]; } };
+  const document = { activeElement: edit as unknown, body: {} };
+  const { fns } = page<{ restore: () => void }>(['function restoreDashboardPanels(', 'function withFocusKept('], {
     state, $: stubDom(), renderBigFiles: noop, renderBigFolders: noop, renderDonut: noop, clearDonut: noop, fxDonutLoadingSync: noop,
-    renderDiskNotes: noop, countUp: noop, formatBytes: String, renderGrowthProjection: noop,
-    loadCostEstimate: () => { asked.push('cost'); }, loadDriveHealth: () => { asked.push('health'); }, loadBudgets: () => { asked.push('budgets'); },
+    renderDiskNotes: noop, countUp: noop, formatBytes: String, renderGrowthProjection: noop, document, focusLanding: () => landing,
+    loadCostEstimate: () => { asked.push('cost'); }, loadDriveHealth: () => { asked.push('health'); },
+    loadBudgets: () => { asked.push('budgets'); edit.gone = true; },
   }, '{ restore: restoreDashboardPanels }');
   fns.restore(); // stopScan, failScan, quietRescanFailed
   assert.deepEqual(asked.sort(), ['budgets', 'cost', 'health'], 'over the saved index\'s tree each card is said again');
+  assert.equal(landing.focused, 1, 'and focus on a control the budgets card took away moves on — not to <body> (review F2.5)');
   asked.length = 0;
   Object.assign(state, STOPPED);
   fns.restore();
