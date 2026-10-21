@@ -1272,6 +1272,10 @@ async function runCleanFind(fetcher) {
   const askAgain = () => { if (working) cleanFindNoList = true; cleanAskAgain(() => runCleanFind(fetcher)); };
   const findBtn = $('cleanFindBtn');
   const findLabel = findBtn.innerHTML;
+  // Held, the button is disabled, and a browser hands focus from a disabled control to <body>, where it stayed
+  // once the answer landed: a second Enter reached nothing (review F3.8, as K02 found of Scan). It is given back
+  // as the button is, unless the person moved it meanwhile.
+  const heldFocus = document.activeElement === findBtn;
   findBtn.disabled = true;
   let data;
   let failure = null;
@@ -1284,6 +1288,7 @@ async function runCleanFind(fetcher) {
   } finally {
     findBtn.disabled = false;
     findBtn.innerHTML = findLabel;
+    if (heldFocus && (!document.activeElement || document.activeElement === document.body)) findBtn.focus({ preventScroll: true });
   }
   if (failed) {
     // The older scan's failure: matched again against the scan the tree now on screen came from — once the

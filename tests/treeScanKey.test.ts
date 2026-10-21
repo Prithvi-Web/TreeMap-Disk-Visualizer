@@ -1102,7 +1102,7 @@ function cleanUpPage(state: Record<string, unknown>, answer: (url: string) => un
   const subs: Array<(scanId: string | null) => void> = [];
   const given: Record<string, unknown> = {
     subscribe: (_topic: string, fn: (scanId: string | null) => void) => { subs.push(fn); }, TOPIC: { scan: 'scan' },
-    state, $, escapeHtml: esc, icon: () => '', skeletonRows: () => '<i>loading</i>', formatCount: String, formatBytes: String, formatDate: String,
+    state, $, document: { activeElement: null, body: null }, escapeHtml: esc, icon: () => '', skeletonRows: () => '<i>loading</i>', formatCount: String, formatBytes: String, formatDate: String,
     chipFor: () => '', cartButtonHtml: () => '', refreshCartButtons: noop, updateCleanSummary: noop, seedNodes: noop, sizeInk: () => '',
     renderSmartGroups: noop, ecosystemLabel: String, renderCloudSafe: async () => { cloud.push(1); }, toast: (m: string) => { toasts.push(m); },
     reportError: (e: Error) => { toasts.push(e.message); }, selectedSavedView: () => ({ id: 'v', q: 'size>1gb' }), cleanOnDiskOf: async () => new Map(),

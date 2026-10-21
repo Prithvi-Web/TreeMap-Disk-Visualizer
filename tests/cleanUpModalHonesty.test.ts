@@ -308,7 +308,7 @@ async function findWith(rejection: Error): Promise<{ msg: string; kind: string }
   // path rather than a test-local idea of what it does.
   const reportError = runnable(bodyOf('function reportError(err, context) {'), { toast }, 'err, context');
   const fn = runnable(bodyOf('async function runCleanFind(fetcher) {'), {
-    ...sheet(), $, toast, reportError,
+    ...sheet(), $, toast, reportError, document: { activeElement: null, body: null },
     seedNodes: () => {},
     icon: () => '',
   }, 'fetcher');
@@ -702,7 +702,7 @@ function findHarness(facts: (paths: string[]) => Promise<unknown>, cloud = false
   let measuredNow = (): number => 0;
   const deps: Record<string, unknown> = {
     cleanAskAgain: () => assert.fail('no other tree came on screen'), cleanNoScanHtml: () => assert.fail('a scan stands behind the tree'),
-    $, state: { scanId: 'scan-1' }, isCloudScan: () => cloud, toast: () => {}, reportError: () => assert.fail('nothing failed'), seedNodes: () => {}, icon: () => '', skeletonRows: () => '',
+    $, document: { activeElement: null, body: null }, state: { scanId: 'scan-1' }, isCloudScan: () => cloud, toast: () => {}, reportError: () => assert.fail('nothing failed'), seedNodes: () => {}, icon: () => '', skeletonRows: () => '',
     chipFor: () => '', formatDate: () => '', sizeInk: () => '', formatBytes: (n: number) => `${n} B`, formatCount: String, escapeHtml: String,
     cartButtonHtml: () => '', refreshCartButtons: () => {}, updateCleanSummary: () => { summaries.push(measuredNow()); },
     api: async (url: string, opts: { body: string }) => {
@@ -778,6 +778,95 @@ test('where the onDisk fact cannot answer — a system that reports no blocks, a
   const cloud = findHarness(async () => assert.fail('a cloud account\'s files are not measured'), true);
   await cloud.page.find(async () => ({ files: [{ path: 'cloud://drive/a.mov', name: 'a.mov', size: 1, modifiedAt: 0 }], matched: 1, truncated: false }));
   assert.deepEqual(cloud.asked, [], 'a cloud account\'s files are on no disk here: nothing is asked');
+});
+
+/**
+ * The page's runCleanFind over focus as a browser keeps it (review F3.8): a control focused holds focus until
+ * another takes it — or until it is disabled, when the browser's focus fixup hands it to <body> as it next reads
+ * where focus is, and enabling the control again does not give it back. The tree's scan is `state.scanId`;
+ * another tree come on screen asks again, as the sheet does while it is open.
+ */
+function findFocusHarness(state: { scanId: string }) {
+  const body = { id: 'body' };
+  let active: { disabled: boolean } | null = null;
+  const document = { body, get activeElement(): unknown { if (active?.disabled) active = null; return active ?? body; } };
+  const els: Record<string, any> = {};
+  const $ = (id: string) => (els[id] ||= {
+    id, innerHTML: '', textContent: '', disabled: false, addEventListener() {}, querySelectorAll: () => [], focus() { active = els[id]; },
+  });
+  const deps: Record<string, unknown> = {
+    $, document, state, cleanAskAgain: (load: () => Promise<void>) => { void load(); }, cleanNoScanHtml: () => assert.fail('a scan stands behind the tree'),
+    isCloudScan: () => false, toast: () => {}, reportError: () => assert.fail('nothing failed for the tree on screen'), seedNodes: () => {}, icon: () => '',
+    skeletonRows: () => '', chipFor: () => '', cartButtonHtml: () => '', refreshCartButtons: () => {}, updateCleanSummary: () => {},
+    cleanOnDiskOf: async () => new Map(),
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const find = new Function(...keys, `let cleanMatches = [], cleanOnDisk = new Map(), cleanFindWaiting = null, cleanFindNoList = false;
+    ${declOf('runCleanFind')}
+    ${declOf('treeScanId')}
+    return runCleanFind;`)(...keys.map((k) => deps[k])) as (fetcher: () => Promise<unknown>) => Promise<void>;
+  return { find, $, document };
+}
+
+/** A request the test answers itself. */
+function held<T>() {
+  let settle!: { resolve: (v: T) => void; reject: (e: Error) => void };
+  const promise = new Promise<T>((resolve, reject) => { settle = { resolve, reject }; });
+  return { promise, ...settle };
+}
+
+test('Find keeps focus through its request — held disabled, the button hands focus to <body>, and it is given back as the button is, unless the person moved it meanwhile or the button never had it (review F3.8)', async () => {
+  const NONE = { files: [], matched: 0, truncated: false };
+  {
+    const h = findFocusHarness({ scanId: 's1' });
+    const answer = held<unknown>();
+    h.$('cleanFindBtn').focus(); // Tab to Find, then Enter
+    const done = h.find(() => answer.promise);
+    assert.equal(h.$('cleanFindBtn').disabled, true, 'control: Find is held while its request is out');
+    assert.equal(h.document.activeElement, h.document.body, 'control: the browser hands focus from the held button to <body>');
+    answer.resolve(NONE);
+    await done;
+    assert.equal(h.$('cleanFindBtn').disabled, false, 'control: Find is handed back');
+    assert.equal(h.document.activeElement, h.$('cleanFindBtn'), 'focus is on Find again — a second Enter reaches it — never left on <body>');
+  }
+  {
+    // Focus the person moved while the request was out stays where they moved it.
+    const h = findFocusHarness({ scanId: 's1' });
+    const answer = held<unknown>();
+    h.$('cleanFindBtn').focus();
+    const done = h.find(() => answer.promise);
+    h.$('ruleSizeMb').focus();
+    answer.resolve(NONE);
+    await done;
+    assert.equal(h.document.activeElement, h.$('ruleSizeMb'), 'focus moved meanwhile is left where the person put it');
+  }
+  {
+    // A Find the button never had focus for — the one a scan landing starts while nothing is focused — puts none on it.
+    const h = findFocusHarness({ scanId: 's1' });
+    const answer = held<unknown>();
+    const done = h.find(() => answer.promise);
+    answer.resolve(NONE);
+    await done;
+    assert.equal(h.document.activeElement, h.document.body, 'focus the button never held is not pulled onto it');
+  }
+  {
+    // The older scan's request failing: Find is asked again of the scan now behind the tree, and keeps focus through both.
+    const state = { scanId: 's1' };
+    const h = findFocusHarness(state);
+    const answers = [held<unknown>(), held<unknown>()];
+    let asked = 0;
+    h.$('cleanFindBtn').focus();
+    const done = h.find(() => answers[asked++].promise);
+    state.scanId = 's2'; // a scan landed: another tree is on screen
+    answers[0].reject(new Error('Unknown or expired scanId'));
+    await done;
+    assert.equal(asked, 2, 'control: Find is asked again of the scan now on screen');
+    assert.equal(h.$('cleanFindBtn').disabled, true, 'control: the Find asked again holds the button');
+    answers[1].resolve(NONE);
+    await waitFor(() => !h.$('cleanFindBtn').disabled, 'the Find asked again to answer');
+    assert.equal(h.document.activeElement, h.$('cleanFindBtn'), 'focus is on Find once the Find asked again answers');
+  }
 });
 
 /**
