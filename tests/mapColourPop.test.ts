@@ -598,13 +598,13 @@ const OTHER_COLOURS: Array<{ name: string; rgb: RGB }> = (() => {
 /** Heights through the cushion's whole range: a one-line tile, two lines, a part cushion, a whole one, tall. */
 const SWEEP_HEIGHTS = [15, 17, 18, 20, 22, 25, 27, 31, 34, 37, 41, 44, 48, 53, 56, 60, 63, 71, 74, 87, 110, 126, 200];
 
-type Swept = { label: string; h: number; y0: number; fill: Grad; texts: Text[] };
+type Swept = { label: string; h: number; y0: number; fill: Grad; texts: Text[]; fillRgb: RGB };
 
 /**
  * Paint `leaves` (each with its colour, or the Trash cell) with the real
  * drawTreemap, each in its own 210 px row slot — after the folder frame it
- * sits in, when it has one — and return each leaf's cushion and the lines
- * written on it.
+ * sits in, when it has one — and return each leaf's cushion, the lines
+ * written on it, and the shade of its colour it was filled with (r.fillRgb).
  */
 function sweep(leaves: Array<{ label: string; rgb?: RGB; trash?: boolean; h: number; inFolder?: boolean }>): Swept[] {
   const nodes: Tile[] = [];
@@ -626,9 +626,9 @@ function sweep(leaves: Array<{ label: string; rgb?: RGB; trash?: boolean; h: num
     where.push({ x: lx, y: ly, h: l.h });
   }
   const rec = paint(nodes, (n) => colourOf.get(n.path) ?? [0, 0, 0]);
-  const fills = leafFills(rec, leaves.length);
+  const fills = leafFills(rec, leaves.length), painted = rec.px.filter((r) => !r.frame);
   return leaves.map((l, k) => ({
-    label: l.label, h: l.h, y0: where[k].y, fill: fills[k],
+    label: l.label, h: l.h, y0: where[k].y, fill: fills[k], fillRgb: painted[k].fillRgb!,
     texts: rec.texts.filter((tx) => Math.abs(tx.x - (where[k].x + 5)) < 0.01 && tx.y >= where[k].y - 0.01 && tx.y < where[k].y + l.h),
   }));
 }
@@ -674,15 +674,15 @@ test('G09: a label written below its folder\'s name tag reaches 4.5:1 too — on
 
 test('G09: the cushion gives way only where a label needs it — a size-ramp tile keeps the whole cushion an unlabelled tile of its height gets', () => {
   // The owner's map is cushioned; legibility may ease a tile's cushion,
-  // never flatten the ramp's tiles, whose labels read at the whole one.
+  // never flatten the ramp's tiles, whose labels read at the whole one. A
+  // leaf with lines of its own is filled a shade lighter where its lines
+  // darken it (tmEdgedFill), by its lines, not its label: the cushion it is
+  // laid in is the whole one its fill gets with nothing written on it.
   const twins = sweep(LABELLED.map((l) => ({ label: `ramp ${l.t}`, rgb: ramp.sizeRgb(STEPS.find((s) => s.t === l.t)!.bytes), h: l.h })));
-  const bare = (() => {
-    const tiles = LABELLED.map((l, i) => ({ ...tile(i, l.depth, STEPS.find((s) => s.t === l.t)!.bytes, l.h) }));
-    return leafFills(paint(tiles), tiles.length);
-  })();
+  const asGrad = (stops: RGB[]) => stops.map((c, i) => [i, `rgb(${c.join(',')})`]);
   for (const [k, l] of LABELLED.entries()) {
     assert.ok(twins[k].texts.length >= 1, `ramp ${l.t}, ${l.h} px: labelled`);
-    assert.deepEqual(twins[k].fill.stops, bare[k].stops, `ramp ${l.t}, a ${l.h} px tile: labelled, it keeps the cushion an unlabelled tile gets`);
+    assert.deepEqual(twins[k].fill.stops, asGrad(LEAF_STOPS(twins[k].fillRgb, l.h, null)), `ramp ${l.t}, a ${l.h} px tile: labelled, it keeps the cushion an unlabelled tile gets`);
   }
 });
 
@@ -2461,29 +2461,34 @@ function uniformGrid(s: number, n: number, bytes: number) {
  * a line or a texture takes on that tile (darker on a light tile, lighter on a dark one) by more than 1.05:1 — `apart`,
  * the line pixels and texture together, not the highlight — the strongest contrast, the share under luminance 0.03, the
  * mean relative luminance against the solid fill's (`mean`, 1 when equal), the mean CIE L* less the solid fill's (`dL`),
- * and the solid fill's own mean L* (`L`). And `ink`: the share of their area a line or a texture covers as the raster shows
+ * and the solid fill's own mean L* (`L`) — the solid fill being the cushion painted, or with `solidOf` the cushion the
+ * tile's own colour gets with nothing on it (a leaf with lines is filled a shade lighter or darker, residual 3); and
+ * without the device pixels `skip` takes (a folder's band laid over the leaf's edge). And `ink`: the share of their area a line or a texture covers as the raster shows
  * it — each pixel counted by how far it lies from the fill toward the shade the tile's lines (r.lines) or texture (r.tex)
  * were laid in on its row, 0 to 1 — so a device pixel a 1 px line covers by half, at 150 %, counts a half: the same share at
  * every device pixel ratio, where `apart` counts that pixel whole.
  */
-function tileLook(raster: ReturnType<typeof rasterCtx>, px: Painted[], inBox: (r: Painted) => boolean, dpr = 1) {
+function tileLook(raster: ReturnType<typeof rasterCtx>, px: Painted[], inBox: (r: Painted) => boolean, dpr = 1, solidOf?: (r: Painted) => RGB[], skip?: (x: number, y: number) => boolean) {
   let total = 0, apart = 0, black = 0, sum = 0, solid = 0, dL = 0, L = 0, strongest = 1, ink = 0;
   for (const r of px) {
     if (r.frame || !r.stops || !inBox(r)) continue;
     const darker = luminance(r.fillRgb!) >= 0.18;
     const lineShades = [...new Set((r.lines || []).map((l) => l.rgb))].map((c) => rgba(c).slice(0, 3) as RGB);
     const x0 = Math.round(r.x * dpr), y0 = Math.round(r.y * dpr), x1 = Math.round((r.x + r.w) * dpr), y1 = Math.round((r.y + r.h) * dpr);
+    // What the lightness is measured against: the cushion as painted, or as the tile's own colour would be painted solid.
+    const own = solidOf ? solidOf(r) : r.stops;
     for (let y = y0; y < y1; y++) {
       const t = Math.max(0, Math.min(1, ((y + 0.5) / dpr - r.y) / r.h));
-      const fill = lerp(r.stops[0], r.stops[1], t);
+      const fill = lerp(r.stops[0], r.stops[1], t), ref = lerp(own[0], own[1], t);
       const shades = r.tex ? [...lineShades, lerp(r.tex.stops[0] as RGB, r.tex.stops[1] as RGB, t)] : lineShades;
       for (let x = x0; x < x1; x++) {
+        if (skip && skip(x, y)) continue;
         const p = raster.at(x, y), c = contrast(p, fill);
         total++;
         if (c > 1.05 && (luminance(p) < luminance(fill)) === darker) apart++;
         strongest = Math.max(strongest, c);
         if (luminance(p) < 0.03) black++;
-        sum += luminance(p); solid += luminance(fill); dL += lab(p).L - lab(fill).L; L += lab(fill).L;
+        sum += luminance(p); solid += luminance(ref); dL += lab(p).L - lab(ref).L; L += lab(ref).L;
         // How far p lies from the fill toward a shade, along the line between them: the share of the pixel that shade covers.
         let k = 0;
         for (const sh of shades) {
@@ -2497,6 +2502,8 @@ function tileLook(raster: ReturnType<typeof rasterCtx>, px: Painted[], inBox: (r
   return { total, apart: apart / total, strongest, black: black / total, mean: sum / solid, dL: dL / total, L: L / total, ink: ink / total };
 }
 
+/** The page's tmLeafStops: the cushion a leaf of colour `base`, `h` css px tall, is painted with — solid, with nothing on it. */
+const LEAF_STOPS = load<(base: RGB, h: number, lines: null) => RGB[]>(['tmLeafStops'], {}, 'tmLeafStops', (f) => { f([100, 100, 100], 20, null); });
 /** Three colours of the size ramp — a 2 MB file's green, a 400 MB file's amber, a 6 GB file's red — and two of the other colourings. */
 const TAPER_COLOURS: Array<{ name: string; rgb: RGB }> = [
   { name: 'size ramp 2 MB', rgb: ramp.sizeRgb(2e6) },
@@ -2505,14 +2512,19 @@ const TAPER_COLOURS: Array<{ name: string; rgb: RGB }> = [
   ...OTHER_COLOURS.filter((c) => c.name === 'Reclaim not scored' || c.name === 'Age band C_ORANGE'),
 ];
 
-test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 to 18 px, the share of pixels a line or a texture takes, and the mean lightness, change smoothly from one size to the next, in both themes, on the size ramp, Reclaim\'s "not scored" grey and an Age band, at device pixel ratios 0.667, 0.8, 1, 1.25, 1.5, 1.75 and 2 (review F3.2, F3.6)', () => {
+test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 to 18 px, the share of pixels a line or a texture takes, and the mean lightness against the tile\'s own solid colour, change smoothly from one size to the next — under 2 L* a step, 7 to 8 px too — in both themes, on the size ramp, Reclaim\'s "not scored" grey and an Age band, at device pixel ratios 0.667, 0.8, 1, 1.25, 1.5, 1.75 and 2 (review F3.2, F3.6; residual 3)', () => {
   // 7 px tiles were one flat block and 8 px tiles a heavy 2 px grid (each leaf drew its own outline, so neighbours met at
   // 2 px): 0% to 43.8% of the pixels, and 15 L* darker, in one step. Now two leaves with lines meet at one 1 px line, and
   // a smaller leaf draws a 1 px texture where they would meet: a 1 px seam per tile at every size, whose share falls as
   // 1 − ((s − 1)/s)² — each step smaller than the one before (5.4 points from 5 to 6 px, 3.1 from 7 to 8). That is the
   // bound: no step bigger than the one before it, by more than half a point. The seam is the owner's faint texture
-  // (1.4:1 at 7 px) below 8 px and his 3:1 line from 8 px, so the mean lightness steps most at 7→8 px: no more than
-  // 7 L* there — half the old step — and under 2 L* at every other size.
+  // (1.4:1 at 7 px) below 8 px and his 3:1 line from 8 px, so the mean lightness stepped most at 7→8 px — 6.3 L* on the
+  // size ramp's amber (from 3.4 L* under the solid fill to 9.7), and a lone 8 px row among 7 px rows read as a dark stripe
+  // (residual 3). A leaf with lines is now filled a shade lighter (or darker, under light lines) by just enough that it
+  // keeps the mean lightness a 7 px tile's texture gives (tmEdgedFill), its chroma kept whole; on amber, orange and red,
+  // which cannot be lightened so, the leaves with a texture are darkened instead, more the bigger they are, to meet the
+  // 8 px leaf (tmTexturePull). So the lightness — measured against the cushion the tile's own colour gets with nothing
+  // on it — steps under 2 L* at every size, 7→8 px too.
   // At 2× a 1 px seam is two device pixels of a tile's 2s: the same share. At 125, 150 and 175 % a texture's seam covers a
   // device pixel and part of the next, which `apart` counts whole: there the share is held as the seams' `ink` (tileLook),
   // each pixel counted by how much of it a seam covers — the formula's share at every ratio, within a point and a half. A
@@ -2533,7 +2545,7 @@ test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 
         const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, () => c.rgb, undefined, false, dpr);
         // The middle tiles: the outer ring meets the map's edge.
         const inner = (r: Painted) => { const [i, j] = /g(\d+)\.(\d+)$/.exec(r.n.path)!.slice(1).map(Number); return i > 0 && j > 0 && i < n - 1 && j < n - 1; };
-        looks.push({ s, ...tileLook(raster, px, inner, dpr) });
+        looks.push({ s, ...tileLook(raster, px, inner, dpr, (r) => LEAF_STOPS(c.rgb, r.h, null)) });
       }
       const where = `${theme}, ${c.name}, dpr ${dpr}`;
       const table = looks.map((l) => `${l.s}px ${(l.apart * 100).toFixed(1)}% (ink ${(l.ink * 100).toFixed(1)}%) ${l.dL.toFixed(1)}L*`).join(', ');
@@ -2549,10 +2561,93 @@ test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 
         // (Where the line is thinner than the texture's seam, its share steps down at 8 px.)
         if (looks[k].s === OUTLINED_PX && seam(OUTLINED_PX) < 1 - 1e-9) continue;
         assert.ok(step <= before + 0.005, `${where}: from ${looks[k - 1].s} to ${looks[k].s} px the seams' share steps ${(step * 100).toFixed(1)} points, more than the step before it (${(before * 100).toFixed(1)}) — ${table}`);
-        const dL = Math.abs(looks[k].dL - looks[k - 1].dL), bound = looks[k].s === OUTLINED_PX ? 7 : 2;
+        const dL = Math.abs(looks[k].dL - looks[k - 1].dL), bound = 2;
         assert.ok(dL <= bound, `${where}: from ${looks[k - 1].s} to ${looks[k].s} px the mean lightness steps ${dL.toFixed(1)} L*, over ${bound} — ${table}`);
       }
     }
+  }
+});
+
+/**
+ * Rows of leaves `cw` css px wide, `cols` to a row, on a map of their own, each row as tall as `rows` says in turn — a row
+ * of 8 px tiles among rows of 7 px ones, as bqa9shots' sparse-clips close-ups found them.
+ */
+function rowsOf(rows: number[], cw: number, cols: number) {
+  const W = cw * cols, H = rows.reduce((a, b) => a + b, 0), tiles: Tile[] = [];
+  let y = 0;
+  for (const [i, h] of rows.entries()) {
+    for (let j = 0; j < cols; j++) tiles.push({ name: `r${i}.${j}`, path: `/s/r${i}.${j}`, size: 4e8, type: 'file', depth: 1, expanded: false, x: (j * cw / W) * 100, y: (y / H) * 100, w: (cw / W) * 100, h: (h / H) * 100 });
+    y += h;
+  }
+  return { tiles, W, H };
+}
+
+/** The page's tmShiftL: `c` with its L* moved by up to `dL`, keeping `floor` of its chroma. */
+const SHIFT_L = load<(c: RGB, dL: number, floor?: number) => RGB>(['tmShiftL'], {}, 'tmShiftL', (f) => { f([100, 100, 100], 3); });
+
+test('owner\'s refinement: no dark stripe — a lone row of 8 px tiles among rows of 7 px tiles is within 2 L* of each of them in mean lightness, against each tile\'s own solid colour — but for the 3:1 line that parts it from the row under it, which on amber, orange and red, whose fill cannot be lightened without giving up their strength, is that line\'s own weight — where its top, left and bottom lines took a third of it, 11 L* darker than the 7 px row under it, in both themes, on the size ramp, Reclaim\'s "not scored" grey and an Age band, at device pixel ratios 0.8, 1, 1.25, 1.5, 1.75 and 2 (residual 3)', () => {
+  // A row of 8 px leaves has a line along its top and its left like any 8 px leaf, and along its foot too, where the 7 px
+  // leaves under it lay no line: on a colour a leaf's fill can be lightened on with its chroma kept whole (the size ramp's
+  // green, the grey) its fill makes up for all three (tmEdgedFill); on amber, orange and red it cannot be lightened at all,
+  // so the 7 px leaves are darkened to meet the 8 px leaf (tmTexturePull) — and the foot line, a 3:1 line on a light colour,
+  // is what is left: 2.5 to 4.9 L* of the row's mean, where the row stood 9.4 to 11.6 L* from the rows around it.
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    for (const c of TAPER_COLOURS) {
+      // Whether a lined leaf's fill can be lightened on this colour, its chroma kept whole.
+      const liftable = lab(SHIFT_L(c.rgb, 4, 1)).L - lab(c.rgb).L >= 3.5;
+      for (const dpr of [0.8, 1, 1.25, 1.5, 1.75, 2]) {
+        const where = `${theme}, ${c.name}, dpr ${dpr}`;
+        // On a page zoomed out the painter's px is a device pixel (review F3.6): the rows are 7 and 8 device px tall.
+        const k = Math.max(1, 1 / dpr), g = rowsOf([7, 7, 7, 8, 7, 7, 7].map((h) => h * k), 12 * k, 10);
+        const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, () => c.rgb, undefined, false, dpr);
+        const inRow = (i: number) => (r: Painted) => { const [ri, j] = /r(\d+)\.(\d+)$/.exec(r.n.path)!.slice(1).map(Number); return ri === i && j > 0 && j < 9; };
+        const eights = px.filter(inRow(3));
+        // The device pixels of the 8 px row's lines along its foot.
+        const foot = new Set<number>();
+        for (const r of eights) {
+          for (const l of r.lines || []) {
+            if (!(l.w > l.h && Math.abs(l.y + l.h - r.y - r.h) < 1e-6)) continue;
+            for (let y = Math.round(l.y * dpr); y < Math.round((l.y + l.h) * dpr); y++) for (let x = Math.round(l.x * dpr); x < Math.round((l.x + l.w) * dpr); x++) foot.add(y * raster.W + x);
+          }
+        }
+        assert.ok(eights.every((r) => r.lines && !r.tex) && px.filter(inRow(2)).every((r) => r.tex && !r.lines) && foot.size > 0,
+          `${where}: control — the 8 px row is lined, its foot too, and the 7 px rows textured`);
+        const row = (i: number, skip?: (x: number, y: number) => boolean) => tileLook(raster, px, inRow(i), dpr, (r) => LEAF_STOPS(c.rgb, r.h, null), skip).dL;
+        const seven = [1, 2, 4, 5].map((i) => row(i)), eight = row(3), bare = row(3, (x, y) => foot.has(y * raster.W + x));
+        const table = `rows 1, 2, 4, 5: ${seven.map((v) => v.toFixed(1)).join(', ')} L*; the 8 px row ${eight.toFixed(1)} L*, ${bare.toFixed(1)} but for its foot`;
+        for (const [j, v] of seven.entries()) {
+          // Where the fill makes up for the foot line too, the whole row is held; else the row but for its foot line.
+          const got = liftable ? eight : bare, what = liftable ? 'the 8 px row' : 'but for its foot line, the 8 px row';
+          assert.ok(Math.abs(got - v) <= 2, `${where}: ${what} is ${Math.abs(got - v).toFixed(1)} L* from the 7 px row ${[1, 2, 4, 5][j]} (${table})`);
+        }
+      }
+    }
+  }
+});
+
+/** corpus/Mail opened as the map, 1115×702 css px as the window draws it 1440 wide (bqa9shots): its mail files 8 to 12 px. */
+function mailAsMap() {
+  const W = 1115, H = 702;
+  return { tiles: buildTreemap(mailTree(), { maxDepth: 4, minSize: 4000, maxNodes: 20000 }) as unknown as Tile[], W, H };
+}
+
+test('owner\'s refinement: corpus/Mail opened as the map is the colour of its mail, not a dark grid — its thousands of 8 to 12 px files, each lined, are within 4 L* of their own solid colour on average between their folders\' bands and name tags (they were 6 L* darker on screen: L* 67 against 73), as close as a 7 px tile\'s texture keeps it, and each file\'s line reaches 3:1, in both themes, at device pixel ratios 1, 1.5 and 2 (residual 5)', () => {
+  const m = mailAsMap();
+  for (const dpr of [1, 1.5, 2]) for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const where = `${theme}, dpr ${dpr}`;
+    const { raster, px } = rasterPaint(m.tiles, palette, m.W, m.H, undefined, undefined, false, dpr);
+    const lined = px.filter((r) => !r.frame && r.lines && r.lines.length);
+    assert.ok(lined.length > 2000, `${where}: control — ${lined.length} lined files`);
+    // The files as they show between their folders' bands — a band laid over a file's edge is its folder's frame — and
+    // outside the mailboxes' name tags, laid over the files under them.
+    const banded = new Uint8Array(raster.W * raster.H);
+    for (const b of px.flatMap((r) => r.bands || [])) {
+      for (let y = Math.round(b.y * dpr); y < Math.round((b.y + b.h) * dpr); y++) banded.fill(1, y * raster.W + Math.round(b.x * dpr), y * raster.W + Math.round((b.x + b.w) * dpr));
+    }
+    const isLined = new Set(lined);
+    const look = tileLook(raster, px, (r) => isLined.has(r), dpr, (r) => LEAF_STOPS(ramp.sizeRgb(r.n.size), r.h, null), (x, y) => banded[y * raster.W + x] === 1 || raster.tagged(x, y));
+    assert.ok(Math.abs(look.dL) <= 4, `${where}: Mail's lined files are ${look.dL.toFixed(1)} L* from their own solid colour on average (L* ${(look.L + look.dL).toFixed(1)} against ${look.L.toFixed(1)})`);
+    assert.deepEqual(measureEdges(raster, px, dpr).under, [], `${where}: lines under ${EDGE_BAR}:1 against a tile beside them`);
   }
 });
 
@@ -2784,13 +2879,8 @@ function denseCornerNodes(): Tile[] {
 }
 const DENSE_PX = 280;
 
-/**
- * corpus/Mail as the corpus map draws it 1440 wide (bqa8shots): a top-level folder 58×52 px holding 24 mailbox folders,
- * each of four to six "Messages" folders of 60–140 mail files of 1–6.5 KB — those over the 4 KB floor 1 px leaves, the
- * rest the folder's own fill — beside two of the corpus's other folders, on a 300×200 map. Mail's box is laid out by
- * the server's own buildTreemap, scaled into it.
- */
-function mailNodes(): { tiles: Tile[]; W: number; H: number; mail: { x: number; y: number; w: number; h: number } } {
+/** corpus/Mail: 24 mailbox folders, each of four to six "Messages" folders of 60–140 mail files of 1–6.5 KB. */
+function mailTree(): FileNode {
   let seed = 37746617;
   const rnd = () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const int = (lo: number, hi: number) => lo + Math.floor(rnd() * (hi - lo + 1));
@@ -2802,6 +2892,15 @@ function mailNodes(): { tiles: Tile[]; W: number; H: number; mail: { x: number; 
       return dir(m, Array.from({ length: int(60, 140) }, (_, i) => ({ name: `${i}.emlx`, path: `${m}/${i}.emlx`, type: 'file' as const, size: Math.round(10 ** (3 + rnd() * 0.81)), modifiedAt: 0, isHidden: false, extension: 'emlx' })));
     }));
   }));
+  return mail;
+}
+/**
+ * corpus/Mail as the corpus map draws it 1440 wide (bqa8shots): a top-level folder 58×52 px holding its 24 mailbox
+ * folders (mailTree) — the mail files over the 4 KB floor 1 px leaves, the rest the folder's own fill — beside two of the
+ * corpus's other folders, on a 300×200 map. Mail's box is laid out by the server's own buildTreemap, scaled into it.
+ */
+function mailNodes(): { tiles: Tile[]; W: number; H: number; mail: { x: number; y: number; w: number; h: number } } {
+  const mail = mailTree();
   const W = 300, H = 200, box = { x: 242, y: 148, w: 58, h: 52 };
   const pct = (v: number, of: number) => (v / of) * 100;
   const tiles: Tile[] = [

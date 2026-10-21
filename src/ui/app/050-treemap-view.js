@@ -955,6 +955,286 @@ function tmTextureStops(stops, base, target) {
     return toward;
   });
 }
+/** CIE L* of the sRGB colour `c` ([r, g, b], 0–255), from its relative luminance. */
+function tmLstar(c) {
+  return tmLstarOf(tmLuminance(c));
+}
+/** CIE L* of a relative luminance `y`. */
+function tmLstarOf(y) {
+  return y > 216 / 24389 ? 116 * Math.cbrt(y) - 16 : (24389 / 27) * y;
+}
+/** The D65 white, in XYZ: CIE L*a*b* is reckoned against it. */
+const TM_D65 = [0.95047, 1, 1.08883];
+/** CIE L*a*b* of the sRGB colour `c`, [L, a, b]. */
+function tmLab(c) {
+  const lin = c.map((v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+  const xyz = [0.4124564 * lin[0] + 0.3575761 * lin[1] + 0.1804375 * lin[2], 0.2126729 * lin[0] + 0.7151522 * lin[1] + 0.072175 * lin[2],
+    0.0193339 * lin[0] + 0.119192 * lin[1] + 0.9503041 * lin[2]];
+  const [fx, fy, fz] = xyz.map((v, i) => { const t = v / TM_D65[i]; return t > 216 / 24389 ? Math.cbrt(t) : ((24389 / 27) * t + 16) / 116; });
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+/** The sRGB colour of CIE L*a*b* `lab`, [r, g, b] 0–255 unrounded — a channel under 0 or over 255 where it lies outside sRGB. */
+function tmFromLab([L, a, b]) {
+  const fy = (L + 16) / 116, f = [fy + a / 500, fy, fy - b / 200];
+  const [X, Y, Z] = f.map((t, i) => (t ** 3 > 216 / 24389 ? t ** 3 : (116 * t - 16) / (24389 / 27)) * TM_D65[i]);
+  const lin = [3.2404542 * X - 1.5371385 * Y - 0.4985314 * Z, -0.969266 * X + 1.8760108 * Y + 0.041556 * Z, 0.0556434 * X - 0.2040259 * Y + 1.0572252 * Z];
+  return lin.map((v) => 255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055));
+}
+/**
+ * The least share of its chroma a leaf's colour keeps when its lightness is
+ * moved (tmShiftL): the owner's colour still pops. A leaf with lines of its
+ * own keeps all of it (TM_LIFT_CHROMA) — inside every outlined tile it shows
+ * at least 0.8 of its colour's strength, its cushion included, and the top
+ * of the size ramp C*ab 60 (tests/mapColourPop.test.ts), and a tall orange
+ * tile's cushion alone leaves it 0.82 — and one with a texture, a few px
+ * across, all but 5 % (TM_SHIFT_CHROMA). A saturated amber lifted 1 L* gives
+ * up 15 % of its chroma; darkened 5 L*, under 5 %.
+ */
+const TM_SHIFT_CHROMA = 0.95;
+const TM_LIFT_CHROMA = 1;
+/**
+ * The colour `c` with its CIE L* moved by up to `dL`, its hue kept: its
+ * chroma too where that lies inside sRGB, else the least chroma given up
+ * that brings it in — never past `floor` of it, so where a lightness needs
+ * more (a saturated amber lifted toward white), the lightness is moved only
+ * as far as that allows.
+ */
+function tmShiftL(c, dL, floor = TM_SHIFT_CHROMA) {
+  const [L, a, b] = tmLab(c);
+  const inside = (rgb) => rgb.every((v) => v >= -0.5 && v <= 255.5);
+  // The most chroma that lies inside sRGB at lightness L2, as a share of c's own, and the colour there.
+  const at = (L2) => {
+    let rgb = tmFromLab([L2, a, b]);
+    if (inside(rgb)) return { k: 1, rgb };
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 12; i++) {
+      const mid = (lo + hi) / 2;
+      if (inside(tmFromLab([L2, a * mid, b * mid]))) lo = mid; else hi = mid;
+    }
+    return { k: lo, rgb: tmFromLab([L2, a * lo, b * lo]) };
+  };
+  const clampL = (v) => Math.max(0, Math.min(100, v));
+  let got = at(clampL(L + dL));
+  if (got.k < floor) {
+    // As far toward L + dL as keeps `floor` of the chroma.
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 12; i++) {
+      const mid = (lo + hi) / 2;
+      if (at(clampL(L + dL * mid)).k >= floor) lo = mid; else hi = mid;
+    }
+    got = at(clampL(L + dL * lo));
+  }
+  return got.rgb.map((v) => Math.max(0, Math.min(255, Math.round(v))));
+}
+/** The share of a tile one painter's px under TM_DENSE_PX that its texture takes: its top row and its left column. */
+const TM_TEXTURE_SHARE = 1 - ((TM_DENSE_PX - 2) / (TM_DENSE_PX - 1)) ** 2;
+/** The most L* a leaf's fill is moved for its lines or its texture, either way. */
+const TM_FILL_SHIFT_MAX = 30;
+/** The L* of a cushion's middle, its stops `stops` as the screen shows them through `washes`. */
+function tmCushionL(stops, washes) {
+  const seen = tmSeenThrough(stops, washes);
+  return tmLstar(mix(seen[0], seen[1], 0.5));
+}
+/**
+ * The L* a line beside a cushion showing `seen` (its stops on the screen) may
+ * take at most (a dark line, `light` false) or at least (a light one): the
+ * luminance at TM_EDGE_MIN from the stop nearest it. Pass 2.6 tones a line to
+ * the first of 32 shades of its tile's fill that reaches that (tmToneFor); a
+ * line moves with this bound as the fill moves.
+ */
+function tmLineBoundL(seen, light) {
+  const ys = seen.map(tmLuminance);
+  return tmLstarOf(light ? Math.min(1, TM_EDGE_MIN * (Math.max(...ys) + 0.05) - 0.05) : Math.max(0, (Math.min(...ys) + 0.05) / TM_EDGE_MIN - 0.05));
+}
+/**
+ * How far in mean L* a tile of TM_DENSE_PX − 1 painter's px, of colour `base`
+ * as the screen shows it through `washes` at device pixel ratio `dpr`, stands
+ * from its solid cushion once its texture is laid: its texture's share of it
+ * (TM_TEXTURE_SHARE) in the texture's shade (tmTextureStops at
+ * tmTextureContrast). What a leaf with lines of its own is brought back to
+ * (tmEdgedFill): a 3:1 line took as much of an 8 px tile as a 1.375:1
+ * texture of a 7 px one, so the map darkened in one step at 8 px.
+ */
+function tmTextureMean(base, washes, dpr) {
+  const stops = tmLeafStops(base, (TM_DENSE_PX - 1) * tmPxScale(dpr), null), tex = tmTextureStops(stops, base, tmTextureContrast(TM_DENSE_PX - 1));
+  return TM_TEXTURE_SHARE * (tmCushionL(tex, washes) - tmCushionL(stops, washes));
+}
+/**
+ * The mean L* less its solid cushion's of a tile of colour `base`, `h` css px
+ * tall, through `washes`, once filled tmShiftL(base, t, TM_LIFT_CHROMA), with
+ * its lines `lines` — [{ a, L, light, cap }]: the share of the tile each
+ * takes, its L* as laid on the tile filled `base`, whether it is lighter than
+ * the tile, and the bound the tile beyond it sets (tmLineBoundL; ±Infinity
+ * where that tile moves with this one, a leaf with lines of its own, or none
+ * does). A line moves as the nearer of its two bounds does. The function of
+ * `t` that tmEdgedFill and tmTexturePull solve, as { fill, mean }.
+ */
+function tmLinedMean(base, h, washes, lines) {
+  const seenOf = (c) => tmSeenThrough(tmLeafStops(c, h, null), washes);
+  const lined = lines.reduce((sum, l) => sum + l.a, 0), solid = tmCushionL(tmLeafStops(base, h, null), washes);
+  const held = lines.reduce((sum, l) => sum + l.a * l.L, 0);
+  // Where a line may lie, by its own tile's bound and the one beyond: no lighter than either (a dark line), or no darker.
+  const bounds = (seen) => [tmLineBoundL(seen, false), tmLineBoundL(seen, true)];
+  const at = (l, b) => (l.light ? Math.max(b[1], l.cap) : Math.min(b[0], l.cap));
+  const b0 = bounds(seenOf(base));
+  return (t) => {
+    const fill = t ? tmShiftL(base, t, TM_LIFT_CHROMA) : base, seen = seenOf(fill), b = bounds(seen);
+    const moved = lines.reduce((sum, l) => sum + l.a * (at(l, b) - at(l, b0)), 0);
+    return { fill, mean: (1 - lined) * tmLstar(mix(seen[0], seen[1], 0.5)) + held + moved - solid };
+  };
+}
+/**
+ * The fill that brings `mean` (tmLinedMean) to `want`, moving L* the way that
+ * does — up when its lines darken it past that, down when they lighten it —
+ * as far as TM_LIFT_CHROMA lets the colour go, by the secant through the
+ * shifts tried (the mean only ever moves one way with the shift, and nearly
+ * in step with it); and the mean it gets there.
+ */
+function tmSolveFill(mean, want) {
+  let s0 = 0, e0 = mean(0).mean - want;
+  if (Math.abs(e0) <= 0.05) return mean(0);
+  const dir = e0 < 0 ? 1 : -1;
+  // A first step as if the mean moved as the fill does where no line lies.
+  let s1 = Math.min(TM_FILL_SHIFT_MAX, -e0 * dir) * dir, got = mean(s1), e1 = got.mean - want;
+  for (let i = 0; i < 4 && Math.abs(e1) > 0.1 && Math.abs(e1 - e0) > 1e-3; i++) {
+    const next = Math.max(-TM_FILL_SHIFT_MAX, Math.min(TM_FILL_SHIFT_MAX, s1 - (e1 * (s1 - s0)) / (e1 - e0)));
+    [s0, e0, s1] = [s1, e1, next];
+    got = mean(s1);
+    e1 = got.mean - want;
+  }
+  return got;
+}
+/** The area of the union of `rects` ([{ x, y, w, h }]): each one's, less where two overlap (a corner where two lines meet). */
+function tmUnionArea(rects) {
+  let sum = 0;
+  for (let i = 0; i < rects.length; i++) {
+    const a = rects[i];
+    sum += a.w * a.h;
+    for (let j = i + 1; j < rects.length; j++) {
+      const b = rects[j];
+      sum -= Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+    }
+  }
+  return Math.max(0, sum);
+}
+/**
+ * What a leaf with lines of its own (tmLeafKind 'edged') is filled with, once
+ * pass 2.6 has first laid its lines (`r.lines`) over its colour `base`: that
+ * colour with its CIE L* moved away from its lines' shades (tmShiftL —
+ * lighter under dark lines, darker under light ones, hue and chroma kept) by
+ * just enough that the tile, fill and lines together, keeps the mean
+ * lightness a texture keeps a tile one painter's px too small for lines
+ * (tmTextureMean), as far as TM_LIFT_CHROMA allows. A 3:1 line takes as much
+ * of a tile as a 1.375:1 texture did one px under it, so the map darkened in
+ * one step at 8 px: an 8 px tile 6.3 L* darker than a 7 px one on the size
+ * ramp's amber, a lone row of 8 px tiles among 7 px rows a dark stripe, and
+ * corpus/Mail opened as the map a dark grid of its lined files, 10 L* under
+ * their colour (residuals 3 and 5). Pass 2.6 then tones every line again
+ * against the fills as painted, so each still reaches TM_EDGE_MIN on both its
+ * sides: a line beside a tile that keeps its fill moves only as far as that
+ * tile lets it; the rest move with the fill (tmLinedMean). The
+ * tile is judged where it shows: a folder's band laid over its edge is the
+ * folder's. A tile its lines darken (or lighten) no more than that texture
+ * would keeps its colour, and so does one whose lines and texture would move
+ * it opposite ways, and one with lines of both tones — a grey between a dark
+ * file and a light one, whose line beside the light one, a dark shade of it,
+ * stood out from both until the lighter lines darkened its fill, and then
+ * none did, so both files laid lines there, side by side. `g` is the
+ * neighbourhood (tmNeighbourhood), whose `fills` keeps what each alike tile
+ * was filled with and `textures` each colour's tmTextureMean, and `washes`
+ * the History diff washes over the tile.
+ */
+function tmEdgedFill(r, g, base, washes) {
+  // Its box as a person sees it: less the bands of the folders whose edge it lies along, laid over its own edge.
+  const inset = { top: 0, bottom: 0, left: 0, right: 0 };
+  for (let f = g.folderOf.get(r); f; f = g.folderOf.get(f)) {
+    for (const side of Object.keys(inset)) if (f.lw > 0 && tmTouches(r, f, side)) inset[side] = Math.max(inset[side], f.lw);
+  }
+  const x0 = r.x + inset.left, x1 = r.x + r.w - inset.right, y0 = r.y + inset.top, y1 = r.y + r.h - inset.bottom;
+  const area = Math.max(x1 - x0, 0) * Math.max(y1 - y0, 0);
+  if (!(area > 0)) return base;
+  // Its lines where they show, each with its L*.
+  const shown = [];
+  for (const l of r.lines || []) {
+    const lx = Math.max(x0, l.x), ly = Math.max(y0, l.y), w = Math.min(x1, l.x + l.w) - lx, h = Math.min(y1, l.y + l.h) - ly;
+    if (w > 1e-6 && h > 1e-6) shown.push({ x: lx, y: ly, w, h, L: tmLstar(tmCssRgba(l.rgb) || [0, 0, 0]) });
+  }
+  const covered = Math.min(tmUnionArea(shown), area), sum = shown.reduce((a, l) => a + l.w * l.h, 0);
+  if (!(covered > 0)) return base;
+  const seen = tmSeenThrough(r.stops, washes), fillL = tmLstar(mix(seen[0], seen[1], 0.5));
+  const lines = shown.map((l) => ({ ...l, a: (covered / area) * (l.w * l.h) / sum, light: l.L > fillL }));
+  // Lines of both tones: a shade lighter or darker would leave no shade of it standing out from one side or the other.
+  if (lines.some((l) => l.light) && lines.some((l) => !l.light)) return base;
+  // How far its lines take it from its colour, against how far the texture would.
+  const solid = tmCushionL(tmLeafStops(base, r.h, null), washes), d0 = lines.reduce((a, l) => a + l.a * (l.L - solid), 0);
+  const tkey = `${base}|${washes.join(';')}`;
+  if (!g.textures.has(tkey)) g.textures.set(tkey, tmTextureMean(base, washes, g.dpr));
+  const texture = g.textures.get(tkey), want = Math.sign(d0) === Math.sign(texture) ? texture : 0;
+  if (Math.abs(d0) <= Math.abs(want) + 0.05) return base;
+  // What lies beyond each side (tmAcross): a tile that keeps its fill — a texture's, a folder's own — bounds the line
+  // beside it; a leaf with lines of its own is moved as this one is, and a line or the map's edge sets none.
+  const across = {};
+  for (const side of Object.keys(TM_SIDES)) across[side] = tmAcross(r, side, g);
+  const sideOf = (l) => (l.w >= l.h ? (Math.abs(l.y - r.y) <= Math.abs(l.y + l.h - r.y - r.h) ? 'top' : 'bottom')
+    : (Math.abs(l.x - r.x) <= Math.abs(l.x + l.w - r.x - r.w) ? 'left' : 'right'));
+  for (const l of lines) {
+    const [p, s] = TM_SIDES[sideOf(l)];
+    l.cap = l.light ? -Infinity : Infinity;
+    for (const seg of across[sideOf(l)]) {
+      const beyond = [...(seg.beside || []), ...(seg.grain || [])];
+      if (seg.line || seg.edged || seg.covered || !beyond.length || !(seg.hi > l[p] + 1e-6 && seg.lo < l[p] + l[s] - 1e-6)) continue;
+      const b = tmLineBoundL(beyond, l.light);
+      l.cap = l.light ? Math.max(l.cap, b) : Math.min(l.cap, b);
+    }
+  }
+  const key = `${base}|${washes.join(';')}|${r.h.toFixed(1)}|${lines.map((l) => `${l.a.toFixed(3)}:${l.L.toFixed(1)}:${l.cap.toFixed(1)}`).join(',')}`;
+  if (!g.fills.has(key)) g.fills.set(key, tmSolveFill(tmLinedMean(base, r.h, washes, lines), want).fill);
+  return g.fills.get(key);
+}
+/** The least pull worth a texture's leaves (tmTexturePull), in mean L*: under it they keep their colour. */
+const TM_PULL_MIN = 0.25;
+/**
+ * How far in mean L* a leaf of TM_DENSE_PX − 1 painter's px with a texture
+ * is moved to meet what a leaf of TM_DENSE_PX with lines of its own shows, on
+ * colour `base` at device pixel ratio `dpr`, through `washes`: none where
+ * tmEdgedFill brings the lined leaf to its texture's lightness, else the rest
+ * of the way. A 3:1 line on a saturated amber or orange cannot be offset by a
+ * lighter fill without the colour giving up its strength — an amber lifted
+ * 1 L* keeps 85 % of its chroma — so an 8 px leaf of the size ramp's amber
+ * stood 5.5 L* darker than a 7 px one, whose texture is faint (1.375:1); the
+ * texture's leaves are darkened a shade instead, so the step at 8 px is no
+ * step (residual 3). The lined leaf is the canonical one: TM_DENSE_PX
+ * painter's px square, its top and left lines one line's width (tmLinePx),
+ * each toned against a tile alike.
+ */
+function tmTexturePull(base, dpr, washes) {
+  const lw = tmLinePx(1, dpr) / tmPxScale(dpr), lined = 1 - (1 - lw / TM_DENSE_PX) ** 2, h = TM_DENSE_PX * tmPxScale(dpr);
+  const seen = tmSeenThrough(tmLeafStops(base, h, null), washes), tone = tmTone(base, seen, TM_EDGE_MIN);
+  const mean = tmLinedMean(base, h, washes, [{ a: lined, L: tmLstar(tone.rgb), light: tone.light, cap: tone.light ? -Infinity : Infinity }]), d0 = mean(0).mean;
+  const texture = tmTextureMean(base, washes, dpr), want = Math.sign(d0) === Math.sign(texture) ? texture : 0;
+  const reached = Math.abs(d0) <= Math.abs(want) + 0.05 ? d0 : tmSolveFill(mean, want).mean;
+  const gap = reached - texture;
+  return Math.abs(gap) < TM_PULL_MIN ? 0 : gap;
+}
+/**
+ * What a leaf with a texture (tmLeafKind 'textured') `s` painter's px across
+ * its thinner side is filled with: its colour `base` with its L* moved
+ * toward a lined leaf's (tmTexturePull) by a share of the way that grows
+ * with its size, from none at 1 px to the whole at TM_DENSE_PX − 1 — so
+ * neither 8 px nor any size under it is a step. `cache` keeps the pull of
+ * each colour.
+ */
+function tmTexturedFill(base, s, dpr, washes, cache) {
+  const key = `${base}|${washes.join(';')}|${dpr}`;
+  let pull = cache && cache.get(key);
+  if (pull === undefined) {
+    pull = tmTexturePull(base, dpr, washes);
+    if (cache) cache.set(key, pull);
+  }
+  if (!pull) return base;
+  const share = (Math.max(1, Math.min(TM_DENSE_PX - 1, s)) - 1) / (TM_DENSE_PX - 2);
+  return share > 0 ? tmShiftL(base, pull * share) : base;
+}
 /**
  * The shade of `base` nearest to it that reaches, against every colour of each
  * group in `groups` — [[colours, target], …], what the screen shows beside the
@@ -963,9 +1243,27 @@ function tmTextureStops(stops, base, target) {
  * on a tie), in 32 steps. Every line is laid after the washes, so it is seen
  * as toned. Each step is tried, since a shade between a light colour and a
  * dark one can stand out from both. Where none reaches every target, `ok` is
- * false and `rgb` is the shade that comes nearest.
+ * false and `rgb` is the shade that comes nearest. Each answer is kept for
+ * the paint (TM_TONE_MEMO): a map of thousands of files alike asks the same
+ * question thousands of times, twice where its leaves' fills are moved
+ * (tmEdgedFill).
  */
 function tmToneFor(base, groups) {
+  const key = `${base}|${groups.map(([cols, target]) => `${cols.join(';')}@${target}`).join('|')}`;
+  let got = TM_TONE_MEMO.get(key);
+  if (!got) {
+    got = tmToneSearch(base, groups);
+    if (TM_TONE_MEMO.size >= TM_TONE_MEMO_MAX) TM_TONE_MEMO.clear();
+    TM_TONE_MEMO.set(key, got);
+  }
+  return { rgb: got.rgb.slice(), light: got.light, ok: got.ok };
+}
+/** tmToneFor's answers for the paint under way, by question; drawTreemap empties it. */
+const TM_TONE_MEMO = new Map();
+/** The most answers TM_TONE_MEMO keeps before it starts again. */
+const TM_TONE_MEMO_MAX = 200000;
+/** tmToneFor's search, unkept. */
+function tmToneSearch(base, groups) {
   // Each colour's luminance once; and the luminances a shade may not take against it — between (b + 0.05) / t − 0.05
   // and t (b + 0.05) − 0.05 it stands under the target — so the nearest shade is found by search, not by trying all 64.
   const lums = groups.filter(([cols]) => cols.length).map(([cols, target]) => [cols.map(tmLuminance), target]);
@@ -1143,7 +1441,10 @@ function tmSideAt(r, side) {
  * What passes 2.6 and 2.7 look at around each rectangle: its folder (null at
  * the top level), and the rectangles of each folder by the device pixel each
  * of their sides lies on — so the neighbour beyond a side is found by one
- * lookup — with the map's size and its ground.
+ * lookup — with the map's size and its ground; and for the paint, which
+ * shades of a leaf's colour stand out from both sides of a shared edge
+ * (`shared`, tmShareOk), what each alike leaf with lines is filled with
+ * (`fills`) and each colour's texture's lightness (`textures`, tmEdgedFill).
  */
 function tmNeighbourhood(px, kids, dpr, w, h, ground) {
   const folders = new Map();
@@ -1162,7 +1463,7 @@ function tmNeighbourhood(px, kids, dpr, w, h, ground) {
     }
     sides.set(parent, at);
   }
-  return { dpr, w, h, ground, kids, folderOf, keyOf, sides, shared: new Map() };
+  return { dpr, w, h, ground, kids, folderOf, keyOf, sides, shared: new Map(), fills: new Map(), textures: new Map() };
 }
 /**
  * The colours a tile shows the screen beside a line: its cushion and highlight,
@@ -1230,7 +1531,7 @@ function tmEdgeOf(c, side, facing, g) {
   if (tmLeafKind(c) === 'edged') {
     if (side === 'top' || side === 'left') return [{ ...all, line: true, shared: c }];
     const drawn = !(facing && !facing.frame && tmLeafKind(facing) === 'edged' && tmShareOk(c, facing, g));
-    return [drawn ? { ...all, line: true } : { ...all, line: false, base: c.fillRgb, beside: tmShown(c) }];
+    return [drawn ? { ...all, line: true } : { ...all, line: false, base: c.fillRgb, beside: tmShown(c), edged: true }];
   }
   return [{ ...all, line: false, base: tmBaseOf(c, g.folderOf.get(c)), beside: tmShown(c), grain: c.texSeen || [] }];
 }
@@ -1617,12 +1918,34 @@ function tmFolderTexture(r, kids, mask, mw, mh, dpr) {
   seams('y', 'h', 'x', 'w', (y, a, b, thick) => [a, y, b - a, thick]);
   return { stops: r.texStops, rects };
 }
-/** A small leaf's texture (tmLeafKind 'textured'): its top row and its left column below that, one painter's px wide (tmSeamPx), clear of every line (`mask`). */
+/**
+ * A small leaf's texture (tmLeafKind 'textured'): its top row and its left
+ * column below that, one painter's px wide (tmSeamPx), clear of every line
+ * (`mask`) — and where a line beside the leaf takes a stretch of either, that
+ * stretch laid one device pixel further in, where it is clear. Left out, a
+ * leaf with a line along its top lost its top row of texture, a third of it:
+ * a row of 7 px leaves under a row of 8 px ones stood 1.5 L* lighter than the
+ * rows of 7 px leaves beyond it (residual 3).
+ */
 function tmLeafTexture(r, mask, mw, mh, dpr) {
-  const t = tmSeamPx(1, dpr);
+  const t = tmSeamPx(1, dpr), d = 1 / dpr;
+  // Seam `q`'s clear runs, and in each stretch the mask takes, the seam moved `step` ([dx, dy]) in — inside the leaf.
+  const seam = (q, step, along) => {
+    const runs = tmClearRuns(q, mask, mw, mh, dpr);
+    const [p, s] = along === 'x' ? [0, 2] : [1, 3];
+    const moved = [q[0] + step[0], q[1] + step[1], q[2], q[3]];
+    if (moved[0] + moved[2] > r.x + r.w + 1e-6 || moved[1] + moved[3] > r.y + r.h + 1e-6) return runs;
+    const taken = tmUncovered(q[p], q[p] + q[s], runs.map((run) => [run[p], run[p] + run[s]]));
+    const again = taken.flatMap(([a, b]) => {
+      const part = [...moved];
+      part[p] = a; part[s] = b - a;
+      return tmClearRuns(part, mask, mw, mh, dpr);
+    });
+    return [...runs, ...again];
+  };
   return {
     stops: r.texStops,
-    rects: [[r.x, r.y, r.w, t], [r.x, r.y + t, t, r.h - t]].flatMap((q) => tmClearRuns(q, mask, mw, mh, dpr)),
+    rects: [...seam([r.x, r.y, r.w, t], [0, d], 'x'), ...seam([r.x, r.y + t, t, r.h - t], [d, 0], 'y')],
   };
 }
 
@@ -1812,6 +2135,43 @@ function tmClipOutTags(ctx, tags, w, h) {
   ctx.clip('evenodd');
 }
 
+/** Where a leaf's label lines lie, as tmLeafStops eases its cushion for them: each line's top below the leaf's, and its font size. */
+function tmLabelAt(r) {
+  return r.label.map((l) => ({ off: l.y - r.y, px: l.px }));
+}
+/**
+ * What pass 1 paints the leaf `r` with in `fill`, a shade of its colour (its
+ * own, or tmEdgedFill's), recorded on it: its cushion, eased for its label
+ * (tmLeafStops), as the screen shows it through the History diff's `washes`
+ * (r.seen); and whether a highlight runs under a dark line of its own. Laid
+ * by tmLayLeaf.
+ */
+function tmPaintLeaf(r, fill, washes) {
+  r.stops = tmLeafStops(fill, r.h, tmLabelAt(r), washes);
+  r.fillRgb = fill; // the shade of its colour it is filled with, which its lines are toned from; r.stops is the cushion painted
+  r.seen = tmSeenThrough(r.stops, washes); // and as pass 4 writes the label on it, through pass 2.5 (G09, F2.1)
+  delete r.lit;
+  delete r.litSeen;
+  if (!tmLeafEdged(r)) return;
+  // Lines of its own (pass 2.6, tmLeafLines). Where the shade of its own
+  // colour that stands out from it is a dark one (tmTone), a highlight runs
+  // along its top row under its top line, part of its cushion.
+  r.lit = !tmTone(fill, r.seen, TM_EDGE_MIN).light;
+  if (r.lit) r.litSeen = tmSeenThrough([mix(r.stops[0], [255, 255, 255], tmLitAlpha(r))], washes)[0];
+}
+/** Pass 1's leaf `r` as recorded (tmPaintLeaf): its cushion edge to edge over its box, and its top highlight. */
+function tmLayLeaf(ctx, r) {
+  ctx.fillStyle = tmLeafFill(ctx, r.stops, r.y, r.h);
+  ctx.fillRect(r.x, r.y, r.w, r.h); // edge to edge: a leaf's outline lies inside its own box
+  if (!r.lit) return;
+  const lit = tmLitLine(r);
+  ctx.strokeStyle = `rgba(255,255,255,${tmLitAlpha(r)})`;
+  ctx.lineWidth = lit.width;
+  ctx.beginPath();
+  ctx.moveTo(lit.x0, lit.y); ctx.lineTo(lit.x1, lit.y);
+  ctx.stroke();
+}
+
 function drawTreemap() {
   // QA D58 — the server stops a map at 20,000 nodes and its response cannot
   // say so (§12 golden lock), so the note under the map does. Written before
@@ -1886,6 +2246,8 @@ function drawTreemap() {
   // paints: a label is read through them (review F2.1).
   const washes = tmDiffWashes(px);
   const kids = tmKidsOf(px);
+  const pulls = new Map(); // each colour's pull on the leaves with a texture (tmTexturedFill)
+  TM_TONE_MEMO.clear(); // the tones this paint asks for (tmToneFor)
 
   // Pass 0: a folder's own fill, where no rectangle covers it (J51) — its
   // files under the map's size floor, or past the server's cap. Laid in the
@@ -2011,36 +2373,35 @@ function drawTreemap() {
     }
 
     const washedBy = tmWashesOver(r, washes);
-    r.stops = tmLeafStops(base, r.h, r.label.map((l) => ({ off: l.y - r.y, px: l.px })), washedBy);
-    ctx.fillStyle = tmLeafFill(ctx, r.stops, r.y, r.h);
-    ctx.fillRect(r.x, r.y, r.w, r.h); // edge to edge: a leaf's outline lies inside its own box
-    r.fillRgb = base; // the colour itself; r.stops is the cushion painted here
-    r.seen = tmSeenThrough(r.stops, washedBy); // and as pass 4 writes the label on it, through pass 2.5 (G09, F2.1)
     if (tmLeafKind(r) === 'textured') {
+      // A shade toward a lined leaf's lightness, by its size (tmTexturedFill, residual 3).
+      const s = Math.min(r.w, r.h) / tmPxScale(dpr);
+      tmPaintLeaf(r, tmTexturedFill(base, s, dpr, washedBy, pulls), washedBy); // laid below (tmLayLeaf)
       // Its texture's shades (pass 2.4, tmLeafTexture), which a line beside it weighs (review F1.5).
-      r.texStops = tmTextureStops(r.stops, base, tmTextureContrast(Math.min(r.w, r.h) / tmPxScale(dpr)));
+      r.texStops = tmTextureStops(r.stops, base, tmTextureContrast(s));
       r.texSeen = tmSeenThrough(r.texStops, washedBy);
+    } else {
+      tmPaintLeaf(r, base, washedBy); // laid below, once its fill is settled (tmLayLeaf)
     }
-    if (tmLeafEdged(r)) {
-      // Lines of its own (pass 2.6, tmLeafLines). Where the shade of its own
-      // colour that stands out from it is a dark one (tmTone), a highlight
-      // runs along its top row under its top line, part of its cushion.
-      r.lit = !tmTone(base, r.seen, TM_EDGE_MIN).light;
-      if (r.lit) {
-        r.litSeen = tmSeenThrough([mix(r.stops[0], [255, 255, 255], tmLitAlpha(r))], washedBy)[0];
-        const lit = tmLitLine(r);
-        ctx.strokeStyle = `rgba(255,255,255,${tmLitAlpha(r)})`;
-        ctx.lineWidth = lit.width;
-        ctx.beginPath();
-        ctx.moveTo(lit.x0, lit.y); ctx.lineTo(lit.x1, lit.y);
-        ctx.stroke();
-      }
-    }
+    r.ownRgb = base; // its colour, which a lined leaf's fill is a shade of (tmEdgedFill)
   }
   // Where passes 2.6 and 2.7 will lay their lines, each stretch toned against
   // what a person sees on each side of it (tmLeafLines, tmFrameBands).
   const near = tmNeighbourhood(px, kids, dpr, pw / dpr, ph / dpr, ground);
-  for (const r of px) if (!r.frame && tmLeafKind(r) === 'edged') r.lines = tmLeafLines(r, near);
+  const edged = px.filter((r) => !r.frame && tmLeafKind(r) === 'edged');
+  for (const r of edged) r.lines = tmLeafLines(r, near);
+  // Where a leaf's lines took it further from its colour than a texture
+  // would, it is filled a shade lighter or darker (tmEdgedFill) — every leaf
+  // judged beside the fills as they were, so two alike are filled alike —
+  // and every line toned again against the fills as they now are (residuals
+  // 3 and 5). Then pass 1 lays each leaf (tmLayLeaf).
+  const refills = edged.map((r) => [r, tmEdgedFill(r, near, r.ownRgb, tmWashesOver(r, washes))]).filter(([r, fill]) => fill !== r.fillRgb);
+  for (const [r, fill] of refills) tmPaintLeaf(r, fill, tmWashesOver(r, washes));
+  if (refills.length) {
+    near.shared.clear();
+    for (const r of edged) r.lines = tmLeafLines(r, near);
+  }
+  for (const r of px) if (!r.frame && !r.shows && r.stops) tmLayLeaf(ctx, r);
   for (const r of px) if (r.frame) r.bands = tmFrameBands(r, near);
   // Pass 2.4: the texture of each folder's own fill (J51) and of each leaf too
   // small for lines, part of its tile — clear of every line (tmLineMask), and

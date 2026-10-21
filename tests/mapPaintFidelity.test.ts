@@ -151,11 +151,16 @@ const MAP_NAMES = ['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT
   // cell (review F2.1) and a staged block (review F1.4 of BQJ-2c-r) show on their outermost device pixel.
   'tmGroundRgb', 'tmCssRgba', 'tmOver', 'tmHollowEdge', 'TM_HOLLOW_WASH', 'TM_HOLLOW_DASH', 'tmStagedEdge',
   // The name tags the outlines and bands stop at (review F3.1).
-  'tmClipOutTags', 'TM_TAG_RADIUS'];
+  'tmClipOutTags', 'TM_TAG_RADIUS',
+  // A leaf's fill moved for its lines or its texture, so neither 8 px nor any size under it is a step (residuals 3 and 5).
+  'tmPaintLeaf', 'tmLayLeaf', 'tmLabelAt', 'tmEdgedFill', 'tmTexturedFill', 'tmTexturePull', 'TM_PULL_MIN', 'tmLinedMean', 'tmSolveFill',
+  'tmUnionArea', 'tmTextureMean', 'tmCushionL', 'tmLineBoundL', 'tmLstarOf', 'tmLstar', 'tmLab', 'tmFromLab', 'TM_D65', 'tmShiftL',
+  'TM_SHIFT_CHROMA', 'TM_LIFT_CHROMA', 'TM_TEXTURE_SHARE', 'TM_FILL_SHIFT_MAX', 'TM_TONE_MEMO', 'TM_TONE_MEMO_MAX', 'tmToneSearch'];
 
 /** What the real lensPaint needs from the page — the map's outline rules among them (review F1.2). */
 const LENS_NAMES = ['lensPaint', 'lensActive', 'lensShapes', 'LENS_SCALE', 'LENS_RADIUS', 'Canvas2D', 'mix', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'tmSeenThrough', 'TM_DIFF_WASH',
-  'tmTone', 'tmToneFor', 'tmLumCache', 'TM_EDGE_MIN', 'TM_LIT', 'tmLitAlpha', 'tmLitLine', 'tmLinePx', 'tmPxScale', 'tmFramesDeepestFirst', 'lensTexture'];
+  'tmTone', 'tmToneFor', 'tmLumCache', 'TM_EDGE_MIN', 'TM_LIT', 'tmLitAlpha', 'tmLitLine', 'tmLinePx', 'tmPxScale', 'tmFramesDeepestFirst', 'lensTexture',
+  'TM_TONE_MEMO', 'TM_TONE_MEMO_MAX', 'tmToneSearch'];
 
 /** The fillStyle the real drawTreemap gives `tile`'s rectangle, and the pixel rect it drew. */
 function mapFill(tile: typeof TILE = TILE, colour: number[] = GREEN) {
