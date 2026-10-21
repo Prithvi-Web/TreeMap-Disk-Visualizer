@@ -3382,9 +3382,10 @@ function tJunction() {
   return { tiles, W, H, colour: (n: Tile) => rgb[n.path] };
 }
 
-test('owner\'s refinement: where a file\'s corner meets another tile\'s edge, the line across keeps its own pixel at the corner — a side line laid in two parts lays its outer pixel first, under the line along the top — so the file stays parted from the tile above it there, at device pixel ratios 1, 1.5 and 2, in both themes (review F2.7)', () => {
+test('owner\'s refinement: where a file\'s corner meets another tile\'s edge, the line across keeps its own pixel at the corner — it runs on past the corner as the edge of the tile above, and is laid again there over the side line laid in two parts (tmBarCorners) — so the file stays parted from the tile above it there, at device pixel ratios 1, 1.5 and 2, in both themes (review F2.7, F3.5)', () => {
   // A two-part line's outer pixel is toned against the tile beyond it alone; laid over the corner, it broke the line
-  // between the file and the tile above it. Only one place in the realistic map, under one colouring, held this.
+  // between the file and the tile above it. Only one place in the realistic map, under one colouring, held this. It was
+  // laid first, under the line along the top; the line that runs on past a corner is now laid again over the corner.
   const m = tJunction();
   for (const dpr of [1, 1.5, 2]) {
     for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {

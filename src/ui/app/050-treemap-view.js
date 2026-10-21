@@ -1341,16 +1341,15 @@ function tmMergeRuns(rects) {
  * left or top edge it shares (tmShareOk) — nothing along its folder's own
  * edge, which the folder's band covers. Each stretch is toned against r's own
  * tile and the tile beyond it, and left out where those two already part
- * themselves and no shade stands out from both (tmSeamParts). The outer pixel
- * of a line laid in two parts, toned against the tile beyond it alone, is laid
- * first, so at a corner the line across keeps its pixel: laid over it, a side
- * line's outer pixel broke the line between r and a tile above it where r's
- * corner meets that tile's edge (review F1.5). And at each corner the line
- * that runs on past it is laid again there on its whole device pixels
- * (tmBarCorners).
+ * themselves and no shade stands out from both (tmSeamParts). At each corner
+ * the line that runs on past it keeps the corner (tmBarCorners): laid over it,
+ * a side line's outer pixel, toned against the tile beyond it alone, broke the
+ * line between r and a tile above it where r's corner meets that tile's edge
+ * (review F1.5), and a light line across, the side line beside a file that
+ * runs on past r's corner (review F3.5).
  */
 function tmLeafLines(r, g) {
-  const own = tmShown(r), out = [], under = [], t = tmLinePx(1, g.dpr);
+  const own = tmShown(r), out = [], t = tmLinePx(1, g.dpr);
   // Each side's outer part, and how far in from its edge its line reaches, for tmBarCorners.
   const outer = { top: [], left: [], right: [], bottom: [] }, reach = { top: 0, left: 0, right: 0, bottom: 0 };
   for (const side of ['top', 'left', 'right', 'bottom']) {
@@ -1366,13 +1365,13 @@ function tmLeafLines(r, g) {
       const parts = tmSeamParts(r.fillRgb, [[own, TM_EDGE_MIN]], beyond, t, null, true, grain, t);
       for (const part of parts) {
         const rect = tmPartRect(r, side, a, b, part);
-        (parts.length > 1 && part.inset === 0 ? under : out).push(rect);
+        out.push(rect);
         if (part.inset === 0) outer[side].push(rect);
         reach[side] = Math.max(reach[side], part.inset + part.width);
       }
     }
   }
-  return [...tmMergeRuns(under), ...tmMergeRuns(out), ...tmBarCorners(r, outer, reach, g)];
+  return [...tmMergeRuns(out), ...tmBarCorners(r, outer, reach, g)];
 }
 /**
  * Where two of the leaf `r`'s lines meet at a corner, the one that runs on past
