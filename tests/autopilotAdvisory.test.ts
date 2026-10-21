@@ -262,8 +262,10 @@ test('a suggestion policy naming a kind no rule here has is refused where it is 
 const ONLY_UNKNOWN = 'This policy names only a kind of file TreeMap does not have (cache-general), so it matches nothing: edit the policy and pick again.';
 const ALSO_UNKNOWN = 'This policy also names a kind of file TreeMap does not have (cache-general), which matches nothing: edit the policy and pick again.';
 
-test('a policy an earlier build saved with a kind no rule here has is kept while unchanged, and every run of it says so - never only "Nothing matched" (BQL-b1 review F3.1)', async () => {
+test('a policy an earlier build saved with a kind no rule here has is kept while unchanged, and every run of it says so - never only "Nothing matched" (BQL-b1 review F3.1)', async (t) => {
   const dir = fs.realpathSync(fileTempDir('treemap-autopilotAdvisory-unknown-run-'));
+  // The test moves its folder away below; the fixture removes only the name it made (review F2.4).
+  t.after(() => fs.rmSync(`${dir}-moved`, { recursive: true, force: true }));
   const deps = path.join(dir, 'proj', 'node_modules', 'dep');
   fs.mkdirSync(deps, { recursive: true });
   fs.writeFileSync(path.join(deps, 'index.js'), Buffer.alloc(4096, 5));
