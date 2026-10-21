@@ -332,9 +332,10 @@ impl<T: Zeroable> AnonRows<T> {
         if keep == 0 {
             // SAFETY: `start` and `bytes` are the live mapping this value owns, and with no
             // room no row of it is lent again; nothing borrows it (`settle` takes `&mut`).
-            unsafe { unmap(self.start.cast::<u8>(), self.bytes) };
-            self.start = NonNull::dangling();
-            self.bytes = 0;
+            if unsafe { unmap(self.start.cast::<u8>(), self.bytes) } {
+                self.start = NonNull::dangling();
+                self.bytes = 0;
+            }
             return;
         }
         // SAFETY: `start..start + bytes` is the live mapping this value owns; `keep` is a
@@ -512,17 +513,20 @@ fn reserve_zeroed(bytes: usize) -> Result<NonNull<u8>, ColumnError> {
     Ok(start)
 }
 
-/// Releases a mapping `map_zeroed` made. A release the OS refuses stays out of the tally.
+/// Releases a mapping `map_zeroed` made; whether the OS did. A release the OS refuses stays
+/// out of the tally.
 ///
 /// # Safety
 ///
 /// `start` and `bytes` are a mapping `map_zeroed` made that has not been released, and
 /// nothing reads or writes it any more.
-unsafe fn unmap(start: NonNull<u8>, bytes: usize) {
+unsafe fn unmap(start: NonNull<u8>, bytes: usize) -> bool {
     // SAFETY: the caller's promise is the one `sys::unmap` asks for.
-    if unsafe { sys::unmap(start, bytes) } {
+    let released = unsafe { sys::unmap(start, bytes) };
+    if released {
         tally(bytes, true);
     }
+    released
 }
 
 /// The OS's error number for the call that just failed.
