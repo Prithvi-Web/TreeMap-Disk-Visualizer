@@ -42,8 +42,12 @@ function scriptsOf(page: string): string[] {
     .map((m) => printer.printFile(ts.createSourceFile('page.js', m[2], ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)));
 }
 
-/** A piece of a string a script writes or builds: text as written (`node`, the literal or template piece it is), or a part code computes. */
-type Piece = { text: string; node: ts.Node } | { hole: ts.Expression };
+/**
+ * A piece of a string a script writes or builds: text as written — `node` is
+ * the literal or template piece it is, `of` the string it is part of, one for
+ * all a template's pieces — or a part code computes.
+ */
+type Piece = { text: string; node: ts.Node; of: ts.Node } | { hole: ts.Expression };
 
 /** Whether `n` writes or builds a string: a string literal, a template, or a + (whose pieces piecesOf reads). */
 function buildsString(n: ts.Node): n is ts.Expression {
@@ -54,10 +58,10 @@ function buildsString(n: ts.Node): n is ts.Expression {
 /** The pieces `expr` builds its string from, in order, + read through: `'a ' + b + \`c${d}\`` is "a ", b, "c", d, "". */
 function piecesOf(expr: ts.Expression): Piece[] {
   if (ts.isParenthesizedExpression(expr) && buildsString(expr.expression)) return piecesOf(expr.expression);
-  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return [{ text: expr.text, node: expr }];
+  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return [{ text: expr.text, node: expr, of: expr }];
   if (ts.isTemplateExpression(expr)) {
-    return [{ text: expr.head.text, node: expr.head },
-      ...expr.templateSpans.flatMap((span): Piece[] => [{ hole: span.expression }, { text: span.literal.text, node: span.literal }])];
+    return [{ text: expr.head.text, node: expr.head, of: expr },
+      ...expr.templateSpans.flatMap((span): Piece[] => [{ hole: span.expression }, { text: span.literal.text, node: span.literal, of: expr }])];
   }
   if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.PlusToken) return [...piecesOf(expr.left), ...piecesOf(expr.right)];
   return [{ hole: expr }];
@@ -229,6 +233,11 @@ function plainLabel(inner: string): string {
 /** No more texts are judged for one expression than this: a label's branches multiply. */
 const MOST_VARIANTS = 64;
 
+/** Each text of `a` followed by each of `b`, no more than MOST_VARIANTS of them. */
+function joinVariants(a: string[], b: string[]): string[] {
+  return a.flatMap((x) => b.map((y) => x + y)).slice(0, MOST_VARIANTS);
+}
+
 /** What `escapeHtml(…)` is handed, or null: the page's escaping keeps a label's words, so a label is read through it. */
 function escaped(expr: ts.Expression): ts.Expression | null {
   return ts.isCallExpression(expr) && ts.isIdentifier(expr.expression) && expr.expression.text === 'escapeHtml' && expr.arguments.length === 1
@@ -244,7 +253,6 @@ function escaped(expr: ts.Expression): ts.Expression | null {
  * never read as words.
  */
 function variantsOf(expr: ts.Expression): string[] {
-  const join = (a: string[], b: string[]): string[] => a.flatMap((x) => b.map((y) => x + y)).slice(0, MOST_VARIANTS);
   const either = (a: string[], b: string[]): string[] => [...a, ...b].slice(0, MOST_VARIANTS);
   if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return [expr.text];
   const handed = escaped(expr);
@@ -253,12 +261,12 @@ function variantsOf(expr: ts.Expression): string[] {
   if (ts.isConditionalExpression(expr)) return either(variantsOf(expr.whenTrue), variantsOf(expr.whenFalse));
   if (ts.isTemplateExpression(expr)) {
     let out = [expr.head.text];
-    for (const span of expr.templateSpans) out = join(join(out, variantsOf(span.expression)), [span.literal.text]);
+    for (const span of expr.templateSpans) out = joinVariants(joinVariants(out, variantsOf(span.expression)), [span.literal.text]);
     return out;
   }
   if (ts.isBinaryExpression(expr)) {
     const op = expr.operatorToken.kind;
-    if (op === ts.SyntaxKind.PlusToken) return join(variantsOf(expr.left), variantsOf(expr.right));
+    if (op === ts.SyntaxKind.PlusToken) return joinVariants(variantsOf(expr.left), variantsOf(expr.right));
     if (op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.QuestionQuestionToken) return either(variantsOf(expr.left), variantsOf(expr.right));
   }
   return [' '];
@@ -292,6 +300,46 @@ function labelsIn(code: string): string[] {
   for (const m of code.matchAll(/<(button|h3)\b[^>]*>([\s\S]*?)<\/\1>/g)) {
     for (const label of labelVariants(m[2])) if (label && !joinedByCode(label)) out.push(label);
   }
+  return out;
+}
+
+/**
+ * Each button's and modal heading's content in a string a script builds —
+ * its text, and each part code computes in it — and whether a + joins the
+ * content from more than one string: `'<button>' + escapeHtml(label) +
+ * '</button>'`, or a button opened in one template and labelled in the next.
+ */
+function contentsOf(pieces: Piece[]): { parts: (string | ts.Expression)[]; joined: boolean }[] {
+  // The string as written, each part code computes marked by its place, and a
+  // mark where one string a + joins ends and the next begins.
+  const JOIN = '\u0003';
+  let last: ts.Node | null = null;
+  const built = pieces.map((piece, i) => {
+    if ('hole' in piece) return `\u0001${i}\u0002`;
+    const mark = last && last !== piece.of ? JOIN : '';
+    last = piece.of;
+    return mark + piece.text;
+  }).join('');
+  return [...built.matchAll(/<(button|h3)\b[^>]*>([\s\S]*?)<\/\1>/g)].map((m) => ({
+    parts: m[2].split(/\u0001(\d+)\u0002/).map((part, j) => (j % 2 ? (pieces[Number(part)] as { hole: ts.Expression }).hole : part.split(JOIN).join(''))),
+    joined: m[2].includes(JOIN),
+  }));
+}
+
+/**
+ * Every label in `code` a + joins from more than one string, read from the
+ * strings and from what each part code computes can give (variantsOf). A
+ * label inside one string is labelsIn's to read, from the code itself.
+ */
+function builtLabels(code: string): string[] {
+  const out: string[] = [];
+  visitBuilding(ts.createSourceFile('page.js', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS), () => undefined, (pieces) => {
+    for (const { parts, joined } of contentsOf(pieces)) {
+      if (!joined) continue;
+      const texts = parts.reduce<string[]>((acc, part) => joinVariants(acc, typeof part === 'string' ? [part] : variantsOf(part)), ['']);
+      out.push(...new Set(texts.map(plainLabel).filter(Boolean)));
+    }
+  });
   return out;
 }
 
@@ -481,7 +529,7 @@ function titleCased(label: string, proper: readonly string[]): string | null {
 /** Each label in the page that is Title Case where it should be sentence case, with the word that gives it away. */
 function titleCaseLabels(page: string): string[] {
   const proper = [...PROPER_NAMES, ...sidebarNames(page)];
-  const labels = [...labelsIn(markupOf(page)), ...scriptsOf(page).flatMap(labelsIn), ...assignedLabels(page)];
+  const labels = [...labelsIn(markupOf(page)), ...scriptsOf(page).flatMap(labelsIn), ...scriptsOf(page).flatMap(builtLabels), ...assignedLabels(page)];
   return labels.flatMap((label) => {
     const word = titleCased(label, proper);
     return word ? [`"${label}" (${word})`] : [];
@@ -581,6 +629,23 @@ test('each way the label reader reads a label holds a case of its own (G18 revie
   assert.equal(labelsIn(choices(7)).length, 64, 'seven: no more than 64');
 });
 
+test('the label reader reads a label a + joins from more than one string (G18 review F3.3)', () => {
+  // The cart's result summary opens its "Undo this run" button in one
+  // template and writes the label in the next. Read as code, the content was
+  // "` + `…", dropped as joined by code, so a Title Case label there passed
+  // unseen. It is read from the strings the + joins instead.
+  const cart = "html += `<div class=\"cart-mf-undo\"><button class=\"btn\" data-cart-undo=\"${escapeHtml(id)}\">` +\n  `${icon('refresh', 14)}Undo This Run</button>` + `<span>${n}</span>`;";
+  assert.deepEqual(labelsIn(cart), [], 'control: read as code, the label is joined by code');
+  assert.deepEqual(builtLabels(cart), ['Undo This Run'], 'the label two templates a + joins hold');
+  assert.deepEqual(builtLabels("el.innerHTML = '<h3>' + icon('k', 18) + 'Keyboard ' + (mac ? 'Keys' : 'Shortcuts') + '</h3>';"), ['Keyboard Keys', 'Keyboard Shortcuts'],
+    'a heading, each way its parts can go; an icon\'s name is not words');
+  assert.deepEqual(builtLabels("el.innerHTML = 'a' + `<button class=\"pill\">` + escapeHtml(label) + '</button>';"), [], 'a label code computes has no words of its own');
+  // A label inside one string is labelsIn's to read, from the code: read once.
+  const oneString = "x = `<button>${a ? 'Read Once' : 'b'}</button>`; y = '<button class=\"' + c + '\">Read Once Too</button>';";
+  assert.deepEqual(labelsIn(oneString), ['Read Once', 'b', 'Read Once Too'], 'control: labelsIn reads a label inside one string');
+  assert.deepEqual(builtLabels(oneString), [], 'so the strings a + joins do not read it again');
+});
+
 test('the label reader follows a label handed to a page function that writes it into a button or a heading (G18 review F2.2)', () => {
   // setConfirmButton('Empty the Trash') writes its label into the confirm
   // button, openBrowse its title and button label into the folder picker,
@@ -637,6 +702,7 @@ test('every button and modal title of the page is in sentence case, but for prop
   assert.ok(labels.length > 150, `control: the page's labels are read, markup and script (${labels.length})`);
   assert.ok(labels.includes('Remove budget') && labels.includes('Keyboard shortcuts'), 'control: a script\'s button and a modal heading are among them');
   assert.ok(labels.includes('Edit budget…') && labels.includes('Set budget…'), 'control: both arms of an interpolated label are among them');
+  assert.ok(scriptsOf(INDEX).flatMap(builtLabels).includes('Undo this run'), 'control: the cart\'s "Undo this run", a label a + joins from two templates, is read (review F3.3)');
   const sinks = labelSinks(INDEX);
   for (const [fn, key] of [['setConfirmButton', '0'], ['openBrowse', '2'], ['openBrowse', '3'], ['watchOffloadJob', '1'], ['askText', '0.title'], ['askText', '0.ok'], ['watchJob', '0.title']]) {
     assert.ok(sinks.get(fn)?.has(key), `control: ${fn}'s argument ${key} is known to end up as a label (${[...sinks.keys()].join(', ')})`);
