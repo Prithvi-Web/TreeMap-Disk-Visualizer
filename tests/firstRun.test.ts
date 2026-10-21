@@ -249,7 +249,7 @@ function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; 
   host.querySelector = cardFinder(host, found);
   $('emptyBrowseBtn').rects = opts.heroUp ? 1 : 0;
   // The start screen's "Scan … again" for a scan just stopped (`again`); what it offers is tests/coreScanFlow.test.ts's.
-  Object.assign($('startAgainBtn'), { rects: opts.again ? 1 : 0, classList: { contains: (c: string) => c === 'start-retry' } });
+  Object.assign($('startAgainBtn'), { rects: opts.again ? 1 : 0, classList: { contains: (c: string) => c === 'start-retry' || c === 'start-again' } });
   const winLine = liftPage<(g: unknown) => string>(WIN_LINE, 'tourWinLine');
   const tour = { active: true, step, wins: opts.wins ?? (opts.win ? [opts.win] : []), winIx: 0, added: opts.added ?? [], unknownReason: '' };
   const cart = new Set(opts.cart ?? []);
@@ -746,7 +746,7 @@ function scanEndPage(o: { root?: unknown; scanId?: string | null; focus: 'pathIn
   const ctl = {
     pathInput: mk('pathInput', 1), scanBtn: mk('scanBtn', 1), row: mk('row', 1), welcome: mk('emptyBrowseBtn', 0), tab: mk('tab', 1),
     // The start screen's "Scan … again", painted beside the welcome when it offers the folder whose scan just ended.
-    again: Object.assign(mk('startAgainBtn', 0), { classList: { contains: (c: string) => c === 'start-retry' } }),
+    again: Object.assign(mk('startAgainBtn', 0), { classList: { contains: (c: string) => c === 'start-retry' || c === 'start-again' } }),
   };
   doc.body = mk('body', 0);
   doc.active = ctl[o.focus];

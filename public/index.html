@@ -8357,14 +8357,17 @@ function activeViewControl() {
 
 /**
  * The start screen's control that takes focus, or null while the start
- * screen is not on screen: its "Scan … again" right after a scan of that
- * folder was stopped or failed — what the person was just doing (the owner,
- * 17 Oct 2026) — else its one primary, "Choose a folder…" (G03).
+ * screen is not on screen: its "Scan … again" for the last folder — right
+ * after a scan of it was stopped or failed, what the person was just doing
+ * (the owner, 17 Oct 2026), or on a relaunch, the folder the history names
+ * (eighth browser pass K01) — else its one primary, "Choose a folder…" (G03).
+ * Only the last folder's carries the id: the history's beside another
+ * folder's Stop does not (J03).
  */
 function startLanding() {
   const shown = (el) => !!el && !el.disabled && el.getClientRects().length > 0;
   const again = $('startAgainBtn');
-  if (shown(again) && again.classList.contains('start-retry')) return again;
+  if (shown(again) && again.classList.contains('start-again')) return again;
   const cta = $('emptyBrowseBtn');
   return shown(cta) ? cta : null;
 }
@@ -43025,6 +43028,27 @@ function renderStartChoices() {
   }
   void startJudge(candidates.map((c) => c.path));
   void startNameDrives();
+  startFocusAtBoot();
+}
+
+/**
+ * On a relaunch with history (state.startFocusDue, set by the restore) the
+ * start screen's control takes focus: the last folder's "Scan … again" once
+ * the rules have said it may be offered (startJudge repaints when they
+ * answer), "Choose a folder…" until then or if they refuse it. A relaunch
+ * left focus on <body>: the tour, which places it on a first run, waits for
+ * someone who has scanned before until their next scan lands (eighth browser
+ * pass K01). Focus the person placed meanwhile is theirs, and ends this.
+ */
+function startFocusAtBoot() {
+  if (!state.startFocusDue) return;
+  const at = document.activeElement;
+  const cta = $('emptyBrowseBtn');
+  if (at && at !== document.body && at !== cta && at.getClientRects().length > 0) { state.startFocusDue = false; return; }
+  const last = state.lastFolder;
+  if (!(last && last.offered && last.path && !startVerdicts.has(last.path))) state.startFocusDue = false; // nothing more to wait for
+  const to = startLanding();
+  if (to && to !== at) to.focus({ preventScroll: true });
 }
 
 /**
@@ -43225,6 +43249,8 @@ async function restoreLastSession() {
     // The person moved first — a scan started, or one stopped, which names its own folder.
     if (state.root || state.scanning) return;
     if (!state.lastFolder) state.lastFolder = state.historyFolder;
+    // The start screen's control takes focus as it is offered (startFocusAtBoot, K01).
+    state.startFocusDue = true;
     renderStartChoices(); // a choice holding focus keeps it, on its new button
   } catch (e) {
     console.warn('[treemap] session restore skipped:', e.message);

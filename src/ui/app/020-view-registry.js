@@ -431,14 +431,17 @@ function activeViewControl() {
 
 /**
  * The start screen's control that takes focus, or null while the start
- * screen is not on screen: its "Scan … again" right after a scan of that
- * folder was stopped or failed — what the person was just doing (the owner,
- * 17 Oct 2026) — else its one primary, "Choose a folder…" (G03).
+ * screen is not on screen: its "Scan … again" for the last folder — right
+ * after a scan of it was stopped or failed, what the person was just doing
+ * (the owner, 17 Oct 2026), or on a relaunch, the folder the history names
+ * (eighth browser pass K01) — else its one primary, "Choose a folder…" (G03).
+ * Only the last folder's carries the id: the history's beside another
+ * folder's Stop does not (J03).
  */
 function startLanding() {
   const shown = (el) => !!el && !el.disabled && el.getClientRects().length > 0;
   const again = $('startAgainBtn');
-  if (shown(again) && again.classList.contains('start-retry')) return again;
+  if (shown(again) && again.classList.contains('start-again')) return again;
   const cta = $('emptyBrowseBtn');
   return shown(cta) ? cta : null;
 }

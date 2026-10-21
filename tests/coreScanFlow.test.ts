@@ -164,7 +164,7 @@ const LIFTED = [
   'async function startScan(', 'async function startScanRequest(', 'function followScanProgress(',
   'function endScanChrome(', 'function failScan(', 'function noteLastFolder(', 'function noteStopUnconfirmed(',
   'function browseWholeDrives(', 'function topologyAnswer(',
-  'function startChoiceList(', 'function startFolderName(', 'function startRefusalWords(', 'function startLastLine(', 'function renderStartChoices(', 'function scanStartChoice(', 'async function startNameDrives(',
+  'function startChoiceList(', 'function startFolderName(', 'function startRefusalWords(', 'function startLastLine(', 'function renderStartChoices(', 'function startFocusAtBoot(', 'function scanStartChoice(', 'async function startNameDrives(',
   'async function startJudge(', 'function startNoteAllowed(', 'function startRejudgeRefused(',
   'function requestedPath(', 'async function restoreLastSession(', 'function showRestoredPath(', 'async function reopenScan(',
   'async function startCloudScan(', 'async function loadSystem(',
@@ -3079,4 +3079,33 @@ test('K02: the Dashboard\'s Scan pressed over a tree keeps focus on #scanBtn thr
   await h.stopScan();
   await turns();
   assert.equal(h.dom.activeElement, h.$('scanBtn'), 'after a Stop of the next scan, focus is on the button still');
+});
+
+test('K01: a relaunch with history puts focus on the start screen\'s "Scan <last> again" — once the rules have said it may be offered, "Choose a folder…" until then — never <body>; a folder the rules refuse leaves it on "Choose a folder…"', async () => {
+  const h = page({ route: server({ roots: [ROOT_HISTORY] }) });
+  await boot(h);
+  assert.match(h.$('startAgainBtn').textContent, /^Scan Macintosh HD again/, 'control: the last folder is offered');
+  assert.equal(h.dom.activeElement, h.$('startAgainBtn'), `focus is on "Scan Macintosh HD again" (on #${h.dom.activeElement.id || 'body'})`);
+  // The rules' answer comes after the restore: focus waits on "Choose a folder…", then moves to the folder offered.
+  let answer: (a: Answer) => void = () => {};
+  const slow = page({ route: server({ roots: [ROOT_HISTORY], policyAnswer: () => new Promise((r) => { answer = r; }) }) });
+  await boot(slow);
+  assert.deepEqual(slow.choices(), [], 'control: nothing offered while the rules are asked');
+  assert.equal(slow.dom.activeElement, slow.$('emptyBrowseBtn'), 'until the rules answer, focus is on "Choose a folder…" — not <body>');
+  answer(await server({ roots: [] })('GET', '/api/policy?scanRoot=%2F', null)!);
+  await turns();
+  assert.equal(slow.dom.activeElement, slow.$('startAgainBtn'), 'once "Scan Macintosh HD again" is offered, focus moves to it');
+  // A folder the rules refuse is not offered: focus stays on "Choose a folder…".
+  const refused = page({ route: server({ roots: [ROOT_HISTORY], refuse: (p) => (p === '/' ? 'Scanning "/" is outside the allowed roots' : null) }) });
+  await boot(refused);
+  assert.ok(!refused.$('startChoices').children.some((b) => b.id === 'startAgainBtn'), 'control: the refused folder is not offered');
+  assert.equal(refused.dom.activeElement, refused.$('emptyBrowseBtn'), 'focus is on "Choose a folder…"');
+  // Focus the person put elsewhere meanwhile is theirs.
+  const own = page({ route: server({ roots: [ROOT_HISTORY] }) });
+  own.switchView('dashboard');
+  own.$('startLast').parent = own.$('emptyState');
+  own.dom.get('helpLink').focus();
+  await own.restoreLastSession();
+  await turns();
+  assert.equal(own.dom.activeElement, own.dom.get('helpLink'), 'focus the person placed before the restore answered stays where it is');
 });

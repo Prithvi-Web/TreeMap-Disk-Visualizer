@@ -492,6 +492,27 @@ function renderStartChoices() {
   }
   void startJudge(candidates.map((c) => c.path));
   void startNameDrives();
+  startFocusAtBoot();
+}
+
+/**
+ * On a relaunch with history (state.startFocusDue, set by the restore) the
+ * start screen's control takes focus: the last folder's "Scan … again" once
+ * the rules have said it may be offered (startJudge repaints when they
+ * answer), "Choose a folder…" until then or if they refuse it. A relaunch
+ * left focus on <body>: the tour, which places it on a first run, waits for
+ * someone who has scanned before until their next scan lands (eighth browser
+ * pass K01). Focus the person placed meanwhile is theirs, and ends this.
+ */
+function startFocusAtBoot() {
+  if (!state.startFocusDue) return;
+  const at = document.activeElement;
+  const cta = $('emptyBrowseBtn');
+  if (at && at !== document.body && at !== cta && at.getClientRects().length > 0) { state.startFocusDue = false; return; }
+  const last = state.lastFolder;
+  if (!(last && last.offered && last.path && !startVerdicts.has(last.path))) state.startFocusDue = false; // nothing more to wait for
+  const to = startLanding();
+  if (to && to !== at) to.focus({ preventScroll: true });
 }
 
 /**
@@ -692,6 +713,8 @@ async function restoreLastSession() {
     // The person moved first — a scan started, or one stopped, which names its own folder.
     if (state.root || state.scanning) return;
     if (!state.lastFolder) state.lastFolder = state.historyFolder;
+    // The start screen's control takes focus as it is offered (startFocusAtBoot, K01).
+    state.startFocusDue = true;
     renderStartChoices(); // a choice holding focus keeps it, on its new button
   } catch (e) {
     console.warn('[treemap] session restore skipped:', e.message);
