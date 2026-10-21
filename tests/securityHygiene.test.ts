@@ -1094,7 +1094,16 @@ test('"Show more" asks once while its page is on the way: a second press is igno
 
 /* ─────────────── Sixth browser pass H05: the headline counts what is really misplaced ─────────────── */
 
-test('the report counts, over every finding, those in folders installed software or the operating system keeps for itself, and a row inside an app names it (H05)', () => {
+// These fixtures are macOS and Linux folders under a "/" root (/Applications, /System, ~/Library, a
+// WSL /mnt/c): on Windows the home folder resolves to a drive (D:\home\tester), outside that root, so
+// the walk never reaches it. Windows' own folders are tested with Windows paths on the drive the home
+// folder is on, by the tests after these, which run on Windows (BQR-1 A2), as the D42 test above
+// already skips here.
+const POSIX_ROOTED = process.platform === 'win32' && 'the fixtures are macOS and Linux folders under a / root';
+/** The Windows tests' skip: they spell Windows paths, which the scanner reads by Windows' path rules. */
+const WINDOWS_ONLY = process.platform !== 'win32' && 'Windows paths, read by Windows path rules';
+
+test('the report counts, over every finding, those in folders installed software or the operating system keeps for itself, and a row inside an app names it (H05)', { skip: POSIX_ROOTED }, () => {
   const report = collectSecurityFindings(treeWith('/', [
     file('ca.pem', '/Applications/Thing.app/Contents/Resources'),
     file('server.pem', path.join(HOME, 'projects', 'web', 'node_modules', 'pkg', 'test')),
@@ -1112,7 +1121,7 @@ test('the report counts, over every finding, those in folders installed software
   assert.match(reason('cert.pem'), /operating system/, 'the operating system\'s own is said as such');
 });
 
-test('the 500 cap leaves the app-owned count over every finding (H05)', () => {
+test('the 500 cap leaves the app-owned count over every finding (H05)', { skip: POSIX_ROOTED }, () => {
   const owned = Array.from({ length: 520 }, (_, i) => file(`c${i}.pem`, `/Applications/A${i % 3}.app/Contents/Resources`));
   const report = collectSecurityFindings(treeWith('/', [...owned, file('id_rsa', path.join(HOME, 'Downloads'))]), [], HOME) as unknown as { findings: unknown[]; total: number; appOwnedCount?: number };
   assert.equal(report.findings.length, 500, 'control: the page holds 500');
@@ -1169,7 +1178,7 @@ test('the Security headline calls only the misplaced findings "outside the folde
   assert.doesNotMatch(plain, /keeps for itself|ship inside/, 'and says nothing about programs');
 });
 
-test('a key a program keeps in its data folder is counted app-owned, and the headline over it neither says it ships inside a program nor that nothing is out of place (review F1.3)', () => {
+test('a key a program keeps in its data folder is counted app-owned, and the headline over it neither says it ships inside a program nor that nothing is out of place (review F1.3)', { skip: POSIX_ROOTED }, () => {
   const data = path.join(HOME, 'Library', 'Application Support', 'SomeGitGui');
   const report = collectSecurityFindings(treeWith('/', [file('id_rsa', data), file('deploy.pem', data)]), [], HOME) as unknown as Record<string, unknown> & { total: number; appOwnedCount?: number };
   assert.equal(report.total, 2, 'control: both are findings');
@@ -1186,7 +1195,7 @@ test('a key a program keeps in its data folder is counted app-owned, and the hea
   }
 });
 
-test('every app-owned row says only what its folder is — a data folder, a package folder, a software bundle, the programs folder, the nearest where a path holds two — never that a file the detector names no program for is part of that software (review F2.2, F3.5)', () => {
+test('every app-owned row says only what its folder is — a data folder, a package folder, a software bundle, the programs folder, the nearest where a path holds two — never that a file the detector names no program for is part of that software (review F2.2, F3.5)', { skip: POSIX_ROOTED }, () => {
   const reasonOf = (name: string, dir: string): string => {
     const [f] = findingsFor([file(name, dir)], '/');
     assert.equal(f?.appOwned, true, `control: ${dir} is app-owned`);
@@ -1218,6 +1227,58 @@ test('every app-owned row says only what its folder is — a data folder, a pack
       'In “pkg”, inside “node_modules”, a folder a package manager fills with installed packages — TreeMap does not offer to move it, since a package may rely on it.'],
   ];
   for (const [name, dir, said] of cases) assert.equal(reasonOf(name, dir), said, dir);
+});
+
+/* ─────────────── The same rows on Windows, with Windows paths (BQR-1 A2) ─────────────── */
+
+/** The Windows tests' drive — the one the home folder resolves to — and a home folder on it as Windows makes one. */
+function windowsDrive(): { root: string; home: string } {
+  const root = path.parse(HOME).root;
+  return { root, home: path.join(root, 'Users', 'tester') };
+}
+
+test('on Windows a key-shaped file in a program\'s folder under Program Files is part of that program, one in AppData or ProgramData sits where programs keep their data, one under Windows is the operating system\'s, and only the key in Downloads is misplaced (BQR-1 A2)', { skip: WINDOWS_ONLY }, () => {
+  const { root, home } = windowsDrive();
+  const vendor = path.join(root, 'Program Files', 'Vendor');
+  const oldVendor = path.join(root, 'Program Files (x86)', 'Old Vendor');
+  const report = collectSecurityFindings(treeWith(root, [
+    file('ca.pem', path.join(vendor, 'Tool', 'resources')),
+    file('server.pem', path.join(oldVendor, 'ssl')),
+    file('id_rsa', path.join(home, 'AppData', 'Roaming', 'Tool')),
+    file('deploy.pem', path.join(home, 'AppData', 'Local', 'Tool', 'keys')),
+    file('agent.pem', path.join(root, 'ProgramData', 'Vendor')),
+    file('cert.pem', path.join(root, 'Windows', 'System32', 'config')),
+    file('id_ed25519', path.join(home, 'Downloads')),
+  ]), [], home) as unknown as { findings: Array<{ name: string; reason: string; appOwned: boolean; severity: string; suggestedPath?: string }>; total: number; counts: Record<string, number>; appOwnedCount: number };
+  assert.equal(report.total, 7, 'control: every file is a finding');
+  assert.deepEqual(report.counts, { high: 1, medium: 0, low: 6 }, 'only the key in Downloads is serious');
+  assert.equal(report.appOwnedCount, 6, 'six sit in folders installed software or Windows keeps for itself');
+  const row = (name: string) => report.findings.find((f) => f.name === name)!;
+  assert.deepEqual(Object.fromEntries(report.findings.map((f) => [f.name, f.reason])), {
+    'ca.pem': `In “resources”, part of a program installed in “${vendor}” — this file ships with that program, so moving it would break it.`,
+    'server.pem': `In “ssl”, part of a program installed in “${oldVendor}” — this file ships with that program, so moving it would break it.`,
+    id_rsa: 'In “Tool”, under “AppData”, where programs keep their own data — TreeMap does not offer to move it, since a program may rely on it. If you saved it here yourself, you can move it by hand.',
+    'deploy.pem': 'In “keys”, under “AppData”, where programs keep their own data — TreeMap does not offer to move it, since a program may rely on it. If you saved it here yourself, you can move it by hand.',
+    'agent.pem': 'In “Vendor”, under “ProgramData”, where programs keep their own data — TreeMap does not offer to move it, since a program may rely on it. If you saved it here yourself, you can move it by hand.',
+    'cert.pem': 'In “config”, a folder the operating system manages — this file is part of the system, so moving it would break whatever uses it.',
+    id_ed25519: 'In “Downloads”, a folder that is easy to share or hand over by accident.',
+  }, 'each row says where its file is, by its Windows folder');
+  assert.equal(row('id_ed25519').suggestedPath, path.join(home, '.ssh'), 'the misplaced key is offered the home folder\'s .ssh');
+  assert.deepEqual(report.findings.filter((f) => f.appOwned).map((f) => f.suggestedPath), [undefined, undefined, undefined, undefined, undefined, undefined],
+    'no file a program or Windows keeps is offered a move');
+});
+
+test('on Windows the 500 cap leaves the app-owned count over every finding, and a Program Files folder away from the drive\'s top is a programs folder, never a program by name (BQR-1 A2)', { skip: WINDOWS_ONLY }, () => {
+  const { root, home } = windowsDrive();
+  const owned = Array.from({ length: 520 }, (_, i) => file(`c${String(i)}.pem`, path.join(root, 'Program Files', `Vendor ${String(i % 3)}`, 'resources')));
+  const report = collectSecurityFindings(treeWith(root, [...owned, file('id_rsa', path.join(home, 'Downloads'))]), [], home) as unknown as { findings: unknown[]; total: number; appOwnedCount: number };
+  assert.deepEqual([report.findings.length, report.total], [500, 521], 'control: the page holds 500 of 521');
+  assert.equal(report.appOwnedCount, 520, 'the count is over every finding, not the page');
+  const copy = path.join(root, 'Backup', 'Program Files', 'Vendor');
+  const [f] = collectSecurityFindings(treeWith(root, [file('server.pem', copy)]), [], home).findings;
+  assert.equal(f.appOwned, true, 'control: a programs folder still');
+  assert.equal(f.reason, 'In “Vendor”, inside “Program Files”, where installed programs live — TreeMap does not offer to move it, since a program may rely on it.',
+    'a copy of Program Files elsewhere is said as a programs folder: no program is installed there');
 });
 
 test('the API\'s appOwnedCount is declared where an agent reads it, beside the total/counts contract it leaves true (H05)', async () => {

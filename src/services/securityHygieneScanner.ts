@@ -379,13 +379,17 @@ const APP_OWNED_SEGMENTS = new Set([
   'node_modules', 'site-packages', 'dist-packages', 'bower_components',
   'program files', 'program files (x86)',
 ]);
-/** The same idea where it takes two consecutive segments to be sure. */
+/**
+ * Folders where programs keep their own data: mostly where it takes two consecutive segments to be
+ * sure, and Windows' ProgramData, the data folder its programs share across accounts (BQR-1 A2).
+ */
 const APP_OWNED_RUNS = [
   ['library', 'application support'],
   ['library', 'containers'],
   ['library', 'group containers'],
   ['appdata', 'local'],
   ['appdata', 'roaming'],
+  ['programdata'],
 ];
 
 /** True when a run of segments appears consecutively in `dirs`. */
@@ -456,7 +460,7 @@ function ownedPlaceOf(filePath: string): OwnedPlace | null {
   }
   for (const want of APP_OWNED_RUNS) {
     for (let i = 0; i + want.length <= dirs.length; i++) {
-      // Library's runs are named by their second folder (the one inside Library), AppData's by its first.
+      // Library's runs are named by their second folder (the one inside Library), AppData's and ProgramData by their first.
       if (want.every((w, k) => dirs[i + k] === w)) return { kind: 'data', name: names[want[0] === 'library' ? i + 1 : i] };
     }
   }
