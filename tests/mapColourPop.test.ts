@@ -3193,7 +3193,7 @@ test('owner\'s refinement: in the History diff a line along a washed folder\'s e
           const c = contrast(raster.at(x, row - 1), raster.at(x, row));
           if (c < worst) { worst = c; at = `${raster.at(x, row - 1).map(Math.round)} on ${raster.at(x, row).map(Math.round)}`; }
         }
-        assert.ok(worst >= PAINTER_EDGE - 0.02, `${where}: L's bottom edge stands ${fmt(worst)}:1 from G's top row (${at})`);
+        assert.ok(worst >= PAINTER_EDGE, `${where}: L's bottom edge stands ${fmt(worst)}:1 from G's top row (${at})`);
         assert.deepEqual(measureEdges(raster, px, dpr).under, [], `${where}: lines under ${EDGE_BAR}:1 against a tile beside them`);
       }
     }
