@@ -1,5 +1,16 @@
 /* ───────────────────────────── Folder budgets (Feature 15) ───────────────────────────── */
-function budgetFor(path) { return state.budgets.list.find(b => b.path === path) || null; }
+/**
+ * The budget on a folder: as the scan behind the tree measured it, or — over
+ * the saved index's tree, which no scan stands behind — as the person saved
+ * it (state.budgets.saved, from the settings). A budget is the person's, not
+ * a scan's: emptied with the meters, the right-click menu offered "Set
+ * budget…" and no "Remove budget" for a folder that had one, and the dialog
+ * opened blank (review F2.1).
+ */
+function budgetFor(path) {
+  return state.budgets.list.find(b => b.path === path)
+    || (state.budgets.saved || []).find(b => b.path === path) || null;
+}
 
 let loadBudgetsSeq = 0;
 /** Fetch budgets for the current scan, update the dashboard widget + treemap overlay. */
@@ -17,8 +28,17 @@ async function loadBudgets() {
     state.budgets.overPaths = new Set();
     state.budgets.gauges = new Map();
     renderBudgetWidget();
+    // What the person saved needs no scan: read for the menu and the
+    // dialog (budgetFor), the newest load's answer only, and only while no
+    // scan stands behind the tree (review F2.1).
+    const seq = ++loadBudgetsSeq;
+    state.budgets.saved = null;
+    const saved = await currentSavedBudgets();
+    if (seq !== loadBudgetsSeq || treeScanId()) return;
+    state.budgets.saved = saved;
     return;
   }
+  state.budgets.saved = null; // a scan stands behind the tree: what it measured is the budget
   // FX: a reload sweeps the existing gauges instead of blanking them; a
   // first paint has no card to veil (renderBudgetWidget hides it empty).
   if (!$('budgetCard').hidden) $('budgetList').classList.add('fx-chart-loading');

@@ -810,7 +810,7 @@ test('the Dashboard\'s folder budgets, cost to keep and drive health are asked o
   const $ = stubDom();
   const state: Record<string, unknown> = { root: TREE, view: 'dashboard', ...HELD, budgets: { list: [], overPaths: new Set(), gauges: new Map() } };
   const { fns, asks } = page<{ budgets: () => Promise<void>; cost: () => Promise<void>; health: () => Promise<void> }>(
-    ['async function loadBudgets(', 'async function loadCostEstimate(', 'async function loadDriveHealth('], {
+    ['async function loadBudgets(', 'async function currentSavedBudgets(', 'async function loadCostEstimate(', 'async function loadDriveHealth('], {
       state, $, loadBudgetsSeq: 0, seedNodes: noop, renderBudgetWidget: noop, isSun: () => false, presentView: noop,
       skeletonRows: () => '<i>loading</i>', costMoney: () => '', costSavingHtml: () => '', fxBarStyle: () => '', formatBytes: String,
       escapeHtml: esc, FxNum: { rollHtml: noop }, fxBarsIn: noop,
@@ -831,13 +831,71 @@ test('the Dashboard\'s folder budgets, cost to keep and drive health are asked o
     const before = asks.length;
     await fns.budgets(); await fns.cost(); await fns.health();
     await turns();
-    assert.equal(asks.length, before, 'over the saved index\'s tree nothing is asked — not of the running scan');
+    // What the person saved is asked for (GET /api/settings, review F2.1); no scan is.
+    assert.deepEqual(asks.slice(before).filter((a) => a.url !== '/api/settings'), [], 'over the saved index\'s tree nothing is asked of a scan — not of the running scan');
     assert.match($('costBody').innerHTML, words, `Cost to keep says ${said} — not the last folder's prices beside this one's map`);
     assert.match($('driveHealthBody').innerHTML, words, `Drive health says ${said} — not the last folder's drive`);
     assert.equal(state.driveHealth, null, 'and the drive report it held goes: a re-entry of the Dashboard repaints from it');
     const b = state.budgets as { list: unknown[]; overPaths: Set<string>; gauges: Map<string, unknown> };
     assert.deepEqual([b.list, [...b.overPaths], b.gauges.size], [[], [], 0], 'the budget meters, and the map\'s over-budget borders, are no other scan\'s');
   }
+});
+
+test('a folder budget the person saved stays known over the saved index\'s tree — the right-click menu and the dialog still offer to edit and remove it — while the Dashboard\'s meters, which a scan measures, leave the card', async () => {
+  const $ = stubDom();
+  const measured = { path: '/r/mail', name: 'mail', actualBytes: 9, maxBytes: 10, overBy: 0 };
+  const state: Record<string, unknown> = { root: TREE, view: 'dashboard', ...HELD,
+    budgets: { list: [measured], overPaths: new Set(), gauges: new Map(), saved: null } };
+  // Saved in settings: 5 GB on /r/mail, and a budget elsewhere no scan of /r measures.
+  const SAVED = [{ path: '/r/mail', maxBytes: 5_000_000_000 }, { path: '/elsewhere', maxBytes: 1_000_000 }];
+  const { fns, asks } = page<{ load: () => Promise<void>; budgetFor: (p: string) => { maxBytes: number } | null; dialog: (n: unknown) => void }>(
+    ['function budgetFor(', 'async function loadBudgets(', 'async function currentSavedBudgets(', 'function renderBudgetWidget(', 'function fxBudgetGaugesDrop(', 'function openBudgetDialog('], {
+      state, $, loadBudgetsSeq: 0, budgetGauges: [], seedNodes: noop, isSun: () => false, presentView: noop, nodeFor: () => null,
+      formatBytes: (n: number) => `${n} B`, escapeHtml: esc, icon: () => '', budgetProjectionLine: () => '', budgetTarget: null,
+      FxCharts: { gauge: () => ({ destroy: noop }), ramp: noop }, GB: 1e9, MB: 1e6, KB: 1e3, setTimeout: noop,
+    }, '{ load: loadBudgets, budgetFor, dialog: openBudgetDialog }',
+    (url) => (url === '/api/settings' ? { budgets: SAVED } : url.includes('budget-gauges') ? { gauges: [] } : { budgets: [measured] }));
+  assert.equal(fns.budgetFor('/r/mail'), measured, 'control: over a tree its scan stands behind, the budget is the one that scan measured');
+  for (const phase of [INDEX_RUNNING, INDEX_STOPPED]) {
+    // The last folder's meters on the card, as a scan of it left them (review F1.12).
+    $('budgetCard').hidden = false;
+    $('budgetList').innerHTML = '<div class="budget-row">old: 9 B / 10 B</div>';
+    Object.assign(state, phase);
+    const before = asks.length;
+    await fns.load();
+    await turns();
+    assert.equal($('budgetCard').hidden, true, 'the meters, a scan\'s measure, leave the card — not the last folder\'s beside this one\'s map (review F2.7)');
+    assert.equal($('budgetList').innerHTML, '', 'and their rows with it');
+    assert.deepEqual(asks.slice(before).map((a) => [a.url, a.scanId]), [['/api/settings', null]], 'what the person saved is asked for — of no scan');
+    assert.equal(fns.budgetFor('/r/mail')?.maxBytes, 5_000_000_000, 'the saved budget is known: the right-click menu offers "Edit budget…" and "Remove budget" (review F2.1)');
+    assert.equal(fns.budgetFor('/r/other'), null, 'control: a folder with none has none');
+    fns.dialog({ path: '/r/mail', name: 'mail', type: 'dir', size: null });
+    assert.deepEqual([$('budgetValue').value, $('budgetUnit').value], ['5', '1000000000'], 'the dialog opens on the saved 5 GB — not blank');
+    assert.equal($('budgetRemoveBtn').style.display, '', 'and offers to remove it');
+  }
+  // A scan lands: what it measured is the budget again, and what was saved elsewhere is not offered as this tree's.
+  Object.assign(state, LANDED);
+  await fns.load();
+  await turns();
+  assert.equal(fns.budgetFor('/r/mail'), measured, 'once a scan stands behind the tree, its measured budget');
+  assert.equal(fns.budgetFor('/elsewhere'), null, 'and nothing the saved list holds beyond it');
+  // The settings read still out when a scan lands: its answer is not kept over the scanned tree.
+  let release: (v: unknown) => void = noop;
+  const slow = page<{ load: () => Promise<void>; budgetFor: (p: string) => unknown }>(
+    ['function budgetFor(', 'async function loadBudgets(', 'async function currentSavedBudgets(', 'function renderBudgetWidget(', 'function fxBudgetGaugesDrop('], {
+      state, $, loadBudgetsSeq: 0, budgetGauges: [], seedNodes: noop, isSun: () => false, presentView: noop,
+      formatBytes: (n: number) => `${n} B`, escapeHtml: esc, icon: () => '', budgetProjectionLine: () => '', FxCharts: { gauge: () => ({ destroy: noop }), ramp: noop },
+    }, '{ load: loadBudgets, budgetFor }',
+    (url) => (url === '/api/settings' ? new Promise((resolve) => { release = resolve; }) : url.includes('budget-gauges') ? { gauges: [] } : { budgets: [measured] }));
+  Object.assign(state, INDEX_RUNNING);
+  const out = slow.fns.load();
+  await turns();
+  Object.assign(state, LANDED);
+  await slow.fns.load();
+  release({ budgets: SAVED });
+  await out;
+  await turns();
+  assert.equal(slow.fns.budgetFor('/elsewhere'), null, 'a saved list asked for over the saved index\'s tree, answering once a scan landed, is not kept');
 });
 
 test('the Dashboard\'s cards keep no answer the older scan gives once the rescan has landed — folder budgets, cost to keep and drive health asked during a rescan and answered after it are not put over the new tree, nor their failures said there', async () => {
@@ -857,7 +915,7 @@ test('the Dashboard\'s cards keep no answer the older scan gives once the rescan
     const $ = stubDom();
     const state: Record<string, unknown> = { root: TREE, view: 'dashboard', ...HELD, budgets: fresh(), cost: null, driveHealth: null };
     const { fns, asks } = page<Record<'budgets' | 'cost' | 'health', () => Promise<void>>>(
-      ['async function loadBudgets(', 'async function loadCostEstimate(', 'async function loadDriveHealth('], {
+      ['async function loadBudgets(', 'async function currentSavedBudgets(', 'async function loadCostEstimate(', 'async function loadDriveHealth('], {
         state, $, loadBudgetsSeq: 0, seedNodes: noop, renderBudgetWidget: noop, isSun: () => false, presentView: noop,
         skeletonRows: () => '<i>loading</i>', costMoney: () => '', costSavingHtml: () => '', fxBarStyle: () => '', formatBytes: String,
         escapeHtml: esc, FxNum: { rollHtml: noop }, fxBarsIn: noop,

@@ -693,7 +693,7 @@ const state = {
   // renderedClusters / shownPerCluster drive the windowed render: how many
   // clusters are in the DOM, and how many images of each. Both reset per render.
   near: { loadedFor: null, status: 'idle', clusters: [], clusterCount: 0, totalReclaimable: 0, available: true, truncated: false, selection: new Set(), pollTimer: 0, renderedClusters: 0, shownPerCluster: {} },
-  budgets: { list: [], overPaths: new Set(), gauges: new Map() },
+  budgets: { list: [], overPaths: new Set(), gauges: new Map(), saved: null }, // saved: the settings' list, over a tree no scan stands behind (budgetFor)
   // v4 §9.5 — notes pinned to folders, path → { text, suppress, … }. Loaded
   // once at boot and kept current by the editor; scan-independent by design
   // (a note describes a folder, not a scan of it).
