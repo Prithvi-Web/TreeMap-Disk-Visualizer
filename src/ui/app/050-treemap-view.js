@@ -1484,10 +1484,18 @@ function tmDiffWashes(px) {
   }
   return washes;
 }
-/** The colours of the washes laid over the tile `r`, in order: those whose folder's frame holds it. */
+/**
+ * The colours of the washes laid over the tile `r`, in order: those whose
+ * folder's box holds it. Pass 2.5 lays each wash over its folder's whole box,
+ * edge to edge on the device's pixels as the folder lies, so every tile in it
+ * is washed to its edge — the lines beside it are toned against it washed. It
+ * laid each half a css px in, which left a tile's outer device pixel at 2×
+ * unwashed, and a folder half a px tall washed off its own box: a line toned
+ * against the washed tile stood 2.91:1 from it there (review F2.3).
+ */
 function tmWashesOver(r, washes) {
   return washes
-    .filter(({ r: f }) => r.x >= f.x - 0.5 && r.y >= f.y - 0.5 && r.x + r.w <= f.x + f.w + 0.5 && r.y + r.h <= f.y + f.h + 0.5)
+    .filter(({ r: f }) => r.x >= f.x - 1e-6 && r.y >= f.y - 1e-6 && r.x + r.w <= f.x + f.w + 1e-6 && r.y + r.h <= f.y + f.h + 1e-6)
     .map((w) => w.rgb);
 }
 /** A cushion's stops as they reach the screen through `washes` (colours, in the order laid). */
@@ -1850,10 +1858,11 @@ function drawTreemap() {
   }
   // Pass 2.5: diff wash over expanded directories (history diff mode only).
   // A folder's own growth/shrinkage must show even when its visible children
-  // didn't change — e.g. it shrank because a child was deleted outright.
+  // didn't change — e.g. it shrank because a child was deleted outright. Over
+  // its whole box, as tmWashesOver reckons it (review F2.3).
   for (const { r, rgb: c } of washes) {
     ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${TM_DIFF_WASH})`;
-    ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
+    ctx.fillRect(r.x, r.y, r.w, r.h);
   }
   // Passes 2.6 and 2.7 stop at the top-level folders' name tags (tmClipOutTags).
   ctx.save();

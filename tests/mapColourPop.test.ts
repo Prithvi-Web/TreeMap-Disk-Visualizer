@@ -3068,6 +3068,62 @@ test('owner\'s refinement: beside a hollow online-only file, a leaf\'s line is l
   }
 });
 
+/**
+ * History diff maps where a wash meets a line at its folder's own edge (review F2.3), each node's diff colour from the
+ * kind named for it. `beside`: in a top-level folder P, a file L 20 px tall over a folder G 6 px tall — too small for a
+ * band — whose one file T fills it, so L's bottom line runs along G's top edge. `sliver`: a top-level folder F1 over a
+ * folder F2 half a css px tall on the map's last row, filled by its one file T2, so F1's bottom band runs along F2.
+ */
+function washEdge(kind: 'beside' | 'sliver', k: string[]) {
+  const W = 80, H = 60, pct = (v: number, of: number) => (v / of) * 100;
+  const node = (path: string, depth: number, dir: boolean, x: number, y: number, w: number, h: number, what: string): Tile =>
+    ({ name: path.slice(path.lastIndexOf('/') + 1), path, size: 5e9, prevSize: PREV[what](5e9), type: dir ? 'dir' : 'file', depth, expanded: dir, x: pct(x, W), y: pct(y, H), w: pct(w, W), h: pct(h, H) } as Tile);
+  const tiles = kind === 'beside'
+    ? [node('/r/P', 1, true, 0, 0, 80, 60, k[0]), node('/r/P/L', 2, false, 10, 10, 50, 20, k[1]), node('/r/P/G', 2, true, 10, 30, 50, 6, k[2]), node('/r/P/G/T', 3, false, 10, 30, 50, 6, k[3])]
+    : [node('/r/F1', 1, true, 0, 0, 80, 59.5, k[0]), node('/r/F1/A', 2, false, 0, 0, 80, 59.5, k[1]), node('/r/F2', 1, true, 0, 59.5, 80, 0.5, k[2]), node('/r/F2/T2', 2, false, 0, 59.5, 80, 0.5, k[3])];
+  return { tiles, W, H };
+}
+
+test('owner\'s refinement: in the History diff a line along a washed folder\'s edge stands out from the tile beside it as the screen shows it — the wash covers its folder\'s whole box, as the painter reckons, so a file\'s line over a folder too small for a band parts from the file in it by the painter\'s 3.3:1, and a band beside a folder half a css px tall on the map\'s last row reaches 3:1 — at device pixel ratios 1, 1.25, 1.5 and 2, in both themes (review F2.3)', () => {
+  // Each wash was laid half a css px in from its folder's edge, while the painter toned the lines against every tile in
+  // the folder as washed: at 2× the tile's outer device pixel was unwashed, and L's line stood 2.91:1 from it (a folder
+  // that shrank, holding one that grew); a folder half a px tall was washed off the map, and the band above it stood
+  // 2.72:1 from it; and a file half a px tall just past a washed folder was counted washed by it too — the band of a
+  // folder that grew stood 2.94:1 from the unwashed file under it.
+  const history = { active: true, diff: true }, colour = (n: Tile) => DIFF_PAGE.diffRgb(n);
+  const kinds = ['grew', 'shrank', 'unchanged'];
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    for (const dpr of [1, 1.25, 1.5, 2]) {
+      for (const kP of kinds) for (const kG of ['grew', 'shrank', 'new']) for (const kL of kinds) {
+        const where = `${theme}, dpr ${dpr}: L ${kL} in P ${kP}, over G ${kG} holding T unchanged`;
+        const m = washEdge('beside', [kP, kL, kG, 'unchanged']);
+        const { raster, px } = rasterPaint(m.tiles, palette, m.W, m.H, colour, history, false, dpr);
+        const l = px.find((r) => r.n.path === '/r/P/L')!, g = px.find((r) => r.n.path === '/r/P/G')!;
+        assert.ok(l.lines && g.lw === 0, `${where}: control — L has lines of its own, and G no band`);
+        // L's last device row, and the first of G under it, along L's bottom clear of its corners.
+        const row = Math.round((l.y + l.h) * dpr);
+        let worst = Infinity, at = '';
+        for (let x = Math.round(l.x * dpr) + 4 * dpr; x < Math.round((l.x + l.w) * dpr) - 4 * dpr; x++) {
+          const c = contrast(raster.at(x, row - 1), raster.at(x, row));
+          if (c < worst) { worst = c; at = `${raster.at(x, row - 1).map(Math.round)} on ${raster.at(x, row).map(Math.round)}`; }
+        }
+        assert.ok(worst >= PAINTER_EDGE - 0.02, `${where}: L's bottom edge stands ${fmt(worst)}:1 from G's top row (${at})`);
+        assert.deepEqual(measureEdges(raster, px, dpr).under, [], `${where}: lines under ${EDGE_BAR}:1 against a tile beside them`);
+      }
+    }
+    for (const k1 of [...kinds, 'new']) for (const k2 of [...kinds, 'new']) for (const kA of kinds) {
+      const where = `${theme}, dpr 2: F1 ${k1} holding A ${kA}, over F2 ${k2} half a px tall`;
+      const m = washEdge('sliver', [k1, kA, k2, 'unchanged']);
+      const { raster, px } = rasterPaint(m.tiles, palette, m.W, m.H, colour, history, false, 2);
+      const f1 = px.find((r) => r.n.path === '/r/F1')!, f2 = px.find((r) => r.n.path === '/r/F2');
+      assert.ok(f1.lw! > 0 && f2 && f2.h === 0.5, `${where}: control — F1 has a band, and F2 is drawn half a px tall`);
+      const e = measureEdges(raster, px, 2);
+      assert.ok(e.edges.some((x) => x.r === f1 && x.tile[1] === raster.H - 1), `${where}: control — F1's bottom band is measured against F2`);
+      assert.deepEqual(e.under, [], `${where}: lines under ${EDGE_BAR}:1 against a tile beside them`);
+    }
+  }
+});
+
 /* ── On the device's own pixels: Retina (2) and 150 % (1.5) ── */
 
 test('tmSnap lays a coordinate on the nearest whole device pixel — at device pixel ratios 1, 1.25, 1.5 and 2 (review F1.7)', () => {

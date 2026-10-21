@@ -1273,12 +1273,10 @@ function exportTreemapSVG() {
     }
   }
   // The History diff's wash over each folder that grew or shrank (pass 2.5):
-  // the diff itself, and what each label's ink was chosen through (F2.1).
+  // the diff itself, and what each label's ink was chosen through (F2.1) —
+  // over the folder's whole box, as on the canvas (review F2.3).
   for (const { r, rgb: c } of tmDiffWashes(state.treemap.pxRects)) {
-    parts.push(
-      `<rect x="${(r.x + 0.5).toFixed(1)}" y="${(r.y + 0.5).toFixed(1)}" width="${Math.max(1, r.w - 1).toFixed(1)}" height="${Math.max(1, r.h - 1).toFixed(1)}" ` +
-      `fill="${rgb(c)}" fill-opacity="${TM_DIFF_WASH}"/>`
-    );
+    parts.push(`<rect ${at(r.x, r.y, r.w, r.h)} fill="${rgb(c)}" fill-opacity="${TM_DIFF_WASH}"/>`);
   }
   // The top-level folders' name tags, laid last. The outlines and bands stop
   // at each tag's edge, as on the canvas (tmClipOutTags, review F3.1): each
