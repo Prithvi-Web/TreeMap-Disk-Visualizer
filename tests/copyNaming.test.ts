@@ -42,17 +42,66 @@ function scriptsOf(page: string): string[] {
     .map((m) => printer.printFile(ts.createSourceFile('page.js', m[2], ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)));
 }
 
-/** The text of every string literal and template piece in `code`, in source order. */
-function literalsOf(code: string): string[] {
-  const sf = ts.createSourceFile('page.js', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-  const out: string[] = [];
-  const visit = (n: ts.Node): void => {
-    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)
-      || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) out.push(n.text);
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
+/** A piece of a string a script writes or builds: text as written (`node`, the literal or template piece it is), or a part code computes. */
+type Piece = { text: string; node: ts.Node } | { hole: ts.Expression };
+
+/** Whether `n` writes or builds a string: a string literal, a template, or a + (whose pieces piecesOf reads). */
+function buildsString(n: ts.Node): n is ts.Expression {
+  return ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n)
+    || (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken);
+}
+
+/** The pieces `expr` builds its string from, in order, + read through: `'a ' + b + \`c${d}\`` is "a ", b, "c", d, "". */
+function piecesOf(expr: ts.Expression): Piece[] {
+  if (ts.isParenthesizedExpression(expr) && buildsString(expr.expression)) return piecesOf(expr.expression);
+  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return [{ text: expr.text, node: expr }];
+  if (ts.isTemplateExpression(expr)) {
+    return [{ text: expr.head.text, node: expr.head },
+      ...expr.templateSpans.flatMap((span): Piece[] => [{ hole: span.expression }, { text: span.literal.text, node: span.literal }])];
+  }
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.PlusToken) return [...piecesOf(expr.left), ...piecesOf(expr.right)];
+  return [{ hole: expr }];
+}
+
+/**
+ * Visits every node under `n` — `onNode` is handed each — but a string a
+ * script writes or builds is read once, whole: `onBuild` is handed its
+ * pieces, and each part code computes in it is visited in turn.
+ */
+function visitBuilding(n: ts.Node, onNode: (n: ts.Node) => void, onBuild: (pieces: Piece[]) => void): void {
+  if (buildsString(n)) {
+    const pieces = piecesOf(n);
+    onBuild(pieces);
+    for (const piece of pieces) if ('hole' in piece) visitBuilding(piece.hole, onNode, onBuild);
+    return;
+  }
+  onNode(n);
+  ts.forEachChild(n, (child) => visitBuilding(child, onNode, onBuild));
+}
+
+/**
+ * The text of every string in `sf`, a long one wrapped by + read as the one
+ * sentence it is (`'Your cleanup ' + 'cart is empty'`), each with the literal
+ * its first piece is: one run of text for each stretch between the parts code
+ * computes, which stand between the pieces either side of them as a
+ * template's `${…}` does.
+ */
+function stringRuns(sf: ts.SourceFile): { text: string; node: ts.Node }[] {
+  const out: { text: string; node: ts.Node }[] = [];
+  visitBuilding(sf, () => undefined, (pieces) => {
+    let run: { text: string; node: ts.Node } | null = null;
+    for (const piece of pieces) {
+      if ('hole' in piece) run = null;
+      else if (run) run.text += piece.text;
+      else out.push(run = { text: piece.text, node: piece.node });
+    }
+  });
   return out;
+}
+
+/** The text of every string in `code` (stringRuns). */
+function literalsOf(code: string): string[] {
+  return stringRuns(ts.createSourceFile('page.js', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)).map((run) => run.text);
 }
 
 /** Every TypeScript file under `dir` (relative to the repository), in path order. */
@@ -70,27 +119,22 @@ function tsFilesUnder(dir: string): string[] {
 }
 
 /**
- * Each string literal and template piece of the TypeScript under `dirs`, with
- * the file and line it is on. Comments are not strings, so they are left out,
- * as the page's are. The file is named from the repository with forward
+ * Each string of the TypeScript under `dirs` — a long one a + wraps read as
+ * one (stringRuns) — with the file and line it is on. Comments are not
+ * strings, so they are left out, as the page's are. The file is named from the repository with forward
  * slashes on every system — Windows' path.relative gives backslashes — so a
  * name reads, and compares, alike everywhere. `p` is the path module that
  * names it, the host's unless a test hands it another system's.
  */
 function sourceStrings(dirs: string[], p: path.PlatformPath = path): { at: string; text: string }[] {
-  const out: { at: string; text: string }[] = [];
-  for (const file of dirs.flatMap(tsFilesUnder)) {
-    const sf = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-    const visit = (n: ts.Node): void => {
-      if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)
-        || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) {
-        out.push({ at: `${p.relative(ROOT, file).split(p.sep).join('/')}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}`, text: n.text });
-      }
-      ts.forEachChild(n, visit);
-    };
-    visit(sf);
-  }
-  return out;
+  return dirs.flatMap(tsFilesUnder).flatMap((file) => fileStrings(file, fs.readFileSync(file, 'utf8'), p));
+}
+
+/** Each string of the TypeScript `text`, the file `file` holds, with the file and the line its first piece is on (sourceStrings, stringRuns). */
+function fileStrings(file: string, text: string, p: path.PlatformPath = path): { at: string; text: string }[] {
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const name = p.relative(ROOT, file).split(p.sep).join('/');
+  return stringRuns(sf).map((run) => ({ at: `${name}:${sf.getLineAndCharacterOfPosition(run.node.getStart(sf)).line + 1}`, text: run.text }));
 }
 
 /** What a person reads in `markup`: its text, and the words of its titles, aria-labels, placeholders and alt text. */
@@ -461,7 +505,7 @@ test('the readers find what a person reads, and leave out comments, ids and rout
   assert.equal(cleanupNamings(`${LEFT_TO_THE_MAP} Cleanup target`).length, 1, 'and nothing else beside it is');
 });
 
-test('the readers read a name wrapped across lines as the name, and two strings of a script as two (G18 review F2.3)', () => {
+test('the readers read a name wrapped across lines as the name, and two strings of a script as two, but for the strings a + joins into one (G18 review F2.3, F3.4)', () => {
   // AGENTS.md is wrapped at about 80 columns, its next line indented, and
   // the markup runs across lines: a name split there is still the name.
   assert.equal(cleanupNamings('A deletion staged in the cleanup\n  cart is trashed.').length, 1, 'a document\'s wrapped "cleanup cart"');
@@ -473,6 +517,19 @@ test('the readers read a name wrapped across lines as the name, and two strings 
     'two strings of a script, or the markup and a script, are not one sentence');
   assert.deepEqual(oldTabNamings(pageText("<b title=\"Folders\">Empty</b><script>const a = 'Shrink'; const b = 'Video';</script>")), [],
     'nor are an element\'s text and its title');
+  // A long string of a script, or of the server, is wrapped by joining its
+  // pieces with + (review F3.4): what the + joins is one sentence.
+  assert.equal(cleanupNamings(pageText("<script>toast('Your cleanup ' + 'cart is empty', 'error');</script>")).length, 1, 'a script\'s sentence a + joins');
+  assert.equal(cleanupNamings(pageText("<script>toast('Your cleanup ' +\n    'cart is empty', 'error');</script>")).length, 1, 'wrapped across lines');
+  assert.equal(cleanupNamings(pageText('<script>toast(`Your cleanup ` + `cart is empty`);</script>')).length, 1, 'backtick strings');
+  assert.equal(cleanupNamings(pageText('<script>toast(`${n} left in your cleanup ` + "cart");</script>')).length, 1, 'a template\'s last piece and the string after it');
+  assert.equal(oldTabNamings(pageText("<script>const s = 'Open Empty ' + ('Folders' + ' now');</script>")).length, 1, 'parenthesised');
+  assert.equal(cleanupNamings(pageText("<script>const s = f(1 + 2, 'the cleanup ' + 'cart');</script>")).length, 1, 'beside a sum of numbers');
+  assert.deepEqual(cleanupNamings(pageText("<script>const s = 'the cleanup ' + kind + ' cart'; const t = `the cleanup ${kind} cart`;</script>")), [],
+    'a part code computes stands between the pieces either side of it, as a template\'s ${} does');
+  assert.deepEqual(fileStrings(path.join(ROOT, 'src', 'x.ts'), "const a = 'Your cleanup ' +\n  'cart is empty';\nconst b = `two ${c} pieces`;"),
+    [{ at: 'src/x.ts:1', text: 'Your cleanup cart is empty' }, { at: 'src/x.ts:3', text: 'two ' }, { at: 'src/x.ts:3', text: ' pieces' }],
+    'a server file\'s, named at the line its first piece is on');
 });
 
 test('the label reader judges buttons and modal headings, markup or script, by their words', () => {
