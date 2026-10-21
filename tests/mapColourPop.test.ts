@@ -3019,6 +3019,55 @@ test('owner\'s refinement: beside a folder too small for a band, a leaf\'s line 
   }
 });
 
+/**
+ * Hollow online-only files among files with lines of their own (review F2.1): a checkerboard of `s` px tiles at the top
+ * level, every other one a hollow cell of the colour `cell`, the rest files in each of `leaves` in turn — so each file
+ * meets a hollow cell on each of its four sides.
+ */
+function besideHollow(cell: RGB, leaves: RGB[], s = 16) {
+  const n = Math.ceil(Math.sqrt(2 * leaves.length)), W = n * s, H = n * s, tiles: Tile[] = [];
+  const colourOf = new Map<string, RGB>();
+  let k = 0;
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const hollow = (i + j) % 2 === 1, path = `/h/${hollow ? 'c' : 'f'}${i}.${j}`;
+      tiles.push({ name: path.slice(3), path, size: 2e9, type: 'file', depth: 1, expanded: false, x: (j * s / W) * 100, y: (i * s / H) * 100, w: (s / W) * 100, h: (s / H) * 100, ...(hollow ? { cloudPlaceholder: true } : {}) } as Tile);
+      colourOf.set(path, hollow ? cell : leaves[k++ % leaves.length]);
+    }
+  }
+  return { tiles, W, H, colour: (t: Tile) => colourOf.get(t.path)! };
+}
+
+test('owner\'s refinement: beside a hollow online-only file, a leaf\'s line is left out only where it parts by 3.3:1 from what the cell shows at its edge — its dashed outline and faint wash, which cover that device pixel by half at 100 % and less as the ratio rises — every file of 8 px and up parted by 3:1 from each hollow cell beside it, on the size ramp, Reclaim scores, "not scored" and the Age bands, at device pixel ratios 1, 1.25, 1.5 and 2, in both themes (review F2.1)', () => {
+  // The cell's edge was taken to be its faint wash alone, so a line was left out beside it; but its dashed outline, 1 px
+  // wide and centred 1 px in, covers half of its first device pixel at 100 %: a Reclaim 15 file stood 1.40:1 from a
+  // Reclaim 53 cell's edge, a red file 2.66:1 from a red cell's.
+  const reclaim = (s: number) => OTHER_COLOURS.find((c) => c.name === `Reclaim score ${s}`)!.rgb;
+  const others = [...OTHER_COLOURS.filter((c) => c.name.startsWith('Age band') || c.name === 'Reclaim not scored').map((c) => c.rgb)];
+  const leaves = [...RAMP_COLOURS.map((c) => c.rgb), ...Array.from({ length: 21 }, (_, k) => reclaim(5 * k)), ...others];
+  const cells = [...RAMP_COLOURS.filter((_, k) => k % 2 === 0).map((c) => c.rgb), ...[0, 15, 30, 45, 53, 60, 75, 90, 100].map(reclaim), ...others];
+  for (const dpr of [1, 1.25, 1.5, 2]) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      let looked = 0;
+      const unparted: string[] = [];
+      for (const cell of cells) {
+        const m = besideHollow(cell, leaves);
+        const { raster, px } = rasterPaint(m.tiles, palette, m.W, m.H, m.colour, undefined, false, dpr);
+        const hollow = px.filter((r) => (r.n as { cloudPlaceholder?: boolean }).cloudPlaceholder), files = px.filter((r) => !(r.n as { cloudPlaceholder?: boolean }).cloudPlaceholder);
+        assert.ok(hollow.length > 0 && hollow.every((r) => !r.stops) && files.every((r) => r.lines),
+          `${theme}, dpr ${dpr}, cells ${cell}: control — the cells are drawn hollow, and the files have lines of their own`);
+        // The owner's 3:1: a line laid in two parts at 125 % blends its inner part into the pixel past its outer one,
+        // so its outer pixel alone parts it from the cell, by the painter's 3.3:1 less the rounding of a colour.
+        const p = partings(raster, px, dpr);
+        looked += p.looked;
+        unparted.push(...p.unparted.map((u) => `${u} (the cell ${cell})`));
+      }
+      assert.ok(looked > cells.length * leaves.length * 4 * 6 * dpr, `${theme}, dpr ${dpr}: control — ${looked} places along the files' sides`);
+      assert.deepEqual(unparted.slice(0, 6), [], `${theme}, dpr ${dpr}: ${unparted.length} places a file is not parted by ${EDGE_BAR}:1 from the hollow cell beside it`);
+    }
+  }
+});
+
 /* ── On the device's own pixels: Retina (2) and 150 % (1.5) ── */
 
 test('tmSnap lays a coordinate on the nearest whole device pixel — at device pixel ratios 1, 1.25, 1.5 and 2 (review F1.7)', () => {

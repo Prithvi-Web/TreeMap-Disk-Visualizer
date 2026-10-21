@@ -13453,6 +13453,24 @@ function tmGroundRgb() {
   const page = tmCssRgba(cssVar('--bg-1'));
   return tmOver(tmCssRgba(cssVar('--tm-canvas-bg')), tmOver(tmCssRgba(cssVar('--glass')), page ? page.slice(0, 3) : [12, 13, 20]));
 }
+/** A hollow online-only cell's faint wash, and its dashed outline: the shares of its colour over the ground (pass 1). */
+const TM_HOLLOW_WASH = 0.16;
+const TM_HOLLOW_DASH = 0.85;
+/**
+ * What a hollow online-only cell of colour `base` shows on its outermost
+ * device pixel, over the map's `ground`, at device pixel ratio `dpr`: where
+ * its dash is off, and where it is on. Pass 1 lays its faint wash from half
+ * a css px in, and its dashed outline 1 px wide centred 1 px in — from half a
+ * css px in too — so each covers that pixel by 1 − dpr / 2 of it: half at
+ * 100 %, none from 200 %. Taken to show the wash alone, a line was left out
+ * beside it where its outline's half-pixel stood 1.40:1 from the file beyond
+ * (review F2.1).
+ */
+function tmHollowEdge(ground, base, dpr) {
+  const cover = Math.max(0, 1 - dpr / 2);
+  const off = mix(ground, base, TM_HOLLOW_WASH * cover);
+  return [off, mix(off, base, TM_HOLLOW_DASH * cover)];
+}
 /** The path of the folder `r` is filed under: its parent's, or for a staged block (the cart preview's) the folder it lies in. */
 function tmFolderPathOf(r) {
   return r.n.freed && typeof r.n.parentPath === 'string' ? r.n.parentPath : tmParentPath(r.n.path);
@@ -13522,9 +13540,14 @@ function tmNeighbourhood(px, kids, dpr, w, h, ground) {
   }
   return { dpr, w, h, ground, kids, folderOf, keyOf, sides, shared: new Map() };
 }
-/** The colours a tile shows the screen beside a line: its cushion and highlight, or the ground a hollow or staged cell shows. Its texture keeps clear of every line (tmLineMask). */
+/**
+ * The colours a tile shows the screen beside a line: its cushion and highlight,
+ * or the ground a hollow or staged cell shows — a hollow cell's on its
+ * outermost device pixel too (tmHollowEdge). Its texture keeps clear of every
+ * line (tmLineMask).
+ */
 function tmShown(c) {
-  if (c.shows) return c.shows;
+  if (c.shows) return c.showsEdge ? [...c.shows, ...c.showsEdge] : c.shows;
   return c.litSeen ? [...(c.seen || []), c.litSeen] : [...(c.seen || [])];
 }
 /** A tile's own colour, which a line in it or a band beside it is a shade of; a cell with none takes its folder's. */
@@ -14255,17 +14278,19 @@ function drawTreemap() {
       ctx.clearRect(r.x, r.y, r.w, r.h); // the map's ground, not a folder's fill (pass 0), shows through it
       ctx.fillStyle = cssVar('--tm-canvas-bg');
       ctx.fillRect(r.x, r.y, r.w, r.h);
-      ctx.fillStyle = `rgba(${base[0]},${base[1]},${base[2]},0.16)`;
+      ctx.fillStyle = `rgba(${base[0]},${base[1]},${base[2]},${TM_HOLLOW_WASH})`;
       ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
       ctx.save();
       ctx.setLineDash([4, 3]);
       ctx.lineWidth = 1;
-      ctx.strokeStyle = `rgba(${base[0]},${base[1]},${base[2]},0.85)`;
+      ctx.strokeStyle = `rgba(${base[0]},${base[1]},${base[2]},${TM_HOLLOW_DASH})`;
       ctx.strokeRect(r.x + 1, r.y + 1, Math.max(1, r.w - 2), Math.max(1, r.h - 2));
       ctx.restore();
       // What it shows inside its dashed edge — its faint wash over the ground —
-      // and its colour, for a folder's band beside it (review F1.5).
-      r.shows = tmSeenThrough([mix(ground, base, 0.16)], tmWashesOver(r, washes));
+      // and its colour, for a folder's band beside it (review F1.5); and on its
+      // outermost device pixel, for a line beside it (tmHollowEdge, review F2.1).
+      r.shows = tmSeenThrough([mix(ground, base, TM_HOLLOW_WASH)], tmWashesOver(r, washes));
+      r.showsEdge = tmSeenThrough(tmHollowEdge(ground, base, dpr), tmWashesOver(r, washes));
       r.showsRgb = base;
       continue;
     }
