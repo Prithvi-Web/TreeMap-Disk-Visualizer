@@ -37,8 +37,15 @@
          "Scan … again", then Desktop, Documents, Downloads, the home folder and
          the whole drive, as renderStartChoices finds them on this machine; the
          line above them names a folder whose scan was stopped or failed.
-         "Choose a folder…" is the one primary (G03) in every state. -->
-    <p class="start-last" id="startLast" role="status" hidden></p>
+         "Choose a folder…" is the one primary (G03) in every state. The line
+         is plain text: what it says is said in #startLastSaid. -->
+    <p class="start-last" id="startLast" hidden></p>
+    <!-- The start screen's line, said aloud (BQS). The line is hidden while it
+         has nothing to say, so it comes on screen with its words already in
+         it, which a screen reader seldom announces. renderStartChoices says it
+         here a frame later — but not the words of a Stop or a failure, which
+         #stopAnnounce and the toast say already (review F1.14). -->
+    <div id="startLastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     <div class="start-choices" id="startChoices" role="group" aria-label="Scan one of these"></div>
     <button class="btn btn-primary" id="emptyBrowseBtn" style="font-size:14px;min-height:44px;padding:0 26px;">
       <span data-icon="folder"></span>Choose a folder…

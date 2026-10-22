@@ -4067,8 +4067,15 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
          "Scan … again", then Desktop, Documents, Downloads, the home folder and
          the whole drive, as renderStartChoices finds them on this machine; the
          line above them names a folder whose scan was stopped or failed.
-         "Choose a folder…" is the one primary (G03) in every state. -->
-    <p class="start-last" id="startLast" role="status" hidden></p>
+         "Choose a folder…" is the one primary (G03) in every state. The line
+         is plain text: what it says is said in #startLastSaid. -->
+    <p class="start-last" id="startLast" hidden></p>
+    <!-- The start screen's line, said aloud (BQS). The line is hidden while it
+         has nothing to say, so it comes on screen with its words already in
+         it, which a screen reader seldom announces. renderStartChoices says it
+         here a frame later — but not the words of a Stop or a failure, which
+         #stopAnnounce and the toast say already (review F1.14). -->
+    <div id="startLastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     <div class="start-choices" id="startChoices" role="group" aria-label="Scan one of these"></div>
     <button class="btn btn-primary" id="emptyBrowseBtn" style="font-size:14px;min-height:44px;padding:0 26px;">
       <span data-icon="folder"></span>Choose a folder…
@@ -4161,8 +4168,14 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           </div>
           <!-- A1: the index indicator. Green "always current" when a live
                watcher is attached; amber when the index exists but missed
-               events and is being rechecked. Hidden when there is no index. -->
-          <div class="index-badge" id="indexBadge" hidden role="status"></div>
+               events and is being rechecked. Hidden when there is no index.
+               Plain text: what it says is said in #indexBadgeSaid. -->
+          <div class="index-badge" id="indexBadge" hidden></div>
+          <!-- The index badge, said aloud (BQS): it comes on screen with its
+               words already in it, which a screen reader seldom announces.
+               renderIndexBadge says them here a frame later, and empties this
+               when the badge goes. -->
+          <div id="indexBadgeSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
           <!-- U-1: a background index build while it runs ("Indexing this
                folder… N items so far"), or why a folder was not indexed on
                its own (more items than TreeMap indexes automatically). Not a
@@ -4186,8 +4199,9 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
                confident wrongness this app exists to avoid.
                tabindex="-1": focus lands on the row when the recheck hides
                the focused "Open Privacy settings" and no other button is
-               left (U-11, review F1.11); it is never in the Tab order. -->
-          <div class="access-row" id="accessRow" role="status" aria-live="polite" tabindex="-1" hidden>
+               left (U-11, review F1.11); it is never in the Tab order.
+               Plain text: what it says is said in #accessSaid. -->
+          <div class="access-row" id="accessRow" tabindex="-1" hidden>
             <span data-icon="alert" data-size="14"></span>
             <div class="access-body">
               <div class="access-text" id="accessText"></div>
@@ -4201,18 +4215,30 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
               <button class="btn" id="accessOpenBtn" hidden>Open Privacy settings</button>
             </div>
           </div>
+          <!-- The row, said aloud (BQS): it comes on screen with its words
+               already in it, which a screen reader seldom announces.
+               keepAccessFocus, which every paint of it runs inside, says its
+               count and its hint here a frame later, and empties this when the
+               row goes. -->
+          <div id="accessSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
           <!-- Track U, U-27: the drives mounted inside the scanned folder that the
                scan did not enter ("Stay on this drive", in Settings), by name; or,
                under "Include drives mounted inside it", the ones it counted; or why
                it could not tell. Hidden when there is nothing to say: a folder with
-               no drive mounted inside it says nothing here. -->
-          <div class="access-row" id="mountsNote" role="status" aria-live="polite" hidden>
+               no drive mounted inside it says nothing here. Plain text: what it
+               says is said in #mountsNoteSaid. -->
+          <div class="access-row" id="mountsNote" hidden>
             <span data-icon="hardDrive" data-size="14"></span>
             <div class="access-body">
               <div class="access-text" id="mountsNoteText"></div>
             </div>
             <button class="btn" id="mountsNoteSettingsBtn">Change in Settings</button>
           </div>
+          <!-- The note, said aloud (BQS): it comes on screen with its words
+               already in it, which a screen reader seldom announces.
+               renderMountsNote says them here a frame later, and empties this
+               when the note goes. -->
+          <div id="mountsNoteSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
 
         <div class="card glass">
@@ -4428,12 +4454,20 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div id="tmEmpty" class="tm-empty-note" role="status" aria-live="polite" hidden></div>
       <!-- v4 §4.3 — the simulated "after". The banner is not decoration: a map
            that shows space you do not have yet has to say so, all the time it
-           is on screen. -->
-      <div class="tm-preview-banner" id="tmPreviewBanner" role="status" aria-live="polite" hidden>
+           is on screen. Plain text: what it says is said in #tmPreviewSaid. -->
+      <div class="tm-preview-banner" id="tmPreviewBanner" hidden>
         <span data-icon="eye" data-size="14"></span>
         <span id="tmPreviewText"></span>
         <button class="pill" id="tmPreviewExit">Exit preview</button>
       </div>
+      <!-- What the preview banner says, said aloud (BQS). The banner is hidden
+           while no preview is up, so it comes on screen with its words already
+           in it, which a screen reader seldom announces; and it holds the Exit
+           preview button, which is no part of what it says. syncCartPreviewChrome
+           says the banner's message here as it is seen, a frame after the banner
+           shows it — without the sentence the stylesheet hides while the cart is
+           open — and empties it when the preview ends. -->
+      <div id="tmPreviewSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
       <!-- What j/k selected, spoken. The tooltip is role="tooltip", which is
            not a live region, so the highlight moved in silence. -->
       <div id="tmKbAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -4476,8 +4510,15 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
     <!-- v4 §8.3 — the drive dock: drop the cart on a drive to offload -->
     <div class="drive-dock" id="tmDock" hidden aria-label="Connected drives — drop your cart on one to offload"></div>
     <!-- v4 §6.2 — where an alternate renderer had to approximate, it says so
-         here, in the same place every time. Never hidden in a console log. -->
-    <div class="tm-altnote" id="tmAltNote" role="status" aria-live="polite" hidden></div>
+         here, in the same place every time. Never hidden in a console log.
+         Plain text: what it says is said in #tmAltNoteSaid. -->
+    <div class="tm-altnote" id="tmAltNote" hidden></div>
+    <!-- The footnote, said aloud (BQS): it is hidden while there is nothing to
+         say, so it comes on screen with its words already in it, which a
+         screen reader seldom announces. renderAltNote says the note here a
+         frame after it shows it — the note a layout settles on, never the
+         count of one still being refined — and empties it when the note goes. -->
+    <div id="tmAltNoteSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   </section>
 
   <!-- ═══════════ Disk City (v4 §6.1) ═══════════
@@ -4522,10 +4563,23 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       </div>
     </div>
     <div class="glass" id="cityWrap">
-      <canvas id="cityCanvas" tabindex="0"
+      <!-- Described by its line (#cityLod): what it shows of the folder, read
+           with the city, since the counts in it are not said as they change. -->
+      <canvas id="cityCanvas" tabindex="0" aria-describedby="cityLod"
               aria-label="Disk usage as an isometric city. Drag to pan, scroll to zoom, click a building to drill in, Escape to go up. A text equivalent of every building is listed below the map."></canvas>
-      <div class="city-card" id="cityCard" role="status" aria-live="polite" hidden></div>
-      <div class="city-lod" id="cityLod" role="status" aria-live="polite" hidden></div>
+      <!-- The hover card: a tooltip the pointer moves, rebuilt as it crosses
+           each building — no status to announce as it changes (BQS); the list
+           of buildings under the map says the same. -->
+      <div class="city-card" id="cityCard" role="tooltip" hidden></div>
+      <!-- Plain text: its news is said in #cityLodSaid. -->
+      <div class="city-lod" id="cityLod" hidden></div>
+      <!-- The city's line, said aloud (BQS). The line is hidden until the city
+           first says something, so it comes on screen with its words already
+           in it, which a screen reader seldom announces. renderCityChrome says
+           its news here a frame later — a city loading, a load that failed,
+           the saved index's tree, the server's cap — never the counts a zoom
+           changes on every frame, which the city's description reads. -->
+      <div id="cityLodSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
     <div class="tm-foot">
       <div id="cityLegend" class="tm-legend"></div>
@@ -4784,14 +4838,24 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <span>less</span><span class="cal-cell" data-lv="1"></span><span class="cal-cell" data-lv="2"></span><span class="cal-cell" data-lv="3"></span><span class="cal-cell" data-lv="4"></span><span>more</span>
         <span id="calMax" style="margin-left:10px;"></span>
       </div>
-      <div class="muted" id="calDegraded" role="status" style="margin-top:8px;" hidden></div>
+      <!-- What the calendar could not count. Plain text: said in #calDegradedSaid. -->
+      <div class="muted" id="calDegraded" style="margin-top:8px;" hidden></div>
+      <!-- The note, said aloud (BQS): it comes on screen with its words already
+           in it, which a screen reader seldom announces. Its writers say it
+           here a frame later, and empty this whenever the note goes. -->
+      <div id="calDegradedSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
   </div>
     <div id="histPanelJournal" class="pane-fade" hidden>
     <div class="card glass">
       <h2><span data-icon="activity"></span>Journal</h2>
       <div class="muted" style="margin-bottom:10px;">A rolling narrative of significant changes, noticed by scheduled scans. Attribution is honest: an app named only when the path says so, <b>you</b> only when TreeMap's own audit log matches, and otherwise exactly “an unidentified process”.</div>
-      <div class="muted" id="journalPortable" role="status" style="margin-bottom:8px;" hidden></div>
+      <!-- Why a portable session keeps no journal. Plain text: said in #journalPortableSaid. -->
+      <div class="muted" id="journalPortable" style="margin-bottom:8px;" hidden></div>
+      <!-- The note, said aloud (BQS): it comes on screen with its words already
+           in it, which a screen reader seldom announces. loadJournal says it
+           here a frame later, and empties this when the note goes. -->
+      <div id="journalPortableSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
       <div id="journalBody"><div class="muted">Reading the journal…</div></div>
       <div id="journalWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
@@ -5052,8 +5116,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         </div>
         <!-- Why a rule set could not become a policy, beside the button that
              was pressed — promoteRuleToPolicy writes it, and it stays until
-             the rules change or the pane is reopened. -->
-        <div class="muted" id="cleanPromoteWhy" role="status" aria-live="polite" style="margin:2px 0 6px;" hidden></div>
+             the rules change or the pane is reopened. Plain text: the same
+             task toasts its words, as every refusal of this sheet is said, so
+             as a live region it would say them twice (BQS). -->
+        <div class="muted" id="cleanPromoteWhy" style="margin:2px 0 6px;" hidden></div>
         <div id="cleanResults"></div>
       </div>
       <div id="cleanPaneSmart" class="pane-fade" style="display:none;">
@@ -5132,8 +5198,16 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div class="muted" id="confirmText" style="font-size:13.5px;line-height:1.55;"></div>
       <!-- B2: filled in when a program holds one of these files open. Lives
            inside the one confirmation dialog every view shares, so no view can
-           delete without it. -->
-      <div id="confirmOpenHandles" hidden role="status"></div>
+           delete without it. Plain text: what it says is said in
+           #confirmOpenHandlesSaid. -->
+      <div id="confirmOpenHandles" hidden></div>
+      <!-- The open-file panel, said aloud (BQS). The panel is hidden while it
+           has nothing to say, so it comes on screen with its words already in
+           it — "Checking…", then the warning that turns OK into "Move to Trash
+           anyway" — which a screen reader seldom announces. Its writers say
+           what it shows here, a frame later, and empty this when it goes. In
+           the dialog, as the dialog is modal. -->
+      <div id="confirmOpenHandlesSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
     <div class="modal-foot">
       <div style="flex:1"></div>
@@ -5708,8 +5782,9 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
     <span class="fx-orb-well" id="nlListenWell"></span>
   </div>
   <!-- FX wiring: shown only while the /api/nl-query round-trip is in
-       flight — the "weaving" orb mounts into the well. -->
-  <div class="nl-pending" id="nlPending" role="status" hidden><span class="fx-orb-well"></span><span class="fx-shimmer-text">Translating…</span></div>
+       flight — the "weaving" orb mounts into the well. Plain text: its words
+       are said in #nlSaid. -->
+  <div class="nl-pending" id="nlPending" hidden><span class="fx-orb-well"></span><span class="fx-shimmer-text">Translating…</span></div>
   <div id="nlOut" hidden>
     <div class="muted" style="font-size:11.5px;margin:9px 0 4px;">Translates to — check it, edit it, then run:</div>
     <input type="text" id="nlResult" class="num" aria-label="The translated query — edit it before running" autocomplete="off" spellcheck="false" style="width:100%;">
@@ -5719,7 +5794,15 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <button class="btn" id="nlCancel">Cancel</button>
     </div>
   </div>
-  <div id="nlReason" class="muted" role="status" aria-live="polite" style="font-size:11.5px;margin-top:7px;" hidden></div>
+  <!-- Why a sentence could not be translated. Plain text: said in #nlSaid. -->
+  <div id="nlReason" class="muted" style="font-size:11.5px;margin-top:7px;" hidden></div>
+  <!-- What the popover says, said aloud (BQS). "Translating…" and the reason
+       are hidden while there is nothing to say, so each comes on screen with
+       its words already in it, which a screen reader seldom announces.
+       nlTranslate says them here, one at a time, a frame after they show; a
+       translation, which moves focus to the query, and a close leave nothing
+       said. -->
+  <div id="nlSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 </div>
 
 <!-- ═══════════ Drop a folder to scan it ═══════════ -->
@@ -10130,11 +10213,16 @@ function sayWorking(host, liveId) {
    now and given the words a frame later, once the box is on screen with them,
    so they are a change a screen reader hears. Words the region already says
    are not said again (a query run once more, to the same message, is no
-   news), and words taken away before their frame are never said. */
+   news), and words taken away before their frame are never said.
+   A box shown on lines of its own — what innerText reads of one, a block a
+   line — is said as sentences: the region is on one line (sr-only), where a
+   line break is only a space, so each line but the last ends with a stop where
+   it has none, and a screen reader pauses there (BQS). */
 const aloudSaid = new Map(); // region id → the words it says, or is about to
 function sayAloud(liveId, text) {
   const live = $(liveId);
-  const words = text || '';
+  const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const words = lines.map((l, i) => (i < lines.length - 1 && !/[.!?…:]$/.test(l) ? `${l}.` : l)).join(' ');
   if (!live || aloudSaid.get(liveId) === words) return;
   aloudSaid.set(liveId, words);
   live.textContent = '';
@@ -10356,7 +10444,12 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
 /** Paint the index indicator for the folder currently on screen. */
 function renderIndexBadge(info) {
   const el = $('indexBadge');
-  if (!info || !info.indexed || !info.root) { el.hidden = true; return; }
+  // The badge comes on screen with its words already in it, which a screen
+  // reader seldom announces: they are said in #indexBadgeSaid, a frame after it
+  // shows them, and taken back as it goes (BQS). Guarded: a page reader may
+  // lift this function without sayAloud.
+  const say = (words) => { if (typeof sayAloud === 'function') sayAloud('indexBadgeSaid', words); };
+  if (!info || !info.indexed || !info.root) { el.hidden = true; say(''); return; }
   const stale = info.root.state !== 'ready' || !info.root.live;
   // A stale root comes with the server's reason, and there is more than one:
   // on macOS another folder's watch starting or stopping can cost this one a
@@ -10396,6 +10489,7 @@ function renderIndexBadge(info) {
     ? 'TreeMap keeps a saved index of this folder so it opens instantly. It may have missed a change at some point, so something may be different now.'
     : 'This folder opens instantly from a saved index that updates itself as files change.';
   el.hidden = false;
+  say(el.textContent);
 }
 
 /** Bumped by each background build; a build whose number has passed stops following its job. */
@@ -11803,6 +11897,13 @@ function keepAccessFocus(paint) {
   const was = document.activeElement;
   const inRow = !!was && (was === row || row.contains(was));
   paint();
+  // Every paint of the row runs in here, and the row comes on screen with its
+  // words already in it, which a screen reader seldom announces: its count and
+  // its hint, a line each, are said in #accessSaid a frame later, and taken
+  // back as it goes (BQS). Guarded: a page reader may lift this without sayAloud.
+  if (typeof sayAloud === 'function') {
+    sayAloud('accessSaid', row.hidden ? '' : [$('accessText').textContent, $('accessHint').textContent].filter(Boolean).join('\n'));
+  }
   if (!inRow || (!row.hidden && !was.hidden)) return;
   const stays = ['accessMissingBtn', 'accessOpenBtn', 'accessListBtn'].map((id) => $(id)).find((b) => !row.hidden && !b.hidden);
   (stays || (row.hidden ? $('scanBtn') : row)).focus();
@@ -12138,6 +12239,11 @@ function renderMountsNote(b) {
   const row = $('mountsNote');
   if (!row) return;
   const note = mountsNoteText(b);
+  // The note comes on screen with its words already in it, which a screen
+  // reader seldom announces: they are said in #mountsNoteSaid a frame later,
+  // and taken back as it goes (BQS). Guarded: a page reader may lift this
+  // function without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('mountsNoteSaid', note ? note.text : '');
   if (!note) {
     row.hidden = true;
     return;
@@ -21415,6 +21521,9 @@ function syncCartPreviewChrome() {
   if (!banner) return;
   banner.hidden = !tmPreview.on;
   if (!tmPreview.on) {
+    // The preview over, nothing of the banner's is left said (BQS). Guarded,
+    // as below.
+    if (typeof sayAloud === 'function') sayAloud('tmPreviewSaid', '');
     wrap.style.removeProperty('--tm-preview-pad');
     // The right pad goes too (J52): the canvas takes its width back, and the
     // view drops the clearance, so the next preview measures its own.
@@ -21443,6 +21552,12 @@ function syncCartPreviewChrome() {
     // The open cart's footer says this sentence beside the banner, so while the
     // cart is open the stylesheet takes it out of the banner (H52).
     ` <span class="tm-pv-cart-said">${cartSpaceSaid()}</span>` + outside;
+  // Said aloud in #tmPreviewSaid (BQS): the banner comes on screen with these
+  // words already in it, which a screen reader seldom announces. Its message
+  // as it is rendered — innerText, so the sentence the stylesheet hides beside
+  // the open cart is not said, and the Exit preview button is no part of it.
+  // Guarded: a page reader may lift this function without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('tmPreviewSaid', $('tmPreviewText').innerText);
   // The banner floats over the map's top edge, and covered the labels of the
   // top-left tiles ("Videos", "holiday-4k.mov" — QA D64). The wrap is padded
   // by the banner's measured height instead — it wraps to two lines beside
@@ -24140,6 +24255,12 @@ function renderAltNote() {
   const note = state.treemap.altNote;
   host.textContent = note || '';
   host.hidden = !note;
+  // Said aloud in #tmAltNoteSaid (BQS): the note comes on screen with its
+  // words already in it, which a screen reader seldom announces. Not the
+  // words of a layout still being refined — a new count every frame, written
+  // with the shapes drawn so far (altRefineSchedule) — but the note it
+  // settles on. Guarded: a page reader may lift this function without sayAloud.
+  if (typeof sayAloud === 'function' && note !== altRefiningNote(state.treemap.cells.length)) sayAloud('tmAltNoteSaid', note);
 }
 
 /* ── Drawing ──────────────────────────────────────────────────────────── */
@@ -28742,6 +28863,7 @@ async function loadCalendar() {
       ? 'The calendar is counted from a finished scan — it fills in once the scan finishes.'
       : 'Opened from the saved index — scan this folder to see its files by the day they last changed or were created.')}</p></div>`;
     $('calDegraded').hidden = true; $('calLegend').hidden = true;
+    if (typeof sayAloud === 'function') sayAloud('calDegradedSaid', ''); // the note gone, nothing of it is left said (BQS)
     return;
   }
   if (!scanId) {
@@ -28750,6 +28872,7 @@ async function loadCalendar() {
       `<button class="btn btn-primary" data-cal-browse>${icon('folder', 15)}Choose a folder</button></div>`;
     body.querySelector('[data-cal-browse]').addEventListener('click', () => openBrowse(null));
     $('calDegraded').hidden = true; $('calLegend').hidden = true;
+    if (typeof sayAloud === 'function') sayAloud('calDegradedSaid', ''); // the note gone, nothing of it is left said (BQS)
     return;
   }
   const seq = ++calSeq;
@@ -28768,6 +28891,7 @@ async function loadCalendar() {
     calData = null;
     body.innerHTML = `<div class="muted">Could not build the calendar: ${escapeHtml(e.message)}</div>`;
     $('calDegraded').hidden = true; $('calLegend').hidden = true;
+    if (typeof sayAloud === 'function') sayAloud('calDegradedSaid', ''); // the note gone, nothing of it is left said (BQS)
   }
 }
 
@@ -28777,6 +28901,11 @@ function renderCalendar() {
   const deg = calData.degraded || [];
   $('calDegraded').hidden = deg.length === 0;
   $('calDegraded').textContent = deg.map((d) => d.reason).join(' ');
+  // The note comes on screen with its words already in it, which a screen
+  // reader seldom announces: they are said in #calDegradedSaid a frame later,
+  // and taken back as it goes (BQS). Guarded: a page reader may lift this
+  // function without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('calDegradedSaid', $('calDegraded').textContent);
   if (!days.length) {
     body.innerHTML = `<div class="muted">${calChannel === 'created' && deg.length
       ? 'No creation days could be counted — see the note below.'
@@ -28984,6 +29113,10 @@ async function loadJournal() {
     const note = portable && portable.portable && (portable.degraded || []).find((d) => d.key === 'journal');
     $('journalPortable').hidden = !note;
     if (note) $('journalPortable').textContent = note.reason;
+    // The note comes on screen with its words already in it, which a screen
+    // reader seldom announces: they are said in #journalPortableSaid a frame
+    // later, and taken back as it goes (BQS). Guarded, as the calendar's.
+    if (typeof sayAloud === 'function') sayAloud('journalPortableSaid', note ? note.reason : '');
     renderJournal(data.entries || []);
   } catch (e) {
     if (seq !== journalSeq || state.view !== 'history') return;
@@ -30918,11 +31051,17 @@ function renderCityChrome() {
   const lod = $('cityLod');
   if (lod) {
     const parts = [];
+    // What of the line is news, said aloud in #cityLodSaid (BQS): a load that
+    // failed, the city loading, the saved index's tree, the server's cap.
+    // Never the counts of what is drawn, which change on every frame of a zoom
+    // and are read with the city (its aria-describedby); this runs each frame.
+    const news = [];
     // A load that failed is said until the next load starts (loadCity).
     // Written once, the next redraw — a resize, the Height or Colour control
     // — wiped it, and a blank plate read as an empty folder (C03 review F3.4).
     const failed = c.loadFailed;
     if (failed) parts.push(`${baseName(failed.path)} did not load: ${failed.message}`);
+    if (failed) news.push(parts[parts.length - 1]);
     if (!from) {
       // Loading is true while a load is out or a scan runs whose landing
       // draws the city. A saved index's tree with no scan behind it and none
@@ -30934,6 +31073,7 @@ function renderCityChrome() {
       // No scan behind the tree (treeScanId) and none coming (treeScanComing).
       const fromIndex = !!state.root && !treeScanId() && !treeScanComing();
       if (!failed) parts.push(fromIndex ? 'Opened from the saved index — scan this folder to see its city.' : 'loading this folder…');
+      if (!failed) news.push(parts[parts.length - 1]);
     } else {
       // §6.1 forbids a silent threshold. A map drawing 4,120 of 251,000 things
       // and saying nothing is lying by omission about what is on screen.
@@ -30960,12 +31100,16 @@ function renderCityChrome() {
       }
       if (capped) {
         parts.push(`the map holds at most ${formatCount(TM_SERVER_NODE_CAP)} items, and this folder reached that — drill in for the rest`);
+        news.push(parts[parts.length - 1]);
       }
       if (c.unknownHeight) parts.push(`${formatCount(c.unknownHeight)} with no ${c.height === 'files' ? 'count' : 'date'} yet, drawn flat`);
       if (c.unresolved) parts.push(`${formatCount(c.unresolved)} could not be depth-sorted and are drawn last`);
     }
     lod.textContent = parts.join(' · ');
     lod.hidden = false;
+    // The line comes on screen with its words already in it, which a screen
+    // reader seldom announces. Guarded: a page reader may lift this without sayAloud.
+    if (typeof sayAloud === 'function') sayAloud('cityLodSaid', news.join(' · '));
   }
 
   const legend = $('cityLegend');
@@ -32530,6 +32674,7 @@ function resetOpenHandleWarning() {
   confirmIgnoreOpenHandles = false;
   const host = $('confirmOpenHandles');
   if (host) { host.hidden = true; host.innerHTML = ''; }
+  if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', ''); // and nothing of it is left said (BQS)
   setConfirmButton('Move to Trash');
 }
 
@@ -32583,6 +32728,11 @@ async function checkOpenHandlesFor(paths) {
   host.hidden = false;
   host.className = 'checking';
   host.textContent = 'Checking whether anything has these files open…';
+  // Said aloud in #confirmOpenHandlesSaid (BQS): the panel comes on screen with
+  // its words already in it, which a screen reader seldom announces. Every
+  // write of the panel says what it shows, as rendered, or empties the region
+  // as it hides. Guarded: a page reader may lift these without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', host.innerText);
 
   const chunks = Math.min(Math.ceil(paths.length / TRASH_CHUNK), OPEN_HANDLE_PREFLIGHT_CHUNKS);
   const conflicts = [];
@@ -32641,6 +32791,7 @@ async function checkOpenHandlesFor(paths) {
     // stand between the user and a delete they asked for. The server still
     // guards the delete itself.
     host.hidden = true;
+    if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', '');
     return;
   }
   if (unavailable) {
@@ -32705,6 +32856,7 @@ function renderOpenHandleWarning(report, pathCount, nodeOf = () => null) {
       host.className = 'checking';
       host.hidden = false;
       host.textContent = report.reason || 'TreeMap couldn’t check whether these files are in use.';
+      if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', host.innerText);
       return;
     }
     // "Checked, found nothing" and "checked as much as it could reach, found
@@ -32715,9 +32867,11 @@ function renderOpenHandleWarning(report, pathCount, nodeOf = () => null) {
       host.className = 'checking';
       host.hidden = false;
       host.textContent = partial;
+      if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', host.innerText);
       return;
     }
     host.hidden = true;
+    if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', '');
     return;
   }
 
@@ -32777,6 +32931,8 @@ function renderOpenHandleWarning(report, pathCount, nodeOf = () => null) {
     // A truncated probe that found something is still truncated, and this is
     // the case it matters most in — the list below may be part of a longer one.
     (partial ? `<div class="oh-file" style="margin-top:6px;">${escapeHtml(partial)}</div>` : '');
+  // As it is shown: one line a block, the programs a line each.
+  if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', host.innerText);
 
   // The button now says what it actually does — a move to the Trash, never
   // "Delete" (H07). The user has read the warning; taking the choice away
@@ -32825,6 +32981,7 @@ function confirmFooterReset() {
   confirmIgnoreOpenHandles = false;
   const host = $('confirmOpenHandles');
   if (host) { host.hidden = true; host.innerHTML = ''; }
+  if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', ''); // and nothing of it is left said (BQS)
   const cancel = $('confirmCancel');
   if (cancel) cancel.hidden = false;
   setConfirmButton('Move to Trash');
@@ -33338,6 +33495,7 @@ function nlClose(opts = {}) {
   // outside click that lands on nothing focusable) without a blur firing.
   fxOrbHide('nlListen');
   $('nlPending').hidden = true;
+  if (typeof sayAloud === 'function') sayAloud('nlSaid', ''); // and nothing of it is left said (BQS)
   $('tmNlBtn').setAttribute('aria-expanded', 'false');
   // A close that hands off elsewhere (Run → the highlight box; a view
   // unmount) skips the button focus, or the caret would bounce twice and a
@@ -33353,6 +33511,11 @@ async function nlTranslate() {
   // the finally below and nlClose (a close mid-flight) both drop that.
   fxOrbHide('nlListen');
   $('nlPending').hidden = false;
+  // Said aloud in #nlSaid (BQS): "Translating…" and the reason come on screen
+  // with their words already in them, which a screen reader seldom announces.
+  // The box's own words, read before the orb mounts into it. Guarded: a page
+  // reader may lift this function without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('nlSaid', $('nlPending').textContent);
   fxOrbShow('nl', $('nlPending').querySelector('.fx-orb-well'), 'weaving');
   try {
     const res = await api('/api/nl-query', {
@@ -33368,17 +33531,21 @@ async function nlTranslate() {
       if (res.matched && res.matched.length) bits.push(`understood: ${res.matched.map((m) => m.phrase).join(', ')}`);
       if (res.unmatched && res.unmatched.length) bits.push(`ignored: ${res.unmatched.join(', ')}`);
       $('nlDetail').textContent = bits.join(' · ');
+      // Focus goes to the query, which is read there: "Translating…" is taken back.
+      if (typeof sayAloud === 'function') sayAloud('nlSaid', '');
       $('nlResult').focus();
       $('nlResult').select();
     } else {
       $('nlOut').hidden = true;
       $('nlReason').hidden = false;
       $('nlReason').textContent = res.reason || 'That could not be translated.';
+      if (typeof sayAloud === 'function') sayAloud('nlSaid', $('nlReason').textContent);
     }
   } catch (e) {
     $('nlOut').hidden = true;
     $('nlReason').hidden = false;
     $('nlReason').textContent = 'Translation failed: ' + e.message;
+    if (typeof sayAloud === 'function') sayAloud('nlSaid', $('nlReason').textContent);
   } finally {
     fxOrbHide('nl');
     $('nlPending').hidden = true;
@@ -43385,6 +43552,13 @@ function renderStartChoices() {
   const words = startLastLine(last, lastVerdict && !lastVerdict.allowed ? lastVerdict : null, unreadable);
   line.textContent = words;
   line.hidden = !words;
+  // Said aloud in #startLastSaid (BQS): the line comes on screen with its words
+  // already in it, which a screen reader seldom announces. Not the line of a
+  // Stop or a failure — stopping, stopped, unshown; failed; unstopped — which
+  // #stopAnnounce (review F1.14) and the toast say already: said here as well,
+  // each would be heard twice. Guarded: a page reader may lift this without sayAloud.
+  const saidElsewhere = !!last && ['stopping', 'stopped', 'unshown', 'failed', 'unstopped'].includes(last.outcome);
+  if (typeof sayAloud === 'function') sayAloud('startLastSaid', saidElsewhere ? '' : words);
   // One "Scan … again" carries the id focus lands by: the last folder's, never the history's beside it (J03).
   const html = list.map((c, i) => `<button class="btn start-choice${c.again ? ` start-again${retry && !c.history ? ' start-retry' : ''}` : ''}"` +
     `${c.again && !c.history ? ' id="startAgainBtn"' : ''} data-start-ix="${i}" title="${escapeHtml(c.drive ? `${c.path} — the whole drive` : c.path)}">` +

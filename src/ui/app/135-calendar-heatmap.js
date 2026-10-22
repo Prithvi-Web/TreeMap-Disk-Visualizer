@@ -48,6 +48,7 @@ async function loadCalendar() {
       ? 'The calendar is counted from a finished scan — it fills in once the scan finishes.'
       : 'Opened from the saved index — scan this folder to see its files by the day they last changed or were created.')}</p></div>`;
     $('calDegraded').hidden = true; $('calLegend').hidden = true;
+    if (typeof sayAloud === 'function') sayAloud('calDegradedSaid', ''); // the note gone, nothing of it is left said (BQS)
     return;
   }
   if (!scanId) {
@@ -56,6 +57,7 @@ async function loadCalendar() {
       `<button class="btn btn-primary" data-cal-browse>${icon('folder', 15)}Choose a folder</button></div>`;
     body.querySelector('[data-cal-browse]').addEventListener('click', () => openBrowse(null));
     $('calDegraded').hidden = true; $('calLegend').hidden = true;
+    if (typeof sayAloud === 'function') sayAloud('calDegradedSaid', ''); // the note gone, nothing of it is left said (BQS)
     return;
   }
   const seq = ++calSeq;
@@ -74,6 +76,7 @@ async function loadCalendar() {
     calData = null;
     body.innerHTML = `<div class="muted">Could not build the calendar: ${escapeHtml(e.message)}</div>`;
     $('calDegraded').hidden = true; $('calLegend').hidden = true;
+    if (typeof sayAloud === 'function') sayAloud('calDegradedSaid', ''); // the note gone, nothing of it is left said (BQS)
   }
 }
 
@@ -83,6 +86,11 @@ function renderCalendar() {
   const deg = calData.degraded || [];
   $('calDegraded').hidden = deg.length === 0;
   $('calDegraded').textContent = deg.map((d) => d.reason).join(' ');
+  // The note comes on screen with its words already in it, which a screen
+  // reader seldom announces: they are said in #calDegradedSaid a frame later,
+  // and taken back as it goes (BQS). Guarded: a page reader may lift this
+  // function without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('calDegradedSaid', $('calDegraded').textContent);
   if (!days.length) {
     body.innerHTML = `<div class="muted">${calChannel === 'created' && deg.length
       ? 'No creation days could be counted — see the note below.'
@@ -290,6 +298,10 @@ async function loadJournal() {
     const note = portable && portable.portable && (portable.degraded || []).find((d) => d.key === 'journal');
     $('journalPortable').hidden = !note;
     if (note) $('journalPortable').textContent = note.reason;
+    // The note comes on screen with its words already in it, which a screen
+    // reader seldom announces: they are said in #journalPortableSaid a frame
+    // later, and taken back as it goes (BQS). Guarded, as the calendar's.
+    if (typeof sayAloud === 'function') sayAloud('journalPortableSaid', note ? note.reason : '');
     renderJournal(data.entries || []);
   } catch (e) {
     if (seq !== journalSeq || state.view !== 'history') return;

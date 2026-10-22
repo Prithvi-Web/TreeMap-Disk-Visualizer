@@ -12,7 +12,12 @@
 /** Paint the index indicator for the folder currently on screen. */
 function renderIndexBadge(info) {
   const el = $('indexBadge');
-  if (!info || !info.indexed || !info.root) { el.hidden = true; return; }
+  // The badge comes on screen with its words already in it, which a screen
+  // reader seldom announces: they are said in #indexBadgeSaid, a frame after it
+  // shows them, and taken back as it goes (BQS). Guarded: a page reader may
+  // lift this function without sayAloud.
+  const say = (words) => { if (typeof sayAloud === 'function') sayAloud('indexBadgeSaid', words); };
+  if (!info || !info.indexed || !info.root) { el.hidden = true; say(''); return; }
   const stale = info.root.state !== 'ready' || !info.root.live;
   // A stale root comes with the server's reason, and there is more than one:
   // on macOS another folder's watch starting or stopping can cost this one a
@@ -52,6 +57,7 @@ function renderIndexBadge(info) {
     ? 'TreeMap keeps a saved index of this folder so it opens instantly. It may have missed a change at some point, so something may be different now.'
     : 'This folder opens instantly from a saved index that updates itself as files change.';
   el.hidden = false;
+  say(el.textContent);
 }
 
 /** Bumped by each background build; a build whose number has passed stops following its job. */
@@ -1459,6 +1465,13 @@ function keepAccessFocus(paint) {
   const was = document.activeElement;
   const inRow = !!was && (was === row || row.contains(was));
   paint();
+  // Every paint of the row runs in here, and the row comes on screen with its
+  // words already in it, which a screen reader seldom announces: its count and
+  // its hint, a line each, are said in #accessSaid a frame later, and taken
+  // back as it goes (BQS). Guarded: a page reader may lift this without sayAloud.
+  if (typeof sayAloud === 'function') {
+    sayAloud('accessSaid', row.hidden ? '' : [$('accessText').textContent, $('accessHint').textContent].filter(Boolean).join('\n'));
+  }
   if (!inRow || (!row.hidden && !was.hidden)) return;
   const stays = ['accessMissingBtn', 'accessOpenBtn', 'accessListBtn'].map((id) => $(id)).find((b) => !row.hidden && !b.hidden);
   (stays || (row.hidden ? $('scanBtn') : row)).focus();
@@ -1794,6 +1807,11 @@ function renderMountsNote(b) {
   const row = $('mountsNote');
   if (!row) return;
   const note = mountsNoteText(b);
+  // The note comes on screen with its words already in it, which a screen
+  // reader seldom announces: they are said in #mountsNoteSaid a frame later,
+  // and taken back as it goes (BQS). Guarded: a page reader may lift this
+  // function without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('mountsNoteSaid', note ? note.text : '');
   if (!note) {
     row.hidden = true;
     return;

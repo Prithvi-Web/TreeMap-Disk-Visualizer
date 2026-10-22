@@ -381,6 +381,12 @@ function renderAltNote() {
   const note = state.treemap.altNote;
   host.textContent = note || '';
   host.hidden = !note;
+  // Said aloud in #tmAltNoteSaid (BQS): the note comes on screen with its
+  // words already in it, which a screen reader seldom announces. Not the
+  // words of a layout still being refined — a new count every frame, written
+  // with the shapes drawn so far (altRefineSchedule) — but the note it
+  // settles on. Guarded: a page reader may lift this function without sayAloud.
+  if (typeof sayAloud === 'function' && note !== altRefiningNote(state.treemap.cells.length)) sayAloud('tmAltNoteSaid', note);
 }
 
 /* ── Drawing ──────────────────────────────────────────────────────────── */

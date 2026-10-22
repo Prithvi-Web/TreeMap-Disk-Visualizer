@@ -84,8 +84,14 @@
           </div>
           <!-- A1: the index indicator. Green "always current" when a live
                watcher is attached; amber when the index exists but missed
-               events and is being rechecked. Hidden when there is no index. -->
-          <div class="index-badge" id="indexBadge" hidden role="status"></div>
+               events and is being rechecked. Hidden when there is no index.
+               Plain text: what it says is said in #indexBadgeSaid. -->
+          <div class="index-badge" id="indexBadge" hidden></div>
+          <!-- The index badge, said aloud (BQS): it comes on screen with its
+               words already in it, which a screen reader seldom announces.
+               renderIndexBadge says them here a frame later, and empties this
+               when the badge goes. -->
+          <div id="indexBadgeSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
           <!-- U-1: a background index build while it runs ("Indexing this
                folder… N items so far"), or why a folder was not indexed on
                its own (more items than TreeMap indexes automatically). Not a
@@ -109,8 +115,9 @@
                confident wrongness this app exists to avoid.
                tabindex="-1": focus lands on the row when the recheck hides
                the focused "Open Privacy settings" and no other button is
-               left (U-11, review F1.11); it is never in the Tab order. -->
-          <div class="access-row" id="accessRow" role="status" aria-live="polite" tabindex="-1" hidden>
+               left (U-11, review F1.11); it is never in the Tab order.
+               Plain text: what it says is said in #accessSaid. -->
+          <div class="access-row" id="accessRow" tabindex="-1" hidden>
             <span data-icon="alert" data-size="14"></span>
             <div class="access-body">
               <div class="access-text" id="accessText"></div>
@@ -124,18 +131,30 @@
               <button class="btn" id="accessOpenBtn" hidden>Open Privacy settings</button>
             </div>
           </div>
+          <!-- The row, said aloud (BQS): it comes on screen with its words
+               already in it, which a screen reader seldom announces.
+               keepAccessFocus, which every paint of it runs inside, says its
+               count and its hint here a frame later, and empties this when the
+               row goes. -->
+          <div id="accessSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
           <!-- Track U, U-27: the drives mounted inside the scanned folder that the
                scan did not enter ("Stay on this drive", in Settings), by name; or,
                under "Include drives mounted inside it", the ones it counted; or why
                it could not tell. Hidden when there is nothing to say: a folder with
-               no drive mounted inside it says nothing here. -->
-          <div class="access-row" id="mountsNote" role="status" aria-live="polite" hidden>
+               no drive mounted inside it says nothing here. Plain text: what it
+               says is said in #mountsNoteSaid. -->
+          <div class="access-row" id="mountsNote" hidden>
             <span data-icon="hardDrive" data-size="14"></span>
             <div class="access-body">
               <div class="access-text" id="mountsNoteText"></div>
             </div>
             <button class="btn" id="mountsNoteSettingsBtn">Change in Settings</button>
           </div>
+          <!-- The note, said aloud (BQS): it comes on screen with its words
+               already in it, which a screen reader seldom announces.
+               renderMountsNote says them here a frame later, and empties this
+               when the note goes. -->
+          <div id="mountsNoteSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
 
         <div class="card glass">

@@ -100,12 +100,20 @@
       <div id="tmEmpty" class="tm-empty-note" role="status" aria-live="polite" hidden></div>
       <!-- v4 §4.3 — the simulated "after". The banner is not decoration: a map
            that shows space you do not have yet has to say so, all the time it
-           is on screen. -->
-      <div class="tm-preview-banner" id="tmPreviewBanner" role="status" aria-live="polite" hidden>
+           is on screen. Plain text: what it says is said in #tmPreviewSaid. -->
+      <div class="tm-preview-banner" id="tmPreviewBanner" hidden>
         <span data-icon="eye" data-size="14"></span>
         <span id="tmPreviewText"></span>
         <button class="pill" id="tmPreviewExit">Exit preview</button>
       </div>
+      <!-- What the preview banner says, said aloud (BQS). The banner is hidden
+           while no preview is up, so it comes on screen with its words already
+           in it, which a screen reader seldom announces; and it holds the Exit
+           preview button, which is no part of what it says. syncCartPreviewChrome
+           says the banner's message here as it is seen, a frame after the banner
+           shows it — without the sentence the stylesheet hides while the cart is
+           open — and empties it when the preview ends. -->
+      <div id="tmPreviewSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
       <!-- What j/k selected, spoken. The tooltip is role="tooltip", which is
            not a live region, so the highlight moved in silence. -->
       <div id="tmKbAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -148,6 +156,13 @@
     <!-- v4 §8.3 — the drive dock: drop the cart on a drive to offload -->
     <div class="drive-dock" id="tmDock" hidden aria-label="Connected drives — drop your cart on one to offload"></div>
     <!-- v4 §6.2 — where an alternate renderer had to approximate, it says so
-         here, in the same place every time. Never hidden in a console log. -->
-    <div class="tm-altnote" id="tmAltNote" role="status" aria-live="polite" hidden></div>
+         here, in the same place every time. Never hidden in a console log.
+         Plain text: what it says is said in #tmAltNoteSaid. -->
+    <div class="tm-altnote" id="tmAltNote" hidden></div>
+    <!-- The footnote, said aloud (BQS): it is hidden while there is nothing to
+         say, so it comes on screen with its words already in it, which a
+         screen reader seldom announces. renderAltNote says the note here a
+         frame after it shows it — the note a layout settles on, never the
+         count of one still being refined — and empties it when the note goes. -->
+    <div id="tmAltNoteSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   </section>

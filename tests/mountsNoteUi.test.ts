@@ -51,12 +51,14 @@ const SIM = '/Library/Developer/CoreSimulator/Volumes';
 
 /* ══════════════ the markup ══════════════ */
 
-test('the Dashboard has the note beside the refused-folder row: hidden, a polite live region, with a Change in Settings button', () => {
+test('the Dashboard has the note beside the refused-folder row: hidden, said in a polite live region of its own, with a Change in Settings button', () => {
   const access = INDEX.indexOf('id="accessRow"');
   const note = INDEX.indexOf('id="mountsNote"');
   assert.ok(access !== -1 && note > access, 'the note follows the refused-folder row');
   const row = slice('id="mountsNote"', 'Change in Settings');
-  assert.match(INDEX, /<div class="access-row" id="mountsNote" role="status" aria-live="polite" hidden>/);
+  // Plain text, hidden while it has nothing to say; its words are said in #mountsNoteSaid (BQS).
+  assert.match(INDEX, /<div class="access-row" id="mountsNote" hidden>/);
+  assert.match(INDEX, /<div id="mountsNoteSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"><\/div>/);
   assert.match(row, /id="mountsNoteText"/);
   assert.match(INDEX, /<button class="btn" id="mountsNoteSettingsBtn"[^>]*>Change in Settings<\/button>/);
 });

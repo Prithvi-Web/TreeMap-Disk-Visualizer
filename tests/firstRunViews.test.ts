@@ -218,7 +218,8 @@ test('the Dashboard\'s welcome names it, and every empty state offers the same s
   // The choices and the line naming the last folder sit outside both parts, so every view's empty state has them.
   const shared = section.slice(section.indexOf('<div class="empty-for-view"'));
   const afterParts = shared.slice(shared.indexOf('</div>') + '</div>'.length);
-  assert.match(afterParts, /<p class="start-last" id="startLast" role="status" hidden><\/p>\s*(<!--[\s\S]*?-->\s*)?<div class="start-choices" id="startChoices" role="group" aria-label="Scan one of these"><\/div>\s*<button class="btn btn-primary" id="emptyBrowseBtn"/,
+  // The line is plain text, its words said in the region right after it (BQS).
+  assert.match(afterParts, /<p class="start-last" id="startLast" hidden><\/p>\s*(<!--[\s\S]*?-->\s*)?<div id="startLastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"><\/div>\s*<div class="start-choices" id="startChoices" role="group" aria-label="Scan one of these"><\/div>\s*<button class="btn btn-primary" id="emptyBrowseBtn"/,
     `the line and the choices, then the one primary, after both parts: ${afterParts.slice(0, 400)}`);
   const forView = slice('<div class="empty-for-view" id="emptyForView" hidden>', '<button');
   for (const id of ['emptyViewIcon', 'emptyViewTitle', 'emptyViewLead']) assert.match(forView, new RegExp(`id="${id}"`), `${id} is in the per-view part`);

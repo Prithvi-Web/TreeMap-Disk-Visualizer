@@ -311,7 +311,7 @@ test('plain words: the weaving orb cannot outlive the popover or the round-trip'
   assert.match(translate, /fxOrbShow\('nl', \$\('nlPending'\)\.querySelector\('\.fx-orb-well'\), 'weaving'\)/);
   assert.match(translate, /finally \{\s*fxOrbHide\('nl'\);/, 'settle drops it');
   assert.match(close, /fxOrbHide\('nl'\)/, 'a close mid-flight drops it too');
-  assert.match(INDEX, /<div class="nl-pending" id="nlPending" role="status" hidden>/, 'and the row starts hidden');
+  assert.match(INDEX, /<div class="nl-pending" id="nlPending" hidden>/, 'and the row starts hidden (plain text: its words are said in #nlSaid, BQS)');
 });
 
 test('plain words: the listening chip is focus-scoped, yields to the translate, and dies with the popover', () => {

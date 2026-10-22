@@ -40,10 +40,23 @@
       </div>
     </div>
     <div class="glass" id="cityWrap">
-      <canvas id="cityCanvas" tabindex="0"
+      <!-- Described by its line (#cityLod): what it shows of the folder, read
+           with the city, since the counts in it are not said as they change. -->
+      <canvas id="cityCanvas" tabindex="0" aria-describedby="cityLod"
               aria-label="Disk usage as an isometric city. Drag to pan, scroll to zoom, click a building to drill in, Escape to go up. A text equivalent of every building is listed below the map."></canvas>
-      <div class="city-card" id="cityCard" role="status" aria-live="polite" hidden></div>
-      <div class="city-lod" id="cityLod" role="status" aria-live="polite" hidden></div>
+      <!-- The hover card: a tooltip the pointer moves, rebuilt as it crosses
+           each building — no status to announce as it changes (BQS); the list
+           of buildings under the map says the same. -->
+      <div class="city-card" id="cityCard" role="tooltip" hidden></div>
+      <!-- Plain text: its news is said in #cityLodSaid. -->
+      <div class="city-lod" id="cityLod" hidden></div>
+      <!-- The city's line, said aloud (BQS). The line is hidden until the city
+           first says something, so it comes on screen with its words already
+           in it, which a screen reader seldom announces. renderCityChrome says
+           its news here a frame later — a city loading, a load that failed,
+           the saved index's tree, the server's cap — never the counts a zoom
+           changes on every frame, which the city's description reads. -->
+      <div id="cityLodSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
     <div class="tm-foot">
       <div id="cityLegend" class="tm-legend"></div>

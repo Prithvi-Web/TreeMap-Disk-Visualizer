@@ -448,11 +448,16 @@ function sayWorking(host, liveId) {
    now and given the words a frame later, once the box is on screen with them,
    so they are a change a screen reader hears. Words the region already says
    are not said again (a query run once more, to the same message, is no
-   news), and words taken away before their frame are never said. */
+   news), and words taken away before their frame are never said.
+   A box shown on lines of its own — what innerText reads of one, a block a
+   line — is said as sentences: the region is on one line (sr-only), where a
+   line break is only a space, so each line but the last ends with a stop where
+   it has none, and a screen reader pauses there (BQS). */
 const aloudSaid = new Map(); // region id → the words it says, or is about to
 function sayAloud(liveId, text) {
   const live = $(liveId);
-  const words = text || '';
+  const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const words = lines.map((l, i) => (i < lines.length - 1 && !/[.!?…:]$/.test(l) ? `${l}.` : l)).join(' ');
   if (!live || aloudSaid.get(liveId) === words) return;
   aloudSaid.set(liveId, words);
   live.textContent = '';

@@ -25,8 +25,9 @@
     <span class="fx-orb-well" id="nlListenWell"></span>
   </div>
   <!-- FX wiring: shown only while the /api/nl-query round-trip is in
-       flight — the "weaving" orb mounts into the well. -->
-  <div class="nl-pending" id="nlPending" role="status" hidden><span class="fx-orb-well"></span><span class="fx-shimmer-text">Translating…</span></div>
+       flight — the "weaving" orb mounts into the well. Plain text: its words
+       are said in #nlSaid. -->
+  <div class="nl-pending" id="nlPending" hidden><span class="fx-orb-well"></span><span class="fx-shimmer-text">Translating…</span></div>
   <div id="nlOut" hidden>
     <div class="muted" style="font-size:11.5px;margin:9px 0 4px;">Translates to — check it, edit it, then run:</div>
     <input type="text" id="nlResult" class="num" aria-label="The translated query — edit it before running" autocomplete="off" spellcheck="false" style="width:100%;">
@@ -36,7 +37,15 @@
       <button class="btn" id="nlCancel">Cancel</button>
     </div>
   </div>
-  <div id="nlReason" class="muted" role="status" aria-live="polite" style="font-size:11.5px;margin-top:7px;" hidden></div>
+  <!-- Why a sentence could not be translated. Plain text: said in #nlSaid. -->
+  <div id="nlReason" class="muted" style="font-size:11.5px;margin-top:7px;" hidden></div>
+  <!-- What the popover says, said aloud (BQS). "Translating…" and the reason
+       are hidden while there is nothing to say, so each comes on screen with
+       its words already in it, which a screen reader seldom announces.
+       nlTranslate says them here, one at a time, a frame after they show; a
+       translation, which moves focus to the query, and a close leave nothing
+       said. -->
+  <div id="nlSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 </div>
 
 <!-- ═══════════ Drop a folder to scan it ═══════════ -->

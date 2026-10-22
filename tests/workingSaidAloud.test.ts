@@ -87,6 +87,64 @@ test('the two checks above see every working row in the page: no live region car
     'every call passes its count, height and sentence as the checks above read them: a sentence held in a variable would go unseen');
 });
 
+/**
+ * The live regions still left hidden while they have nothing to say, each waiting for the batch that owns its writer,
+ * with why. Named here so that nothing else can join them; the batch's fix takes its name off.
+ */
+const WAITING: ReadonlyMap<string, string> = new Map([
+  ['tmEmpty', 'its writer, tmSetEmpty (050-treemap-view.js), is another batch\'s, which fixes it there; until that batch merges it is the one live region left hidden'],
+]);
+
+/** Every opening tag in the page — the markup and the script's own templates. */
+const TAGS = [...INDEX.matchAll(/<[a-z][a-z0-9]*\b[^<>]*>/gi)].map((m) => m[0]);
+/** A live region is told by its role or its aria-live. */
+const isLive = (tag: string) => /\srole="(?:status|alert|log)"|\saria-live="/.test(tag);
+const idOf = (tag: string) => / id="([^"]+)"/.exec(tag)?.[1] ?? tag;
+
+/** The source of the page's top-level function that holds `at`, or the 2,000 characters from `at` where none does (a listener). */
+function enclosingFn(at: number): string {
+  for (const m of INDEX.matchAll(/\n(?:async )?function \w+\(/g)) {
+    if (m.index > at) break;
+    const open = INDEX.indexOf('{', INDEX.indexOf(')', m.index));
+    let depth = 0;
+    for (let i = open; i < INDEX.length; i++) {
+      if (INDEX[i] === '{') depth++;
+      else if (INDEX[i] === '}' && --depth === 0) { if (i > at) return INDEX.slice(m.index, i + 1); break; }
+    }
+  }
+  return INDEX.slice(at, at + 2000);
+}
+
+/**
+ * Each script statement that shows or hides the element with this id — through `$('id')` or a constant that holds it.
+ * A write is `.hidden =`, or the hidden attribute set, removed or toggled.
+ */
+function hidingsOf(id: string): string[] {
+  const out: string[] = [];
+  const show = String.raw`(?:\.hidden\s*=(?!=)|\.(?:setAttribute|removeAttribute|toggleAttribute)\(\s*'hidden')`;
+  for (const m of INDEX.matchAll(new RegExp(String.raw`\$\('${id}'\)${show}[^\n]{0,40}`, 'g'))) out.push(m[0]);
+  for (const m of INDEX.matchAll(new RegExp(String.raw`(?:const|let) (\w+) = \$\('${id}'\);`, 'g'))) {
+    for (const w of enclosingFn(m.index).matchAll(new RegExp(String.raw`\b${m[1]}${show}[^\n]{0,40}`, 'g'))) out.push(`${m[1]} = $('${id}') … ${w[0]}`);
+  }
+  return out;
+}
+
+test('no live region in the page is hidden while it has nothing to say, and no script shows or hides one: a box that comes and goes is plain text, its words said in a region of its own (BQS; review F2.2)', () => {
+  // A box hidden while it has nothing to say goes from not displayed to displayed with its words already in it. A
+  // screen reader announces a live region's text as it changes, and seldom a region that appears filled: the words
+  // go unsaid. Said aloud as well, from a region of their own (sayAloud), they would be heard twice by a reader that
+  // does announce a box shown filled. So the box is plain text, and sayAloud says its words a frame after it shows them.
+  const hidden = TAGS.filter((t) => isLive(t) && /\shidden(?:[\s>=])/.test(t)).map(idOf);
+  assert.ok(hidden.every((id) => !id.startsWith('<')), `control: each hidden live region has an id: ${hidden.join(', ')}`);
+  assert.deepEqual(hidden.filter((id) => !WAITING.has(id)), [],
+    'no live region ships hidden but those waiting for their batch, named with why (#tmEmpty)');
+  const live = [...new Set(TAGS.filter(isLive).map(idOf).filter((id) => !id.startsWith('<')))];
+  assert.ok(['stopAnnounce', 'scanAnnounce', 'tmKbAnnounce', 'tmQuerySaid', 'toasts'].every((id) => live.includes(id)), `control: the page's live regions are found by their ids (${live.join(', ')})`);
+  const shown = live.filter((id) => !WAITING.has(id)).flatMap((id) => hidingsOf(id).map((w) => `#${id}: ${w}`));
+  assert.deepEqual(shown, [], 'nor does the script show or hide one: it would be shown already filled, as a box hidden in the markup is');
+  assert.ok(hidingsOf('tmEmpty').length > 0, 'control: the check sees a live region the script shows and hides — #tmEmpty, which waits for its batch');
+});
+
 test('each part has a live region of its own beside its host, empty, in the page from the start — never inside the host, whose every write would take it away (BQR-1 item 11)', () => {
   for (const { host, region } of PARTS) {
     const open = INDEX.indexOf(`<div id="${host}"`);

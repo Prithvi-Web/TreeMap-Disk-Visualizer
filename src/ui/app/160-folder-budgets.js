@@ -385,6 +385,7 @@ function nlClose(opts = {}) {
   // outside click that lands on nothing focusable) without a blur firing.
   fxOrbHide('nlListen');
   $('nlPending').hidden = true;
+  if (typeof sayAloud === 'function') sayAloud('nlSaid', ''); // and nothing of it is left said (BQS)
   $('tmNlBtn').setAttribute('aria-expanded', 'false');
   // A close that hands off elsewhere (Run → the highlight box; a view
   // unmount) skips the button focus, or the caret would bounce twice and a
@@ -400,6 +401,11 @@ async function nlTranslate() {
   // the finally below and nlClose (a close mid-flight) both drop that.
   fxOrbHide('nlListen');
   $('nlPending').hidden = false;
+  // Said aloud in #nlSaid (BQS): "Translating…" and the reason come on screen
+  // with their words already in them, which a screen reader seldom announces.
+  // The box's own words, read before the orb mounts into it. Guarded: a page
+  // reader may lift this function without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('nlSaid', $('nlPending').textContent);
   fxOrbShow('nl', $('nlPending').querySelector('.fx-orb-well'), 'weaving');
   try {
     const res = await api('/api/nl-query', {
@@ -415,17 +421,21 @@ async function nlTranslate() {
       if (res.matched && res.matched.length) bits.push(`understood: ${res.matched.map((m) => m.phrase).join(', ')}`);
       if (res.unmatched && res.unmatched.length) bits.push(`ignored: ${res.unmatched.join(', ')}`);
       $('nlDetail').textContent = bits.join(' · ');
+      // Focus goes to the query, which is read there: "Translating…" is taken back.
+      if (typeof sayAloud === 'function') sayAloud('nlSaid', '');
       $('nlResult').focus();
       $('nlResult').select();
     } else {
       $('nlOut').hidden = true;
       $('nlReason').hidden = false;
       $('nlReason').textContent = res.reason || 'That could not be translated.';
+      if (typeof sayAloud === 'function') sayAloud('nlSaid', $('nlReason').textContent);
     }
   } catch (e) {
     $('nlOut').hidden = true;
     $('nlReason').hidden = false;
     $('nlReason').textContent = 'Translation failed: ' + e.message;
+    if (typeof sayAloud === 'function') sayAloud('nlSaid', $('nlReason').textContent);
   } finally {
     fxOrbHide('nl');
     $('nlPending').hidden = true;

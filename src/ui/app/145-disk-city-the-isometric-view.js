@@ -1412,11 +1412,17 @@ function renderCityChrome() {
   const lod = $('cityLod');
   if (lod) {
     const parts = [];
+    // What of the line is news, said aloud in #cityLodSaid (BQS): a load that
+    // failed, the city loading, the saved index's tree, the server's cap.
+    // Never the counts of what is drawn, which change on every frame of a zoom
+    // and are read with the city (its aria-describedby); this runs each frame.
+    const news = [];
     // A load that failed is said until the next load starts (loadCity).
     // Written once, the next redraw — a resize, the Height or Colour control
     // — wiped it, and a blank plate read as an empty folder (C03 review F3.4).
     const failed = c.loadFailed;
     if (failed) parts.push(`${baseName(failed.path)} did not load: ${failed.message}`);
+    if (failed) news.push(parts[parts.length - 1]);
     if (!from) {
       // Loading is true while a load is out or a scan runs whose landing
       // draws the city. A saved index's tree with no scan behind it and none
@@ -1428,6 +1434,7 @@ function renderCityChrome() {
       // No scan behind the tree (treeScanId) and none coming (treeScanComing).
       const fromIndex = !!state.root && !treeScanId() && !treeScanComing();
       if (!failed) parts.push(fromIndex ? 'Opened from the saved index — scan this folder to see its city.' : 'loading this folder…');
+      if (!failed) news.push(parts[parts.length - 1]);
     } else {
       // §6.1 forbids a silent threshold. A map drawing 4,120 of 251,000 things
       // and saying nothing is lying by omission about what is on screen.
@@ -1454,12 +1461,16 @@ function renderCityChrome() {
       }
       if (capped) {
         parts.push(`the map holds at most ${formatCount(TM_SERVER_NODE_CAP)} items, and this folder reached that — drill in for the rest`);
+        news.push(parts[parts.length - 1]);
       }
       if (c.unknownHeight) parts.push(`${formatCount(c.unknownHeight)} with no ${c.height === 'files' ? 'count' : 'date'} yet, drawn flat`);
       if (c.unresolved) parts.push(`${formatCount(c.unresolved)} could not be depth-sorted and are drawn last`);
     }
     lod.textContent = parts.join(' · ');
     lod.hidden = false;
+    // The line comes on screen with its words already in it, which a screen
+    // reader seldom announces. Guarded: a page reader may lift this without sayAloud.
+    if (typeof sayAloud === 'function') sayAloud('cityLodSaid', news.join(' · '));
   }
 
   const legend = $('cityLegend');

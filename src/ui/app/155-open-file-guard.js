@@ -17,6 +17,7 @@ function resetOpenHandleWarning() {
   confirmIgnoreOpenHandles = false;
   const host = $('confirmOpenHandles');
   if (host) { host.hidden = true; host.innerHTML = ''; }
+  if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', ''); // and nothing of it is left said (BQS)
   setConfirmButton('Move to Trash');
 }
 
@@ -70,6 +71,11 @@ async function checkOpenHandlesFor(paths) {
   host.hidden = false;
   host.className = 'checking';
   host.textContent = 'Checking whether anything has these files open…';
+  // Said aloud in #confirmOpenHandlesSaid (BQS): the panel comes on screen with
+  // its words already in it, which a screen reader seldom announces. Every
+  // write of the panel says what it shows, as rendered, or empties the region
+  // as it hides. Guarded: a page reader may lift these without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', host.innerText);
 
   const chunks = Math.min(Math.ceil(paths.length / TRASH_CHUNK), OPEN_HANDLE_PREFLIGHT_CHUNKS);
   const conflicts = [];
@@ -128,6 +134,7 @@ async function checkOpenHandlesFor(paths) {
     // stand between the user and a delete they asked for. The server still
     // guards the delete itself.
     host.hidden = true;
+    if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', '');
     return;
   }
   if (unavailable) {
@@ -192,6 +199,7 @@ function renderOpenHandleWarning(report, pathCount, nodeOf = () => null) {
       host.className = 'checking';
       host.hidden = false;
       host.textContent = report.reason || 'TreeMap couldn’t check whether these files are in use.';
+      if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', host.innerText);
       return;
     }
     // "Checked, found nothing" and "checked as much as it could reach, found
@@ -202,9 +210,11 @@ function renderOpenHandleWarning(report, pathCount, nodeOf = () => null) {
       host.className = 'checking';
       host.hidden = false;
       host.textContent = partial;
+      if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', host.innerText);
       return;
     }
     host.hidden = true;
+    if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', '');
     return;
   }
 
@@ -264,6 +274,8 @@ function renderOpenHandleWarning(report, pathCount, nodeOf = () => null) {
     // A truncated probe that found something is still truncated, and this is
     // the case it matters most in — the list below may be part of a longer one.
     (partial ? `<div class="oh-file" style="margin-top:6px;">${escapeHtml(partial)}</div>` : '');
+  // As it is shown: one line a block, the programs a line each.
+  if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', host.innerText);
 
   // The button now says what it actually does — a move to the Trash, never
   // "Delete" (H07). The user has read the warning; taking the choice away
@@ -312,6 +324,7 @@ function confirmFooterReset() {
   confirmIgnoreOpenHandles = false;
   const host = $('confirmOpenHandles');
   if (host) { host.hidden = true; host.innerHTML = ''; }
+  if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', ''); // and nothing of it is left said (BQS)
   const cancel = $('confirmCancel');
   if (cancel) cancel.hidden = false;
   setConfirmButton('Move to Trash');

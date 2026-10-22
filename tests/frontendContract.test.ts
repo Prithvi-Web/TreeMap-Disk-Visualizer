@@ -681,13 +681,14 @@ test('canvas overlays set the pixel-ratio transform, never inherit it', () => {
 
 test('the alternate renderers announce what they had to approximate', () => {
   // §6.2 requires the footnote; §2.4 requires it to be visible rather than
-  // logged. A live region, so a screen reader hears the caveat change when the
+  // logged. Said aloud, so a screen reader hears the caveat change when the
   // map does — and it is emphatically not a toast, because a caveat about what
-  // is on screen has to stay up for as long as the screen does.
+  // is on screen has to stay up for as long as the screen does. The footnote
+  // is hidden while there is nothing to say, so it is plain text and its words
+  // are said in a live region of its own (BQS; tests/hiddenBoxesSaidAloud.test.ts).
   assert.ok(INDEX.includes('id="tmAltNote"'), 'the footnote element exists');
-  const el = INDEX.slice(INDEX.indexOf('id="tmAltNote"') - 120, INDEX.indexOf('id="tmAltNote"') + 120);
-  assert.match(el, /role="status"/, 'the footnote is a status region');
-  assert.match(el, /aria-live="polite"/, 'and it is announced when it changes');
+  assert.ok(INDEX.includes('<div id="tmAltNoteSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>'), 'its words have a polite live region of their own');
+  assert.match(INDEX, /function renderAltNote\([\s\S]{0,900}sayAloud\('tmAltNoteSaid', note\)/, 'and the footnote\'s writer says them there');
 });
 
 test('all four map renderers are reachable, and each is a labelled control', () => {
@@ -1697,7 +1698,8 @@ test('the open-file warning lives in the one dialog every view shares', () => {
   // view can route around it.
   const modal = INDEX.slice(INDEX.indexOf('id="confirmModal"'), INDEX.indexOf('id="confirmModal"') + 1400);
   assert.match(modal, /id="confirmOpenHandles"/, 'the warning panel is inside the confirmation dialog');
-  assert.match(modal, /role="status"/, 'and is announced to a screen reader when it appears');
+  // Said aloud from a live region of its own, in the dialog, a frame after the panel shows (BQS).
+  assert.match(modal, /<div id="confirmOpenHandlesSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"><\/div>/, 'and is announced to a screen reader when it appears');
   const code = appCode();
   assert.match(code, /\/api\/files\/open-handles/, 'the dialog pre-flights the check');
 });

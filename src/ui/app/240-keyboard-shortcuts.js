@@ -471,6 +471,13 @@ function renderStartChoices() {
   const words = startLastLine(last, lastVerdict && !lastVerdict.allowed ? lastVerdict : null, unreadable);
   line.textContent = words;
   line.hidden = !words;
+  // Said aloud in #startLastSaid (BQS): the line comes on screen with its words
+  // already in it, which a screen reader seldom announces. Not the line of a
+  // Stop or a failure — stopping, stopped, unshown; failed; unstopped — which
+  // #stopAnnounce (review F1.14) and the toast say already: said here as well,
+  // each would be heard twice. Guarded: a page reader may lift this without sayAloud.
+  const saidElsewhere = !!last && ['stopping', 'stopped', 'unshown', 'failed', 'unstopped'].includes(last.outcome);
+  if (typeof sayAloud === 'function') sayAloud('startLastSaid', saidElsewhere ? '' : words);
   // One "Scan … again" carries the id focus lands by: the last folder's, never the history's beside it (J03).
   const html = list.map((c, i) => `<button class="btn start-choice${c.again ? ` start-again${retry && !c.history ? ' start-retry' : ''}` : ''}"` +
     `${c.again && !c.history ? ' id="startAgainBtn"' : ''} data-start-ix="${i}" title="${escapeHtml(c.drive ? `${c.path} — the whole drive` : c.path)}">` +

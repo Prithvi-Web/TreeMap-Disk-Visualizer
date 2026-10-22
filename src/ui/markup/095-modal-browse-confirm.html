@@ -37,8 +37,16 @@
       <div class="muted" id="confirmText" style="font-size:13.5px;line-height:1.55;"></div>
       <!-- B2: filled in when a program holds one of these files open. Lives
            inside the one confirmation dialog every view shares, so no view can
-           delete without it. -->
-      <div id="confirmOpenHandles" hidden role="status"></div>
+           delete without it. Plain text: what it says is said in
+           #confirmOpenHandlesSaid. -->
+      <div id="confirmOpenHandles" hidden></div>
+      <!-- The open-file panel, said aloud (BQS). The panel is hidden while it
+           has nothing to say, so it comes on screen with its words already in
+           it — "Checking…", then the warning that turns OK into "Move to Trash
+           anyway" — which a screen reader seldom announces. Its writers say
+           what it shows here, a frame later, and empty this when it goes. In
+           the dialog, as the dialog is modal. -->
+      <div id="confirmOpenHandlesSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
     <div class="modal-foot">
       <div style="flex:1"></div>

@@ -1033,6 +1033,54 @@ test('a Stop with nothing on screen is announced: the start screen\'s sentence g
   assert.equal(h.$('stopAnnounce').textContent, 'You stopped the scan of /Users/x/Desktop.');
 });
 
+/**
+ * What renderStartChoices says in #startLastSaid, recorded: #startLast is hidden while it has nothing to say and shown
+ * with its words already in it, which a screen reader seldom announces (BQS). It says them in a region of its own —
+ * but not the lines a Stop or a failure wrote, which their own regions say already (review F1.14): the same sentence
+ * would be heard twice.
+ */
+function startLastSaid(h: ReturnType<typeof page>): string[] {
+  const log: string[] = [];
+  h.given.sayAloud = (id: string, text: string) => { if (id === 'startLastSaid') log.push(text); };
+  return log;
+}
+
+test('the start screen says aloud, in its own region, the folder the last session cannot reopen and why: nothing else says it (BQS)', async () => {
+  const gone = page({ route: server({ roots: [{ rootPath: '/Volumes/Photos', count: 1, latestAt: 1_700_000_000_000, latestSize: 1 }], missing: ['/Volumes/Photos'] }) });
+  const said = startLastSaid(gone);
+  await boot(gone);
+  const cannot = 'Your last scan was of /Volumes/Photos, which cannot be opened now: Path does not exist.';
+  assert.equal(gone.$('startLast').textContent, cannot, 'control: the start screen names the folder it cannot reopen, and why');
+  assert.equal(said.at(-1), cannot, 'and says it aloud');
+});
+
+test('the start screen says aloud, in its own region, a last folder the rules refuse, once their answer comes (BQS)', async () => {
+  const back = page({ route: server({ roots: [ROOT_HISTORY], refuse: onlyDownloads }) });
+  const said = startLastSaid(back);
+  await boot(back);
+  assert.match(back.$('startLast').textContent, /^Your last scan was of \/, which TreeMap may not scan now: /, 'control: the rules refuse the last folder');
+  assert.equal(said.at(-1), back.$('startLast').textContent, 'and that is said aloud');
+});
+
+test('the start screen\'s region says none of a Stop\'s words, which #stopAnnounce says, nor a failure\'s, which the toast says — so neither is heard twice (BQS)', async () => {
+  const h = page({ route: server({ roots: [] }) });
+  const hSaid = startLastSaid(h);
+  await boot(h);
+  await startFrom(h, /^Desktop$/);
+  await pressStop(h);
+  assert.equal(h.$('startLast').textContent, 'You stopped the scan of /Users/x/Desktop.', 'control: a Stop names the folder');
+  assert.equal(h.$('stopAnnounce').textContent, 'You stopped the scan of /Users/x/Desktop.', 'control: and #stopAnnounce says it (review F1.14)');
+  assert.ok(hSaid.length > 0 && hSaid.every((t) => t === ''), `the start screen's region says none of a Stop's words: ${JSON.stringify(hSaid)}`);
+
+  const f = page({ route: server({ roots: [], scanAnswer: () => ({ status: 500, body: { error: 'The disk is busy.', code: 'INTERNAL' } }) }) });
+  const fSaid = startLastSaid(f);
+  await boot(f);
+  await startFrom(f, /^Desktop$/);
+  assert.equal(f.$('startLast').textContent, 'The scan of /Users/x/Desktop failed: The disk is busy.', 'control: a failure names the folder');
+  assert.deepEqual(f.toasts.map((t) => t[0]), ['The disk is busy.'], 'control: and the toast says why');
+  assert.ok(fSaid.length > 0 && fSaid.every((t) => t === ''), `nor a failure's: ${JSON.stringify(fSaid)}`);
+});
+
 test('(vii) a Stop that left focus on <body> — a mouse click that focuses nothing — still lands it on "Scan … again"', async () => {
   const h = page({ route: server({ roots: [] }) });
   await boot(h);

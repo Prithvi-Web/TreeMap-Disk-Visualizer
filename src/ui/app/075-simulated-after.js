@@ -429,6 +429,9 @@ function syncCartPreviewChrome() {
   if (!banner) return;
   banner.hidden = !tmPreview.on;
   if (!tmPreview.on) {
+    // The preview over, nothing of the banner's is left said (BQS). Guarded,
+    // as below.
+    if (typeof sayAloud === 'function') sayAloud('tmPreviewSaid', '');
     wrap.style.removeProperty('--tm-preview-pad');
     // The right pad goes too (J52): the canvas takes its width back, and the
     // view drops the clearance, so the next preview measures its own.
@@ -457,6 +460,12 @@ function syncCartPreviewChrome() {
     // The open cart's footer says this sentence beside the banner, so while the
     // cart is open the stylesheet takes it out of the banner (H52).
     ` <span class="tm-pv-cart-said">${cartSpaceSaid()}</span>` + outside;
+  // Said aloud in #tmPreviewSaid (BQS): the banner comes on screen with these
+  // words already in it, which a screen reader seldom announces. Its message
+  // as it is rendered — innerText, so the sentence the stylesheet hides beside
+  // the open cart is not said, and the Exit preview button is no part of it.
+  // Guarded: a page reader may lift this function without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('tmPreviewSaid', $('tmPreviewText').innerText);
   // The banner floats over the map's top edge, and covered the labels of the
   // top-left tiles ("Videos", "holiday-4k.mov" — QA D64). The wrap is padded
   // by the banner's measured height instead — it wraps to two lines beside
