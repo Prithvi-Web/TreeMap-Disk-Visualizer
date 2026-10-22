@@ -317,6 +317,9 @@ async function showFinishedAfterStop(scanId, gen, noted, path) {
   }
   if (noted && state.lastFolder === noted) state.lastFolder = null; // the tree is on screen: no start screen names it
   state.scanId = scanId;
+  // The scan landed after all, so the Stop no longer stands over its generation: what finishScan tells
+  // every view is a landing, and the tour moves with it as with any scan that lands (review F1.1).
+  state.lastStop = null;
   $('stopAnnounce').textContent = `The scan of ${path} had already finished when you pressed Stop — its results are on screen.`;
   const had = document.activeElement;
   await finishScan(result.root, stats && stats.durationMs > 0 ? stats.durationMs : 0, stats, { afterStop: true });

@@ -1074,17 +1074,22 @@ test('a tour held back for someone who has scanned before starts at the map when
   assert.deepEqual([not.tour.active, not.renders], [false, []], 'control: a tour nobody held back stays down');
 });
 
-test('the tour moves with a scan that lands — never with the saved index\'s tree painted while its scan is still to come, nor with a Stop putting an older tree back, so it never takes the view and focus from the Stop the person is about to press (BQR-1 item 12a)', async () => {
-  // Eighth and ninth browser passes (25 trials): a Stop pressed at the paint left focus on the map card's "Show me what
-  // I could free" — the index paint (finishScan's TOPIC.scan with no scan behind it) started the held-back tour, which
-  // put the map up over the Dashboard's Stop and focused its card, so the next Enter, meant for Stop, pressed it.
+/** The tour's TOPIC.scan subscriber (the one after tourScanFailed), out of the built page, as a statement. */
+function tourLandingSubscriber(): string {
   const at = INDEX.indexOf('subscribe(TOPIC.scan, () => {', INDEX.indexOf('function tourScanFailed('));
   let depth = 0; let end = -1;
   for (let i = INDEX.indexOf('{', at); i < INDEX.length && end === -1; i++) {
     if (INDEX[i] === '{') depth++;
     else if (INDEX[i] === '}' && --depth === 0) end = i + 1;
   }
-  const subscriber = `${INDEX.slice(at, end)});`;
+  return `${INDEX.slice(at, end)});`;
+}
+
+test('the tour moves with a scan that lands — never with the saved index\'s tree painted while its scan is still to come, nor with a Stop putting an older tree back, so it never takes the view and focus from the Stop the person is about to press (BQR-1 item 12a)', async () => {
+  // Eighth and ninth browser passes (25 trials): a Stop pressed at the paint left focus on the map card's "Show me what
+  // I could free" — the index paint (finishScan's TOPIC.scan with no scan behind it) started the held-back tour, which
+  // put the map up over the Dashboard's Stop and focused its card, so the next Enter, meant for Stop, pressed it.
+  const subscriber = tourLandingSubscriber();
   const run = async (tourAt: { deferred: boolean; step: string; active: boolean }, scan: Record<string, unknown>) => {
     const tour = { wins: [], winIx: 0, added: [], unknownReason: '', winsAwaitScan: false, ...tourAt };
     const state = { root: { name: 'Mail' }, view: 'dashboard', scanGen: 7, lastStop: null, indexScanDue: false, ...scan };
@@ -1118,6 +1123,51 @@ test('the tour moves with a scan that lands — never with the saved index\'s tr
   const stop = pageFn('async function stopScan(');
   const said = stop.indexOf('state.lastStop = { gen, noted: null };');
   assert.ok(said !== -1 && said < stop.indexOf('putBackHeldTree();'), 'the Stop is recorded before the older tree is put back');
+});
+
+test('a scan that had already finished when Stop was pressed lands, and the tour moves with it — the welcome card, and a tour held back for someone who has scanned before, go to the map; a finished scan that cannot be shown moves nothing (review F1.1, seventh browser pass J02)', async () => {
+  // stopScan recorded the Stop (lastStop of this generation) and took the card back to the welcome; the cancel answered
+  // { cancelled: false, status: 'complete' }, so stopSettled shows the finished scan (showFinishedAfterStop) through
+  // finishScan, whose TOPIC.scan is a landing in the same generation as that Stop.
+  const subscriber = tourLandingSubscriber();
+  const shown = pageFn('async function showFinishedAfterStop(');
+  const ROOT = { name: 'Mail', path: '/r/Mail' };
+  const run = async (tourAt: { deferred: boolean; step: string; active: boolean }, readable: boolean) => {
+    const tour = { wins: [], winIx: 0, added: [], unknownReason: '', winsAwaitScan: false, ...tourAt };
+    const state: Record<string, unknown> = { root: null, view: 'dashboard', scanGen: 7, lastStop: { gen: 7, noted: null }, indexScanDue: false, lastFolder: null, scanId: null };
+    const views: string[] = []; const renders: string[] = []; const landed: Array<() => void> = [];
+    new Function('subscribe', 'TOPIC', 'tour', 'state', 'switchView', 'tourRender', 'tourRejudgeWins', `'use strict'; ${subscriber}`)(
+      (_topic: string, fn: () => void) => { landed.push(fn); }, { scan: 'scan' }, tour, state,
+      (v: string) => { views.push(v); state.view = v; }, () => { renders.push(tour.step); }, () => {});
+    const finished: unknown[] = [];
+    const finishScan = async (root: unknown) => { // as the page's: the tree drawn, the scan chrome ended, every view told
+      finished.push(root);
+      state.root = root;
+      state.indexScanDue = false;
+      landed[0]();
+    };
+    const api = async (url: string) => {
+      if (url.endsWith('/stats')) return { scanId: 'scan-7', status: 'complete', durationMs: 1200 };
+      if (!readable) throw new Error('The scan record is gone');
+      return { status: 'complete', root: ROOT };
+    };
+    const el = () => ({ innerHTML: '', textContent: '' });
+    const fn = new Function('state', 'api', '$', 'icon', 'escapeHtml', 'finishScan', 'document', 'startLastLine', 'withFocusKept', 'renderStartChoices',
+      `'use strict'; ${shown}; return showFinishedAfterStop;`)(
+      state, api, el, () => '', (s: string) => s, finishScan, { activeElement: null, body: {} }, () => '', (f: () => void) => f(), () => {});
+    await fn('scan-7', 7, null, '/r/Mail');
+    await new Promise((r) => setImmediate(r)); // the subscriber's microtask
+    const stop = state.lastStop as { gen: number } | null;
+    return { active: tour.active, step: tour.step, views, renders, finished: finished.length, stopStands: !!stop && stop.gen === state.scanGen };
+  };
+  const welcome = { deferred: false, step: 'welcome', active: true };
+  const heldBack = { deferred: true, step: 'welcome', active: false };
+  assert.deepEqual(await run(welcome, true), { active: true, step: 'map', views: ['treemap'], renders: ['map'], finished: 1, stopStands: false },
+    'the finished scan lands: the welcome card goes to the map with it, as with any scan that lands');
+  assert.deepEqual(await run(heldBack, true), { active: true, step: 'map', views: ['treemap'], renders: ['map'], finished: 1, stopStands: false },
+    'and a tour held back for someone who has scanned before starts at the map');
+  assert.deepEqual(await run(welcome, false), { active: true, step: 'welcome', views: [], renders: [], finished: 0, stopStands: true },
+    'a finished scan whose results cannot be shown lands nothing: the Stop still stands over its generation, and the card stays the welcome');
 });
 
 test('the map card, its quick wins asked for while the scan behind the saved index\'s tree runs, says they appear once the scan finishes — no button that would ask again, and focus on Skip, never <body> (review F1.4)', () => {

@@ -492,7 +492,9 @@ function tourRejudgeWins() {
 // while its scan is still to come (indexScanDue) — the person's Stop is on the
 // Dashboard, and the map put up over it, its card focused, turned the next
 // Enter, meant for Stop, into "Show me what I could free" — nor a Stop putting
-// an older tree back (stopScan records the Stop first): nothing landed.
+// an older tree back (stopScan records the Stop first): nothing landed. A scan
+// that had finished when Stop was pressed does land (showFinishedAfterStop
+// clears the Stop first, review F1.1).
 subscribe(TOPIC.scan, () => {
   const landed = !state.indexScanDue && !(state.lastStop && state.lastStop.gen === state.scanGen);
   if (tour.deferred && !tour.active && landed) {

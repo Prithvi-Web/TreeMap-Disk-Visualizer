@@ -9984,6 +9984,9 @@ async function showFinishedAfterStop(scanId, gen, noted, path) {
   }
   if (noted && state.lastFolder === noted) state.lastFolder = null; // the tree is on screen: no start screen names it
   state.scanId = scanId;
+  // The scan landed after all, so the Stop no longer stands over its generation: what finishScan tells
+  // every view is a landing, and the tour moves with it as with any scan that lands (review F1.1).
+  state.lastStop = null;
   $('stopAnnounce').textContent = `The scan of ${path} had already finished when you pressed Stop — its results are on screen.`;
   const had = document.activeElement;
   await finishScan(result.root, stats && stats.durationMs > 0 ? stats.durationMs : 0, stats, { afterStop: true });
@@ -34198,7 +34201,9 @@ function tourRejudgeWins() {
 // while its scan is still to come (indexScanDue) — the person's Stop is on the
 // Dashboard, and the map put up over it, its card focused, turned the next
 // Enter, meant for Stop, into "Show me what I could free" — nor a Stop putting
-// an older tree back (stopScan records the Stop first): nothing landed.
+// an older tree back (stopScan records the Stop first): nothing landed. A scan
+// that had finished when Stop was pressed does land (showFinishedAfterStop
+// clears the Stop first, review F1.1).
 subscribe(TOPIC.scan, () => {
   const landed = !state.indexScanDue && !(state.lastStop && state.lastStop.gen === state.scanGen);
   if (tour.deferred && !tour.active && landed) {
