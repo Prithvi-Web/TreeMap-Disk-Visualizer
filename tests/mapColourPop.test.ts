@@ -1359,7 +1359,7 @@ function rasterCtx(W: number, H: number, ground: RGB) {
 type Band = { x: number; y: number; w: number; h: number; rgb: string };
 /** A rectangle as drawTreemap leaves it in pxRects, with what it recorded painting it. */
 type Texture = { stops: RGB[]; rects: number[][] };
-type Painted = { n: Tile; x: number; y: number; w: number; h: number; frame: boolean; lines?: Band[]; lit?: boolean; stops?: RGB[]; fillRgb?: RGB; bg?: RGB[]; bands?: Band[]; tex?: Texture; lw?: number; seen?: RGB[]; litSeen?: RGB };
+type Painted = { n: Tile; x: number; y: number; w: number; h: number; frame: boolean; lines?: Band[]; lit?: boolean; stops?: RGB[]; fillRgb?: RGB; bg?: RGB[]; bands?: Band[]; tex?: Texture; lw?: number; seen?: RGB[]; litSeen?: RGB; dashes?: number[][] };
 
 /**
  * `tiles` painted by the real drawTreemap onto a `W`×`H` css px map in `palette`'s theme, at device pixel ratio `dpr`: a raster of the device's pixels,
@@ -3929,6 +3929,83 @@ test('owner\'s refinement: at a T-junction where the tile that runs on past a fi
           assert.deepEqual(partings(raster, px, dpr).unparted, [], `${where}: files not parted by ${EDGE_BAR}:1 from what lies beside them`);
           assert.deepEqual(measureEdges(raster, px, dpr).under, [], `${where}: lines under ${EDGE_BAR}:1 against a tile beside them`);
         }
+      }
+    }
+  }
+});
+
+/**
+ * Containers TreeMap can look inside (pass 7's indigo dashes, residual 6), in a top-level folder 260×200 px: an archive
+ * 40×30 px with a glyph, one 16×12 px beside it, one 6×6 px, one in the folder's corner along its band, and a Photos
+ * library 140×108 px nested in the folder, holding twelve files 35×36 px — beside files of their own colours.
+ */
+function containerMap(): { tiles: Tile[]; W: number; H: number } {
+  const W = 260, H = 200, pct = (v: number, of: number) => (v / of) * 100;
+  const node = (path: string, depth: number, x: number, y: number, w: number, h: number, size: number, extra: object = {}): Tile =>
+    ({ name: path.slice(path.lastIndexOf('/') + 1), path, size, type: 'file', depth, expanded: false, x: pct(x, W), y: pct(y, H), w: pct(w, W), h: pct(h, H), ...extra });
+  const dir = { type: 'dir', expanded: true };
+  const tiles = [
+    node('/k', 1, 0, 0, 260, 200, 3e10, dir),
+    node('/k/a.zip', 2, 12, 30, 40, 30, 5e8, { container: 'zip' }), node('/k/b.zip', 2, 52, 30, 16, 12, 2e8, { container: 'zip' }),
+    node('/k/g.bin', 2, 52, 42, 16, 18, 9e7), node('/k/c.zip', 2, 68, 30, 6, 6, 4e6, { container: 'zip' }), node('/k/h.bin', 2, 68, 36, 6, 24, 3e6),
+    node('/k/i.bin', 2, 74, 30, 22, 30, 4e9), node('/k/d.bin', 2, 12, 60, 84, 40, 1.5e9),
+    node('/k/P.photoslibrary', 2, 100, 30, 140, 108, 6e9, { ...dir, container: 'photos' }),
+    ...Array.from({ length: 12 }, (_, k) => node(`/k/P.photoslibrary/p${k}.heic`, 3, 100 + 35 * (k % 4), 30 + 36 * Math.floor(k / 4), 35, 36, 10 ** (6 + (k % 5) * 0.8))),
+    node('/k/z.zip', 2, 230, 160, 30, 40, 7e8, { container: 'zip' }), node('/k/y.bin', 2, 200, 160, 30, 40, 2e9),
+  ];
+  return { tiles: tiles as Tile[], W, H };
+}
+
+test('owner\'s refinement: the indigo dashes of a container TreeMap can look inside lie on whole device pixels, a device pixel clear of every line and band — its own lines or band, its folder\'s band along its edge, the lines of what it holds — so every line beside them still reaches 3:1, where a dash blended into the pixel beside a file\'s line stood 2.67:1 and the dashes ran over the bands of Pictures and Code; at device pixel ratios 0.8, 1, 1.25, 1.5, 1.75 and 2, in both themes, coloured by size and by Age (residual 6)', () => {
+  const m = containerMap(), age = hashColouring('age');
+  for (const dpr of [0.8, 1, 1.25, 1.5, 1.75, 2]) for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) for (const [by, colour] of [['size', undefined], ['Age', age]] as const) {
+    const where = `${theme}, dpr ${dpr}, by ${by}`;
+    const { raster, px } = rasterPaint(m.tiles, palette, m.W, m.H, colour, undefined, false, dpr);
+    const of = (name: string) => px.find((r) => r.n.path.endsWith(`/${name}`))!;
+    for (const name of ['a.zip', 'b.zip', 'z.zip', 'P.photoslibrary']) {
+      assert.ok((of(name).dashes || []).length >= 4, `${where}: control — ${name} has its dashes recorded (${(of(name).dashes || []).length})`);
+    }
+    assert.ok(of('a.zip').lines && of('P.photoslibrary').lw! > 0 && of('k').lw! > 0, `${where}: control — the archive is lined, the library and its folder banded`);
+    assert.deepEqual(measureEdges(raster, px, dpr).under, [], `${where}: lines under ${EDGE_BAR}:1 against a tile beside them`);
+    // A dashed ring on each of its four sides — the corner archive's too, inside its folder's band along two of them.
+    for (const name of ['a.zip', 'b.zip', 'z.zip', 'P.photoslibrary']) {
+      const r = of(name), d = r.dashes!, mid = { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+      const sides = { top: d.some(([, y, w, h]) => w > h && y < mid.y), bottom: d.some(([, y, w, h]) => w > h && y > mid.y), left: d.some(([x, , w, h]) => h > w && x < mid.x), right: d.some(([x, , w, h]) => h > w && x > mid.x) };
+      assert.deepEqual(sides, { top: true, bottom: true, left: true, right: true }, `${where}: ${name} is dashed on each of its sides`);
+    }
+    // Every device pixel a line or a band takes.
+    const W = raster.W, H = raster.H, lined = new Uint8Array(W * H);
+    for (const b of px.flatMap((r) => [...(r.lines || []), ...(r.bands || [])])) {
+      for (let y = Math.max(0, Math.floor(b.y * dpr + 1e-6)); y < Math.min(H, Math.ceil((b.y + b.h) * dpr - 1e-6)); y++) {
+        for (let x = Math.max(0, Math.floor(b.x * dpr + 1e-6)); x < Math.min(W, Math.ceil((b.x + b.w) * dpr - 1e-6)); x++) lined[y * W + x] = 1;
+      }
+    }
+    const whole = (v: number) => Math.abs(v * dpr - Math.round(v * dpr)) < 1e-6;
+    const near: string[] = [], off: string[] = [];
+    let dashPx = 0;
+    for (const r of px) {
+      for (const [x, y, w, h] of r.dashes || []) {
+        if (![x, y, x + w, y + h].every(whole) || !(w > 0 && h > 0)) { off.push(`${r.n.name}: ${x * dpr},${y * dpr} ${w * dpr}×${h * dpr}`); continue; }
+        for (let py = Math.round(y * dpr); py < Math.round((y + h) * dpr); py++) {
+          for (let qx = Math.round(x * dpr); qx < Math.round((x + w) * dpr); qx++) {
+            dashPx++;
+            const beside = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => lined[(py + dy) * W + qx + dx] === 1);
+            if (beside && near.length < 6) near.push(`${r.n.name}'s dash at ${qx},${py}`);
+          }
+        }
+      }
+    }
+    assert.deepEqual(off, [], `${where}: dashes off whole device pixels`);
+    assert.ok(dashPx > 200, `${where}: control — ${dashPx} device pixels of dashes`);
+    assert.deepEqual(near, [], `${where}: dashes on a line or a band, or beside one`);
+    // Drawn as recorded: each dash shows over the tile it lies on.
+    const dashCalls = new Set(px.flatMap((r) => (r.dashes || []).map(([x, y, w, h]) => ['fillRect', 'rgba(94,92,230,0.9)', x, y, w, h].join('|'))));
+    const bare = rasterPaint(m.tiles, palette, m.W, m.H, colour, undefined, false, dpr, dashCalls).raster;
+    for (const r of px) {
+      for (const [x, y, w, h] of r.dashes || []) {
+        const cx = Math.floor((x + w / 2) * dpr), cy = Math.floor((y + h / 2) * dpr);
+        assert.ok(contrast(raster.at(cx, cy), bare.at(cx, cy)) > 1.5 || Math.max(...raster.at(cx, cy).map((v, i) => Math.abs(v - bare.at(cx, cy)[i]))) > 40,
+          `${where}: ${r.n.name}'s dash at ${cx},${cy} shows (${raster.at(cx, cy).map(Math.round)} over ${bare.at(cx, cy).map(Math.round)})`);
       }
     }
   }

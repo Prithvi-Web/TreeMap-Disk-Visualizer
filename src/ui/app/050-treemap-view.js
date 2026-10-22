@@ -1954,6 +1954,54 @@ function tmLeafTexture(r, mask, mw, mh, dpr) {
   };
 }
 
+/** The indigo of a container's dashes (pass 7): a container TreeMap can look inside. */
+const TM_OPEN_DASH = 'rgba(94,92,230,0.9)';
+/** A container's dashes, in painter's px: so long, then a gap so long, from each corner of its ring. */
+const TM_OPEN_DASH_ON = 5;
+const TM_OPEN_DASH_OFF = 3;
+/**
+ * Where pass 7 lays the indigo dashes of a container TreeMap can look inside
+ * (`r`), as rectangles [x, y, w, h] on whole device pixels: a ring one line's
+ * width wide (tmLinePx), TM_OPEN_DASH_ON painter's px on and TM_OPEN_DASH_OFF
+ * off along each side from its corners, inside how far its own lines or band
+ * and the bands of its folders along its edge reach in (`g`, the
+ * neighbourhood), a device pixel clear of them — and clear of every line and
+ * band in it (`mask`, tmLineMask: the lines of what a Photos library holds).
+ * Stroked 1.5 css px wide 1.5 px in, a dash covered part of the device pixel
+ * beside a file's own line and blended with it, 2.67:1 from the tile beyond,
+ * and ran over the bands of Pictures and Code (residual 6). None where the
+ * ring does not fit.
+ */
+function tmOpenDashes(r, g, mask, mw, mh, dpr) {
+  const t = tmLinePx(1, dpr), gap = 1 / dpr, u = tmPxScale(dpr);
+  // How far in from each side a line or band reaches: its own, and its folders' laid over its edge.
+  const reach = { top: 0, bottom: 0, left: 0, right: 0 };
+  for (let f = g.folderOf.get(r); f; f = g.folderOf.get(f)) {
+    for (const side of Object.keys(reach)) if (f.lw > 0 && tmTouches(r, f, side)) reach[side] = Math.max(reach[side], f.lw);
+  }
+  if (r.frame && r.lw > 0) for (const side of Object.keys(reach)) reach[side] = Math.max(reach[side], r.lw);
+  for (const l of r.lines || []) {
+    reach.top = Math.max(reach.top, l.w >= l.h && l.y - r.y < r.h / 2 ? l.y + l.h - r.y : 0);
+    reach.bottom = Math.max(reach.bottom, l.w >= l.h && l.y - r.y >= r.h / 2 ? r.y + r.h - l.y : 0);
+    reach.left = Math.max(reach.left, l.h > l.w && l.x - r.x < r.w / 2 ? l.x + l.w - r.x : 0);
+    reach.right = Math.max(reach.right, l.h > l.w && l.x - r.x >= r.w / 2 ? r.x + r.w - l.x : 0);
+  }
+  const x0 = tmSnap(r.x + reach.left + gap, dpr), x1 = tmSnap(r.x + r.w - reach.right - gap, dpr);
+  const y0 = tmSnap(r.y + reach.top + gap, dpr), y1 = tmSnap(r.y + r.h - reach.bottom - gap, dpr);
+  if (x1 - x0 < 2 * t + u || y1 - y0 < 2 * t + u) return [];
+  // Each side's dashes from its start, as runs [a, b) along it.
+  const runs = (a, b) => {
+    const out = [];
+    for (let v = a; v < b - 1e-6; v += (TM_OPEN_DASH_ON + TM_OPEN_DASH_OFF) * u) out.push([tmSnap(v, dpr), tmSnap(Math.min(b, v + TM_OPEN_DASH_ON * u), dpr)]);
+    return out.filter(([p, q]) => q > p + 1e-6);
+  };
+  const rects = [
+    ...runs(x0, x1).flatMap(([a, b]) => [[a, y0, b - a, t], [a, y1 - t, b - a, t]]),
+    ...runs(y0 + t, y1 - t).flatMap(([a, b]) => [[x0, a, t, b - a], [x1 - t, a, t, b - a]]),
+  ];
+  return rects.flatMap((q) => tmClearRuns(q, mask, mw, mh, dpr));
+}
+
 const TM_CUSHION_LIGHT = 0.16;   // the white mixed into the top edge
 const TM_CUSHION_SHADE = 0.22;   // the black mixed into the bottom edge
 const TM_CUSHION_FULL_H = 60;    // px: a tile this tall or taller gets the whole cushion
@@ -2528,14 +2576,21 @@ function drawTreemap() {
 
   // Pass 7: container badges (Feature 23) — drillable archives get a dashed
   // indigo border and a small box glyph. Virtual entries inside stay plain.
+  // The dashes keep a device pixel clear of every line and band
+  // (tmOpenDashes), and stop at the top-level folders' name tags as the lines
+  // do.
+  ctx.save();
+  if (tagRects.length) tmClipOutTags(ctx, tagRects, pw / dpr, ph / dpr);
+  ctx.fillStyle = TM_OPEN_DASH;
+  for (const r of px) {
+    if (!containerListable(r.n) || r.n.virtual) continue;
+    r.dashes = tmOpenDashes(r, near, lineMask, pw, ph, dpr);
+    for (const [x, y, w, h] of r.dashes) ctx.fillRect(x, y, w, h);
+  }
+  ctx.restore();
   for (const r of px) {
     if (!containerListable(r.n) || r.n.virtual) continue;
     marks.open.add(r.n.container);
-    ctx.strokeStyle = 'rgba(94,92,230,0.9)';
-    ctx.setLineDash([5, 3]);
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(r.x + 1.5, r.y + 1.5, Math.max(1, r.w - 3), Math.max(1, r.h - 3));
-    ctx.setLineDash([]);
     if (r.w > 40 && r.h > 34) {
       const bx = r.x + r.w - 15, by = r.y + r.h - 15;
       ctx.strokeStyle = 'rgba(255,255,255,0.95)';
