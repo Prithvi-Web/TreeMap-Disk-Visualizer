@@ -162,6 +162,151 @@ test('every function that writes a box said aloud — showing it, hiding it, or 
   }
 });
 
+/* ── each write, on its own branch (BQT item 32b) ──
+   The check above asks whether a function that writes a box says the box's words anywhere in it, so a function
+   with one branch that writes the box and leaves without a word passed as long as another branch spoke. Each write
+   is now held to its own branch: walking out from it, block by block, a say must stand on the way — after it in the
+   branch, before the branch leaves; or before it, with no wait (an await) since, at any level it passed through.
+   A block a branch only passes beside — an else, a callback — is not on its way. A finally block's write is said
+   when the try before it and its catch both say. */
+
+/** Every `{…}` block of a function's source, by the offsets of its braces: strings, comments, regular expressions and template text skipped. */
+function blocksOf(src: string): Array<{ start: number; end: number }> {
+  const out: Array<{ start: number; end: number }> = [];
+  const stack: Array<{ kind: 'block' | 'tpl'; start: number }> = [];
+  let i = 0;
+  let prev = '';
+  const template = (): void => { // inside `…`, from i: up to its end, or into a ${ … }
+    for (; i < src.length; i++) {
+      if (src[i] === '\\') { i++; continue; }
+      if (src[i] === '`') { i++; return; }
+      if (src[i] === '$' && src[i + 1] === '{') { stack.push({ kind: 'tpl', start: i + 1 }); i += 2; return; }
+    }
+  };
+  while (i < src.length) {
+    const c = src[i];
+    if (c === '/' && src[i + 1] === '/') { i = src.indexOf('\n', i); if (i === -1) break; continue; }
+    if (c === '/' && src[i + 1] === '*') { i = src.indexOf('*/', i) + 2; continue; }
+    if (c === '\'' || c === '"') {
+      for (i++; i < src.length && src[i] !== c; i++) if (src[i] === '\\') i++;
+      i++; prev = 'x'; continue;
+    }
+    if (c === '/' && (prev === '' || /[(,=:[!&|?{};]/.test(prev))) { // a regular expression
+      let inClass = false;
+      for (i++; i < src.length; i++) {
+        if (src[i] === '\\') { i++; continue; }
+        if (src[i] === '[') inClass = true; else if (src[i] === ']') inClass = false;
+        else if (src[i] === '/' && !inClass) break;
+      }
+      i++; prev = 'x'; continue;
+    }
+    if (c === '`') { i++; template(); prev = 'x'; continue; }
+    if (c === '{') stack.push({ kind: 'block', start: i });
+    else if (c === '}') {
+      const top = stack.pop();
+      if (top && top.kind === 'block') out.push({ start: top.start, end: i });
+      else if (top && top.kind === 'tpl') { i++; template(); prev = 'x'; continue; }
+    }
+    if (!/\s/.test(c)) prev = c;
+    i++;
+  }
+  return out;
+}
+
+/** Whether a write at offset `at` of a function's source stands on a branch that says the words in `region`. */
+function saidOnBranch(fn: string, at: number, region: string): boolean {
+  const blocks = blocksOf(fn);
+  // A guard around the say itself is part of the say: `if (typeof sayAloud === 'function') { sayAloud(…) }`.
+  const guard = (b: { start: number }) => /typeof sayAloud === 'function'\)\s*$/.test(fn.slice(Math.max(0, b.start - 60), b.start));
+  // A name the function gives its say: `const say = (words) => { … sayAloud('region', words) … }`.
+  const aliases = [...fn.matchAll(new RegExp(String.raw`(?:const|let) (\w+) = \([^)]*\) => \{[^}]*sayAloud\('${region}', `, 'g'))].map((m) => m[1]);
+  const says = (text: string) => text.includes(`sayAloud('${region}', `) || aliases.some((a) => new RegExp(String.raw`(?<![\w.])${a}\(`).test(text));
+  /** The text of block `b` at its own level: the blocks inside it blanked, but a guard around a say. */
+  const level = (b: { start: number; end: number }) => {
+    let text = fn.slice(0, b.end);
+    for (const inner of blocks) {
+      if (inner.start > b.start && inner.end < b.end && !guard(inner)) text = text.slice(0, inner.start) + ' '.repeat(inner.end - inner.start + 1) + text.slice(inner.end + 1);
+    }
+    return text;
+  };
+  const chain = blocks.filter((b) => b.start < at && at < b.end).sort((a, b) => a.start - b.start);
+  let lo = at;
+  let hi = at;
+  let left = false; // the branch has left a block it passed through: what stands after that block is not on its way
+  let waited = false; // an await stands between a say before and the write
+  for (let k = chain.length - 1; k >= 0; k--) {
+    const b = chain[k];
+    const text = level(b);
+    if (k < chain.length - 1 && /finally\s*$/.test(fn.slice(0, lo))) {
+      // A finally: said when the try before it and its catch both say.
+      const before = blocks.filter((x) => x.end < lo && x.start > b.start).sort((x, y) => y.end - x.end).slice(0, 2);
+      if (before.length === 2 && before.every((x) => says(fn.slice(x.start, x.end)))) return true;
+    }
+    const before = text.slice(b.start + 1, lo);
+    const sayAt = Math.max(before.lastIndexOf(`sayAloud('${region}', `), ...aliases.map((a) => before.search(new RegExp(String.raw`(?<![\w.])${a}\(`))));
+    if (!waited && sayAt !== -1 && !/\bawait\b/.test(fn.slice(b.start + 1 + sayAt, lo))) return true;
+    if (/\bawait\b/.test(fn.slice(b.start + 1, lo))) waited = true;
+    const rest = text.slice(hi, b.end);
+    const leaves = /\b(?:return|throw)\b/.exec(rest);
+    if (!left && says(leaves ? rest.slice(0, leaves.index) : rest)) return true;
+    if (leaves) left = true;
+    lo = b.start;
+    hi = b.end + 1;
+  }
+  return false;
+}
+
+/** Each place the page writes the element with this id — its hidden, its text or its markup — and the function it is in. */
+function writeSitesOf(id: string): Array<{ fn: string; at: number; line: string }> {
+  const write = String.raw`\.(?:hidden|textContent|innerHTML|innerText)\s*=(?!=)`;
+  const sites: Array<{ fn: string; at: number; line: string }> = [];
+  const site = (at: number) => {
+    const fn = enclosingFn(at);
+    const start = INDEX.lastIndexOf(fn, at);
+    sites.push({ fn, at: at - start, line: INDEX.slice(at, INDEX.indexOf('\n', at)).trim() });
+  };
+  for (const m of INDEX.matchAll(new RegExp(String.raw`\$\('${id}'\)${write}`, 'g'))) site(m.index);
+  for (const m of INDEX.matchAll(new RegExp(String.raw`(?:const|let) (\w+) = \$\('${id}'\);`, 'g'))) {
+    const fn = enclosingFn(m.index);
+    const start = INDEX.lastIndexOf(fn, m.index);
+    for (const w of fn.matchAll(new RegExp(String.raw`(?<![\w.])${m[1]}${write}`, 'g'))) site(start + w.index);
+  }
+  return sites;
+}
+
+test('the branch check reads branches: a write whose branch leaves without a word is caught though the function speaks elsewhere; a say before it counts unless the function waited since, and a block beside it does not (BQT item 32b)', () => {
+  /** Where the n-th write of #b is in a function's source. */
+  const at = (fn: string, n = 1) => { let i = -1; for (let k = 0; k < n; k++) i = fn.indexOf('$(\'b\').', i + 1); return i; };
+  const r = 'r';
+  const two = `function f(a) {\n  if (a) { $('b').hidden = true; return; }\n  $('b').hidden = false;\n  sayAloud('r', 'x');\n}`;
+  assert.equal(saidOnBranch(two, at(two), r), false, 'a branch that writes and leaves with no say');
+  assert.equal(saidOnBranch(two, at(two, 2), r), true, 'and the write after it, which the say follows');
+  const first = `function f(a) {\n  sayAloud('r', a ? '' : 'x');\n  if (a) { $('b').hidden = true; return; }\n}`;
+  assert.equal(saidOnBranch(first, at(first), r), true, 'a say before, on the way in');
+  const waits = `async function f() {\n  sayAloud('r', 'Working…');\n  try { await go(); sayAloud('r', ''); } catch (e) { $('b').hidden = false; $('b').textContent = e.message; }\n}`;
+  assert.equal(saidOnBranch(waits, at(waits), r), false, 'a say before an await does not say what is written after it');
+  const beside = `function f(a) {\n  if (a) { sayAloud('r', 'x'); } else { $('b').hidden = true; }\n}`;
+  assert.equal(saidOnBranch(beside, at(beside), r), false, 'a say in the block beside it is not on its way');
+  const alias = `function f(a) {\n  const say = (w) => { if (typeof sayAloud === 'function') sayAloud('r', w); };\n  if (a) { $('b').hidden = true; say(''); return; }\n}`;
+  assert.equal(saidOnBranch(alias, at(alias), r), true, 'a name the function gives its say counts');
+  const fin = `async function f() {\n  try { await go(); sayAloud('r', ''); } catch (e) { sayAloud('r', e.message); } finally { $('b').hidden = true; }\n}`;
+  assert.equal(saidOnBranch(fin, at(fin), r), true, 'a finally whose try and catch both say');
+  const finNo = `async function f() {\n  try { await go(); sayAloud('r', ''); } catch (e) { log(e); } finally { $('b').hidden = true; }\n}`;
+  assert.equal(saidOnBranch(finNo, at(finNo), r), false, 'and not one whose catch says nothing');
+});
+
+test('every write of a box said aloud is on a branch that says it — each place a function shows, hides or fills it, never only somewhere else in the function — or the function runs only inside the one that says it (BQT item 32b)', () => {
+  for (const { box, region, parts = [], sayer } of SAID) {
+    const sites = [box, ...parts].flatMap(writeSitesOf);
+    assert.ok(sites.length > 0, `control: #${box} is written`);
+    for (const s of sites) {
+      // A painter that says nothing at all runs only inside the sayer (the test above holds it there).
+      if (sayer && !s.fn.includes(`sayAloud('${region}', `)) continue;
+      assert.ok(saidOnBranch(s.fn, s.at, region), `${fnName(s.fn)} writes #${box} — ${s.line} — on a branch that says nothing in #${region}`);
+    }
+  }
+});
+
 test('the two boxes that were never a status are plain: Disk City\'s hover card a tooltip, and the Clean Up refusal toasted, in the same task, every time it is shown (BQS)', () => {
   for (const { box, why } of NOT_LIVE) assert.ok(!isLive(tagOf(box)), `#${box} is no live region — ${why}: ${tagOf(box)}`);
   assert.match(tagOf('cityCard'), /\srole="tooltip"/, 'the hover card is a tooltip, as the map\'s is');
