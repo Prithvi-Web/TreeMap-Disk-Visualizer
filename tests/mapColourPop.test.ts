@@ -2474,10 +2474,11 @@ function uniformGrid(s: number, n: number, bytes: number) {
  * without the device pixels `skip` takes (a folder's band laid over the leaf's edge). And `ink`: the share of their area a line or a texture covers as the raster shows
  * it — each pixel counted by how far it lies from the fill toward the shade the tile's lines (r.lines) or texture (r.tex)
  * were laid in on its row, 0 to 1 — so a device pixel a 1 px line covers by half, at 150 %, counts a half: the same share at
- * every device pixel ratio, where `apart` counts that pixel whole.
+ * every device pixel ratio, where `apart` counts that pixel whole. And `moved`: the mean CIE L* of the cushion painted
+ * less that of the one measured against — with `solidOf`, how far the painter moved the tile's fill from its colour.
  */
 function tileLook(raster: ReturnType<typeof rasterCtx>, px: Painted[], inBox: (r: Painted) => boolean, dpr = 1, solidOf?: (r: Painted) => RGB[], skip?: (x: number, y: number) => boolean) {
-  let total = 0, apart = 0, black = 0, sum = 0, solid = 0, dL = 0, L = 0, strongest = 1, ink = 0;
+  let total = 0, apart = 0, black = 0, sum = 0, solid = 0, dL = 0, L = 0, strongest = 1, ink = 0, moved = 0;
   for (const r of px) {
     if (r.frame || !r.stops || !inBox(r)) continue;
     const darker = luminance(r.fillRgb!) >= 0.18;
@@ -2496,7 +2497,7 @@ function tileLook(raster: ReturnType<typeof rasterCtx>, px: Painted[], inBox: (r
         if (c > 1.05 && (luminance(p) < luminance(fill)) === darker) apart++;
         strongest = Math.max(strongest, c);
         if (luminance(p) < 0.03) black++;
-        sum += luminance(p); solid += luminance(ref); dL += lab(p).L - lab(ref).L; L += lab(ref).L;
+        sum += luminance(p); solid += luminance(ref); dL += lab(p).L - lab(ref).L; L += lab(ref).L; moved += lab(fill as RGB).L - lab(ref).L;
         // How far p lies from the fill toward a shade, along the line between them: the share of the pixel that shade covers.
         let k = 0;
         for (const sh of shades) {
@@ -2507,7 +2508,7 @@ function tileLook(raster: ReturnType<typeof rasterCtx>, px: Painted[], inBox: (r
       }
     }
   }
-  return { total, apart: apart / total, strongest, black: black / total, mean: sum / solid, dL: dL / total, L: L / total, ink: ink / total };
+  return { total, apart: apart / total, strongest, black: black / total, mean: sum / solid, dL: dL / total, L: L / total, ink: ink / total, moved: moved / total };
 }
 
 /** The page's tmLeafStops: the cushion a leaf of colour `base`, `h` css px tall, is painted with — solid, with nothing on it. */
@@ -2520,7 +2521,7 @@ const TAPER_COLOURS: Array<{ name: string; rgb: RGB }> = [
   ...OTHER_COLOURS.filter((c) => c.name === 'Reclaim not scored' || c.name === 'Age band C_ORANGE'),
 ];
 
-test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 to 18 px, the share of pixels a line or a texture takes, and the mean lightness against the tile\'s own solid colour, change smoothly from one size to the next — under 2 L* a step, 7 to 8 px too — in both themes, on the size ramp, Reclaim\'s "not scored" grey and an Age band, at device pixel ratios 0.667, 0.8, 1, 1.25, 1.5, 1.75 and 2 (review F3.2, F3.6; residual 3)', () => {
+test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 1 to 18 px, the share of pixels a line or a texture takes (from 5 px) and the mean lightness against the tile\'s own solid colour (from 3 px) change smoothly from one size to the next — under 2 L* a step, 7 to 8 px too, at every ratio — and the shade a leaf with a texture is filled with moves under 2 L* a size, from none at 1 px to the whole at 7, in both themes, on the size ramp, Reclaim\'s "not scored" grey and an Age band, at device pixel ratios 0.667, 0.8, 1, 1.25, 1.5, 1.75 and 2 (review F3.2, F3.6; residual 3; review F1.6, F1.11)', () => {
   // 7 px tiles were one flat block and 8 px tiles a heavy 2 px grid (each leaf drew its own outline, so neighbours met at
   // 2 px): 0% to 43.8% of the pixels, and 15 L* darker, in one step. Now two leaves with lines meet at one 1 px line, and
   // a smaller leaf draws a 1 px texture where they would meet: a 1 px seam per tile at every size, whose share falls as
@@ -2542,13 +2543,18 @@ test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 
   // own right and bottom line at those ratios put a 2 px grid back: 43.7% of the 8 px tiles' area at 150 %, against 26.4%
   // for 7 px (review F3.2). On a page zoomed out (ratio 0.8, 0.667) the painter's px is a device pixel, so the grids are of
   // tiles 5 to 18 device px, and a seam is one device pixel (review F3.6).
+  // Under 5 px: from 1 px, where a tile has no texture, the owner's texture starts at 2 px (1.1:1, taken by size on the
+  // device's pixels, so at 125 and 175 % the 2 px grid is part 2 px and part 1.6), a step of its own of 2.3 to 3.6 L*;
+  // from 3 px the lightness is held under 2 L* a step as above. And the shade the painter moves a textured leaf's fill
+  // to, toward the 8 px leaf (tmTexturedFill), is held to move under 2 L* a size from 1 px to 7: filled the whole way
+  // at every size, a 2 px grid stood 8.6 L* under a 1 px one, and nothing looked under 5 px (review F1.11).
   const grey = TAPER_COLOURS.find((c) => c.name === 'Reclaim not scored')!;
   const runs = [...TAPER_COLOURS.map((c) => ({ c, dpr: 1 })), { c: TAPER_COLOURS[1], dpr: 2 },
     ...[1.25, 1.5, 1.75].map((dpr) => ({ c: TAPER_COLOURS[1], dpr })), { c: grey, dpr: 1.5 }, { c: TAPER_COLOURS[1], dpr: 0.8 }, { c: grey, dpr: 0.667 }];
   for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
     for (const { c, dpr } of runs) {
       const looks: Array<ReturnType<typeof tileLook> & { s: number }> = [];
-      for (let s = 5; s <= 18; s++) {
+      for (let s = 1; s <= 18; s++) {
         const n = 9, g = uniformGrid(s * Math.max(1, 1 / dpr), n, 4e8);
         const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, () => c.rgb, undefined, false, dpr);
         // The middle tiles: the outer ring meets the map's edge.
@@ -2556,21 +2562,31 @@ test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 5 
         looks.push({ s, ...tileLook(raster, px, inner, dpr, (r) => LEAF_STOPS(c.rgb, r.h, null)) });
       }
       const where = `${theme}, ${c.name}, dpr ${dpr}`;
-      const table = looks.map((l) => `${l.s}px ${(l.apart * 100).toFixed(1)}% (ink ${(l.ink * 100).toFixed(1)}%) ${l.dL.toFixed(1)}L*`).join(', ');
+      const table = looks.map((l) => `${l.s}px ${(l.apart * 100).toFixed(1)}% (ink ${(l.ink * 100).toFixed(1)}%) ${l.dL.toFixed(1)}L* (fill ${l.moved.toFixed(1)})`).join(', ');
       // A seam's width in painter's px: a texture's one, a line's a whole number of device pixels (lineCss).
       const seam = (s: number) => (s >= OUTLINED_PX && dpr >= 1 ? lineCss(dpr) : 1);
       for (const l of looks) {
+        if (l.s < 5) continue;
         const want = 1 - ((l.s - seam(l.s)) / l.s) ** 2;
         if (Number.isInteger(dpr)) assert.ok(Math.abs(l.apart - want) < 0.02, `${where}: ${l.s} px tiles — one 1 px seam each, ${(l.apart * 100).toFixed(1)}% of their pixels (${table})`);
         assert.ok(Math.abs(l.ink - want) < 0.015, `${where}: ${l.s} px tiles — one 1 px seam each, covering ${(l.ink * 100).toFixed(1)}% of their area, where one covers ${(want * 100).toFixed(1)}% (${table})`);
       }
       for (let k = 1; k < looks.length; k++) {
-        const step = Math.abs(looks[k].ink - looks[k - 1].ink), before = k > 1 ? Math.abs(looks[k - 1].ink - looks[k - 2].ink) : Infinity;
-        // (Where the line is thinner than the texture's seam, its share steps down at 8 px.)
-        if (looks[k].s === OUTLINED_PX && seam(OUTLINED_PX) < 1 - 1e-9) continue;
-        assert.ok(step <= before + 0.005, `${where}: from ${looks[k - 1].s} to ${looks[k].s} px the seams' share steps ${(step * 100).toFixed(1)} points, more than the step before it (${(before * 100).toFixed(1)}) — ${table}`);
-        const dL = Math.abs(looks[k].dL - looks[k - 1].dL), bound = 2;
-        assert.ok(dL <= bound, `${where}: from ${looks[k - 1].s} to ${looks[k].s} px the mean lightness steps ${dL.toFixed(1)} L*, over ${bound} — ${table}`);
+        const a = looks[k - 1], b = looks[k];
+        if (b.s < OUTLINED_PX) {
+          const moved = Math.abs(b.moved - a.moved);
+          assert.ok(moved <= 2, `${where}: from ${a.s} to ${b.s} px the shade a textured leaf is filled with moves ${moved.toFixed(1)} L*, over 2 — ${table}`);
+        }
+        if (a.s < 3) continue;
+        if (a.s >= 5) {
+          const step = Math.abs(b.ink - a.ink), before = a.s > 5 ? Math.abs(a.ink - looks[k - 2].ink) : Infinity;
+          // (Where the line is thinner than the texture's seam, its share steps down at 8 px: the lightness is held there all the same.)
+          if (!(b.s === OUTLINED_PX && seam(OUTLINED_PX) < 1 - 1e-9)) {
+            assert.ok(step <= before + 0.005, `${where}: from ${a.s} to ${b.s} px the seams' share steps ${(step * 100).toFixed(1)} points, more than the step before it (${(before * 100).toFixed(1)}) — ${table}`);
+          }
+        }
+        const dL = Math.abs(b.dL - a.dL), bound = 2;
+        assert.ok(dL <= bound, `${where}: from ${a.s} to ${b.s} px the mean lightness steps ${dL.toFixed(1)} L*, over ${bound} — ${table}`);
       }
     }
   }
