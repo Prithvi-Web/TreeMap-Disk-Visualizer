@@ -466,9 +466,15 @@ function pageHarness(opts: {
   platform?: string; fda?: FdaState | null; refused?: { dirs: number; examples: string[] } | null; scanning?: boolean;
   refresh?: () => unknown; current?: () => unknown;
 }) {
+  // sayAloud and the map it keeps what each region says in, declared right above it in the page: the
+  // row's words are said in #accessSaid (BQS), a frame later — frames run by the test (frame()).
+  const aloud = /\nconst (\w+) = new Map\(\);[^\n]*\nfunction sayAloud\(/.exec(INDEX);
+  assert.ok(aloud, 'control: sayAloud keeps what each region says in a map declared right above it');
   const src = block('/* ── Refused folders ── */', '/* ── end refused folders ── */') +
     block('/* ── Full Disk Access recheck ── */', '/* ── end Full Disk Access recheck ── */') +
-    INDEX.slice(INDEX.indexOf('async function startScanRequest('), INDEX.indexOf('function quietRescanFailed('));
+    INDEX.slice(INDEX.indexOf('async function startScanRequest('), INDEX.indexOf('function quietRescanFailed(')) +
+    `\nconst ${aloud[1]} = new Map();\n${braced('function sayAloud(')}\n`;
+  const frames: Array<() => void> = [];
   const els: Record<string, El> = {};
   // The row's parts, as the shipped markup nests them: hiding the row hides
   // them too, and focus on one of them is inside the row.
@@ -539,14 +545,16 @@ function pageHarness(opts: {
   const followScanProgress = (): void => { order.push('follow'); };
   const TOPIC = { scan: 'scan', capabilities: 'capabilities' };
   const fns = new Function('$', 'state', 'api', 'toast', 'icon', 'escapeHtml', 'formatCount', 'emit', 'TOPIC', 'window', 'document',
-    'beginScanChrome', 'performance', 'abandonIfStopped', 'followScanProgress', 'failScan', 'quietRescanFailed', 'startNoteAllowed',
+    'beginScanChrome', 'performance', 'abandonIfStopped', 'followScanProgress', 'failScan', 'quietRescanFailed', 'startNoteAllowed', 'requestAnimationFrame',
     `'use strict'; ${src} return { render: renderRefusedFolders, notice: preScanAccessNotice, arm: armFullDiskAccessRecheck, scan: startScanRequest };`)(
     $, state, api, (m: string) => toasts.push(m), () => '', (s: string) => String(s), (n: number) => String(n),
     (topic: string, payload: unknown) => { emitted.push([topic, payload]); }, TOPIC, win, doc,
     beginScanChrome, { now: () => 0 }, () => false, followScanProgress,
     (m: string) => assert.fail(`the scan failed: ${m}`), () => assert.fail('a quiet rescan failed'),
     () => {}, // what the start screen learns from a scan the server accepted: tests/coreScanFlow.test.ts's
+    (fn: () => void) => { frames.push(fn); },
   ) as { render: () => void; notice: (p: string) => boolean; arm: () => void; scan: (p: string) => Promise<void> };
+  const frame = (): void => { for (const fn of frames.splice(0)) fn(); };
   const settle = async (): Promise<void> => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
   const fire = async (...names: string[]): Promise<void> => {
     for (const n of names) {
@@ -555,7 +563,7 @@ function pageHarness(opts: {
     }
     await settle();
   };
-  return { ...fns, els, $, state, toasts, asked, emitted, fire, doc, order };
+  return { ...fns, els, $, state, toasts, asked, emitted, fire, doc, order, frame };
 }
 
 test('the refused row\'s hint is the server\'s sentence for the state it probed, and the button is hidden exactly when granted', () => {
@@ -1129,6 +1137,51 @@ test('when the recheck hides a focused "Open Privacy settings", focus moves to w
   await o.fire('focus');
   assert.equal(o.els.accessOpenBtn.hidden, true);
   assert.equal(o.doc.activeElement, elsewhere, 'a hidden button that did not have focus moves nobody');
+});
+
+/** Every word written to #accessSaid from now on, recorded. */
+function recordSaid(h: ReturnType<typeof pageHarness>): string[] {
+  const said: string[] = [];
+  let text = h.$('accessSaid').textContent;
+  Object.defineProperty(h.$('accessSaid'), 'textContent', { get: () => text, set: (v: string) => { text = v; said.push(v); } });
+  return said;
+}
+
+test('focus moved onto the access row reads its words there, so #accessSaid does not say them as well; focus moved anywhere else leaves them to the region (BQT item 27)', async () => {
+  // The notice beside a running / scan, with focus on "Open Privacy settings": the recheck finds access on,
+  // hides the button, and the row, its last part, takes focus — reading its words, the new hint among them.
+  const n = pageHarness({ fda: 'not-granted', scanning: true });
+  n.notice('/');
+  n.frame();
+  assert.match(n.els.accessSaid.textContent, /^macOS keeps TreeMap out of the folders it protects/, 'control: the notice is said in #accessSaid as it comes on screen');
+  n.arm();
+  n.doc.activeElement = n.els.accessOpenBtn;
+  const said = recordSaid(n);
+  await n.fire('focus');
+  n.frame();
+  assert.equal(n.doc.activeElement, n.els.accessRow, 'control: focus lands on the row');
+  assert.match(n.els.accessHint.textContent, /^Full Disk Access is on/, 'control: whose words changed with it, and are what focus reads there');
+  assert.deepEqual(said.filter(Boolean), [], 'the region does not say the words focus has just read on the row: they would be heard twice');
+  assert.equal(n.els.accessSaid.textContent, '', 'nor does it go on saying the words before them');
+  n.render(); // the same words painted again, focus still on the row
+  n.frame();
+  assert.deepEqual(said.filter(Boolean), [], 'and the same words again are no news');
+
+  // Focus moved to a button that stays reads that button, not the row: the row's new words are the region's to say.
+  const h = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: ['/Users/x/Library/Mail'] } });
+  h.render();
+  h.frame();
+  h.arm();
+  h.doc.activeElement = h.els.accessOpenBtn;
+  const heard = recordSaid(h);
+  await h.fire('focus');
+  h.frame();
+  assert.equal(h.doc.activeElement, h.els.accessMissingBtn, 'control: focus moves to "What’s missing?"');
+  assert.deepEqual(heard.filter(Boolean), [`2 folders could not be read — Mail and 1 more. ${h.els.accessHint.textContent}`], 'the row\'s new words are said in the region');
+  // The row gone, focus goes to the Scan button and the region is emptied.
+  h.state.scanStats = { refused: { dirs: 0, examples: [] } };
+  h.render();
+  assert.deepEqual([h.doc.activeElement, h.els.accessSaid.textContent], [h.$('scanBtn'), ''], 'the row gone: focus on Scan, nothing left said');
 });
 
 test('any repaint that hides the focused part of the access row moves focus to what stays, or to the Scan button, never to the page body', async () => {

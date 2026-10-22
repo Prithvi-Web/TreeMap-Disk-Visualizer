@@ -1474,16 +1474,20 @@ function keepAccessFocus(paint) {
   const was = document.activeElement;
   const inRow = !!was && (was === row || row.contains(was));
   paint();
+  // Where focus goes, if the part of the row it was on is gone.
+  const stays = ['accessMissingBtn', 'accessOpenBtn', 'accessListBtn'].map((id) => $(id)).find((b) => !row.hidden && !b.hidden);
+  const to = inRow && (row.hidden || was.hidden) ? (stays || (row.hidden ? $('scanBtn') : row)) : null;
   // Every paint of the row runs in here, and the row comes on screen with its
   // words already in it, which a screen reader seldom announces: its count and
   // its hint, a line each, are said in #accessSaid a frame later, and taken
-  // back as it goes (BQS). Guarded: a page reader may lift this without sayAloud.
+  // back as it goes (BQS). Focus moved onto the row itself reads them there,
+  // so the region keeps them as heard and stays silent — said in both, they
+  // were heard twice (BQT item 27). Guarded: a page reader may lift this
+  // without sayAloud.
   if (typeof sayAloud === 'function') {
-    sayAloud('accessSaid', row.hidden ? '' : [$('accessText').textContent, $('accessHint').textContent].filter(Boolean).join('\n'));
+    sayAloud('accessSaid', row.hidden ? '' : [$('accessText').textContent, $('accessHint').textContent].filter(Boolean).join('\n'), to === row);
   }
-  if (!inRow || (!row.hidden && !was.hidden)) return;
-  const stays = ['accessMissingBtn', 'accessOpenBtn', 'accessListBtn'].map((id) => $(id)).find((b) => !row.hidden && !b.hidden);
-  (stays || (row.hidden ? $('scanBtn') : row)).focus();
+  if (to) to.focus();
 }
 
 /** Paint the before-the-total notice into the access row (no count yet, and no byte figure: U-D14). */

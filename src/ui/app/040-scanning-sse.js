@@ -452,16 +452,20 @@ function sayWorking(host, liveId) {
    A box shown on lines of its own — what innerText reads of one, a block a
    line — is said as sentences: the region is on one line (sr-only), where a
    line break is only a space, so each line but the last ends with a stop where
-   it has none, and a screen reader pauses there (BQS). */
+   it has none, and a screen reader pauses there (BQS).
+   `heard`: the words reach the person another way as they change — focus
+   moved onto the box reads them there — so they are kept as said, which a
+   repaint with the same words is no news to, and the region is left empty:
+   said in it too, they would be heard twice (BQT item 27). */
 const aloudSaid = new Map(); // region id → the words it says, or is about to
-function sayAloud(liveId, text) {
+function sayAloud(liveId, text, heard = false) {
   const live = $(liveId);
   const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
   const words = lines.map((l, i) => (i < lines.length - 1 && !/[.!?…:]$/.test(l) ? `${l}.` : l)).join(' ');
   if (!live || aloudSaid.get(liveId) === words) return;
   aloudSaid.set(liveId, words);
   live.textContent = '';
-  if (words) requestAnimationFrame(() => { if (aloudSaid.get(liveId) === words) live.textContent = words; });
+  if (words && !heard) requestAnimationFrame(() => { if (aloudSaid.get(liveId) === words) live.textContent = words; });
 }
 
 /**
