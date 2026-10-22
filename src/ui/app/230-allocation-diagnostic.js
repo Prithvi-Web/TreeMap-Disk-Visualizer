@@ -92,6 +92,13 @@ async function renderAllocationDiagnostic() {
 async function loadFleet() {
   const host = $('fleetBody');
   clearTimeout(state.fleet.timer);
+  // A first look has nothing to show yet: working rows, their sentence said
+  // in the view's own live region (review F2.1). A refresh leaves the answer
+  // on screen, and says nothing every five seconds.
+  if (!state.fleet.data) {
+    host.innerHTML = skeletonRows(3, 38, 'Looking for TreeMaps on your network…');
+    if (typeof sayWorking === 'function') sayWorking(host, 'fleetWorking');
+  }
   try { state.fleet.data = await api('/api/fleet'); }
   catch (e) { host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`; return; }
   renderFleet();

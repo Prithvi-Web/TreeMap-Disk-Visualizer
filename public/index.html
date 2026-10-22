@@ -4589,9 +4589,12 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
   <section class="view" id="view-fleet" role="tabpanel" aria-label="Fleet" hidden>
     <div class="card glass">
       <h2><span data-icon="globe"></span>Other Machines</h2>
-      <!-- Loading matches skeletonRows' shape: the copy lives in the
-           aria-label, the rows are decoration (§3.5). -->
-      <div id="fleetBody"><div role="status" aria-label="Looking for TreeMaps on your network…"><div class="skeleton" style="height:38px;margin:8px 0;"></div><div class="skeleton" style="height:38px;margin:8px 0;"></div><div class="skeleton" style="height:38px;margin:8px 0;"></div></div></div>
+      <!-- loadFleet writes its working rows here as the view opens, and says
+           their sentence in fleetWorking: shipped in the markup, the sentence
+           stood only in their label, and a screen reader announces a live
+           region's text as it changes, not its label (review F2.1). -->
+      <div id="fleetBody"></div>
+      <div id="fleetWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
   </section>
 
@@ -41502,6 +41505,13 @@ async function renderAllocationDiagnostic() {
 async function loadFleet() {
   const host = $('fleetBody');
   clearTimeout(state.fleet.timer);
+  // A first look has nothing to show yet: working rows, their sentence said
+  // in the view's own live region (review F2.1). A refresh leaves the answer
+  // on screen, and says nothing every five seconds.
+  if (!state.fleet.data) {
+    host.innerHTML = skeletonRows(3, 38, 'Looking for TreeMaps on your network…');
+    if (typeof sayWorking === 'function') sayWorking(host, 'fleetWorking');
+  }
   try { state.fleet.data = await api('/api/fleet'); }
   catch (e) { host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`; return; }
   renderFleet();

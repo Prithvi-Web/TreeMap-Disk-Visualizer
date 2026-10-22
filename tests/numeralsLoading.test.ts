@@ -317,9 +317,11 @@ test('the muted-text loaders became skeletons, keeping their §3.5 copy for scre
   // state is the same skeleton language, not a bare muted sentence.
   assert.match(slice('async function loadCalendar', 'function renderCalendar'),
     /skeletonRows\(\d+, \d+, 'Counting bytes per day…'\)/);
-  const fleet = slice('id="fleetBody"', '</section>');
-  assert.match(fleet, /class="skeleton"/, 'the fleet view loads as skeleton rows');
-  assert.match(fleet, /aria-label="Looking for TreeMaps on your network…"/, 'with its copy in the label');
+  // The Fleet view's rows are its loader's, which says their sentence aloud
+  // (review F2.1; tests/workingSaidAloud.test.ts): shipped in the markup, the
+  // sentence stood only in their label.
+  assert.match(slice('async function loadFleet', 'function renderFleet'),
+    /skeletonRows\(\d+, \d+, 'Looking for TreeMaps on your network…'\)/, 'the fleet view loads as skeleton rows, with its copy');
 });
 
 /* ══════════════════ FxCharts tooltip upgrades ══════════════════ */

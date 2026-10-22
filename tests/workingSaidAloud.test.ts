@@ -14,7 +14,9 @@ import { INDEX } from './fixtures/liftFrontend';
  * has a live region of its own beside it, in the page from the start, and sayWorking puts the sentence
  * in that region's text once the rows are on screen and takes it out once they are gone. The Apps,
  * Security, Photo and video libraries and Games views wrote rows with no sentence at all; they now
- * have one, said the same way (review F1.8).
+ * have one, said the same way (review F1.8). The Fleet view shipped its rows in the markup with the
+ * sentence only in their label, and its loader never spoke; its loader now writes them and says them,
+ * and no live region anywhere in the page carries a sentence in a label but skeletonRows' own (review F2.1).
  */
 
 /** Every part outside Clean Up that writes labelled working rows: its loader, its host, its sentence, its region. */
@@ -32,6 +34,8 @@ const PARTS = [
   { loader: 'async function loadSecurity(', host: 'securityBody', sentence: 'Looking for keys, credentials and wallets…', region: 'securityWorking' },
   { loader: 'async function loadMedia(', host: 'mediaBody', sentence: 'Reading photo and video libraries…', region: 'mediaWorking' },
   { loader: 'async function loadGames(', host: 'gamesBody', sentence: 'Reading game libraries…', region: 'gamesWorking' },
+  // Its rows shipped in the markup with the sentence only in their label, and its loader never spoke (review F2.1).
+  { loader: 'async function loadFleet(', host: 'fleetBody', sentence: 'Looking for TreeMaps on your network…', region: 'fleetWorking' },
 ] as const;
 
 /** The Clean Up sheet's panes, which speak in the sheet's own region (c42d3c23, tests/treeScanKey.test.ts). */
@@ -67,6 +71,20 @@ test('every working row without a sentence is one of the Dashboard\'s lists a ru
   });
   assert.deepEqual([...new Set(into)].sort(), ['bigFiles', 'bigFolders', 'donutLegend'],
     'each skeleton written without a sentence is the Dashboard\'s largest files, largest folders or file-type legend, which a scan paints as it starts (scanAnnounce says the scan)');
+});
+
+test('the two checks above see every working row in the page: no live region carries a sentence in its label but skeletonRows\' own, working rows are drawn only by skeletonRows, and every call of it is one they read (review F2.1)', () => {
+  // A live region is told by its role or its aria-live; a label on one is never announced as it changes.
+  const labelledLive = [...INDEX.matchAll(/<[a-z][a-z0-9]*\b[^<>]*>/gi)].map((m) => m[0])
+    .filter((tag) => /\srole="(?:status|alert|log)"|\saria-live="/.test(tag) && /\saria-label(?:ledby)?="/.test(tag));
+  assert.deepEqual(labelledLive, ['<div role="status" aria-label="${escapeHtml(label)}">'],
+    'the only live region with a label is skeletonRows\' template, which each part hands to sayWorking (the Fleet view shipped one in its markup)');
+  const drawn = INDEX.split('class="skeleton"').length - 1;
+  assert.equal(drawn, 1, 'working rows are drawn in one place, skeletonRows, so no markup or loader holds rows the checks above cannot see');
+  assert.ok(pageFn('function skeletonRows(').includes('class="skeleton"'), 'control: that place is skeletonRows');
+  const calls = [...INDEX.matchAll(/skeletonRows\(([^)]*)\)/g)].map((m) => m[0]).filter((c) => c !== 'skeletonRows(n, h = 38, label = \'\')');
+  assert.deepEqual(calls.filter((c) => !/^skeletonRows\(\d+(?:, \d+)?\)$|^skeletonRows\(\d+, \d+, '[^']+'\)$/.test(c)), [],
+    'every call passes its count, height and sentence as the checks above read them: a sentence held in a variable would go unseen');
 });
 
 test('each part has a live region of its own beside its host, empty, in the page from the start — never inside the host, whose every write would take it away (BQR-1 item 11)', () => {
@@ -206,4 +224,56 @@ test('a card asked again says its sentence again: the region is emptied before t
   d.frame();
   assert.deepEqual(d.$('zombieWorking').said, ['', 'Checking for held-up space…'], 'emptied first, then said a frame later');
   await d.answer('zombies');
+});
+
+/**
+ * The Fleet view's loader, skeletonRows and sayWorking lifted from the page, over Hosts: its request held until
+ * answered, frames run by hand, the five-second refresh left to the test to call.
+ */
+function fleet() {
+  const els = new Map<string, Host>();
+  const $ = (id: string) => { let e = els.get(id); if (!e) { e = new Host(); els.set(id, e); } return e; };
+  const frames: Array<() => void> = [];
+  const held: Array<(v: unknown) => void> = [];
+  const given: Record<string, unknown> = {
+    $, state: { view: 'fleet', fleet: { data: null, timer: 0 } }, escapeHtml: (s: string) => s,
+    MutationObserver: FakeObserver, requestAnimationFrame: (fn: () => void) => frames.push(fn), workingSaid: new Map(),
+    api: (url: string) => { assert.equal(url, '/api/fleet', 'control: the Fleet view asks for the fleet'); return new Promise((r) => held.push(r)); },
+    // What the view paints once it has its answer: the panel, which takes the working rows' place.
+    renderFleet: () => { $('fleetBody').innerHTML = '<div class="fleet-off"><p>Seeing other TreeMaps on your network is off.</p></div>'; },
+    setTimeout: () => 1, clearTimeout: () => {},
+  };
+  const own = new Set(['loadFleet', 'skeletonRows', 'sayWorking']);
+  const scope = new Proxy(given, {
+    has: (t, k) => typeof k === 'string' && k in t && !own.has(k),
+    get: (t, k) => (k === Symbol.unscopables ? undefined : t[k as string]),
+    set: (t, k, v) => { t[k as string] = v; return true; },
+  });
+  const decls = ['async function loadFleet(', 'function skeletonRows(', 'function sayWorking('];
+  const load = new Function('scope', `with (scope) { ${decls.map(pageFn).join('\n')}\n return loadFleet; }`)(scope) as () => Promise<void>;
+  const frame = () => { for (const fn of frames.splice(0)) fn(); };
+  const answer = async (v: unknown) => { for (const r of held.splice(0)) r(v); await turns(); };
+  return { $, load, frame, answer, held };
+}
+
+test('the Fleet view, looking for the first time, says so in its own region a frame after its rows are written and empties it once answered; a refresh with the answer on screen writes no rows and says nothing (review F2.1)', async () => {
+  const f = fleet();
+  void f.load();
+  await turns();
+  assert.equal(f.held.length, 1, 'control: the first look is out');
+  assert.equal(f.$('fleetBody').firstElementChild?.getAttribute('aria-label'), 'Looking for TreeMaps on your network…', 'its working rows are on screen, with their sentence');
+  assert.equal(f.$('fleetWorking').textContent, '', 'nothing is said before the frame');
+  f.frame();
+  assert.equal(f.$('fleetWorking').textContent, 'Looking for TreeMaps on your network…', 'a frame later its region says it, in its text');
+  await f.answer({ enabled: false, shares: [], neverShares: [] });
+  assert.equal(f.$('fleetWorking').textContent, '', 'answered: the region is emptied');
+  const shown = f.$('fleetBody').innerHTML;
+  f.$('fleetWorking').said.length = 0;
+  void f.load(); // the refresh it makes every five seconds while the view is open
+  await turns();
+  f.frame();
+  assert.equal(f.held.length, 1, 'control: the refresh is out');
+  assert.deepEqual(f.$('fleetWorking').said, [], 'the refresh says nothing: a look every five seconds is no news');
+  assert.equal(f.$('fleetBody').innerHTML, shown, 'and keeps the answer on screen: no working rows over it');
+  await f.answer({ enabled: false, shares: [], neverShares: [] });
 });
