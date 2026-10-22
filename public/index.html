@@ -32727,12 +32727,15 @@ async function checkOpenHandlesFor(paths) {
   const host = $('confirmOpenHandles');
   host.hidden = false;
   host.className = 'checking';
-  host.textContent = 'Checking whether anything has these files open…';
+  const checking = 'Checking whether anything has these files open…';
+  host.textContent = checking;
   // Said aloud in #confirmOpenHandlesSaid (BQS): the panel comes on screen with
   // its words already in it, which a screen reader seldom announces. Every
-  // write of the panel says what it shows, as rendered, or empties the region
-  // as it hides. Guarded: a page reader may lift these without sayAloud.
-  if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', host.innerText);
+  // write of the panel says what it shows, or empties the region as it hides:
+  // a line it just set, as it was set — read back, it cost a layout for the
+  // same words (BQT item 31) — and the warning, a block a line, as it is
+  // rendered. Guarded: a page reader may lift these without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', checking);
 
   const chunks = Math.min(Math.ceil(paths.length / TRASH_CHUNK), OPEN_HANDLE_PREFLIGHT_CHUNKS);
   const conflicts = [];
@@ -32855,8 +32858,9 @@ function renderOpenHandleWarning(report, pathCount, nodeOf = () => null) {
     if (report.checked === false) {
       host.className = 'checking';
       host.hidden = false;
-      host.textContent = report.reason || 'TreeMap couldn’t check whether these files are in use.';
-      if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', host.innerText);
+      const couldNot = report.reason || 'TreeMap couldn’t check whether these files are in use.';
+      host.textContent = couldNot;
+      if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', couldNot);
       return;
     }
     // "Checked, found nothing" and "checked as much as it could reach, found
@@ -32867,7 +32871,7 @@ function renderOpenHandleWarning(report, pathCount, nodeOf = () => null) {
       host.className = 'checking';
       host.hidden = false;
       host.textContent = partial;
-      if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', host.innerText);
+      if (typeof sayAloud === 'function') sayAloud('confirmOpenHandlesSaid', partial);
       return;
     }
     host.hidden = true;

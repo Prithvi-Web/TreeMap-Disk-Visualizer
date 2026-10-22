@@ -195,6 +195,8 @@ class El {
   readonly style = { setProperty: () => {}, removeProperty: () => {}, getPropertyValue: () => '' };
   /** What the stylesheet leaves out of this element's markup as it is rendered: nothing, unless a test says. */
   unrendered: (html: string) => string = (html) => html;
+  /** How many times innerText was read: a read a browser answers only after laying the page out (BQT item 31). */
+  innerTextReads = 0;
   private text = '';
   private html = '';
   private readonly classes = new Set<string>();
@@ -210,7 +212,7 @@ class El {
   get innerHTML(): string { return this.html; }
   set innerHTML(v: string) { this.html = String(v); this.text = decode(this.html.replace(/<[^>]+>/g, '')); }
   /** As a browser reads it: what is rendered, one block a line; an element not displayed reads as its text. */
-  get innerText(): string { return this.hidden ? this.text : rendered(this.unrendered(this.html)); }
+  get innerText(): string { this.innerTextReads++; return this.hidden ? this.text : rendered(this.unrendered(this.html)); }
   setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
   getAttribute(k: string): string | null { return this.attrs.get(k) ?? null; }
   querySelector(): El { return new El(); }
@@ -389,6 +391,53 @@ test('the delete dialog put back with "Still in use" says its warning too: paint
   assert.equal(p.$('confirmOpenHandles').hidden, false, 'control: the warning is shown');
   p.frame();
   assert.equal(p.$('confirmOpenHandlesSaid').textContent, IN_USE, 'and said a frame later');
+});
+
+test('the open-file panel says a check that could not be made, and a check that reached only part of the set and found nothing, in its own region a frame after it shows them — the server\'s reason, or the panel\'s own words without one (BQT item 32c)', async () => {
+  const lsof = 'lsof is not installed on this computer, so TreeMap cannot see which programs have files open.';
+  // Through the check itself: the first chunk's answer is the machine saying it cannot look.
+  const p = openHandles();
+  void p.fns.checkOpenHandlesFor(['/a/b.txt']);
+  p.frame();
+  await p.answer({ checked: false, conflicts: [], reason: lsof });
+  assert.deepEqual([p.$('confirmOpenHandles').hidden, p.$('confirmOpenHandles').textContent], [false, lsof], 'control: the panel says the check could not be made, in the server\'s words');
+  assert.equal(p.$('confirmOpenHandlesSaid').textContent, '', 'new words: the region is emptied at once');
+  p.frame();
+  assert.equal(p.$('confirmOpenHandlesSaid').textContent, lsof, 'and a frame later says them');
+  // Painted directly, with no reason: the panel's own words.
+  const own = openHandles();
+  own.fns.renderOpenHandleWarning({ checked: false, conflicts: [] }, 1, () => null);
+  own.frame();
+  assert.equal(own.$('confirmOpenHandlesSaid').textContent, 'TreeMap couldn’t check whether these files are in use.', 'a check that could not be made, with no reason given, says so in the panel\'s own words');
+
+  const part = 'TreeMap checked 8,000 of 9,000 selected items, so anything open in the rest isn’t listed here.';
+  const q = openHandles();
+  q.fns.renderOpenHandleWarning({ checked: true, complete: false, conflicts: [], reason: part }, 9000, () => null);
+  assert.deepEqual([q.$('confirmOpenHandles').hidden, q.$('confirmOpenHandles').textContent], [false, part], 'control: a partial check that found nothing says how far it reached');
+  q.frame();
+  assert.equal(q.$('confirmOpenHandlesSaid').textContent, part, 'and that is said a frame later');
+  q.fns.renderOpenHandleWarning({ checked: true, complete: false, conflicts: [] }, 2, () => null);
+  q.frame();
+  assert.equal(q.$('confirmOpenHandlesSaid').textContent, 'TreeMap could not check every file in this set, so some open files may not be listed.',
+    'with no reason given, the panel\'s own words for a partial check are said');
+});
+
+test('the open-file panel\'s one-line words — "Checking…", a check that could not be made, a partial check that found nothing — are said as they were set, with no layout read; only the warning, on lines of its own, is read as it is shown (BQT item 31)', async () => {
+  const p = openHandles();
+  void p.fns.checkOpenHandlesFor(['/a/b.txt']);
+  p.frame();
+  assert.equal(p.$('confirmOpenHandlesSaid').textContent, 'Checking whether anything has these files open…', 'control: "Checking…" is said');
+  await p.answer({ checked: false, conflicts: [], reason: 'No way to look.' });
+  p.frame();
+  assert.equal(p.$('confirmOpenHandlesSaid').textContent, 'No way to look.', 'control: a check that could not be made is said');
+  p.fns.renderOpenHandleWarning({ checked: true, complete: false, conflicts: [] }, 2, () => null);
+  p.frame();
+  assert.match(p.$('confirmOpenHandlesSaid').textContent, /^TreeMap could not check every file/, 'control: a partial check that found nothing is said');
+  assert.equal(p.$('confirmOpenHandles').innerTextReads, 0, 'none of the three read the panel back: each says the one line it just set');
+  p.fns.renderOpenHandleWarning({ conflicts: [{ processName: 'Preview', path: '/a/b.txt' }], checked: true }, 1, () => null);
+  assert.ok(p.$('confirmOpenHandles').innerTextReads > 0, 'control: the warning, a block a line, is read as it is shown');
+  p.frame();
+  assert.equal(p.$('confirmOpenHandlesSaid').textContent, IN_USE, 'and said a sentence a line');
 });
 
 /* ── plain words ── */
