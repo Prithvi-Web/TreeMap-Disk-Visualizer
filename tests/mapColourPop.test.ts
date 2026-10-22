@@ -1372,10 +1372,11 @@ type Painted = { n: Tile; x: number; y: number; w: number; h: number; frame: boo
  * hatch's amber was never beside a band, and the pills never over a line.
  *
  * With `bare` (lineCalls of the same map), the map as it would be with no leaf outline, no folder band and no
- * name tag drawn: what a name tag should lie over (review F3.1).
+ * name tag drawn: what a name tag should lie over (review F3.1). With `bareKeepsTags` too, the name tags are laid
+ * all the same: the map without the calls `bare` names alone.
  */
 function rasterPaint(tiles: Tile[], palette: Record<string, string>, W: number, H: number,
-  colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.size), history = { active: false, diff: false }, hideCloud = false, dpr = 1, bare?: Set<string>) {
+  colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.size), history = { active: false, diff: false }, hideCloud = false, dpr = 1, bare?: Set<string>, bareKeepsTags = false) {
   const state = { treemap: { nodes: tiles, hideCloud, rootSize: 1e12, history, pxRects: [] as Painted[], colorMode: 'size', mode: 'treemap', query: '' } };
   const canvas = { style: {}, width: 0, height: 0 };
   const deps = {
@@ -1405,7 +1406,7 @@ function rasterPaint(tiles: Tile[], palette: Record<string, string>, W: number, 
       if (k === 'strokeRect' || k === 'fillRect') {
         return (...a: number[]) => { if (!bare.has([k, k === 'strokeRect' ? t.strokeStyle : t.fillStyle, ...a].join('|'))) t[k](...a); };
       }
-      if (k === 'fill') return () => {}; // the name tags, the only shapes this raster fills
+      if (k === 'fill' && !bareKeepsTags) return () => {}; // the name tags, the only shapes this raster fills
       return t[k];
     },
     set(t, k: string, v) { t[k] = v; return true; },
@@ -4009,6 +4010,52 @@ test('owner\'s refinement: the indigo dashes of a container TreeMap can look ins
           `${where}: ${r.n.name}'s dash at ${cx},${cy} shows (${raster.at(cx, cy).map(Math.round)} over ${bare.at(cx, cy).map(Math.round)})`);
       }
     }
+  }
+});
+
+/** A top-level folder, Projects, with its name tag (62 × 18 css px at 5, 5), an archive 90 × 22 at its corner whose dashes run under the tag and past it, an archive 3 css px square, and a file. */
+function taggedContainers(): { tiles: Tile[]; W: number; H: number } {
+  const W = 200, H = 160, pct = (v: number, of: number) => (v / of) * 100;
+  const node = (path: string, depth: number, x: number, y: number, w: number, h: number, size: number, extra: object = {}): Tile =>
+    ({ name: path.slice(path.lastIndexOf('/') + 1), path, size, type: 'file', depth, expanded: false, x: pct(x, W), y: pct(y, H), w: pct(w, W), h: pct(h, H), ...extra });
+  const tiles = [
+    node('/Projects', 1, 0, 0, 200, 160, 2e10, { type: 'dir', expanded: true }),
+    node('/Projects/t.zip', 2, 4, 4, 90, 22, 6e8, { container: 'zip' }),
+    node('/Projects/s.zip', 2, 120, 12, 3, 3, 9e6, { container: 'zip' }),
+    node('/Projects/big.bin', 2, 0, 30, 200, 130, 1.9e10),
+  ];
+  return { tiles: tiles as Tile[], W, H };
+}
+
+test('owner\'s refinement: a container\'s indigo dashes stop at a top-level folder\'s name tag, as the lines do — every device pixel the tag covers whole shows the map without the dashes there, under the tag — and a container too small for its ring of dashes gets none, at device pixel ratios 1, 1.5 and 2, in both themes (review F1.7)', () => {
+  // Pass 7 lays the dashes under the clip tmClipOutTags makes, and tmOpenDashes lays none where the ring does not fit;
+  // the fixture above never put a dash under a tag, nor a container that small, so neither was held.
+  const m = taggedContainers();
+  for (const dpr of [1, 1.5, 2]) for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const where = `${theme}, dpr ${dpr}`;
+    const { raster, px } = rasterPaint(m.tiles, palette, m.W, m.H, undefined, undefined, false, dpr);
+    const of = (name: string) => px.find((r) => r.n.path.endsWith(`/${name}`))!;
+    const t = of('t.zip');
+    assert.ok((t.dashes || []).length >= 4, `${where}: control — the corner archive has its dashes (${(t.dashes || []).length})`);
+    assert.deepEqual(of('s.zip').dashes, [], `${where}: an archive 3 css px square has no room for its ring, and gets no dashes`);
+    const dashCalls = new Set(px.flatMap((r) => (r.dashes || []).map(([x, y, w, h]) => ['fillRect', 'rgba(94,92,230,0.9)', x, y, w, h].join('|'))));
+    const noDash = rasterPaint(m.tiles, palette, m.W, m.H, undefined, undefined, false, dpr, dashCalls, true).raster;
+    let under = 0, shown = 0;
+    const onTag: string[] = [];
+    for (const [x, y, w, h] of t.dashes!) {
+      for (let py = Math.round(y * dpr); py < Math.round((y + h) * dpr); py++) {
+        for (let qx = Math.round(x * dpr); qx < Math.round((x + w) * dpr); qx++) {
+          const a = raster.at(qx, py), b = noDash.at(qx, py), same = a.every((v, i) => Math.abs(v - b[i]) < 1e-6);
+          if (raster.taggedWhole(qx, py)) {
+            under++;
+            if (!same && onTag.length < 6) onTag.push(`${qx},${py}: ${a.map(Math.round)} where the map without the dash shows ${b.map(Math.round)}`);
+          } else if (!raster.tagged(qx, py) && !same) shown++;
+        }
+      }
+    }
+    assert.ok(under > 20, `${where}: control — ${under} device pixels of the archive's dashes lie wholly under the folder's tag`);
+    assert.ok(shown > 20, `${where}: control — and ${shown} past it show`);
+    assert.deepEqual(onTag, [], `${where}: under the tag no dash shows`);
   }
 });
 
