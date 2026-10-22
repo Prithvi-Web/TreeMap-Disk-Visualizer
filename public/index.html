@@ -10866,7 +10866,16 @@ function quietRescanFailed(e) {
   el.classList.add('error');
   el.innerHTML = icon('alert', 14) + '<span>Showing the saved index — the refresh failed: ' + escapeHtml(why) + '</span>';
   $('scanAnnounce').textContent = 'Couldn’t refresh this folder: ' + why;
-  $('indexBadge').classList.add('stale');
+  // Amber, the badge kept the words it was painted with: "Up to date — updates
+  // itself as files change" beside the dot that says it may not be. Its words
+  // say what happened (BQT item 25), and are said in #indexBadgeSaid as every
+  // paint of it is (BQS); guarded, as there.
+  const badge = $('indexBadge');
+  const failed = 'Index may be out of date — the refresh failed, so what is shown may be older.';
+  badge.classList.add('stale');
+  badge.innerHTML = '<span class="dot"></span><span>' + failed + '</span>';
+  badge.title = 'The refresh of this folder failed, so what is shown comes from its saved index and may be older.';
+  if (typeof sayAloud === 'function') sayAloud('indexBadgeSaid', badge.hidden ? '' : failed);
   toast('Couldn’t refresh this folder: ' + why, 'error');
   // The view on screen says what it will now never be drawn from: Disk City's
   // "loading this folder…" and the Reclaim legend's "scoring starts once this

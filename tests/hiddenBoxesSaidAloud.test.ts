@@ -546,6 +546,27 @@ test('the index badge says what it shows in its own region a frame after it show
   assert.deepEqual([p.$('indexBadge').hidden, p.$('indexBadgeSaid').textContent], [true, ''], 'no index: the badge goes and the region is emptied');
 });
 
+const REFRESH_FAILED = 'Index may be out of date — the refresh failed, so what is shown may be older.';
+
+test('a quiet rescan that fails takes "Up to date" off the index badge it turns amber: the badge says the refresh failed and what is shown may be older, and its region says that a frame later (BQT item 25)', () => {
+  const noop = () => {};
+  const st = { scanning: true, view: 'dashboard', heldBehindIndex: null };
+  const p = page(['function renderIndexBadge(', 'function quietRescanFailed('], {
+    formatDate: () => '21 Oct 2026', state: st, endScanChrome: noop, restoreDashboardPanels: noop, icon: () => '', toast: noop,
+    withFocusKept: (f: () => void) => f(), switchView: noop, tourScanFailed: noop, liveScanEnded: noop, drainScanQueue: noop,
+  });
+  p.fns.renderIndexBadge({ indexed: true, path: '/r', root: { path: '/r', state: 'ready', live: true } });
+  p.frame();
+  assert.equal(p.$('indexBadgeSaid').textContent, 'Up to date — updates itself as files change', 'control: the index painted, its badge says it is up to date');
+  p.fns.quietRescanFailed(new Error('That folder no longer exists.'));
+  assert.equal(p.$('indexBadge').classList.contains('stale'), true, 'control: the badge turns amber');
+  assert.equal(p.$('indexBadge').textContent, REFRESH_FAILED, 'and its words say what happened, never "Up to date" beside an amber dot');
+  assert.doesNotMatch(p.$('indexBadge').title, /updates itself/, 'nor does its tooltip promise an index kept current');
+  assert.equal(p.$('indexBadgeSaid').textContent, '', 'new words: the region is emptied at once');
+  p.frame();
+  assert.equal(p.$('indexBadgeSaid').textContent, REFRESH_FAILED, 'and a frame later says them');
+});
+
 /** The refused-folder row's painters over Els, on a Mac without Full Disk Access. */
 function accessRow() {
   const st = {

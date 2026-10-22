@@ -894,6 +894,10 @@ test('a failed background rescan clears the spinner, the skeletons and the Stop 
   assert.match(els.scanStatus.innerHTML, /Showing the saved index — the refresh failed: That folder no longer exists\./, 'with the reason');
   assert.equal(els.scanAnnounce?.textContent, 'Couldn’t refresh this folder: That folder no longer exists.', 'a screen reader hears it too');
   assert.equal(els.indexBadge.cls.has('stale'), true, '"Index live — always current" is no longer claimed');
+  // Nor in words: amber beside "Up to date — updates itself as files change" said two things (BQT item 25).
+  assert.doesNotMatch(els.indexBadge.innerHTML, /Up to date/, 'the badge no longer says it is up to date');
+  assert.match(els.indexBadge.innerHTML, /<span class="dot"><\/span><span>Index may be out of date — the refresh failed, so what is shown may be older\.<\/span>/,
+    'it says what happened: the refresh failed, and what is shown may be older');
   assert.deepEqual(toasts, [['Couldn’t refresh this folder: That folder no longer exists.', 'error']]);
   // The view on screen is re-entered, as failScan re-enters it: Disk City's
   // "loading this folder…" and the Reclaim legend's wait were of a scan that
