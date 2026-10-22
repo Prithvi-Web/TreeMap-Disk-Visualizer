@@ -157,7 +157,7 @@ const MAP_NAMES = ['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT
   'tmUnionArea', 'tmTextureMean', 'tmCushionL', 'tmLineBoundL', 'tmLstarOf', 'tmLstar', 'tmLab', 'tmFromLab', 'TM_D65', 'tmShiftL',
   'TM_SHIFT_CHROMA', 'TM_LIFT_CHROMA', 'TM_TEXTURE_SHARE', 'TM_FILL_SHIFT_MAX', 'TM_TONE_MEMO', 'TM_TONE_MEMO_MAX', 'tmToneSearch',
   // A container's indigo dashes, clear of every line and band (residual 6).
-  'tmOpenDashes', 'TM_OPEN_DASH', 'TM_OPEN_DASH_ON', 'TM_OPEN_DASH_OFF',
+  'tmOpenDashes', 'TM_OPEN_DASH', 'TM_OPEN_DASH_ON', 'TM_OPEN_DASH_OFF', 'tmUnderTag',
   // Pass 3's name tag, which the lens lays too (residual 8).
   'tmLayTag'];
 

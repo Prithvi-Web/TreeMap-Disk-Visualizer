@@ -2207,6 +2207,22 @@ function tmClipOutTags(ctx, tags, w, h) {
   }
   ctx.clip('evenodd');
 }
+/**
+ * Whether the rectangle `q` ([x, y, w, h]) lies wholly under one of the name
+ * tags `tags` — the rounded pill pass 3 lays, which tmClipOutTags cuts out of
+ * what is drawn under it — and so does not show. A pill is convex: a
+ * rectangle lies in it when its four corners do.
+ */
+function tmUnderTag([x, y, w, h], tags) {
+  return tags.some((t) => {
+    const rr = Math.max(0, Math.min(TM_TAG_RADIUS, t.w / 2, t.h / 2));
+    const inPill = (px, py) => {
+      const dx = Math.max(t.x + rr - px, 0, px - (t.x + t.w - rr)), dy = Math.max(t.y + rr - py, 0, py - (t.y + t.h - rr));
+      return dx * dx + dy * dy <= rr * rr + 1e-9;
+    };
+    return inPill(x, y) && inPill(x + w, y) && inPill(x, y + h) && inPill(x + w, y + h);
+  });
+}
 
 /** Where a leaf's label lines lie, as tmLeafStops eases its cushion for them: each line's top below the leaf's, and its font size. */
 function tmLabelAt(r) {
@@ -2608,8 +2624,12 @@ function drawTreemap() {
   ctx.restore();
   for (const r of px) {
     if (!containerListable(r.n) || r.n.virtual) continue;
-    marks.open.add(r.n.container);
-    if (r.w > 40 && r.h > 34) {
+    // The key names it only where its mark shows: a dash clear of the name
+    // tags, or its glyph. A container too small for its ring gets no dashes,
+    // and one under a tag has them cut away (review F1.5).
+    const glyph = r.w > 40 && r.h > 34;
+    if (glyph || r.dashes.some((q) => !tmUnderTag(q, tagRects))) marks.open.add(r.n.container);
+    if (glyph) {
       const bx = r.x + r.w - 15, by = r.y + r.h - 15;
       ctx.strokeStyle = 'rgba(255,255,255,0.95)';
       ctx.lineWidth = 1.3;

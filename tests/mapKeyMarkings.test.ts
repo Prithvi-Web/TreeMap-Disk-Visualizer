@@ -148,6 +148,22 @@ test('G27: a disk image TreeMap cannot list (.dmg), or an entry inside an archiv
   assert.deepEqual(named(keyFor([node({ ...BIG, container: 'zip', virtual: true })])), []);
 });
 
+test('G27: a container whose mark is not on screen is not named — one too small for its dashes and its glyph, or one whose dashes all lie under a folder\'s name tag, where they stop — while one with its dashes alone is (review F1.5)', () => {
+  // Since the dashes keep a device pixel clear of every line (residual 6) a small container gets none, and the dashes
+  // stop at the name tags as the lines do; but every listable container was named, so the key explained a dashed indigo
+  // border no tile on screen showed.
+  assert.deepEqual(named(keyFor([node({ w: 0.4, h: 0.4, container: 'zip' })])), [], 'a 4 × 4 px archive has no room for its dashes, nor its glyph');
+  assert.deepEqual(named(keyFor([node({ w: 0.3, h: 0.8, container: 'zip' })])), [], 'nor one 3 × 8 px');
+  assert.deepEqual(named(keyFor([node({ w: 1.2, h: 1.2, container: 'zip' })])), ['archive you can open'], 'control: one 12 × 12 px draws its dashes, with no glyph, and is named');
+  // A top-level folder 300 px square, whose tag is 62 × 18 px at (5, 5): an archive 10 × 12 px at (10, 8) lies under it whole.
+  const folder = node({ name: 'Projects', path: '/r/Projects', type: 'dir', expanded: true, w: 30, h: 30 });
+  const under = node({ path: '/r/Projects/a.zip', depth: 2, x: 1, y: 0.8, w: 1, h: 1.2, container: 'zip' });
+  const rest = node({ path: '/r/Projects/b.bin', depth: 2, x: 0, y: 3, w: 30, h: 27 });
+  assert.deepEqual(named(keyFor([folder, under, rest])), [], 'an archive whose dashes all lie under the folder\'s name tag is not named');
+  const clear = node({ path: '/r/Projects/a.zip', depth: 2, x: 1, y: 3.2, w: 1, h: 1.2, container: 'zip' });
+  assert.deepEqual(named(keyFor([folder, clear, { ...rest, y: 5, h: 25 }])), ['archive you can open'], 'control: the same archive below the tag is named');
+});
+
 test('G27: a cloud placeholder drawn hollow is named; one hidden, or too small to be drawn hollow, is not', () => {
   assert.deepEqual(named(keyFor([node({ ...BIG, cloudPlaceholder: true })])), ['in the cloud, not on this disk']);
   assert.deepEqual(named(keyFor([node({ ...BIG, cloudPlaceholder: true })], { hideCloud: true })), []);
