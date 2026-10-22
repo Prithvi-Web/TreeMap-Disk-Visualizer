@@ -1244,9 +1244,14 @@ function exportTreemapPNG() {
  * the size ramp whatever the colour mode, its labels fixed black.
  */
 function exportTreemapSVG() {
+  // As wide and tall as the canvas: its device pixels over the ratio, where
+  // tmSnap lays the map's far edges — written to a ten-thousandth, rounded
+  // up, so the last device pixel is never cut. Rounded to a css px, at 150 %
+  // the right edge's line, on the canvas's last device pixel, lay a third of a
+  // px past the SVG (residual 8).
   const dpr = window.devicePixelRatio || 1;
-  const w = Math.round(tmBuffer.width / dpr);
-  const h = Math.round(tmBuffer.height / dpr);
+  const w = Math.ceil((tmBuffer.width / dpr) * 1e4 - 1e-6) / 1e4;
+  const h = Math.ceil((tmBuffer.height / dpr) * 1e4 - 1e-6) / 1e4;
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const rgb = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
   const defs = [];
@@ -1305,20 +1310,17 @@ function exportTreemapSVG() {
   for (const { r, rgb: c } of tmDiffWashes(state.treemap.pxRects)) {
     parts.push(`<rect ${at(r.x, r.y, r.w, r.h)} fill="${rgb(c)}" fill-opacity="${TM_DIFF_WASH}"/>`);
   }
-  // The top-level folders' name tags, laid last. The outlines and bands stop
-  // at each tag's edge, as on the canvas (tmClipOutTags, review F3.1): each
-  // tag is cut out of a clip of the whole map by the even-odd rule.
-  const tags = [];
-  for (const r of state.treemap.pxRects) {
-    if (!r.frame || r.n.depth !== 1 || r.w < 90 || r.h < 44) continue;
-    const maxChars = Math.floor((r.w - 26) / 6.2);
-    const label = r.n.name.length > maxChars ? r.n.name.slice(0, Math.max(1, maxChars - 1)) + '…' : r.n.name;
-    tags.push({ r, label, x: (r.x + 5).toFixed(1), y: (r.y + 5).toFixed(1), w: Math.min(r.w - 12, label.length * 6.2 + 14).toFixed(1) });
-  }
+  // The top-level folders' name tags, laid last: the very tags pass 3 laid
+  // (state.treemap.tags, tmFolderTags), each as wide as the canvas measured
+  // its name. The outlines and bands stop at each tag's edge, as on the canvas
+  // (tmClipOutTags, review F3.1): each tag is cut out of a clip of the whole
+  // map by the even-odd rule. They were estimated at 6.2 px a letter, and a
+  // long name cut to an ellipsis the canvas never wrote (residual 8).
+  const tags = state.treemap.tags || [];
   if (tags.length) {
     const f = (v) => +v.toFixed(2);
     const cut = tags.map((t) => {
-      const x = Number(t.x), y = Number(t.y), tw = Number(t.w), th = 18, rr = Math.min(TM_TAG_RADIUS, tw / 2, th / 2);
+      const x = t.x, y = t.y, tw = t.w, th = t.h, rr = Math.min(TM_TAG_RADIUS, tw / 2, th / 2);
       const arc = (ex, ey) => `A${f(rr)} ${f(rr)} 0 0 1 ${f(ex)} ${f(ey)}`;
       return `M${f(x + rr)} ${f(y)}H${f(x + tw - rr)}${arc(x + tw, y + rr)}V${f(y + th - rr)}${arc(x + tw - rr, y + th)}` +
         `H${f(x + rr)}${arc(x, y + th - rr)}V${f(y + rr)}${arc(x + rr, y)}Z`;
@@ -1348,10 +1350,12 @@ function exportTreemapSVG() {
       parts.push(`<text x="${(r.x + 5).toFixed(1)}" y="${(size.y + size.px * 0.8).toFixed(1)}" font-size="${size.px}" fill="${tmLabelInk(r, size.y, size.px, size.alpha)}">${esc(formatBytes(r.n.size))}</text>`);
     }
   }
-  // Top-level directory name tags.
-  for (const { r, label, x, y, w: tw } of tags) {
-    parts.push(`<rect x="${x}" y="${y}" width="${tw}" height="18" rx="${TM_TAG_RADIUS}" fill="rgba(0,0,0,0.5)"/>`);
-    parts.push(`<text x="${(r.x + 12).toFixed(1)}" y="${(r.y + 18).toFixed(1)}" font-size="10.5" font-weight="600" fill="rgba(255,255,255,0.92)">${esc(label)}</text>`);
+  // Top-level directory name tags, each name whole, squeezed to the folder
+  // less 26 where pass 3's maxWidth squeezes it.
+  for (const { r, x, y, w: tw, h: th, nameW } of tags) {
+    const squeeze = nameW > r.w - 26 ? ` textLength="${+(r.w - 26).toFixed(2)}" lengthAdjust="spacingAndGlyphs"` : '';
+    parts.push(`<rect x="${+x.toFixed(2)}" y="${+y.toFixed(2)}" width="${+tw.toFixed(2)}" height="${th}" rx="${TM_TAG_RADIUS}" fill="rgba(0,0,0,0.5)"/>`);
+    parts.push(`<text x="${(r.x + 12).toFixed(1)}" y="${(r.y + 18).toFixed(1)}" font-size="10.5" font-weight="600" fill="rgba(255,255,255,0.92)"${squeeze}>${esc(r.n.name)}</text>`);
   }
   if (defs.length) parts.splice(2, 0, `<defs>${defs.join('')}</defs>`);
   parts.push('</svg>');

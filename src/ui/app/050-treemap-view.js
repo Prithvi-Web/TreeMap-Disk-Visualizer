@@ -2140,16 +2140,30 @@ function tmLabelLines(r, tags) {
   return lines;
 }
 
-/** Pass 3's name tags for the top-level folders, measured before pass 1 so labels can be placed around them. */
+/**
+ * Pass 3's name tags for the top-level folders, measured before pass 1 so
+ * labels can be placed around them: each { r, x, y, w, h } and the name's own
+ * measured width (`nameW`), which pass 3 writes squeezed to r.w − 26 where it
+ * is wider. drawTreemap records them (state.treemap.tags) for the SVG export
+ * and the lens, which lay the very tags the map laid.
+ */
 function tmFolderTags(ctx, px) {
   ctx.font = '600 10.5px -apple-system, sans-serif';
   const tags = [];
   for (const r of px) {
     if (!r.frame || r.n.depth !== 1 || r.w < 90 || r.h < 44) continue;
-    const tw = Math.min(ctx.measureText(r.n.name).width, r.w - 26);
-    tags.push({ r, x: r.x + 5, y: r.y + 5, w: tw + 14, h: 18 });
+    const nameW = ctx.measureText(r.n.name).width, tw = Math.min(nameW, r.w - 26);
+    tags.push({ r, x: r.x + 5, y: r.y + 5, w: tw + 14, h: 18, nameW });
   }
   return tags;
+}
+/** Pass 3's name tag `t` (tmFolderTags) on `ctx`: its half black, and the folder's name in it. Laid by the map and by the lens. */
+function tmLayTag(ctx, t) {
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  roundRect(ctx, t.x, t.y, t.w, t.h, TM_TAG_RADIUS);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.fillText(t.r.n.name, t.r.x + 12, t.r.y + 14.5, t.r.w - 26);
 }
 
 /** A name tag's corner radius (pass 3), which the clip under it follows (tmClipOutTags). */
@@ -2294,6 +2308,7 @@ function drawTreemap() {
   // Where each label goes, around the top-level folders' tags: pass 1 eases
   // a cushion under its label where it must, and pass 4 writes it there.
   const tagRects = tmFolderTags(ctx, px);
+  state.treemap.tags = tagRects; // the tags pass 3 lays, for the SVG export and the lens
   for (const r of px) r.label = tmLabelLines(r, tagRects);
   // The History diff's washes, which pass 2.5 lays over the leaves pass 1
   // paints: a label is read through them (review F2.1).
@@ -2501,14 +2516,7 @@ function drawTreemap() {
   // Pass 3: top-level directory name tags.
   ctx.textBaseline = 'middle';
   ctx.font = '600 10.5px -apple-system, sans-serif';
-  for (const t of tagRects) {
-    const r = t.r;
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    roundRect(ctx, t.x, t.y, t.w, t.h, TM_TAG_RADIUS);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.92)';
-    ctx.fillText(r.n.name, r.x + 12, r.y + 14.5, r.w - 26);
-  }
+  for (const t of tagRects) tmLayTag(ctx, t);
   // Pass 4: leaf labels (only when ≥ 40 px wide).
   //
   // The folder tag above is an overlay, not a reserved header row, so a child

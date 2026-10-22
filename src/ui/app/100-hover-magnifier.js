@@ -87,6 +87,9 @@ function lensPaint(ctx, cssW, cssH) {
   const shapes = lensShapes();
   const labels = [];
   const framed = []; // the rectangle map's folders on the glass, whose bands go over their leaves
+  const lined = []; // its leaves on the glass with lines of their own, laid after every tile, as pass 2.6 lays them
+  // The top-level folders' name tags the map laid (pass 3), on the rectangle map only.
+  const tags = isCells() ? [] : state.treemap.tags || [];
   for (const s of shapes) {
     const b = s.bb
       ? { x0: s.bb.x0, x1: s.bb.x1, y0: s.bb.y0, y1: s.bb.y1 }
@@ -146,13 +149,10 @@ function lensPaint(ctx, cssW, cssH) {
     // A small leaf's texture as the map lays it (pass 2.4).
     if (!s.kind && s.tex) lensTexture(ctx, s);
     if (!s.kind && s.lines) {
-      // Its lines as the map draws them (pass 2.6, tmLeafLines): each stretch
-      // in the shade the map picked, inside its box, and the highlight along
-      // its top under a dark one.
-      for (const l of s.lines) {
-        ctx.fillStyle = l.rgb;
-        ctx.fillRect(l.x, l.y, l.w, l.h);
-      }
+      // Its lines as the map draws them (pass 2.6, tmLeafLines), below — each
+      // stretch in the shade the map picked, inside its box — and the
+      // highlight along its top under a dark one, part of its tile.
+      lined.push(s);
       if (s.lit) {
         const lit = tmLitLine(s);
         ctx.lineWidth = lit.width;
@@ -174,13 +174,28 @@ function lensPaint(ctx, cssW, cssH) {
     }
     labels.push({ n: s.n, b });
   }
-  // Each folder's bands, deepest folder first, as pass 2.7 lays them.
+  // Each leaf's lines, then each folder's bands, deepest folder first, as
+  // passes 2.6 and 2.7 lay them — both stopping at the name tags, as on the
+  // map (tmClipOutTags); then the tags themselves, as pass 3 lays them. The
+  // glass drew no tag, and the lines ran on where the map has one (residual 8).
+  ctx.save();
+  if (tags.length) tmClipOutTags(ctx, tags, cssW, cssH);
+  for (const s of lined) {
+    for (const l of s.lines) {
+      ctx.fillStyle = l.rgb;
+      ctx.fillRect(l.x, l.y, l.w, l.h);
+    }
+  }
   for (const f of tmFramesDeepestFirst(framed)) {
     for (const band of f.bands) {
       ctx.fillStyle = band.rgb;
       ctx.fillRect(band.x, band.y, band.w, band.h);
     }
   }
+  ctx.restore();
+  ctx.textBaseline = 'middle';
+  ctx.font = '600 10.5px -apple-system, sans-serif';
+  for (const t of tags) tmLayTag(ctx, t);
   ctx.restore(); // out of the magnified transform, still inside the clip
 
   // Labels are drawn UNMAGNIFIED, at their magnified positions. A name scaled
@@ -210,6 +225,11 @@ function lensPaint(ctx, cssW, cssH) {
     const text = Canvas2D.fitText(ctx, l.n.name, Math.min(w - 6, r * 1.7));
     if (!text) continue;
     const tw = ctx.measureText(text).width;
+    // Not on a name tag, as on the map, where a label goes below its folder's tag (tmLabelLines).
+    if (tags.some((t) => {
+      const p = toLens(t.x, t.y), q = toLens(t.x + t.w, t.y + t.h);
+      return cx - tw / 2 < q.x && cx + tw / 2 > p.x && cy - 6 < q.y && cy + 6 > p.y;
+    })) continue;
     // One name per patch of glass: at 4× the tiles are big enough to read but
     // the lens is small enough that two names still collide often.
     if (placed.some((p) => Math.abs(p.x - cx) < (p.w + tw) / 2 + 3 && Math.abs(p.y - cy) < 12)) continue;

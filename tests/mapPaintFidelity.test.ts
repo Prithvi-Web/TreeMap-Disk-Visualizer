@@ -157,12 +157,16 @@ const MAP_NAMES = ['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT
   'tmUnionArea', 'tmTextureMean', 'tmCushionL', 'tmLineBoundL', 'tmLstarOf', 'tmLstar', 'tmLab', 'tmFromLab', 'TM_D65', 'tmShiftL',
   'TM_SHIFT_CHROMA', 'TM_LIFT_CHROMA', 'TM_TEXTURE_SHARE', 'TM_FILL_SHIFT_MAX', 'TM_TONE_MEMO', 'TM_TONE_MEMO_MAX', 'tmToneSearch',
   // A container's indigo dashes, clear of every line and band (residual 6).
-  'tmOpenDashes', 'TM_OPEN_DASH', 'TM_OPEN_DASH_ON', 'TM_OPEN_DASH_OFF'];
+  'tmOpenDashes', 'TM_OPEN_DASH', 'TM_OPEN_DASH_ON', 'TM_OPEN_DASH_OFF',
+  // Pass 3's name tag, which the lens lays too (residual 8).
+  'tmLayTag'];
 
 /** What the real lensPaint needs from the page — the map's outline rules among them (review F1.2). */
 const LENS_NAMES = ['lensPaint', 'lensActive', 'lensShapes', 'LENS_SCALE', 'LENS_RADIUS', 'Canvas2D', 'mix', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'tmSeenThrough', 'TM_DIFF_WASH',
   'tmTone', 'tmToneFor', 'tmLumCache', 'TM_EDGE_MIN', 'TM_LIT', 'tmLitAlpha', 'tmLitLine', 'tmLinePx', 'tmPxScale', 'tmFramesDeepestFirst', 'lensTexture',
-  'TM_TONE_MEMO', 'TM_TONE_MEMO_MAX', 'tmToneSearch'];
+  'TM_TONE_MEMO', 'TM_TONE_MEMO_MAX', 'tmToneSearch',
+  // The map's name tags on the glass: the lines and bands stop at them, and they are laid as pass 3 lays them (residual 8).
+  'tmClipOutTags', 'TM_TAG_RADIUS', 'tmLayTag', 'roundRect'];
 
 /** The fillStyle the real drawTreemap gives `tile`'s rectangle, and the pixel rect it drew. */
 function mapFill(tile: typeof TILE = TILE, colour: number[] = GREEN) {
@@ -241,7 +245,11 @@ test('D39: a tile whose cushion eased for its label shows the same eased cushion
  * pixel ratio `dpr`, on a map `size` css px square, painted onto `ctx` (review F1.2 of BQJ-2c-r).
  */
 function mapRects(nodes: any[], colourOf: (n: any) => number[], hideCloud = false, dpr = 1, size = 100, ctx: unknown = recordingCtx().ctx) {
-  const state = { treemap: { nodes, hideCloud, rootSize: 1e9, history: { active: false }, pxRects: [] as any[] } };
+  return mapState(nodes, colourOf, hideCloud, dpr, size, ctx).pxRects;
+}
+/** mapRects' whole record of the paint: its rectangles (pxRects) and the top-level folders' name tags it laid (tags). */
+function mapState(nodes: any[], colourOf: (n: any) => number[], hideCloud = false, dpr = 1, size = 100, ctx: unknown = recordingCtx().ctx) {
+  const state = { treemap: { nodes, hideCloud, rootSize: 1e9, history: { active: false }, pxRects: [] as any[], tags: [] as any[] } };
   load<() => void>(MAP_NAMES, {
     $: () => ({ clientWidth: size + 20 }), treemapCanvasHeight: () => size, window: { devicePixelRatio: dpr },
     tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: ctx,
@@ -249,33 +257,46 @@ function mapRects(nodes: any[], colourOf: (n: any) => number[], hideCloud = fals
     renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {}, cellRgb: colourOf, tmHatchPattern: () => null,
     tmPreview: { on: false }, roundRect() {}, formatBytes: (n: number) => `${n} B`,
   }, 'drawTreemap')();
-  return state.treemap.pxRects;
+  return state.treemap;
 }
 
-type LensOp = { kind: string; style?: unknown; lineWidth?: number; box: number[] | null; seg?: number[] };
+type LensOp = { kind: string; style?: unknown; lineWidth?: number; box: number[] | null; seg?: number[]; rule?: string; shapes?: number[][]; text?: string; at?: number[]; font?: string };
 /**
  * What the real lensPaint draws over `pxRects` with the cursor `at`, in order: each fill and stroke with its paint and the box it covered.
  * Only the map's ground, --tm-canvas-bg, reads as LENS_GROUND; every other variable is magenta (review F3.2), so a test that finds
  * LENS_GROUND knows the glass read the ground's variable and not another.
  */
 const LENS_GROUND = '#0b0b0f';
-function lensOps(pxRects: any[], colourOf: (n: any) => number[], at = { x: 25, y: 25 }, size = [120, 100]): LensOp[] {
+function lensOps(pxRects: any[], colourOf: (n: any) => number[], at = { x: 25, y: 25 }, size = [120, 100], tags: any[] = []): LensOp[] {
   const ops: LensOp[] = [];
-  const st: Record<string, any> = { fillStyle: '', strokeStyle: '', lineWidth: 1 };
+  const st: Record<string, any> = { fillStyle: '', strokeStyle: '', lineWidth: 1, font: '' };
   let box: number[] | null = null;
   let pen: number[] | null = null;
   let segs: number[][] = [];
+  // The current path's shapes as boxes [x, y, w, h]: each rectangle, and each subpath of points (a rounded rectangle's moveTo and arcTo).
+  let shapes: number[][] = [];
+  let pts: number[][] = [];
+  const closeSub = () => {
+    if (pts.length < 2) { pts = []; return; }
+    const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+    shapes.push([Math.min(...xs), Math.min(...ys), Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)]);
+    pts = [];
+  };
   const props: Record<string, unknown> = {
     measureText: (t: string) => ({ width: String(t).length * 6 }),
     createLinearGradient: (...args: number[]) => {
       const g: Grad = { kind: 'linear', args, stops: [] };
       return Object.assign(g, { addColorStop: (o: number, c: string) => { g.stops.push([o, c]); } });
     },
-    beginPath: () => { box = null; segs = []; pen = null; },
-    rect: (...a: number[]) => { box = a; },
-    moveTo: (x: number, y: number) => { pen = [x, y]; },
+    beginPath: () => { box = null; segs = []; pen = null; shapes = []; pts = []; },
+    rect: (...a: number[]) => { box = a; shapes.push(a); },
+    moveTo: (x: number, y: number) => { pen = [x, y]; closeSub(); pts.push([x, y]); },
     lineTo: (x: number, y: number) => { if (pen) segs.push([pen[0], pen[1], x, y]); pen = [x, y]; },
-    fill: () => { ops.push({ kind: 'fill', style: st.fillStyle, box }); },
+    arcTo: (x1: number, y1: number, x2: number, y2: number) => { pts.push([x1, y1], [x2, y2]); },
+    closePath: () => closeSub(),
+    clip: (rule?: string) => { closeSub(); ops.push({ kind: 'clip', rule, box: null, shapes: [...shapes] }); },
+    fill: () => { closeSub(); ops.push({ kind: 'fill', style: st.fillStyle, box: box ?? (shapes.length === 1 ? shapes[0] : null) }); },
+    fillText: (t: string, x: number, y: number, maxW?: number) => { ops.push({ kind: 'text', style: st.fillStyle, box: null, text: t, at: maxW === undefined ? [x, y] : [x, y, maxW], font: st.font }); },
     stroke: () => {
       ops.push({ kind: 'stroke', style: st.strokeStyle, lineWidth: st.lineWidth, box });
       for (const seg of segs) ops.push({ kind: 'line', style: st.strokeStyle, lineWidth: st.lineWidth, box: null, seg });
@@ -289,7 +310,7 @@ function lensOps(pxRects: any[], colourOf: (n: any) => number[], at = { x: 25, y
     set(_t, k: string, v) { st[k] = v; return true; },
   });
   load<(ctx: unknown, w: number, h: number) => void>(LENS_NAMES, {
-    state: { lens: { held: true, pinned: false, at }, treemap: { pxRects, cells: [] } },
+    state: { lens: { held: true, pinned: false, at }, treemap: { pxRects, cells: [], tags } },
     isCells: () => false, cssVar: (name: string) => (name === '--tm-canvas-bg' ? LENS_GROUND : '#ff00ff'), cellRgb: colourOf, altCellPath() {}, window: { devicePixelRatio: 1 },
   }, 'lensPaint')(ctx, size[0], size[1]);
   return ops;
@@ -454,4 +475,41 @@ test('the lens strokes a leaf\'s top highlight where the map stroked it — its 
     assert.ok(near(glass[0].seg!, drawn[0].seg), `dpr ${dpr}: the lens strokes the highlight from ${glass[0].seg} where the map strokes it from ${drawn[0].seg}`);
     assert.ok(Math.abs(glass[0].lineWidth! - drawn[0].width) < 1e-9, `dpr ${dpr}: the lens strokes it ${glass[0].lineWidth} css px of the map wide, the map ${drawn[0].width}`);
   }
+});
+
+test('the lens shows a top-level folder\'s name tag as the map lays it — the lines and bands stop at the tag\'s edge, clipped out of them by its own box, and the tag, its half black and its name, laid after them, where the map\'s pass 3 laid it; no name the glass writes sits on it (residual 8)', () => {
+  // A folder 100×60 on a 120×100 map, big enough for its tag, tiled by four files whose lines run under the tag, and a
+  // file beside it; the glass about the tag. It drew no tag, so on the glass the lines ran on where the map has the tag.
+  const nodes = [
+    { name: 'Music', path: '/r/Music', size: 4e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 83.34, h: 60 },
+    ...[0, 1, 2, 3].map((k) => ({ name: `m${k}`, path: `/r/Music/m${k}`, size: 5e9, type: 'file', depth: 2, expanded: false, x: k * 20.835, y: 0, w: 20.835, h: 60 })),
+    { name: 'big.bin', path: '/r/big.bin', size: 2e10, type: 'file', depth: 1, expanded: false, x: 83.34, y: 0, w: 16.66, h: 100 },
+  ];
+  const colours: Record<string, number[]> = { '/r/Music': [10, 132, 255], '/r/big.bin': [48, 209, 88] };
+  const colourOf = (n: any) => colours[n.path] ?? [255, 214, 10];
+  const map = mapState(nodes, colourOf, false, 1, 120);
+  const px = map.pxRects, tags = map.tags;
+  assert.equal(tags.length, 1, 'control: the map laid the folder\'s name tag');
+  const t = tags[0], music = px.find((r: any) => r.n.path === '/r/Music');
+  const under = px.flatMap((r: any) => r.lines || []).filter((l: any) => l.x < t.x + t.w && l.x + l.w > t.x && l.y < t.y + t.h && l.y + l.h > t.y);
+  assert.ok(under.length > 0 && music.bands?.length, 'control: the files\' lines run where the tag sits, and the folder is banded');
+  const ops = lensOps(px, colourOf, { x: t.x + t.w / 2, y: t.y + t.h / 2 }, [120, 100], tags);
+  const lineAt = (op: LensOp) => op.kind === 'fillRect' && px.some((r: any) => [...(r.lines || []), ...(r.bands || [])].some((l: any) => l.rgb === op.style && near(op.box, [l.x, l.y, l.w, l.h])));
+  const firstLine = ops.findIndex(lineAt), lastLine = ops.length - 1 - [...ops].reverse().findIndex(lineAt);
+  assert.ok(firstLine > 0, 'control: the glass lays the lines and bands');
+  // The clip: the map's whole rectangle with the tag cut out of it, before the first line and after the last leaf's fill.
+  const clip = ops.findIndex((op, i) => i < firstLine && op.kind === 'clip' && op.rule === 'evenodd');
+  assert.notEqual(clip, -1, 'the lines and bands are laid under an even-odd clip');
+  assert.ok(ops[clip].shapes!.some((b) => near(b, [t.x, t.y, t.w, t.h])), `that cuts the tag out by its own box ${[t.x, t.y, t.w, t.h]} (${JSON.stringify(ops[clip].shapes)})`);
+  assert.ok(ops.slice(clip).every((op) => !(op.kind === 'fill' && typeof op.style === 'object')), 'every tile is filled before the clip');
+  // The tag after the lines: its half black over its box, and its name where pass 3 wrote it.
+  const pill = ops.findIndex((op, i) => i > lastLine && op.kind === 'fill' && op.style === 'rgba(0,0,0,0.5)' && near(op.box, [t.x, t.y, t.w, t.h]));
+  assert.notEqual(pill, -1, `the tag's half black is laid over its box after the lines (${JSON.stringify(ops.filter((op) => op.kind === 'fill' && op.style === 'rgba(0,0,0,0.5)'))})`);
+  const name = ops.findIndex((op, i) => i > pill && op.kind === 'text' && op.text === 'Music' && near(op.at!, [music.x + 12, music.y + 14.5, music.w - 26]));
+  assert.notEqual(name, -1, `and the folder's name where the map writes it, at most the folder less 26 wide (${JSON.stringify(ops.filter((op) => op.kind === 'text'))})`);
+  // The names the glass writes at its own size, about the cursor: none on the tag as it shows on the glass.
+  const toLens = (x: number, y: number) => [t.x + t.w / 2 + (x - (t.x + t.w / 2)) * 4, t.y + t.h / 2 + (y - (t.y + t.h / 2)) * 4];
+  const [tx0, ty0] = toLens(t.x, t.y), [tx1, ty1] = toLens(t.x + t.w, t.y + t.h);
+  const onTag = ops.filter((op, i) => i > name && op.kind === 'text' && op.at!.length === 2 && op.at![0] < tx1 && op.at![0] + op.text!.length * 6 > tx0 && op.at![1] + 6 > ty0 && op.at![1] - 6 < ty1);
+  assert.deepEqual(onTag.map((op) => op.text), [], 'no name the glass writes sits on the tag');
 });

@@ -853,13 +853,14 @@ test('G09: the History diff\'s wash is laid only while the diff is on — Histor
  * pxRects the real drawTreemap left, and its SVG is read back. At device pixel
  * ratio `dpr`, as the page zoomed in or out (review F1.2 of BQJ-2c-r).
  */
-function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string, history = { active: false, diff: false }, palette?: Record<string, string>, hideCloud = false, dpr = 1) {
+function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string, history = { active: false, diff: false }, palette?: Record<string, string>, hideCloud = false, dpr = 1, W = MAP_W, H = MAP_H) {
   const state = { treemap: { nodes: tiles, hideCloud, rootSize: 1e12, history, pxRects: [] as any[],
     colorMode: 'size', mode: 'treemap', query: '', rootName: 'r' } };
   const rec = recordingCtx();
+  const tmBuffer = { width: W, height: H };
   const common = {
-    $: () => ({ clientWidth: MAP_W + 20 }), treemapCanvasHeight: () => MAP_H, window: { devicePixelRatio: dpr },
-    tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: MAP_W, height: MAP_H }, tmBufCtx: rec.ctx,
+    $: () => ({ clientWidth: W + 20 }), treemapCanvasHeight: () => H, window: { devicePixelRatio: dpr },
+    tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer, tmBufCtx: rec.ctx,
     cssVar: (name: string) => (palette ? palette[name] ?? '' : name === '--bg-1' ? ground : 'rgba(0,0,0,0.3)'),
     state,
     tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
@@ -881,7 +882,7 @@ function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string, hist
   }, 'exportTreemapSVG', (e) => e());
   svg = '';
   exp();
-  return { svg, rec, px: state.treemap.pxRects };
+  return { svg, rec, px: state.treemap.pxRects, buffer: tmBuffer };
 }
 
 /** `name="value"` attributes of one tag. */
@@ -4540,4 +4541,55 @@ test('owner\'s outlines: the SVG export\'s outlines and bands stop at its name t
   assert.equal(rects.filter(({ at }) => within(at)).length, outlines.length + bands.length, 'and nothing else is');
   assert.ok(tags.every(({ at }) => at > close), 'the tags are laid after the clipped lines, outside the clip');
   assert.ok([...svg.matchAll(/<text [^>]*font-weight="600"[^>]*>/g)].every((m) => m.index! > close), 'and so are their names');
+});
+
+test('owner\'s outlines: the SVG export is as wide and as tall as the canvas — its device pixels over the ratio, where the map\'s far edges are laid (tmSnap), not that rounded to a css px — so every line and band, the far edge\'s too, lies inside it, at 125, 150, 175 and 220 % on a map 1115×702 css px (residual 8)', () => {
+  // At 150 % the canvas is 1673 device px across, 1115.33 css px: the SVG was 1115 wide, and the right edge's line, laid on
+  // the canvas's last device pixel, a third of a css px past it.
+  const tiles = realisticNodes(), W = 1115, H = 702;
+  for (const dpr of [1.25, 1.5, 1.75, 2.2]) {
+    const { svg, px, buffer } = exportSvg(tiles, (n) => ramp.sizeRgb(n.size), '#0e0e13', undefined, undefined, false, dpr, W, H);
+    const root = attrs(/<svg [^>]*>/.exec(svg)![0]), w = Number(root.width), h = Number(root.height);
+    assert.ok(buffer.width === Math.round(W * dpr + 1e-6) && buffer.height === Math.round(H * dpr + 1e-6), `dpr ${dpr}: control — the canvas is ${buffer.width}×${buffer.height} device px`);
+    assert.ok(Math.abs(w * dpr - buffer.width) < 1e-3 && Math.abs(h * dpr - buffer.height) < 1e-3, `dpr ${dpr}: the SVG is ${w}×${h} css px, the canvas ${buffer.width / dpr}×${buffer.height / dpr}`);
+    assert.equal(root.viewBox, `0 0 ${root.width} ${root.height}`, `dpr ${dpr}: its viewBox is its size`);
+    const laid = (px as Painted[]).flatMap((r) => [...(r.lines || []), ...(r.bands || [])]);
+    const past = laid.filter((l) => l.x + l.w > w + 1e-6 || l.y + l.h > h + 1e-6).map((l) => `${l.x},${l.y} ${l.w}×${l.h}`);
+    assert.ok(laid.some((l) => Math.abs(l.x + l.w - buffer.width / dpr) < 1e-6), `dpr ${dpr}: control — a line or band on the canvas's last device pixel`);
+    assert.deepEqual(past.slice(0, 4), [], `dpr ${dpr}: lines or bands past the SVG's edge`);
+  }
+});
+
+test('owner\'s outlines: the SVG export\'s name tags are the canvas\'s — each pill where pass 3 laid it and as wide, the measured name and 14 px, at most the folder less 12, cut out of the lines\' clip by that same box, and its name written whole, squeezed to the folder less 26 where the canvas squeezes it, not cut short at 6.2 px a letter (residual 8)', () => {
+  // The recording context measures 6 px a character, the SVG estimated 6.2: a short name's pill came out wider than the
+  // canvas's, and a long one was cut to an ellipsis the canvas never wrote — the clips under them differed too.
+  const long = 'A folder with a name far too long for its tag';
+  const tiles: Tile[] = [
+    { name: 'Music', path: '/r/Music', size: 6e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 60, h: 50 },
+    { name: long, path: `/r/${long}`, size: 4e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 50, w: 12, h: 50 },
+    { name: 'big.bin', path: '/r/big.bin', size: 4e10, type: 'file', depth: 1, expanded: false, x: 60, y: 0, w: 40, h: 100 },
+  ];
+  for (const [f, y, w] of [['Music', 0, 60], [long, 50, 12]] as const) {
+    for (let k = 0; k < 4; k++) tiles.push({ name: `s${k}`, path: `/r/${f}/s${k}`, size: 5e9 - k * 1e8, type: 'file', depth: 2, expanded: false, x: (k * w) / 4, y, w: w / 4, h: 50 });
+  }
+  const { svg, px } = exportSvg(tiles, (n) => ramp.sizeRgb(n.size), '#0e0e13');
+  const pills = [...svg.matchAll(/<rect ([^>]*?)\/?>/g)].map((m) => attrs(m[1])).filter((a) => a.fill === 'rgba(0,0,0,0.5)' && 'rx' in a);
+  const clip = attrs(/<clipPath id="[\w-]+">\s*<path ([^>]*?)\/?>/.exec(svg)![1]);
+  const cuts = subpaths(clip.d).slice(1).map((sp) => sp.box);
+  const names = [...svg.matchAll(/<text ([^>]*font-weight="600"[^>]*)>([^<]*)<\/text>/g)].map((m) => ({ a: attrs(m[1]), text: m[2] }));
+  const folders = (px as Painted[]).filter((r) => r.frame && r.n.depth === 1);
+  assert.equal(folders.length, 2, 'control: two top-level folders, each big enough for a tag');
+  assert.equal(pills.length, 2, 'control: a pill for each');
+  for (const r of folders) {
+    const want = [r.x + 5, r.y + 5, Math.min(r.n.name.length * 6, r.w - 26) + 14, 18];
+    const pill = pills.find((a) => Math.abs(Number(a.x) - want[0]) < 0.06 && Math.abs(Number(a.y) - want[1]) < 0.06);
+    assert.ok(pill, `${r.n.name}: a pill at ${want[0]},${want[1]}`);
+    assert.ok(Math.abs(Number(pill!.width) - want[2]) < 0.06 && Number(pill!.height) === 18, `${r.n.name}: the pill ${pill!.width} wide, as the canvas's ${want[2]}`);
+    assert.ok(cuts.some((b) => b.every((v, i) => Math.abs(v - want[i]) < 0.011)), `${r.n.name}: the lines' clip cut out by the pill's box ${want} (${cuts.map((b) => b.map(fmt).join(',')).join('; ')})`);
+    const name = names.find((n) => Math.abs(Number(n.a.x) - (r.x + 12)) < 0.06 && Math.abs(Number(n.a.y) - (r.y + 18)) < 0.06);
+    assert.ok(name && name.text === r.n.name, `${r.n.name}: its name written whole (${name && name.text})`);
+    const squeezed = r.n.name.length * 6 > r.w - 26;
+    assert.equal(name!.a.textLength === undefined ? undefined : Number(name!.a.textLength), squeezed ? r.w - 26 : undefined, `${r.n.name}: ${squeezed ? 'squeezed to the folder less 26' : 'at its own width'}`);
+    if (squeezed) assert.equal(name!.a.lengthAdjust, 'spacingAndGlyphs', `${r.n.name}: squeezed, glyphs and all, as the canvas's maxWidth does`);
+  }
 });
