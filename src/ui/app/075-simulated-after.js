@@ -457,15 +457,18 @@ function syncCartPreviewChrome() {
     // emptied, and a sparse file frees only what it really takes.
     // Said as the cart's footer, sheet and summary say it (D07).
     `<b>${escapeHtml(formatBytes(tmPreview.freedBytes))}</b> this cart stages for the Trash.` +
-    // The open cart's footer says this sentence beside the banner, so while the
+    // The open cart's footer shows this sentence beside the banner, so while the
     // cart is open the stylesheet takes it out of the banner (H52).
     ` <span class="tm-pv-cart-said">${cartSpaceSaid()}</span>` + outside;
   // Said aloud in #tmPreviewSaid (BQS): the banner comes on screen with these
-  // words already in it, which a screen reader seldom announces. Its message
-  // as it is rendered — innerText, so the sentence the stylesheet hides beside
-  // the open cart is not said, and the Exit preview button is no part of it.
-  // Guarded: a page reader may lift this function without sayAloud.
-  if (typeof sayAloud === 'function') sayAloud('tmPreviewSaid', $('tmPreviewText').innerText);
+  // words already in it, which a screen reader seldom announces. The whole
+  // message, the cart open or not: the footer that shows the sentence the
+  // stylesheet takes out of the banner then is no live region, so said only
+  // as the banner showed it, "space comes back only when you empty the Trash"
+  // was never said while the cart was open (BQT item 30, BQS review L2). Its
+  // text, which no layout is read for; the Exit preview button is no part of
+  // it. Guarded: a page reader may lift this function without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('tmPreviewSaid', $('tmPreviewText').textContent);
   // The banner floats over the map's top edge, and covered the labels of the
   // top-left tiles ("Videos", "holiday-4k.mov" — QA D64). The wrap is padded
   // by the banner's measured height instead — it wraps to two lines beside

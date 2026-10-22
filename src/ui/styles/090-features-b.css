@@ -284,7 +284,9 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 /* In that narrow strip the whole message ran to twelve lines at 1024 and took
    the map down to about 245 px (sixth browser pass H52). Its second half —
    when the space comes back, and the Undo Vault's copy — is what the open
-   cart's footer says right beside it, so the banner leaves it to the cart. */
+   cart's footer says right beside it, so the banner leaves it to the cart on
+   screen. It is still said aloud (#tmPreviewSaid): that footer is no live
+   region (BQT item 30). */
 body.cart-open .tm-preview-banner .tm-pv-cart-said { display: none; }
 .tm-preview-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
   z-index: 6; display: flex; align-items: center; gap: 10px; padding: 8px 12px;

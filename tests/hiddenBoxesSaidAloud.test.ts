@@ -281,24 +281,28 @@ function previewBanner(cartOpen: boolean) {
   return p;
 }
 
-test('the preview banner\'s message is said in its own region a frame after the banner shows it, as a person sees it — without the sentence the stylesheet hides while the cart is open — and the region is emptied when the preview ends (BQS)', () => {
+test('the preview banner\'s whole message is said in its own region a frame after the banner shows it — the cart open or closed, the sentence that space comes back only once the Trash is emptied included — and the region is emptied when the preview ends (BQS; BQT item 30)', () => {
   assert.match(INDEX, /body\.cart-open \.tm-preview-banner \.tm-pv-cart-said \{ display: none; \}/,
-    'control: while the cart is open the stylesheet hides the banner\'s sentence the cart\'s footer says beside it (H52)');
+    'control: while the cart is open the stylesheet hides the banner\'s sentence the cart\'s footer shows beside it (H52)');
+  // That footer is no live region: said nowhere else, the sentence must be said here, the cart open or not (BQS review L2).
+  assert.doesNotMatch(INDEX.slice(INDEX.lastIndexOf('<', INDEX.indexOf(' id="cartFootTotal"')), INDEX.indexOf('>', INDEX.indexOf(' id="cartFootTotal"')) + 1),
+    /\srole="(?:status|alert|log)"|\saria-live="/, 'control: the cart\'s footer, which shows it while the cart is open, says nothing aloud');
   const lead = 'Preview — nothing has been deleted. The hatched areas are the 1.2 GB this cart stages for the Trash.';
   const outside = '2 staged items (0.5 GB) are outside this folder and not shown.';
   const open = previewBanner(true);
   open.fns.syncCartPreviewChrome();
   assert.equal(open.$('tmPreviewBanner').hidden, false, 'control: the banner is shown');
   assert.ok(open.$('tmPreviewText').innerHTML.includes(`<span class="tm-pv-cart-said">${PREVIEW_SAID}</span>`), 'control: its markup holds the sentence the cart says');
+  assert.equal(open.$('tmPreviewText').innerText, `${lead} ${outside}`, 'control: beside the open cart the banner shows the message without it');
   assert.equal(open.$('tmPreviewSaid').textContent, '', 'nothing is said before the frame: the banner comes on screen in this task');
   open.frame();
-  assert.equal(open.$('tmPreviewSaid').textContent, `${lead} ${outside}`,
-    'a frame later the region says the message a person sees beside the open cart — not the sentence the stylesheet hides there');
+  assert.equal(open.$('tmPreviewSaid').textContent, `${lead} ${PREVIEW_SAID} ${outside}`,
+    'a frame later the region says the whole message — with the cart open too, since nothing else says that space comes back only once the Trash is emptied');
 
   const closed = previewBanner(false);
   closed.fns.syncCartPreviewChrome();
   closed.frame();
-  assert.equal(closed.$('tmPreviewSaid').textContent, `${lead} ${PREVIEW_SAID} ${outside}`, 'with the cart closed the banner shows that sentence, and it is said');
+  assert.equal(closed.$('tmPreviewSaid').textContent, `${lead} ${PREVIEW_SAID} ${outside}`, 'with the cart closed the banner shows that sentence, and the same message is said');
   (closed.scope.tmPreview as { on: boolean }).on = false;
   closed.fns.syncCartPreviewChrome();
   assert.deepEqual([closed.$('tmPreviewBanner').hidden, closed.$('tmPreviewSaid').textContent], [true, ''], 'the preview over, the banner goes and the region is emptied at once');

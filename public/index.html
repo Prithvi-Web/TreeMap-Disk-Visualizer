@@ -2964,7 +2964,9 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 /* In that narrow strip the whole message ran to twelve lines at 1024 and took
    the map down to about 245 px (sixth browser pass H52). Its second half —
    when the space comes back, and the Undo Vault's copy — is what the open
-   cart's footer says right beside it, so the banner leaves it to the cart. */
+   cart's footer says right beside it, so the banner leaves it to the cart on
+   screen. It is still said aloud (#tmPreviewSaid): that footer is no live
+   region (BQT item 30). */
 body.cart-open .tm-preview-banner .tm-pv-cart-said { display: none; }
 .tm-preview-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
   z-index: 6; display: flex; align-items: center; gap: 10px; padding: 8px 12px;
@@ -4464,9 +4466,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
            while no preview is up, so it comes on screen with its words already
            in it, which a screen reader seldom announces; and it holds the Exit
            preview button, which is no part of what it says. syncCartPreviewChrome
-           says the banner's message here as it is seen, a frame after the banner
-           shows it — without the sentence the stylesheet hides while the cart is
-           open — and empties it when the preview ends. -->
+           says the banner's whole message here, a frame after the banner shows
+           it — the sentence the stylesheet takes out of the banner while the cart
+           is open included, since the cart's footer that shows it then says
+           nothing aloud (BQT item 30) — and empties it when the preview ends. -->
       <div id="tmPreviewSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
       <!-- What j/k selected, spoken. The tooltip is role="tooltip", which is
            not a live region, so the highlight moved in silence. -->
@@ -21572,15 +21575,18 @@ function syncCartPreviewChrome() {
     // emptied, and a sparse file frees only what it really takes.
     // Said as the cart's footer, sheet and summary say it (D07).
     `<b>${escapeHtml(formatBytes(tmPreview.freedBytes))}</b> this cart stages for the Trash.` +
-    // The open cart's footer says this sentence beside the banner, so while the
+    // The open cart's footer shows this sentence beside the banner, so while the
     // cart is open the stylesheet takes it out of the banner (H52).
     ` <span class="tm-pv-cart-said">${cartSpaceSaid()}</span>` + outside;
   // Said aloud in #tmPreviewSaid (BQS): the banner comes on screen with these
-  // words already in it, which a screen reader seldom announces. Its message
-  // as it is rendered — innerText, so the sentence the stylesheet hides beside
-  // the open cart is not said, and the Exit preview button is no part of it.
-  // Guarded: a page reader may lift this function without sayAloud.
-  if (typeof sayAloud === 'function') sayAloud('tmPreviewSaid', $('tmPreviewText').innerText);
+  // words already in it, which a screen reader seldom announces. The whole
+  // message, the cart open or not: the footer that shows the sentence the
+  // stylesheet takes out of the banner then is no live region, so said only
+  // as the banner showed it, "space comes back only when you empty the Trash"
+  // was never said while the cart was open (BQT item 30, BQS review L2). Its
+  // text, which no layout is read for; the Exit preview button is no part of
+  // it. Guarded: a page reader may lift this function without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('tmPreviewSaid', $('tmPreviewText').textContent);
   // The banner floats over the map's top edge, and covered the labels of the
   // top-left tiles ("Videos", "holiday-4k.mov" — QA D64). The wrap is padded
   // by the banner's measured height instead — it wraps to two lines beside
