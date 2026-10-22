@@ -342,7 +342,7 @@ impl<T: Zeroable> AnonRows<T> {
         // whole number of pages from its page-aligned start, below `bytes`; and the rows at
         // and past `keep` lie past the room, which nothing lends again and nothing borrows
         // now (`settle` takes `&mut`).
-        if unsafe { sys::release_tail(self.start.cast::<u8>(), keep, self.bytes) } {
+        if unsafe { release_tail(self.start.cast::<u8>(), keep, self.bytes) } {
             tally_part(self.bytes - keep);
             self.bytes = keep;
         }
@@ -521,12 +521,46 @@ fn reserve_zeroed(bytes: usize) -> Result<NonNull<u8>, ColumnError> {
 /// `start` and `bytes` are a mapping `map_zeroed` made that has not been released, and
 /// nothing reads or writes it any more.
 unsafe fn unmap(start: NonNull<u8>, bytes: usize) -> bool {
+    if release_refused() {
+        return false;
+    }
     // SAFETY: the caller's promise is the one `sys::unmap` asks for.
     let released = unsafe { sys::unmap(start, bytes) };
     if released {
         tally(bytes, true);
     }
     released
+}
+
+/// Releases the end of a mapping `map_zeroed` made, from `keep` bytes on, and keeps the
+/// start; whether the OS did. The caller counts what it gave back.
+///
+/// # Safety
+///
+/// The promise `sys::release_tail` asks for: `start` and `bytes` are a mapping `map_zeroed`
+/// made that has not been released, `keep` is a whole number of pages less than `bytes`,
+/// and nothing reads or writes the mapping past `keep` any more.
+unsafe fn release_tail(start: NonNull<u8>, keep: usize, bytes: usize) -> bool {
+    if release_refused() {
+        return false;
+    }
+    // SAFETY: the caller's promise is the one `sys::release_tail` asks for.
+    unsafe { sys::release_tail(start, keep, bytes) }
+}
+
+/// Whether a release is refused before the OS is asked: never, outside the unit tests (the
+/// OS's own refusal is the call's answer). The unit tests refuse on their own thread, to see
+/// what a refused release leaves: a `munmap` that would split a mapping past the process's
+/// limit of mappings fails, and no test can make the OS refuse on cue.
+#[cfg(not(test))]
+fn release_refused() -> bool {
+    false
+}
+
+/// Whether this thread's unit test has the OS refuse to give memory back.
+#[cfg(test)]
+fn release_refused() -> bool {
+    tests::REFUSE_RELEASE.with(Cell::get)
 }
 
 /// The OS's error number for the call that just failed.
@@ -550,6 +584,12 @@ mod tests {
     use super::*;
 
     type TestResult = Result<(), ColumnError>;
+
+    thread_local! {
+        /// While set, this thread's releases are refused before the OS is asked
+        /// (`release_refused`).
+        pub(super) static REFUSE_RELEASE: Cell<bool> = const { Cell::new(false) };
+    }
 
     /// A row value that is not zero, for row `i`.
     fn value(i: usize) -> u32 {
@@ -776,6 +816,58 @@ mod tests {
         );
         drop(none);
         assert_eq!(anon_tally(), emptied, "and the drop releases nothing more");
+        Ok(())
+    }
+
+    /// A release the OS refuses at the settle leaves the mapping as it was: still the
+    /// column's, whole, nothing counted given back; and the drop releases all of it, once.
+    /// So for a room of no rows, whose settle releases the whole mapping, and for a room of
+    /// some rows, whose settle gives back the pages past it (review F1.7 of f3b4c90a).
+    #[cfg(unix)]
+    #[test]
+    fn a_release_the_os_refuses_at_the_settle_is_left_to_the_drop() -> TestResult {
+        let page = sys::page_bytes().ok_or(ColumnError::TooLarge {
+            rows: 0,
+            row_bytes: 0,
+        })?;
+        let rows_a_page = page / size_of::<u32>();
+        let whole = u64::try_from(page * 8).unwrap_or(u64::MAX);
+        for (len, room, what) in [
+            (0, 0, "a room of no rows"),
+            (10, rows_a_page + 1, "a room of one page and one row"),
+        ] {
+            let before = anon_tally();
+            let mut rows = AnonRows::<u32>::reserve(rows_a_page * 8)?;
+            let start = rows.start;
+            REFUSE_RELEASE.with(|refuse| refuse.set(true));
+            let settled = rows.settle(len, room);
+            REFUSE_RELEASE.with(|refuse| refuse.set(false));
+            settled?;
+            let after = anon_tally();
+            assert_eq!(
+                (rows.start, rows.bytes),
+                (start, page * 8),
+                "{what}: a refused release leaves the whole mapping the column's"
+            );
+            assert_eq!(
+                (
+                    after.unmaps - before.unmaps,
+                    after.bytes_unmapped - before.bytes_unmapped
+                ),
+                (0, 0),
+                "{what}: nothing is counted given back"
+            );
+            drop(rows);
+            let dropped = anon_tally();
+            assert_eq!(
+                (
+                    dropped.unmaps - before.unmaps,
+                    dropped.bytes_unmapped - before.bytes_unmapped
+                ),
+                (1, whole),
+                "{what}: the drop releases the whole mapping, once"
+            );
+        }
         Ok(())
     }
 
