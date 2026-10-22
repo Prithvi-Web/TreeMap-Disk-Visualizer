@@ -165,6 +165,12 @@ async function loadTreemap(rootPath, animate = false) {
         refreshTimebar();
         drawView(); // the scores follow the drawn set — see the branch above
       };
+      // A map answer with nodes of its own: land() hands the map the nodes it
+      // is given, and maybeInjectTrash squeezes them in place and adds the
+      // Trash cell to them. The map kept for a Stop (`scanMap`, below) is kept,
+      // and landed, as a copy, so a home folder's map is never squeezed twice
+      // beside a second Trash cell (review F1.1, F1.3).
+      const ownNodes = (data) => ({ ...data, nodes: data.nodes.map((n) => ({ ...n })) });
       // The older folder's map, back at once (ninth browser pass, item 19): a
       // Stop that puts back the tree an index paint stood over (putBackHeldTree,
       // J06) has the view ask that tree's scan for the map of the folder it was
@@ -179,7 +185,7 @@ async function loadTreemap(rootPath, animate = false) {
         && (memo.ask === rootPath || memo.data.root.path === rootPath)
         && !(state.treemap.nodesFor && state.treemap.nodesFor.scanId === scanAtRequest)
         && !state.treemap.history.scrubbing) {
-        land(memo.data, memo.floor, scanAtRequest);
+        land(ownNodes(memo.data), memo.floor, scanAtRequest);
       }
       let floor = TM_MIN_SIZE; // the floor the map on screen will have been asked with
       // No scan behind the tree on screen: its map is laid out here, from it (J05).
@@ -199,7 +205,7 @@ async function loadTreemap(rootPath, animate = false) {
       }
       if (state.treemap.history.scrubbing) return; // same rule as above: a scrub in flight owns the map
       // The last map a scan answered, for the Stop above.
-      if (scanAtRequest) state.treemap.scanMap = { scanId: scanAtRequest, ask: rootPath, maxDepth: state.treemap.maxDepth, data, floor };
+      if (scanAtRequest) state.treemap.scanMap = { scanId: scanAtRequest, ask: rootPath, maxDepth: state.treemap.maxDepth, data: ownNodes(data), floor };
       land(data, floor, scanAtRequest);
     }
   } catch (e) {
