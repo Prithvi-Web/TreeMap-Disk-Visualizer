@@ -12,7 +12,9 @@ import { INDEX } from './fixtures/liftFrontend';
  * sheet's panes; the same rows stood in the Dashboard's disk layout, held-up space, drive health and
  * cost cards, the History view's calendar and journal, the Undo Vault and Missing gigabytes. Each now
  * has a live region of its own beside it, in the page from the start, and sayWorking puts the sentence
- * in that region's text once the rows are on screen and takes it out once they are gone.
+ * in that region's text once the rows are on screen and takes it out once they are gone. The Apps,
+ * Security, Photo and video libraries and Games views wrote rows with no sentence at all; they now
+ * have one, said the same way (review F1.8).
  */
 
 /** Every part outside Clean Up that writes labelled working rows: its loader, its host, its sentence, its region. */
@@ -25,6 +27,11 @@ const PARTS = [
   { loader: 'async function loadJournal(', host: 'journalBody', sentence: 'Reading the journal…', region: 'journalWorking' },
   { loader: 'async function loadCapsule(', host: 'capsuleBody', sentence: 'Reading the Undo Vault…', region: 'capsuleWorking' },
   { loader: 'async function loadMissing(', host: 'missingBody', sentence: 'Reconciling this disk…', region: 'missingWorking' },
+  // Their working rows had no sentence at all, so a screen reader heard nothing while they worked (review F1.8).
+  { loader: 'async function loadApps(', host: 'appsBody', sentence: 'Working out what each application owns…', region: 'appsWorking' },
+  { loader: 'async function loadSecurity(', host: 'securityBody', sentence: 'Looking for keys, credentials and wallets…', region: 'securityWorking' },
+  { loader: 'async function loadMedia(', host: 'mediaBody', sentence: 'Reading photo and video libraries…', region: 'mediaWorking' },
+  { loader: 'async function loadGames(', host: 'gamesBody', sentence: 'Reading game libraries…', region: 'gamesWorking' },
 ] as const;
 
 /** The Clean Up sheet's panes, which speak in the sheet's own region (c42d3c23, tests/treeScanKey.test.ts). */
@@ -49,6 +56,17 @@ test('every labelled skeleton in the page is one of the parts that say their sen
   const labelled = [...INDEX.matchAll(/skeletonRows\(\d+, \d+, '([^']+)'\)/g)].map((m) => m[1]);
   assert.deepEqual([...new Set(labelled)].sort(), [...PARTS.map((p) => p.sentence), ...CLEAN_UP].sort(),
     'each labelled skeleton is a part listed here or a Clean Up pane');
+});
+
+test('every working row without a sentence is one of the Dashboard\'s lists a running scan paints, whose progress the scan says aloud — no other part works in silence (review F1.8)', () => {
+  const bare = [...INDEX.matchAll(/skeletonRows\(\d+(?:, \d+)?\)/g)];
+  assert.ok(bare.length > 0, 'control: the Dashboard\'s lists are painted with rows of no sentence while a scan runs');
+  const into = bare.map((m) => {
+    const before = INDEX.slice(Math.max(0, m.index - 80), m.index);
+    return /\$\('(\w+)'\)\.innerHTML = $/.exec(before)?.[1] ?? `${before.slice(-50)}skeletonRows(…)`;
+  });
+  assert.deepEqual([...new Set(into)].sort(), ['bigFiles', 'bigFolders', 'donutLegend'],
+    'each skeleton written without a sentence is the Dashboard\'s largest files, largest folders or file-type legend, which a scan paints as it starts (scanAnnounce says the scan)');
 });
 
 test('each part has a live region of its own beside its host, empty, in the page from the start — never inside the host, whose every write would take it away (BQR-1 item 11)', () => {

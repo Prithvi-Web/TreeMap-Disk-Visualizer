@@ -28,7 +28,8 @@ async function loadMedia(force = false) {
     return;
   }
   if (!force && state.media.loadedFor === scanId) { renderMedia(); return; }
-  host.innerHTML = skeletonRows(4, 42);
+  host.innerHTML = skeletonRows(4, 42, 'Reading photo and video libraries…');
+  if (typeof sayWorking === 'function') sayWorking(host, 'mediaWorking');
   $('mediaInfo').textContent = '';
   try {
     const report = await api('/api/media?scanId=' + scanId);
@@ -120,7 +121,8 @@ async function loadGames(force = false) {
     return;
   }
   if (!force && state.games.loadedFor === scanId) { renderGames(); return; }
-  host.innerHTML = skeletonRows(6, 42);
+  host.innerHTML = skeletonRows(6, 42, 'Reading game libraries…');
+  if (typeof sayWorking === 'function') sayWorking(host, 'gamesWorking');
   $('gamesInfo').textContent = '';
   try {
     const report = await api('/api/games?scanId=' + scanId);

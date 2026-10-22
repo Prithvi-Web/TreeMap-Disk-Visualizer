@@ -4581,6 +4581,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <div class="as-x">Number of files</div>
       </div>
       <div id="appsBody"><div class="muted">Run a scan to see how much disk each application owns.</div></div>
+      <div id="appsWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
   </section>
 
@@ -4614,6 +4615,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <h2><span data-icon="shield"></span>Secrets in the wrong place</h2>
       <div class="apps-info muted" id="securityInfo"></div>
       <div id="securityBody"><div class="muted">Run a scan to check where your keys and credentials are sitting.</div></div>
+      <div id="securityWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
   </section>
 
@@ -4623,6 +4625,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <h2><span data-icon="play"></span>Game Libraries</h2>
       <div class="apps-info muted" id="gamesInfo"></div>
       <div id="gamesBody"><div class="muted">Run a scan to see what your game libraries hold.</div></div>
+      <div id="gamesWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
     <!-- v4 §8.1 — media libraries: the same pattern, opaque bundles broken
          into originals / derivatives / database, only derivatives removable -->
@@ -4630,6 +4633,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <h2><span data-icon="image"></span>Media Libraries</h2>
       <div class="apps-info muted" id="mediaInfo"></div>
       <div id="mediaBody"><div class="muted">Run a scan to see what your photo and video libraries hold — Photos, Final Cut, iMovie, Lightroom, Capture One.</div></div>
+      <div id="mediaWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
   </section>
 
@@ -36228,7 +36232,8 @@ async function loadApps(force = false) {
   }
   if (!force && state.apps.loadedFor === scanId) { renderApps(); return; }
   appsScatterDrop(); // the standing dots belong to the previous scan's apps
-  host.innerHTML = skeletonRows(8, 42);
+  host.innerHTML = skeletonRows(8, 42, 'Working out what each application owns…');
+  if (typeof sayWorking === 'function') sayWorking(host, 'appsWorking');
   $('appsInfo').textContent = '';
   try {
     const data = await api('/api/apps?scanId=' + scanId);
@@ -36561,7 +36566,8 @@ async function loadSecurity(force = false) {
     return;
   }
   if (!force && state.security.loadedFor === scanId) { renderSecurity(); return; }
-  host.innerHTML = skeletonRows(5, 40);
+  host.innerHTML = skeletonRows(5, 40, 'Looking for keys, credentials and wallets…');
+  if (typeof sayWorking === 'function') sayWorking(host, 'securityWorking');
   $('securityInfo').textContent = '';
   try {
     const report = await api('/api/security/findings?scanId=' + scanId);
@@ -36770,7 +36776,8 @@ async function loadMedia(force = false) {
     return;
   }
   if (!force && state.media.loadedFor === scanId) { renderMedia(); return; }
-  host.innerHTML = skeletonRows(4, 42);
+  host.innerHTML = skeletonRows(4, 42, 'Reading photo and video libraries…');
+  if (typeof sayWorking === 'function') sayWorking(host, 'mediaWorking');
   $('mediaInfo').textContent = '';
   try {
     const report = await api('/api/media?scanId=' + scanId);
@@ -36862,7 +36869,8 @@ async function loadGames(force = false) {
     return;
   }
   if (!force && state.games.loadedFor === scanId) { renderGames(); return; }
-  host.innerHTML = skeletonRows(6, 42);
+  host.innerHTML = skeletonRows(6, 42, 'Reading game libraries…');
+  if (typeof sayWorking === 'function') sayWorking(host, 'gamesWorking');
   $('gamesInfo').textContent = '';
   try {
     const report = await api('/api/games?scanId=' + scanId);

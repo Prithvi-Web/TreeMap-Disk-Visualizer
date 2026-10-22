@@ -443,7 +443,8 @@ async function loadApps(force = false) {
   }
   if (!force && state.apps.loadedFor === scanId) { renderApps(); return; }
   appsScatterDrop(); // the standing dots belong to the previous scan's apps
-  host.innerHTML = skeletonRows(8, 42);
+  host.innerHTML = skeletonRows(8, 42, 'Working out what each application owns…');
+  if (typeof sayWorking === 'function') sayWorking(host, 'appsWorking');
   $('appsInfo').textContent = '';
   try {
     const data = await api('/api/apps?scanId=' + scanId);
@@ -776,7 +777,8 @@ async function loadSecurity(force = false) {
     return;
   }
   if (!force && state.security.loadedFor === scanId) { renderSecurity(); return; }
-  host.innerHTML = skeletonRows(5, 40);
+  host.innerHTML = skeletonRows(5, 40, 'Looking for keys, credentials and wallets…');
+  if (typeof sayWorking === 'function') sayWorking(host, 'securityWorking');
   $('securityInfo').textContent = '';
   try {
     const report = await api('/api/security/findings?scanId=' + scanId);
