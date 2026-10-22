@@ -454,12 +454,50 @@ applySideNav(sideNavPref() === 'rail' || sideNavNarrow.matches);
 // peer's refusal — can be read before it goes (BQL-a review F3.6).
 const TOAST_MIN_MS = 4200;
 const TOAST_MS_PER_CHAR = 60;
+/* ── A toast raised over an open sheet, said in the sheet too (BQT item 26) ──
+   Every sheet is a modal dialog (aria-modal="true"), and while focus is in one
+   Chromium leaves what stands outside it out of the accessibility tree: the
+   toast stack, outside every sheet, may then never be announced. So a toast
+   raised while a sheet is open is also said in that sheet's own live region,
+   #<sheet>ToastSaid, there from the start — the BQS way: emptied now and given
+   the words a frame later, with those of every toast raised before that frame,
+   so the same words again are a change too. A sheet closed by then says
+   nothing: the stack is heard again. The region is emptied as the last of its
+   toasts goes. With no sheet open the stack alone says a toast, as it always
+   has. Answers what takes the words back as the toast goes, or null. */
+const toastSheetSaid = new Map(); // a sheet's region → { words, waiting, up }: what it says, or is about to, for how many toasts
+function toastSayInSheet(msg) {
+  const top = typeof topModal === 'function' ? topModal() : null;
+  const live = top ? $(top.id + 'ToastSaid') : null;
+  if (!live) return null;
+  let said = toastSheetSaid.get(live);
+  if (said && said.waiting) said.words += ' ' + msg;
+  else {
+    const now = { words: String(msg), waiting: true, up: 0 };
+    said = now;
+    toastSheetSaid.set(live, now);
+    live.textContent = '';
+    requestAnimationFrame(() => {
+      now.waiting = false;
+      if (toastSheetSaid.get(live) === now && top.classList.contains('open')) live.textContent = now.words;
+    });
+  }
+  said.up++;
+  const mine = said;
+  return () => {
+    if (--mine.up > 0 || toastSheetSaid.get(live) !== mine) return;
+    toastSheetSaid.delete(live);
+    live.textContent = '';
+  };
+}
 function toast(msg, kind = 'success', ms = Math.max(TOAST_MIN_MS, String(msg).length * TOAST_MS_PER_CHAR)) {
   const el = document.createElement('div');
   el.className = 'toast ' + kind;
   el.innerHTML = icon(kind === 'error' ? 'alert' : 'checkCircle', 16) + '<span>' + escapeHtml(msg) + '</span>';
+  // Raised over an open sheet, said in it too (above). Guarded: a page reader may lift this without it.
+  const unsay = typeof toastSayInSheet === 'function' ? toastSayInSheet(msg) : null;
   $('toasts').appendChild(el);
-  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 320); }, ms);
+  setTimeout(() => { el.classList.add('out'); setTimeout(() => { el.remove(); if (unsay) unsay(); }, 320); }, ms);
 }
 
 /* ── Where the toasts stand (BQR-1 item 14) ──

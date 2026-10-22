@@ -1,5 +1,9 @@
 <!-- ═══════════ Browse modal ═══════════ -->
 <div class="modal-backdrop" id="browseModal" role="dialog" aria-modal="true" aria-labelledby="browseTitle">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="browseModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:560px;">
     <div class="modal-head">
       <h3 id="browseTitle"><span data-icon="folder"></span>Choose a folder</h3>
@@ -28,6 +32,10 @@
 
 <!-- ═══════════ Confirm modal ═══════════ -->
 <div class="modal-backdrop" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="confirmModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:430px;">
     <div class="modal-head">
       <h3 id="confirmTitle"><span data-icon="trash"></span>Move to Trash?</h3>
@@ -62,6 +70,10 @@
      not implemented in Electron — it returns nothing there — so every such
      question asks through this sheet (askText). -->
 <div class="modal-backdrop" id="askModal" role="dialog" aria-modal="true" aria-labelledby="askTitle">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="askModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:430px;">
     <div class="modal-head">
       <h3 id="askTitle">Name this</h3>

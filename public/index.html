@@ -4932,6 +4932,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
        <body> inert, so a sheet inside <main> made its own page inert and
        nothing in it could be clicked, typed into or focused (B31). -->
   <div class="modal-backdrop" id="apModal" role="dialog" aria-modal="true" aria-labelledby="apModalTitle">
+    <!-- A toast raised while this sheet is open, said in it too: the stack outside
+         every sheet may be left out of what a screen reader reads while focus
+         is in one (toastSayInSheet, BQT item 26). -->
+    <div id="apModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     <div class="modal" style="width:620px;">
       <div class="modal-head">
         <h3 id="apModalTitle"><span data-icon="sparkles"></span>New policy</h3>
@@ -5031,6 +5035,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 
 <!-- ═══════════ Offload progress (Feature 24) ═══════════ -->
 <div class="modal-backdrop" id="offloadModal" role="dialog" aria-modal="true" aria-labelledby="offloadTitle">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="offloadModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:520px;">
     <div class="modal-head">
       <h3 id="offloadTitle"><span data-icon="archive"></span>Offloading…</h3>
@@ -5057,6 +5065,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 
 <!-- ═══════════ Clean Up modal ═══════════ -->
 <div class="modal-backdrop" id="cleanModal" role="dialog" aria-modal="true" aria-labelledby="cleanTitle">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="cleanModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal">
     <div class="modal-head">
       <h3 id="cleanTitle"><span data-icon="sparkles"></span>Clean Up</h3>
@@ -5164,6 +5176,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 
 <!-- ═══════════ Browse modal ═══════════ -->
 <div class="modal-backdrop" id="browseModal" role="dialog" aria-modal="true" aria-labelledby="browseTitle">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="browseModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:560px;">
     <div class="modal-head">
       <h3 id="browseTitle"><span data-icon="folder"></span>Choose a folder</h3>
@@ -5192,6 +5208,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 
 <!-- ═══════════ Confirm modal ═══════════ -->
 <div class="modal-backdrop" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="confirmModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:430px;">
     <div class="modal-head">
       <h3 id="confirmTitle"><span data-icon="trash"></span>Move to Trash?</h3>
@@ -5226,6 +5246,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
      not implemented in Electron — it returns nothing there — so every such
      question asks through this sheet (askText). -->
 <div class="modal-backdrop" id="askModal" role="dialog" aria-modal="true" aria-labelledby="askTitle">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="askModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:430px;">
     <div class="modal-head">
       <h3 id="askTitle">Name this</h3>
@@ -5245,6 +5269,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 
 <!-- ═══════════ Budget modal (Feature 15) ═══════════ -->
 <div class="modal-backdrop" id="budgetModal" role="dialog" aria-modal="true" aria-labelledby="budgetTitle">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="budgetModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:440px;">
     <div class="modal-head">
       <h3 id="budgetTitle"><span data-icon="gauge"></span>Set folder budget</h3>
@@ -5284,6 +5312,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
      suppressing note also pauses Smart suggestions and Autopilot for the
      whole subtree — words for the human, a matching pause for the machine. -->
 <div class="modal-backdrop" id="noteModal" role="dialog" aria-modal="true" aria-labelledby="noteTitle">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="noteModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:460px;">
     <div class="modal-head">
       <h3 id="noteTitle"><span data-icon="doc"></span>Folder note</h3>
@@ -5327,6 +5359,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
      ⌘K / Ctrl+K. One box over everything: views, actions, saved views and
      recent scan roots, fuzzy-matched. Focus returns to where it was. -->
 <div class="modal-backdrop" id="cmdkModal" role="dialog" aria-modal="true" aria-label="Command palette">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="cmdkModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal cmdk-panel" style="width:560px;max-width:92vw;">
     <input type="text" id="cmdkInput" role="combobox" aria-expanded="true" aria-controls="cmdkList"
            aria-autocomplete="list" aria-label="Search views, actions, saved views and recent folders"
@@ -5338,6 +5374,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 
 <!-- ═══════════ Settings modal ═══════════ -->
 <div class="modal-backdrop" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="settingsModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:740px;">
     <div class="modal-head">
       <h3 id="settingsTitle"><span data-icon="settings"></span>Settings</h3>
@@ -5592,6 +5632,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 <div id="tooltip" role="tooltip"></div>
 <!-- ═══════════ Trash contents (Feature 8) ═══════════ -->
 <div class="modal-backdrop" id="trashModal" role="dialog" aria-modal="true" aria-label="Trash contents">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="trashModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:560px;max-width:92vw;">
     <div class="modal-head">
       <h3><span data-icon="trash" data-size="17"></span>Trash <span class="num" id="trashModalMeta"></span></h3>
@@ -5610,6 +5654,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
      from GET /api/scan/:scanId/refused. Nothing in it commits, so it opens on
      itself (the focus net's fallback), and closes like every sheet. -->
 <div class="modal-backdrop" id="refusedModal" role="dialog" aria-modal="true" aria-label="Folders TreeMap could not read">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="refusedModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:620px;max-width:92vw;">
     <div class="modal-head">
       <h3><span data-icon="alert" data-size="17"></span>Folders TreeMap could not read <span class="num" id="refusedModalMeta"></span></h3>
@@ -5625,6 +5673,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 
 <!-- ═══════════ Keyboard shortcuts (Feature 6) ═══════════ -->
 <div class="modal-backdrop" id="shortcutsModal" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="shortcutsModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:540px;max-width:92vw;">
     <div class="modal-head">
       <h3><span data-icon="keyboard" data-size="18"></span>Keyboard shortcuts</h3>
@@ -5708,6 +5760,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 
 <!-- ═══════════ Duplicate viewer (v4 §8.2) ═══════════ -->
 <div class="modal-backdrop" id="dupeViewerModal" role="dialog" aria-modal="true" aria-labelledby="dupeViewerTitle">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="dupeViewerModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:min(94vw,960px);">
     <div class="modal-head">
       <h3 id="dupeViewerTitle"><span data-icon="copy"></span>Compare copies</h3>
@@ -5744,6 +5800,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
      scanned, because "this leaves no trace" is a promise the user has to be
      told about to rely on. -->
 <div class="modal-backdrop" id="portableModal" role="dialog" aria-modal="true" aria-labelledby="portableTitle">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="portableModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:560px;">
     <div class="modal-head">
       <h3 id="portableTitle"><span data-icon="disc"></span>Portable session</h3>
@@ -7462,12 +7522,50 @@ applySideNav(sideNavPref() === 'rail' || sideNavNarrow.matches);
 // peer's refusal — can be read before it goes (BQL-a review F3.6).
 const TOAST_MIN_MS = 4200;
 const TOAST_MS_PER_CHAR = 60;
+/* ── A toast raised over an open sheet, said in the sheet too (BQT item 26) ──
+   Every sheet is a modal dialog (aria-modal="true"), and while focus is in one
+   Chromium leaves what stands outside it out of the accessibility tree: the
+   toast stack, outside every sheet, may then never be announced. So a toast
+   raised while a sheet is open is also said in that sheet's own live region,
+   #<sheet>ToastSaid, there from the start — the BQS way: emptied now and given
+   the words a frame later, with those of every toast raised before that frame,
+   so the same words again are a change too. A sheet closed by then says
+   nothing: the stack is heard again. The region is emptied as the last of its
+   toasts goes. With no sheet open the stack alone says a toast, as it always
+   has. Answers what takes the words back as the toast goes, or null. */
+const toastSheetSaid = new Map(); // a sheet's region → { words, waiting, up }: what it says, or is about to, for how many toasts
+function toastSayInSheet(msg) {
+  const top = typeof topModal === 'function' ? topModal() : null;
+  const live = top ? $(top.id + 'ToastSaid') : null;
+  if (!live) return null;
+  let said = toastSheetSaid.get(live);
+  if (said && said.waiting) said.words += ' ' + msg;
+  else {
+    const now = { words: String(msg), waiting: true, up: 0 };
+    said = now;
+    toastSheetSaid.set(live, now);
+    live.textContent = '';
+    requestAnimationFrame(() => {
+      now.waiting = false;
+      if (toastSheetSaid.get(live) === now && top.classList.contains('open')) live.textContent = now.words;
+    });
+  }
+  said.up++;
+  const mine = said;
+  return () => {
+    if (--mine.up > 0 || toastSheetSaid.get(live) !== mine) return;
+    toastSheetSaid.delete(live);
+    live.textContent = '';
+  };
+}
 function toast(msg, kind = 'success', ms = Math.max(TOAST_MIN_MS, String(msg).length * TOAST_MS_PER_CHAR)) {
   const el = document.createElement('div');
   el.className = 'toast ' + kind;
   el.innerHTML = icon(kind === 'error' ? 'alert' : 'checkCircle', 16) + '<span>' + escapeHtml(msg) + '</span>';
+  // Raised over an open sheet, said in it too (above). Guarded: a page reader may lift this without it.
+  const unsay = typeof toastSayInSheet === 'function' ? toastSayInSheet(msg) : null;
   $('toasts').appendChild(el);
-  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 320); }, ms);
+  setTimeout(() => { el.classList.add('out'); setTimeout(() => { el.remove(); if (unsay) unsay(); }, 320); }, ms);
 }
 
 /* ── Where the toasts stand (BQR-1 item 14) ──
@@ -8053,6 +8151,11 @@ function toastAction(msg, label, fn, kind = 'success', ms = 12000, { focus = fal
     `<button class="pill" type="button" aria-describedby="${msgId}" style="margin-left:10px;flex:none;">` + escapeHtml(label) + '</button>';
   const btn = el.querySelector('button');
   const back = focus ? document.activeElement : null;
+  // Raised over an open sheet, its message is said in the sheet too, as a
+  // toast's is (toastSayInSheet, BQT item 26) — unless it takes focus, which
+  // leaves the sheet for its button, read with the message it describes.
+  // Guarded: a page reader may lift this without it.
+  const unsay = !focus && typeof toastSayInSheet === 'function' ? toastSayInSheet(msg) : null;
   // Gone once, and its choice made once: the toast stays on screen, and
   // clickable, for the 320ms it fades, so a double-click — or a click as it
   // times out — ran `fn` again (final review F1.12).
@@ -8080,7 +8183,7 @@ function toastAction(msg, label, fn, kind = 'success', ms = 12000, { focus = fal
     done = true;
     const held = el.contains(document.activeElement);
     el.classList.add('out');
-    setTimeout(() => el.remove(), 320);
+    setTimeout(() => { el.remove(); if (unsay) unsay(); }, 320);
     if (held) handOff();
   };
   btn.addEventListener('click', () => { if (done) return; gone(); fn(); });

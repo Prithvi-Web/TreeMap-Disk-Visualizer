@@ -8,6 +8,10 @@
 
 <!-- ═══════════ Offload progress (Feature 24) ═══════════ -->
 <div class="modal-backdrop" id="offloadModal" role="dialog" aria-modal="true" aria-labelledby="offloadTitle">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="offloadModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:520px;">
     <div class="modal-head">
       <h3 id="offloadTitle"><span data-icon="archive"></span>Offloading…</h3>

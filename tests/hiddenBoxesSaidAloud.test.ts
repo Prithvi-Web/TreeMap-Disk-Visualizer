@@ -332,7 +332,9 @@ function rendered(html: string): string {
 /** An element as far as these writers reach. A region's text is recorded each time it is set. */
 class El {
   hidden = false;
+  id = '';
   className = '';
+  readonly children: El[] = [];
   title = '';
   value = '';
   readonly said: string[] = [];
@@ -361,6 +363,10 @@ class El {
   setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
   getAttribute(k: string): string | null { return this.attrs.get(k) ?? null; }
   querySelector(): El { return new El(); }
+  appendChild(child: El): El { this.children.push(child); return child; }
+  addEventListener(): void {}
+  remove(): void { this.removed = true; }
+  removed = false;
   focus(): void {}
   select(): void {}
   contains(): boolean { return false; }
@@ -792,4 +798,84 @@ test('the journal\'s portable-session note says itself in its own region a frame
   portable = false;
   await p.fns.loadJournal();
   assert.deepEqual([p.$('journalPortable').hidden, p.$('journalPortableSaid').textContent], [true, ''], 'a session that keeps a journal: the note goes and the region is emptied');
+});
+
+/* ── a toast raised over an open sheet (BQT item 26) ── */
+
+test('every sheet is a modal dialog with a live region of its own for toasts, empty in the page from the start, as its own child — inside the dialog (BQT item 26)', () => {
+  const sheets = [...INDEX.matchAll(/<div class="modal-backdrop" id="(\w+)"[^>]*>/g)].map((m) => ({ id: m[1], tag: m[0] }));
+  assert.ok(sheets.length >= 15, `control: the page's sheets are found (${sheets.length})`);
+  assert.equal(INDEX.split('class="modal-backdrop"').length - 1, sheets.length, 'control: each found once');
+  for (const { id, tag } of sheets) {
+    assert.match(tag, /\srole="dialog"[^>]*\saria-modal="true"/, `#${id} is a modal dialog`);
+    assert.equal(INDEX.split(regionMarkup(`${id}ToastSaid`)).length, 2, `#${id}ToastSaid: exactly one empty live region in the markup`);
+    const holders = ancestorsOf(`${id}ToastSaid`);
+    assert.equal(idIn(holders[holders.length - 1]), id, `#${id}ToastSaid stands in #${id} itself, so it is inside the dialog whatever the dialog shows`);
+  }
+});
+
+/** toast() and its sheet's voice lifted from the page, over Els: the sheet on top is the test's to say, timers run by hand. */
+function toasts() {
+  let top: El | null = null;
+  const timers: Array<() => void> = [];
+  const p = page(['const TOAST_MIN_MS', 'const TOAST_MS_PER_CHAR', 'const toastSheetSaid', 'function toastSayInSheet(', 'function toast('], {
+    icon: () => '<svg aria-hidden="true"></svg>', topModal: () => top, document: { createElement: () => new El() },
+    setTimeout: (fn: () => void) => { timers.push(fn); return timers.length; },
+  });
+  /** A sheet opened on top, by its id. */
+  const open = (id: string) => { const sheet = p.$(id); sheet.id = id; sheet.classList.add('open'); top = sheet; return sheet; };
+  /** Every toast up runs out its time and goes. */
+  const expire = () => { for (let i = 0; i < 4; i++) for (const fn of timers.splice(0)) fn(); };
+  return { ...p, open, close: () => { top?.classList.remove('open'); top = null; }, expire };
+}
+
+test('a toast raised while a sheet is open is said in that sheet\'s own region too, a frame later — while focus is in a sheet the stack outside it may be left out of what a screen reader reads — and its region is emptied as the toast goes; with no sheet open the stack alone says it (BQT item 26)', () => {
+  const t = toasts();
+  t.fns.toast('Asked it to scan — its own screen will show the result');
+  t.frame();
+  assert.equal(t.$('toasts').children.length, 1, 'control: with no sheet open the toast is up in the stack, which says it');
+  assert.deepEqual([...['settingsModal', 'cleanModal', 'confirmModal']].map((id) => t.$(`${id}ToastSaid`).said), [[], [], []], 'and no sheet\'s region says it again');
+
+  t.open('settingsModal');
+  t.fns.toast('Settings saved — ignore rules apply from the next scan');
+  t.fns.toast('Could not save the scanning budget: offline', 'error');
+  assert.equal(t.$('toasts').children.length, 3, 'control: the toasts are up in the stack as ever');
+  assert.equal(t.$('settingsModalToastSaid').textContent, '', 'nothing is said in the sheet before the frame: the region is emptied');
+  t.frame();
+  assert.equal(t.$('settingsModalToastSaid').textContent, 'Settings saved — ignore rules apply from the next scan Could not save the scanning budget: offline',
+    'a frame later the sheet\'s region says them — both toasts raised before the frame');
+  t.expire();
+  assert.equal(t.$('settingsModalToastSaid').textContent, '', 'the toasts gone, nothing of them is left said in the sheet');
+  t.fns.toast('Could not save the scanning budget: offline', 'error');
+  t.frame();
+  assert.equal(t.$('settingsModalToastSaid').textContent, 'Could not save the scanning budget: offline', 'the same words again are a new toast, and are said again');
+  t.expire();
+
+  // Raised as its sheet closes — Save, then the sheet goes: the stack is no longer left out, and says it alone.
+  t.fns.toast('Settings saved — ignore rules apply from the next scan');
+  t.close();
+  t.frame();
+  assert.equal(t.$('settingsModalToastSaid').textContent, '', 'a sheet closed before the frame says nothing: its region is not on screen, and the stack is heard again');
+});
+
+test('a toast with a button raised over an open sheet is said in the sheet too, unless it takes focus — which leaves the sheet for its button, read with the message it describes (BQT item 26)', () => {
+  let top: El | null = null;
+  const timers: Array<() => void> = [];
+  const p = page(['let toastActionSeq', 'const sheetToasts', 'const toastSheetSaid', 'function toastSayInSheet(', 'function toastAction('], {
+    icon: () => '<svg aria-hidden="true"></svg>', topModal: () => top, document: { createElement: () => new El(), activeElement: null },
+    modalFocusables: () => [], modalFocusInto: () => {}, setTimeout: (fn: () => void) => { timers.push(fn); return timers.length; },
+  });
+  const sheet = p.$('browseModal');
+  sheet.id = 'browseModal';
+  sheet.classList.add('open');
+  top = sheet;
+  p.fns.toastAction('No folder is named Photo here. Did you mean “Photos”?', 'Open Photos', () => {}, 'error', 12000, { focus: true, sheet: 'browseModal' });
+  p.frame();
+  assert.deepEqual(p.$('browseModalToastSaid').said, [], 'one that takes focus is read where focus lands, and is not said in the sheet');
+  p.fns.toastAction('These results expire in about 5 minutes — scan again to keep them fresh.', 'Scan again', () => {});
+  assert.equal(p.$('browseModalToastSaid').textContent, '', 'one that leaves focus where it is: the sheet\'s region is emptied at once');
+  p.frame();
+  assert.equal(p.$('browseModalToastSaid').textContent, 'These results expire in about 5 minutes — scan again to keep them fresh.', 'and says its message a frame later');
+  for (let i = 0; i < 4; i++) for (const fn of timers.splice(0)) fn();
+  assert.equal(p.$('browseModalToastSaid').textContent, '', 'the toast gone, nothing of it is left said');
 });

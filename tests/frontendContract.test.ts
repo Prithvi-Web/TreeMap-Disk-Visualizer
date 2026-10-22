@@ -1696,7 +1696,8 @@ test('the open-file warning lives in the one dialog every view shares', () => {
   // every view". There is exactly one such dialog, so putting it there covers
   // Grid, Treemap, the cart, Clean Up and Duplicates at once — and no future
   // view can route around it.
-  const modal = INDEX.slice(INDEX.indexOf('id="confirmModal"'), INDEX.indexOf('id="confirmModal"') + 1400);
+  // The dialog's markup, up to the next sheet (a fixed length ran short once the sheet gained its toast region, BQT item 26).
+  const modal = INDEX.slice(INDEX.indexOf('id="confirmModal"'), INDEX.indexOf('class="modal-backdrop"', INDEX.indexOf('id="confirmModal"')));
   assert.match(modal, /id="confirmOpenHandles"/, 'the warning panel is inside the confirmation dialog');
   // Said aloud from a live region of its own, in the dialog, a frame after the panel shows (BQS).
   assert.match(modal, /<div id="confirmOpenHandlesSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"><\/div>/, 'and is announced to a screen reader when it appears');

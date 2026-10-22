@@ -11,6 +11,10 @@
      ⌘K / Ctrl+K. One box over everything: views, actions, saved views and
      recent scan roots, fuzzy-matched. Focus returns to where it was. -->
 <div class="modal-backdrop" id="cmdkModal" role="dialog" aria-modal="true" aria-label="Command palette">
+  <!-- A toast raised while this sheet is open, said in it too: the stack outside
+       every sheet may be left out of what a screen reader reads while focus
+       is in one (toastSayInSheet, BQT item 26). -->
+  <div id="cmdkModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal cmdk-panel" style="width:560px;max-width:92vw;">
     <input type="text" id="cmdkInput" role="combobox" aria-expanded="true" aria-controls="cmdkList"
            aria-autocomplete="list" aria-label="Search views, actions, saved views and recent folders"
