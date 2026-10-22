@@ -141,9 +141,11 @@ test('D28: with Size or Age colouring a load asks for no scores at all', async (
  * from (null: laid out here from a tree with no scan behind it) and how many rectangles — and `shapes` each one's
  * rectangles, as `name@x+w`. With `home`, Mail is the home folder and the Trash holds 100 bytes, and the page's own
  * maybeInjectTrash adds the Trash cell to Mail's map, as on a home folder's scan. A map is asked of a folder by
- * `root=`: Mail's two files, or one file in any other folder.
+ * `root=`, of whichever scan stands behind the tree on screen: Mail's two files, or one file in any other folder —
+ * with `answerRoot`, under the folder's own spelling of the one asked, as a scan answers for a link (/tmp answered as
+ * /private/tmp; review F2.3).
  */
-function stopHarness(opts: { home?: boolean } = {}) {
+function stopHarness(opts: { home?: boolean; answerRoot?: (asked: string) => string } = {}) {
   const MAIL = '/Users/x/Mail', CORPUS = '/Users/x/corpus';
   const file = (p: string, size: number) => ({ name: p.slice(p.lastIndexOf('/') + 1), path: p, size, type: 'file', extension: 'emlx' });
   const mailTree = { name: 'Mail', path: MAIL, size: 300, type: 'dir', children: [file(`${MAIL}/a.emlx`, 200), file(`${MAIL}/b.emlx`, 100)] };
@@ -162,9 +164,10 @@ function stopHarness(opts: { home?: boolean } = {}) {
   const out: Array<{ url: string; land: () => void }> = [];
   const draws: Array<{ rootPath: string; scanId: unknown; nodes: number }> = [];
   const shapes: string[][] = [];
-  const mapOf = (root: string) => (root === MAIL ? mailMap : { root: { name: root.slice(root.lastIndexOf('/') + 1), path: root, size: 50 }, nodes: [
+  const asked = (root: string) => (root === MAIL ? mailMap : { root: { name: root.slice(root.lastIndexOf('/') + 1), path: root, size: 50 }, nodes: [
     { name: 'c.emlx', path: `${root}/c.emlx`, size: 50, type: 'file', depth: 1, expanded: false, x: 0, y: 0, w: 100, h: 100 },
   ] });
+  const mapOf = (root: string) => { const m = asked(root); return opts.answerRoot ? { ...m, root: { ...m.root, path: opts.answerRoot(root) } } : m; };
   const deps = {
     state, $: (id: string) => (els[id] ||= el()), REDUCED: true,
     isSun: () => false, isCells: () => false, exitCartPreview() {}, renderCrumbs() {}, exitHistoryState() {}, refreshTimebar() {},
@@ -174,7 +177,8 @@ function stopHarness(opts: { home?: boolean } = {}) {
     // The saved index's tree is whole here: nothing was withheld for the index to answer for.
     ensureSubtree: async (p: string) => (state.root && state.root.path === p ? state.root : null),
     api: (url: string) => new Promise((resolve) => {
-      assert.match(url, /^\/api\/scan\/scan-mail\/treemap\?/, 'a map is asked of the scan behind the tree on screen');
+      const scan = /^\/api\/scan\/([^/?]+)\/treemap\?/.exec(url), behind = state.scanning ? state.settledScanId : state.scanId;
+      assert.ok(scan && scan[1] === behind, `a map is asked of the scan behind the tree on screen, ${behind}: ${url}`);
       const root = decodeURIComponent(/[?&]root=([^&]*)/.exec(url)![1]);
       out.push({ url, land: () => resolve(JSON.parse(JSON.stringify(mapOf(root)))) });
     }),
@@ -275,9 +279,12 @@ test('J06: on a home folder\'s map the Stop draws the older map as it was drawn 
   assert.deepEqual(h.shapes.at(-1), drawn, 'and the scan\'s answer, when it lands, draws it the same');
 });
 
-test('J06: the older map is drawn ahead of its answer only for the folder and depth it was drawn for, and not while History is scrubbed — a load of another folder of that scan, of the same folder at another depth, or one under a scrub waits for its own answer (review F1.9)', async () => {
+test('J06: the older map is drawn ahead of its answer only for the scan, folder and depth it was drawn for, and not while History is scrubbed — a load of the same folder in another scan of it, of another folder of that scan, of the same folder at another depth, or one under a scrub waits for its own answer (review F1.9, F2.3)', async () => {
   const h = stopHarness();
   const cases: Array<{ what: string; path: string; set: (on: boolean) => void }> = [
+    // A newer scan of Mail behind the tree: the older scan's map drawn ahead of its answer would stand for it, and stay
+    // if that answer failed (review F2.3).
+    { what: 'Mail in another scan of it', path: h.MAIL, set(on) { Object.assign(h.state, { scanId: on ? 'scan-mail-2' : 'scan-mail', settledScanId: on ? 'scan-mail-2' : 'scan-mail' }); } },
     { what: 'another folder of the same scan', path: `${h.MAIL}/Archive`, set() {} },
     { what: 'Mail at another depth', path: h.MAIL, set(on) { h.state.treemap.maxDepth = on ? 3 : 4; } },
     { what: 'Mail while History is scrubbed', path: h.MAIL, set(on) { h.state.treemap.history.scrubbing = on; } },
@@ -287,7 +294,7 @@ test('J06: the older map is drawn ahead of its answer only for the folder and de
     c.set(true);
     const at = h.draws.length;
     const load = h.loadTreemap(c.path);
-    assert.equal(h.draws.length, at, `${c.what}: nothing is drawn before its own answer lands — the map kept is Mail's at depth 4`);
+    assert.equal(h.draws.length, at, `${c.what}: nothing is drawn before its own answer lands — the map kept is scan-mail's of Mail at depth 4`);
     await h.answer();
     await load;
     c.set(false);
@@ -299,6 +306,28 @@ test('J06: the older map is drawn ahead of its answer only for the folder and de
   assert.equal(h.draws.length, at + 1, 'control: a Stop back to Mail at depth 4 draws Mail\'s map at once');
   await h.answer();
   await load;
+});
+
+test('J06: the older map is drawn at once for its folder by either spelling — as the view asked for it, when its scan answered under the folder\'s own (a link: /tmp answered as /private/tmp), and as the scan answered (review F2.3)', async () => {
+  // The kept map is drawn for a load of its folder by the spelling the view asked with or the one the scan answered
+  // with. The harness answered every folder as asked, so dropping the first spelling left every test green; after a
+  // scan of a link the Stop's load asks by the link, and the older map would wait for its scan's answer after all.
+  const REAL = '/private/Users/x/Mail';
+  const h = stopHarness({ answerRoot: (p) => (p === '/Users/x/Mail' ? REAL : p) });
+  await h.mailThenCorpusThenStop();
+  assert.equal(h.state.treemap.scanMap.ask, h.MAIL, 'control: Mail\'s map was asked as Mail');
+  assert.equal(h.state.treemap.scanMap.data.root.path, REAL, 'control: and answered under its own spelling');
+  const at = h.draws.length;
+  const asked = h.loadTreemap(h.MAIL);
+  assert.deepEqual(h.draws.slice(at), [{ rootPath: REAL, scanId: 'scan-mail', nodes: 2 }], 'a Stop back to Mail, asked as before, draws its map at once');
+  await h.answer();
+  await asked;
+  await h.mailThenCorpusThenStop();
+  const at2 = h.draws.length;
+  const answered = h.loadTreemap(REAL);
+  assert.deepEqual(h.draws.slice(at2), [{ rootPath: REAL, scanId: 'scan-mail', nodes: 2 }], 'and asked under the spelling its scan answered with, at once too');
+  await h.answer();
+  await answered;
 });
 
 /** The coverage sentence for `drawn` cells of which the first `scored` are scored and the next `pending` are in flight. */
