@@ -278,6 +278,24 @@ test('a sheet opened by a click that does not focus its button — Safari, Firef
   setOpen(api, p.confirm, false);
   assert.equal(doc.activeElement, p.pageBtn, 'focus returns to the button the click pressed');
 
+  // Every kind of control the net names, not only a button (review F1.5): a link — Safari does not focus a clicked
+  // link either — a field of each kind, and anything given a tabindex. The click lands inside the link and the
+  // tabindex row, on the control itself for a field.
+  const kinds: Array<[string, FEl, FEl]> = [];
+  const link = append(p.main, mk('a', 'helpLink', [], { href: '#help' }));
+  kinds.push(['a link', link, append(link, mk('span'))]);
+  for (const tag of ['input', 'select', 'textarea']) { const f = append(p.main, mk(tag, `${tag}Box`)); kinds.push([`${tag === 'input' ? 'an' : 'a'} ${tag}`, f, f]); }
+  const row = append(p.main, mk('div', 'pickerRow', ['row'], { tabindex: '0' }));
+  kinds.push(['a row with a tabindex', row, append(row, mk('span'))]);
+  for (const [kind, control, target] of kinds) {
+    field.focus(); api.noteFocus(field);
+    clicks[0].fn({ target });
+    setOpen(api, p.confirm, true);
+    doc.activeElement = doc.body;
+    setOpen(api, p.confirm, false);
+    assert.equal(doc.activeElement, control, `focus returns to ${kind} the click pressed`);
+  }
+
   // A click on what is no control — the page's background — is no opener.
   field.focus(); api.noteFocus(field);
   clicks[0].fn({ target: p.main });
