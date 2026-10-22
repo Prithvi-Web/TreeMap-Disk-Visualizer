@@ -380,8 +380,8 @@ const APP_OWNED_SEGMENTS = new Set([
   'program files', 'program files (x86)',
 ]);
 /**
- * Folders where programs keep their own data: mostly where it takes two consecutive segments to be
- * sure, and Windows' ProgramData, the data folder its programs share across accounts (BQR-1 A2).
+ * Folders where programs keep their own data, where it takes two consecutive segments to be sure.
+ * Windows' ProgramData is one too, only where Windows keeps it (programDataAt).
  */
 const APP_OWNED_RUNS = [
   ['library', 'application support'],
@@ -389,8 +389,19 @@ const APP_OWNED_RUNS = [
   ['library', 'group containers'],
   ['appdata', 'local'],
   ['appdata', 'roaming'],
-  ['programdata'],
 ];
+
+/**
+ * Where in `dirs`, the lowercased folders of `filePath`, Windows' ProgramData is — the data folder its
+ * programs share across accounts (BQR-1 A2) — or -1: only at the top of a drive (`C:\ProgramData`), or
+ * of a drive WSL mounts (`/mnt/c/ProgramData`). A folder of that name anywhere else is one a person
+ * made, and a key in it is theirs, as in a folder of any other name (review F1.3).
+ */
+function programDataAt(filePath: string, dirs: string[]): number {
+  if (/^[a-z]:$/.test(dirs[0] ?? '') && dirs[1] === 'programdata') return 1;
+  if (filePath.startsWith('/') && dirs[0] === 'mnt' && /^[a-z]$/.test(dirs[1] ?? '') && dirs[2] === 'programdata') return 2;
+  return -1;
+}
 
 /** True when a run of segments appears consecutively in `dirs`. */
 function hasRun(dirs: string[], want: string[]): boolean {
@@ -437,7 +448,7 @@ export function isApplicationOwned(filePath: string): boolean {
   if (installedProgramOf(filePath) !== null) return true;
   const dirs = segments(path.dirname(filePath));
   if (dirs.some((d) => APP_OWNED_SEGMENTS.has(d) || BUNDLE_DIR.test(d))) return true;
-  return APP_OWNED_RUNS.some((want) => hasRun(dirs, want));
+  return APP_OWNED_RUNS.some((want) => hasRun(dirs, want)) || programDataAt(filePath, dirs) !== -1;
 }
 
 /** One of the panel's wider-net places (review F2.2): what the folder is, and its name as spelled. */
@@ -460,11 +471,12 @@ function ownedPlaceOf(filePath: string): OwnedPlace | null {
   }
   for (const want of APP_OWNED_RUNS) {
     for (let i = 0; i + want.length <= dirs.length; i++) {
-      // Library's runs are named by their second folder (the one inside Library), AppData's and ProgramData by their first.
+      // Library's runs are named by their second folder (the one inside Library), AppData's by their first.
       if (want.every((w, k) => dirs[i + k] === w)) return { kind: 'data', name: names[want[0] === 'library' ? i + 1 : i] };
     }
   }
-  return null;
+  const programData = programDataAt(filePath, dirs);
+  return programData === -1 ? null : { kind: 'data', name: names[programData] };
 }
 
 /** The row's reason for a file in one of the wider-net places, `where` being its own folder (review F2.2). */

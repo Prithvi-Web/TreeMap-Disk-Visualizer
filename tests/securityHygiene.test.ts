@@ -1281,6 +1281,53 @@ test('on Windows the 500 cap leaves the app-owned count over every finding, and 
     'a copy of Program Files elsewhere is said as a programs folder: no program is installed there');
 });
 
+/* ─────────────── Only Windows' own ProgramData is where programs keep their data (review F1.3) ─────────────── */
+
+type Row = { name: string; severity: string; appOwned: boolean; suggestedPath?: string; reason: string; exposed: boolean };
+/** Each row by its file's name, its folder's name `folder` spelled `as` in its reason: rows in folders named otherwise read the same. */
+function rowsSpelling(rows: Row[], folder: string, as: string) {
+  return Object.fromEntries(rows.map((r) => [r.name, {
+    severity: r.severity, appOwned: r.appOwned, suggestedPath: r.suggestedPath, exposed: r.exposed, reason: r.reason.replaceAll(`“${folder}”`, `“${as}”`),
+  }]));
+}
+
+test('a folder named ProgramData that a person made in their own folders is theirs: a key in it is ranked, said and offered a move as in a folder of any other name (review F1.3)', () => {
+  const rowsIn = (folder: string) => findingsFor([
+    file('id_rsa', path.join(HOME, 'Desktop', folder)),
+    file('deploy.pem', path.join(HOME, 'Projects', folder, 'keys')),
+  ]) as unknown as Row[];
+  const control = rowsSpelling(rowsIn('Backup'), 'Backup', 'ProgramData');
+  assert.deepEqual([control.id_rsa?.severity, control.id_rsa?.appOwned, control.id_rsa?.suggestedPath], ['high', false, path.join(HOME, '.ssh')],
+    'control: a key in a folder on the Desktop is serious and offered the home folder\'s .ssh');
+  assert.equal(control['deploy.pem']?.appOwned, false, 'control: a key in a project\'s folder is no program\'s');
+  assert.deepEqual(rowsSpelling(rowsIn('ProgramData'), 'ProgramData', 'ProgramData'), control,
+    'a folder named ProgramData away from the top of a drive is the person\'s: not "where programs keep their own data", not held back from the serious list or the move');
+});
+
+test('under WSL, Windows\' own ProgramData at the top of a drive (/mnt/c/ProgramData) is where programs keep their data (review F1.3)', { skip: POSIX_ROOTED }, () => {
+  const [f] = findingsFor([file('agent.pem', '/mnt/c/ProgramData/Vendor')], '/');
+  assert.equal(f?.appOwned, true, 'the drive\'s own ProgramData, seen from WSL');
+  assert.equal(f?.reason, 'In “Vendor”, under “ProgramData”, where programs keep their own data — TreeMap does not offer to move it, since a program may rely on it. If you saved it here yourself, you can move it by hand.');
+  const [mine] = findingsFor([file('agent.pem', '/mnt/c/Users/me/ProgramData/Vendor')], '/');
+  assert.equal(mine?.appOwned, false, 'one a person made deeper on the drive is theirs');
+});
+
+test('on Windows only the ProgramData at the top of a drive is where programs keep their data: one a person made in their own folders, or deeper on the drive, is theirs (review F1.3)', { skip: WINDOWS_ONLY }, () => {
+  const { root, home } = windowsDrive();
+  const report = collectSecurityFindings(treeWith(root, [
+    file('agent.pem', path.join(root, 'ProgramData', 'Vendor')),
+    file('id_rsa', path.join(home, 'Desktop', 'ProgramData')),
+    file('server.pem', path.join(root, 'Backup', 'ProgramData', 'Vendor')),
+  ]), [], home) as unknown as { findings: Row[] };
+  const row = (name: string) => report.findings.find((f) => f.name === name)!;
+  assert.equal(row('agent.pem').appOwned, true, 'control: the drive\'s own ProgramData is a program data folder');
+  assert.deepEqual([row('id_rsa').appOwned, row('id_rsa').severity, row('id_rsa').suggestedPath, row('id_rsa').reason],
+    [false, 'high', path.join(home, '.ssh'), 'In “ProgramData”, a folder that is easy to share or hand over by accident.'],
+    'a key in a ProgramData folder on the Desktop is misplaced, serious, and offered the home folder\'s .ssh');
+  assert.deepEqual([row('server.pem').appOwned, row('server.pem').reason], [false, 'In “Vendor”, which is not where this kind of file belongs.'],
+    'nor is a copy of ProgramData deeper on the drive a program data folder');
+});
+
 test('the API\'s appOwnedCount is declared where an agent reads it, beside the total/counts contract it leaves true (H05)', async () => {
   const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8');
   const section = agents.slice(agents.indexOf('`GET /api/security/findings`'), agents.indexOf('`GET /api/provenance?path=`'));
