@@ -162,6 +162,10 @@ function renderEngineBudget(data) {
   }
   const note = $('engineBudgetNote');
   if (note) note.textContent = engineBudgetStatusText(data);
+  // Said in #engineBudgetNoteSaid: held while Settings is closed — an answer
+  // can come after it was — and said a frame after it opens (BQT item 28).
+  // Guarded: a page reader may lift this function without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('engineBudgetNoteSaid', engineBudgetStatusText(data));
 }
 
 function renderEngineBudgetUnavailable(err) {
@@ -169,6 +173,7 @@ function renderEngineBudgetUnavailable(err) {
   for (const input of engineBudgetInputs()) input.disabled = true;
   const note = $('engineBudgetNote');
   if (note) note.textContent = engineBudgetErrorText(err);
+  if (typeof sayAloud === 'function') sayAloud('engineBudgetNoteSaid', engineBudgetErrorText(err)); // as above (BQT item 28)
 }
 
 async function loadEngineBudget() {

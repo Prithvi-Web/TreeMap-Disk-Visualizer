@@ -385,6 +385,7 @@ function openPolicyEditor(policy) {
   setApMatchKind(kind);
   $('apRuleQuery').value = kind === 'query' ? (apDraft.match.q || '') : '';
   $('apQueryStatus').textContent = '';
+  if (typeof sayAloud === 'function') sayAloud('apQuerySaid', ''); // the last policy's line goes, and nothing of it is left said (BQT item 28)
   if (kind === 'query') void validateApQuery();
   // Every custom-rule control starts from the markup's own default on every
   // open, and only then takes what the policy stored. Painted for a custom
@@ -506,7 +507,11 @@ async function validateApQuery() {
   const q = $('apRuleQuery').value.trim();
   const status = $('apQueryStatus');
   const seq = ++apQuerySeq;
-  if (!q) { status.textContent = 'A policy needs a query to match on.'; status.classList.add('bad'); return; }
+  // Each line is said in #apQuerySaid: held while the query row or the editor
+  // is not on screen, and said a frame after it is (BQT item 28). Guarded: a
+  // page reader may lift this function without sayAloud.
+  const say = (words) => { if (typeof sayAloud === 'function') sayAloud('apQuerySaid', words); };
+  if (!q) { status.textContent = 'A policy needs a query to match on.'; status.classList.add('bad'); say(status.textContent); return; }
   try {
     await api('/api/query/validate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -515,11 +520,13 @@ async function validateApQuery() {
     if (seq !== apQuerySeq) return;
     status.textContent = 'That query is understood.';
     status.classList.remove('bad');
+    say(status.textContent);
   } catch (e) {
     if (seq !== apQuerySeq) return;
     const where = typeof e.offset === 'number' ? ` (at character ${e.offset + 1})` : '';
     status.textContent = (e.message || 'That query could not be understood.') + where;
     status.classList.add('bad');
+    say(status.textContent);
   }
 }
 let apQueryDeb = 0;

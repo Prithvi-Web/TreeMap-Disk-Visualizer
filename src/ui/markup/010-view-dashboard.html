@@ -101,13 +101,8 @@
           <div id="indexAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
           <div class="scan-meta num" id="scanMeta"></div>
           <div class="progress-track" id="progressTrack" role="progressbar" aria-label="Scan progress"><div class="progress-fill"></div></div>
-          <!-- a11y: a scan is a minutes-long process whose only report was a
-               visual counter. This is the one polite live region that speaks
-               it — start, a sentence every ten seconds, the finish and any
-               failure. Visually hidden: sighted users have the counter and
-               the bar, and a second copy of the same words on screen would
-               be noise. -->
-          <div id="scanAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+          <!-- The scan's voice, #scanAnnounce, is not here: it stands outside
+               every view, beside #stopAnnounce (BQT item 28). -->
           <!-- Folders the OS would not open. Hidden unless there are some:
                a scan that read everything says nothing here. On a Mac this
                is the everyday state of a fresh install, and saying "0 B,

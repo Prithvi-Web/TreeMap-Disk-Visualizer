@@ -4037,6 +4037,22 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
        outside everything a scan hides (stopScan writes it, beginScanChrome
        clears it). -->
   <div id="stopAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <!-- a11y: a scan is a minutes-long process whose only report was a visual
+       counter. This is the one polite live region that speaks it — start, a
+       sentence every ten seconds, the finish and any failure. Visually hidden:
+       sighted users have the counter and the bar, and a second copy of the
+       same words on screen would be noise. It stood in the Dashboard's Scan
+       card, hidden with the Dashboard: a scan run from the map or Disk City —
+       a rescan, one behind a saved index's paint — finished, failed or
+       counted in silence, and "Starting scan…" was written there in the task
+       that brought the Dashboard back, so it came on screen already in it.
+       Here, outside every view, it is always rendered (BQT item 28). -->
+  <div id="scanAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <!-- What a view not available on this computer says, said aloud: the notice
+       is made and shown already filled (renderCapabilityNotice), so its words
+       are said here, a frame later, in the main part of the page, where the
+       notice is put and nothing hides it (BQT item 28). -->
+  <div id="capabilityNoticeSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <!-- ═══════════ Empty state ═══════════ -->
   <section id="emptyState">
     <!-- Two parts, one shown (renderEmptyState). The Dashboard's empty state is
@@ -4187,13 +4203,8 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           <div id="indexAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
           <div class="scan-meta num" id="scanMeta"></div>
           <div class="progress-track" id="progressTrack" role="progressbar" aria-label="Scan progress"><div class="progress-fill"></div></div>
-          <!-- a11y: a scan is a minutes-long process whose only report was a
-               visual counter. This is the one polite live region that speaks
-               it — start, a sentence every ten seconds, the finish and any
-               failure. Visually hidden: sighted users have the counter and
-               the bar, and a second copy of the same words on screen would
-               be noise. -->
-          <div id="scanAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+          <!-- The scan's voice, #scanAnnounce, is not here: it stands outside
+               every view, beside #stopAnnounce (BQT item 28). -->
           <!-- Folders the OS would not open. Hidden unless there are some:
                a scan that read everything says nothing here. On a Mac this
                is the everyday state of a fresh install, and saying "0 B,
@@ -4875,7 +4886,15 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <select id="cmpB" aria-label="Newer scan or snapshot"></select>
       </span>
       <button class="btn btn-primary" id="cmpRunBtn" aria-describedby="cmpInfo"><span data-icon="diff"></span>Compare</button>
-      <span class="muted" id="cmpInfo" role="status"></span>
+      <!-- Plain text, Compare's description: what it says is said in #cmpSaid (BQT item 28). -->
+      <span class="muted" id="cmpInfo"></span>
+      <!-- What the Compare panel says, said aloud: why Compare is held back,
+           and why the split view could not load. Each was a status region of
+           its own, written when the server answered — while this panel was
+           hidden, if another was picked meanwhile — so it came back already
+           filled, never heard. Their writers say them here, held while the
+           panel or the History view is hidden (BQT item 28). -->
+      <div id="cmpSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
     <div id="cmpBody"><div class="card glass"><div class="muted">Pick two scans of the same folder — scans from this session give a full file-level diff; history snapshots compare top-level folders.</div></div></div>
   </div>
@@ -4970,7 +4989,14 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
             <span data-icon="search"></span>
             <input type="text" id="apRuleQuery" placeholder="ext:log modified&gt;90d" aria-label="The query this policy matches on" autocomplete="off" spellcheck="false">
           </div>
-          <div class="muted" id="apQueryStatus" role="status" aria-live="polite" style="margin-top:6px;"></div>
+          <!-- Plain text: what it says is said in #apQuerySaid (BQT item 28). -->
+          <div class="muted" id="apQueryStatus" style="margin-top:6px;"></div>
+          <!-- The query line, said aloud. A live region of its own once, it was
+               filled in the task the editor opened (a query policy with no
+               query), or while this row was hidden: on screen already filled,
+               or never. validateApQuery says it here, held while the row or
+               the editor is not on screen and said a frame after (BQT item 28). -->
+          <div id="apQuerySaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
         <div id="apMatchCustom" style="display:none;">
           <div class="rule-row">
@@ -5443,7 +5469,14 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           <span class="muted budget-help">Nearly all of it — a tenth is left so the computer stays usable; for when you are watching and want it now</span>
         </label>
       </div>
-      <div class="muted" id="engineBudgetNote" role="status" aria-live="polite"></div>
+      <!-- Plain text: what it says is said in #engineBudgetNoteSaid (BQT item 28). -->
+      <div class="muted" id="engineBudgetNote"></div>
+      <!-- The budget's line, said aloud. A live region of its own once, it was
+           written when the server answered — after Settings closed, if it was
+           closed quickly — and came back already filled, never heard. Its
+           writers say it here, held while the sheet is closed and said a frame
+           after it opens (BQT item 28). -->
+      <div id="engineBudgetNoteSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 
       <!-- Phase 3 — which engine walks the disk. Four choices, saved the moment
            one is picked like the budget above; Automatic is the right answer for
@@ -5770,7 +5803,13 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <button class="close-x" id="dupeViewerClose" aria-label="Close"><span data-icon="x"></span></button>
     </div>
     <div class="modal-body">
-      <div class="muted" id="dupeViewerSummary" role="status" style="margin-bottom:10px;"></div>
+      <!-- Plain text: what it says is said in #dupeViewerSummarySaid (BQT item 28). -->
+      <div class="muted" id="dupeViewerSummary" style="margin-bottom:10px;"></div>
+      <!-- The viewer's summary, said aloud. A live region of its own once, it
+           was given "Reading the copies…" in the task the sheet opened, so the
+           sheet came on screen with it already there. Its writers say it here,
+           a frame later, and closing the viewer takes it back (BQT item 28). -->
+      <div id="dupeViewerSummarySaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
       <div class="dv-panes" id="dupeViewerPanes"></div>
       <div class="muted num" id="dupeViewerHint" style="margin-top:10px;">← → between groups · 1–9 choose the keeper · Space stages the others · Esc closes</div>
     </div>
@@ -8734,16 +8773,22 @@ function renderCapabilityNotice(view, reason) {
     host.id = 'capabilityNotice';
     host.className = 'card glass';
     host.style.cssText = 'display:none;margin:18px auto;max-width:640px;padding:18px 20px;';
-    host.setAttribute('role', 'status');
+    // Plain text: made and shown already filled, as a live region it was
+    // seldom announced. Its words are said in #capabilityNoticeSaid, a frame
+    // after it shows them (BQT item 28).
     const main = document.querySelector('main') || document.body;
     main.appendChild(host);
   }
-  if (!reason) { host.style.display = 'none'; return; }
+  // Guarded: a page reader may lift this function without sayAloud.
+  const say = (words) => { if (typeof sayAloud === 'function') sayAloud('capabilityNoticeSaid', words); };
+  if (!reason) { host.style.display = 'none'; say(''); return; }
+  const title = `${view.label} isn’t available on this computer`;
   host.innerHTML =
     `<div style="display:flex;gap:10px;align-items:flex-start;">${icon('alert', 18)}` +
-    `<div><b>${escapeHtml(view.label)} isn’t available on this computer</b>` +
+    `<div><b>${escapeHtml(title)}</b>` +
     `<div class="muted" style="margin-top:6px;line-height:1.5;">${escapeHtml(reason)}</div></div></div>`;
   host.style.display = 'block';
+  say(`${title}.\n${reason}`);
 }
 
 /** Reflect capability changes onto the tab bar itself. */
@@ -10305,9 +10350,14 @@ function sayWorking(host, liveId) {
   watch.observe(host, { childList: true });
   workingSaid.set(liveId, { rows, watch });
   live.textContent = '';
-  requestAnimationFrame(() => {
+  requestAnimationFrame(function fill() {
     const now = workingSaid.get(liveId);
-    if (now && now.rows === rows) live.textContent = sentence;
+    if (!now || now.rows !== rows) return;
+    // A parent hides the region — the part's view is not up: said once it is
+    // on screen, a frame after (aloudWait, BQT item 28). Guarded: a page reader
+    // may lift this without it.
+    if (typeof aloudWait === 'function' && aloudWait(live, () => requestAnimationFrame(fill))) return;
+    live.textContent = sentence;
   });
 }
 
@@ -10327,7 +10377,12 @@ function sayWorking(host, liveId) {
    `heard`: the words reach the person another way as they change — focus
    moved onto the box reads them there — so they are kept as said, which a
    repaint with the same words is no news to, and the region is left empty:
-   said in it too, they would be heard twice (BQT item 27). */
+   said in it too, they would be heard twice (BQT item 27).
+   A box whose region a parent hides — its view not up, its sheet or pane
+   closed — is not on screen, whatever it says: words put in the region then
+   are never heard, and come on screen already in it when the parent comes
+   back. They wait until the region is on screen, and are said a frame after
+   (aloudWait, below; BQT item 28). */
 const aloudSaid = new Map(); // region id → the words it says, or is about to
 function sayAloud(liveId, text, heard = false) {
   const live = $(liveId);
@@ -10336,7 +10391,43 @@ function sayAloud(liveId, text, heard = false) {
   if (!live || aloudSaid.get(liveId) === words) return;
   aloudSaid.set(liveId, words);
   live.textContent = '';
-  if (words && !heard) requestAnimationFrame(() => { if (aloudSaid.get(liveId) === words) live.textContent = words; });
+  if (!words || heard) return;
+  requestAnimationFrame(function fill() {
+    if (aloudSaid.get(liveId) !== words) return;
+    // Guarded: a page reader may lift this without aloudWait.
+    if (typeof aloudWait === 'function' && aloudWait(live, () => requestAnimationFrame(fill))) return;
+    live.textContent = words;
+  });
+}
+
+/* ── Held until it is on screen (BQT item 28) ──
+   Whether a live region is on screen: a browser gives it a box while it, and
+   everything holding it, is displayed (an sr-only region's is one pixel), and
+   none while a parent hides it. aloudWait answers false for a region on
+   screen, so its words are put in it now; otherwise it watches the region —
+   a ResizeObserver hears its box come — runs `then` once it is on screen, and
+   answers true. The last `then` asked for a region is the one run: words that
+   changed while it waited are said as they are by then. Without a
+   ResizeObserver, words go in at once, as they always did. */
+const aloudWaiting = new Map(); // a region not on screen → what runs once it is
+let aloudWatch = null;
+function aloudWait(live, then) {
+  if (typeof live.getClientRects !== 'function' || live.getClientRects().length > 0) return false;
+  if (typeof ResizeObserver === 'undefined') return false;
+  if (!aloudWatch) {
+    aloudWatch = new ResizeObserver((entries) => {
+      for (const { target } of entries) {
+        if (!target.getClientRects().length || !aloudWaiting.has(target)) continue;
+        const go = aloudWaiting.get(target);
+        aloudWaiting.delete(target);
+        aloudWatch.unobserve(target);
+        go();
+      }
+    });
+  }
+  aloudWaiting.set(live, then);
+  aloudWatch.observe(live);
+  return true;
 }
 
 /**
@@ -10657,11 +10748,18 @@ function indexAutoPlan(stats, autoBuild, exactRoot, stoppedAtCap) {
  * region: a screen reader hears it through #indexAnnounce, once each time the
  * kind of line changes, never once per count (Track U review of U-1, finding
  * 8; the scan's own counter speaks once every ten seconds for the same reason).
+ * Said through sayAloud, which holds the words while the Dashboard is not up —
+ * a build runs on whatever view is — and says them a frame after it comes
+ * back; and taken back as the line goes, so a later build is news again
+ * (BQT item 28). Its sentence has no count in it, so a poll that changes
+ * only the count says nothing new. Guarded: a page reader may lift this
+ * function without sayAloud.
  */
 function renderIndexLine(line) {
   const el = $('indexLine');
   if (!el) return;
-  if (!line) { el.hidden = true; el.textContent = ''; el.dataset.kind = ''; return; }
+  const say = (words) => { if (typeof sayAloud === 'function') sayAloud('indexAnnounce', words); };
+  if (!line) { el.hidden = true; el.textContent = ''; el.dataset.kind = ''; say(''); return; }
   const soFar = typeof line.processed === 'number' ? ` — ${formatCount(line.processed)} items so far` : '';
   const sentence =
     line.kind === 'offer'
@@ -10673,11 +10771,8 @@ function renderIndexLine(line) {
           : 'Indexing this folder for instant opening';
   el.textContent = sentence + soFar;
   el.hidden = false;
-  if (el.dataset.kind !== line.kind) {
-    el.dataset.kind = line.kind;
-    const say = $('indexAnnounce');
-    if (say) say.textContent = sentence;
-  }
+  el.dataset.kind = line.kind;
+  say(sentence);
 }
 
 /** Ask whether a folder can be served from the index. Never throws. */
@@ -32315,6 +32410,7 @@ function openPolicyEditor(policy) {
   setApMatchKind(kind);
   $('apRuleQuery').value = kind === 'query' ? (apDraft.match.q || '') : '';
   $('apQueryStatus').textContent = '';
+  if (typeof sayAloud === 'function') sayAloud('apQuerySaid', ''); // the last policy's line goes, and nothing of it is left said (BQT item 28)
   if (kind === 'query') void validateApQuery();
   // Every custom-rule control starts from the markup's own default on every
   // open, and only then takes what the policy stored. Painted for a custom
@@ -32436,7 +32532,11 @@ async function validateApQuery() {
   const q = $('apRuleQuery').value.trim();
   const status = $('apQueryStatus');
   const seq = ++apQuerySeq;
-  if (!q) { status.textContent = 'A policy needs a query to match on.'; status.classList.add('bad'); return; }
+  // Each line is said in #apQuerySaid: held while the query row or the editor
+  // is not on screen, and said a frame after it is (BQT item 28). Guarded: a
+  // page reader may lift this function without sayAloud.
+  const say = (words) => { if (typeof sayAloud === 'function') sayAloud('apQuerySaid', words); };
+  if (!q) { status.textContent = 'A policy needs a query to match on.'; status.classList.add('bad'); say(status.textContent); return; }
   try {
     await api('/api/query/validate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -32445,11 +32545,13 @@ async function validateApQuery() {
     if (seq !== apQuerySeq) return;
     status.textContent = 'That query is understood.';
     status.classList.remove('bad');
+    say(status.textContent);
   } catch (e) {
     if (seq !== apQuerySeq) return;
     const where = typeof e.offset === 'number' ? ` (at character ${e.offset + 1})` : '';
     status.textContent = (e.message || 'That query could not be understood.') + where;
     status.classList.add('bad');
+    say(status.textContent);
   }
 }
 let apQueryDeb = 0;
@@ -38149,7 +38251,13 @@ async function openDupeViewer(kind, idx) {
   const seq = ++dupeViewer.seq;
   dupeViewer.totalCopies = list[idx].files.length;
   const paths = list[idx].files.slice(0, 8).map((f) => f.path); // the detail endpoint's own cap
+  // The summary's every line is said in #dupeViewerSummarySaid, a frame after
+  // it shows — this one in the task the sheet opens, which the sheet came on
+  // screen with already in it while the summary was a live region of its own
+  // (BQT item 28). Guarded: a page reader may lift this without sayAloud.
+  const say = (words) => { if (typeof sayAloud === 'function') sayAloud('dupeViewerSummarySaid', words); };
   $('dupeViewerSummary').textContent = 'Reading the copies…';
+  say('Reading the copies…');
   $('dupeViewerPanes').innerHTML = '';
   $('dupeViewerModal').classList.add('open');
   if (!wasOpen) document.addEventListener('keydown', dupeViewerKeys);
@@ -38163,14 +38271,15 @@ async function openDupeViewer(kind, idx) {
     if (seq !== dupeViewer.seq) return; // superseded by another open or a close
     // Read for the tree before — the rescan landed, or another tree is on
     // screen — so not shown over this one, whose groups are its own (review F2.3).
-    if (scanId !== treeScanId()) { $('dupeViewerSummary').textContent = treeChanged; return; }
+    if (scanId !== treeScanId()) { $('dupeViewerSummary').textContent = treeChanged; say(treeChanged); return; }
     dupeViewer.data = data;
     dupeViewer.keeper = data.recommendedKeep ? data.recommendedKeep.index : 0;
     renderDupeViewer();
   } catch (e) {
     if (seq !== dupeViewer.seq) return;
-    if (scanId !== treeScanId()) { $('dupeViewerSummary').textContent = treeChanged; return; }
+    if (scanId !== treeScanId()) { $('dupeViewerSummary').textContent = treeChanged; say(treeChanged); return; }
     $('dupeViewerSummary').textContent = 'Could not read the copies: ' + e.message;
+    say($('dupeViewerSummary').textContent);
   }
 }
 
@@ -38182,6 +38291,9 @@ function dupeSimilarity(d) {
 
 function closeDupeViewer() {
   dupeViewer.seq++; // any in-flight detail fetch belongs to a viewer that is gone
+  // Nothing of the summary is left said, so the next open's "Reading the
+  // copies…" is news again (BQT item 28). Guarded, as above.
+  if (typeof sayAloud === 'function') sayAloud('dupeViewerSummarySaid', '');
   closeModal('dupeViewerModal');
   document.removeEventListener('keydown', dupeViewerKeys);
 }
@@ -38225,6 +38337,9 @@ function renderDupeViewer() {
       ? ` · <span class="dv-absent">${escapeHtml(noDiffWhy)} — metadata comparison only</span>` : '') +
     (dupeViewer.totalCopies > d.files.length
       ? ` · <span class="dv-absent">comparing the first ${d.files.length} of ${dupeViewer.totalCopies} copies — the rest are not staged from here</span>` : '');
+  // Said in #dupeViewerSummarySaid, as every line of it is (BQT item 28): its
+  // text, one line. Guarded: a page reader may lift this without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('dupeViewerSummarySaid', $('dupeViewerSummary').textContent);
   $('dupeViewerPanes').innerHTML = d.files.map((f, i) => {
     const blocks = f.visualDiff && i !== ref
       ? `<div class="dv-diff" aria-hidden="true">${f.visualDiff.differingBlocks.map((b) =>
@@ -39024,6 +39139,10 @@ async function loadCompareOptions() {
     // After the sync, which clears the line for picks a person makes: this
     // one is about the default picks, and holds Compare back with them.
     $('cmpInfo').textContent = heldBack;
+    // Said in #cmpSaid: held while the Compare panel is hidden — another panel
+    // picked while the lists were read — and said a frame after it shows (BQT
+    // item 28). Guarded: a page reader may lift this without sayAloud.
+    if (typeof sayAloud === 'function') sayAloud('cmpSaid', heldBack);
     $('cmpRunBtn').disabled = Boolean(heldBack);
   } catch (e) {
     toast('Could not load scans: ' + e.message, 'error');
@@ -39075,6 +39194,7 @@ function cmpSyncResult() {
   // goes with them (review F1.13).
   $('cmpRunBtn').disabled = false;
   $('cmpInfo').textContent = '';
+  if (typeof sayAloud === 'function') sayAloud('cmpSaid', ''); // and nothing of it is left said (BQT item 28)
   const shown = state.compare.result;
   const a = $('cmpA').value, b = $('cmpB').value;
   if (shown && shown.a === a && shown.b === b) return;
@@ -39200,6 +39320,10 @@ async function initCmpSplit(rootPath, whenA, whenB) {
     if (seq !== cmpSplitSeq) return;
     cmpSplit = null;
     if (note) note.textContent = `No split view: ${e.message}`;
+    // Said in #cmpSaid, which stands in the panel from the start: the note is
+    // in the card this compare drew, and the panel may be hidden by now (BQT
+    // item 28). Guarded: a page reader may lift this without sayAloud.
+    if (typeof sayAloud === 'function') sayAloud('cmpSaid', `No split view: ${e.message}`);
   }
 }
 
@@ -39288,7 +39412,7 @@ function renderCompare(r) {
       <div class="rule-row num muted" id="cmpSplitFoot" style="justify-content:space-between;">
         <span>Loading the two maps…</span>
       </div>
-      <div class="muted" id="cmpSplitNote" role="status"></div>
+      <div class="muted" id="cmpSplitNote"></div>
     </div>` : '';
   $('cmpBody').innerHTML = splitCard + `
     <div class="card glass">
@@ -42314,6 +42438,10 @@ function renderEngineBudget(data) {
   }
   const note = $('engineBudgetNote');
   if (note) note.textContent = engineBudgetStatusText(data);
+  // Said in #engineBudgetNoteSaid: held while Settings is closed — an answer
+  // can come after it was — and said a frame after it opens (BQT item 28).
+  // Guarded: a page reader may lift this function without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('engineBudgetNoteSaid', engineBudgetStatusText(data));
 }
 
 function renderEngineBudgetUnavailable(err) {
@@ -42321,6 +42449,7 @@ function renderEngineBudgetUnavailable(err) {
   for (const input of engineBudgetInputs()) input.disabled = true;
   const note = $('engineBudgetNote');
   if (note) note.textContent = engineBudgetErrorText(err);
+  if (typeof sayAloud === 'function') sayAloud('engineBudgetNoteSaid', engineBudgetErrorText(err)); // as above (BQT item 28)
 }
 
 async function loadEngineBudget() {

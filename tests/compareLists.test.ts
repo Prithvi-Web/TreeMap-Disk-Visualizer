@@ -75,6 +75,8 @@ function harness(scans: Scan[], snapshots: Snap[] = [], clock: { minute: (t: num
   // The Compare button as a browser keeps one: its listener, and whether it is disabled.
   const runBtn = { disabled: false, addEventListener: (_t: string, fn: () => Promise<void>) => { button.click = fn; } };
   const compared: string[] = [];
+  /** What the page said aloud, region by region (sayAloud). */
+  const said: Array<[string, string]> = [];
   const els: Record<string, unknown> = {
     cmpA, cmpB, cmpBody: body, cmpInfo: info,
     cmpRunBtn: runBtn,
@@ -102,6 +104,7 @@ function harness(scans: Scan[], snapshots: Snap[] = [], clock: { minute: (t: num
     toast: (m: string) => (toasts ? toasts.push(m) : assert.fail(`the page reported: ${m}`)), icon: () => '', REDUCED: true,
     cmpCountsDrop: noop, fxHuntBeamSync: noop, coverageRules: () => null, cmpCoverage: () => null,
     renderCompare: (r: { whenA: number; whenB: number }) => { body.innerHTML = `RESULT t${r.whenA} → t${r.whenB}`; },
+    sayAloud: (id: string, text: string) => { said.push([id, text]); },
   };
   const names = ['lastPathSegment', 'loadCompareOptions', 'parseCmp', ...(/function cmpSyncResult\s*\(/.test(INDEX) ? ['cmpSyncResult'] : []),
     'cmpOptionLabels', ...(/function cmpPairRefusal\s*\(/.test(INDEX) ? ['cmpPairRefusal'] : [])];
@@ -113,7 +116,7 @@ function harness(scans: Scan[], snapshots: Snap[] = [], clock: { minute: (t: num
   };
   // As the page wires them (the last test pins that wiring).
   if (page.sync) { cmpA.addEventListener('change', page.sync); cmpB.addEventListener('change', page.sync); }
-  return { ...page, cmpA, cmpB, body, info, runBtn, server, compared, click: () => button.click!() };
+  return { ...page, cmpA, cmpB, body, info, runBtn, server, compared, said, click: () => button.click!() };
 }
 
 const scan = (scanId: string, rootPath: string, finishedAt: number, totalSize = 1000): Scan => ({ scanId, rootPath, finishedAt, totalSize });
@@ -325,11 +328,21 @@ test('F05: the one-record line is about the default picks — once a person pick
   assert.equal(h.info.textContent, '', 'and no line says there is only one record');
 });
 
-test('F05: while Compare is held back, its reason is announced and is the button\'s own description — a disabled button is skipped by the keyboard (review F1.13)', () => {
+test('F05: while Compare is held back, its reason is announced and is the button\'s own description — a disabled button is skipped by the keyboard (review F1.13)', async () => {
   const info = /<[^>]*\bid="cmpInfo"[^>]*>/.exec(INDEX)?.[0] ?? '';
   const button = /<button[^>]*\bid="cmpRunBtn"[^>]*>/.exec(INDEX)?.[0] ?? '';
-  assert.match(info, /\brole="status"/, `the line is a status region, so a screen reader hears it when it is written: ${info}`);
+  // Announced from #cmpSaid, which holds the words while the Compare panel is hidden and says them a frame after it
+  // shows: the line itself, a status region of its own once, was written when the lists came back — while another
+  // panel was up, if one was picked meanwhile — and came back already filled (BQT item 28).
+  assert.doesNotMatch(info, /\srole="|\saria-live="/, `the line is plain text, its words said in a region of their own: ${info}`);
+  assert.match(INDEX, /<div id="cmpSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"><\/div>/, 'which is in the page from the start');
   assert.match(button, /\baria-describedby="cmpInfo"/, `and Compare is described by it: ${button}`);
+  const h = harness([scan('s1', '/c/corpus', 100)], [snap('h1', '/c/corpus', 100)]);
+  await h.load();
+  assert.match(h.info.textContent, /^Only one record of this folder so far/, 'control: Compare is held back, and the line says why');
+  assert.deepEqual(h.said.at(-1), ['cmpSaid', h.info.textContent], 'and the reason is said aloud');
+  h.cmpA.pick('scan:s1');
+  assert.deepEqual(h.said.at(-1), ['cmpSaid', ''], 'a pick a person makes takes the line, and its words, away');
 });
 
 test('C08: the lists are wired to keep the result honest when a person changes them', () => {

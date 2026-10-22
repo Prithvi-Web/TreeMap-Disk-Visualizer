@@ -10,7 +10,13 @@
       <button class="close-x" id="dupeViewerClose" aria-label="Close"><span data-icon="x"></span></button>
     </div>
     <div class="modal-body">
-      <div class="muted" id="dupeViewerSummary" role="status" style="margin-bottom:10px;"></div>
+      <!-- Plain text: what it says is said in #dupeViewerSummarySaid (BQT item 28). -->
+      <div class="muted" id="dupeViewerSummary" style="margin-bottom:10px;"></div>
+      <!-- The viewer's summary, said aloud. A live region of its own once, it
+           was given "Reading the copies…" in the task the sheet opened, so the
+           sheet came on screen with it already there. Its writers say it here,
+           a frame later, and closing the viewer takes it back (BQT item 28). -->
+      <div id="dupeViewerSummarySaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
       <div class="dv-panes" id="dupeViewerPanes"></div>
       <div class="muted num" id="dupeViewerHint" style="margin-top:10px;">← → between groups · 1–9 choose the keeper · Space stages the others · Esc closes</div>
     </div>

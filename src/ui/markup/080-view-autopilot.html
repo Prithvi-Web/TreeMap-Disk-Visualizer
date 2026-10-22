@@ -63,7 +63,14 @@
             <span data-icon="search"></span>
             <input type="text" id="apRuleQuery" placeholder="ext:log modified&gt;90d" aria-label="The query this policy matches on" autocomplete="off" spellcheck="false">
           </div>
-          <div class="muted" id="apQueryStatus" role="status" aria-live="polite" style="margin-top:6px;"></div>
+          <!-- Plain text: what it says is said in #apQuerySaid (BQT item 28). -->
+          <div class="muted" id="apQueryStatus" style="margin-top:6px;"></div>
+          <!-- The query line, said aloud. A live region of its own once, it was
+               filled in the task the editor opened (a query policy with no
+               query), or while this row was hidden: on screen already filled,
+               or never. validateApQuery says it here, held while the row or
+               the editor is not on screen and said a frame after (BQT item 28). -->
+          <div id="apQuerySaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
         <div id="apMatchCustom" style="display:none;">
           <div class="rule-row">

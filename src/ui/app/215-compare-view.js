@@ -70,6 +70,10 @@ async function loadCompareOptions() {
     // After the sync, which clears the line for picks a person makes: this
     // one is about the default picks, and holds Compare back with them.
     $('cmpInfo').textContent = heldBack;
+    // Said in #cmpSaid: held while the Compare panel is hidden — another panel
+    // picked while the lists were read — and said a frame after it shows (BQT
+    // item 28). Guarded: a page reader may lift this without sayAloud.
+    if (typeof sayAloud === 'function') sayAloud('cmpSaid', heldBack);
     $('cmpRunBtn').disabled = Boolean(heldBack);
   } catch (e) {
     toast('Could not load scans: ' + e.message, 'error');
@@ -121,6 +125,7 @@ function cmpSyncResult() {
   // goes with them (review F1.13).
   $('cmpRunBtn').disabled = false;
   $('cmpInfo').textContent = '';
+  if (typeof sayAloud === 'function') sayAloud('cmpSaid', ''); // and nothing of it is left said (BQT item 28)
   const shown = state.compare.result;
   const a = $('cmpA').value, b = $('cmpB').value;
   if (shown && shown.a === a && shown.b === b) return;
@@ -246,6 +251,10 @@ async function initCmpSplit(rootPath, whenA, whenB) {
     if (seq !== cmpSplitSeq) return;
     cmpSplit = null;
     if (note) note.textContent = `No split view: ${e.message}`;
+    // Said in #cmpSaid, which stands in the panel from the start: the note is
+    // in the card this compare drew, and the panel may be hidden by now (BQT
+    // item 28). Guarded: a page reader may lift this without sayAloud.
+    if (typeof sayAloud === 'function') sayAloud('cmpSaid', `No split view: ${e.message}`);
   }
 }
 
@@ -334,7 +343,7 @@ function renderCompare(r) {
       <div class="rule-row num muted" id="cmpSplitFoot" style="justify-content:space-between;">
         <span>Loading the two maps…</span>
       </div>
-      <div class="muted" id="cmpSplitNote" role="status"></div>
+      <div class="muted" id="cmpSplitNote"></div>
     </div>` : '';
   $('cmpBody').innerHTML = splitCard + `
     <div class="card glass">

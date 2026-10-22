@@ -69,7 +69,14 @@
           <span class="muted budget-help">Nearly all of it — a tenth is left so the computer stays usable; for when you are watching and want it now</span>
         </label>
       </div>
-      <div class="muted" id="engineBudgetNote" role="status" aria-live="polite"></div>
+      <!-- Plain text: what it says is said in #engineBudgetNoteSaid (BQT item 28). -->
+      <div class="muted" id="engineBudgetNote"></div>
+      <!-- The budget's line, said aloud. A live region of its own once, it was
+           written when the server answered — after Settings closed, if it was
+           closed quickly — and came back already filled, never heard. Its
+           writers say it here, held while the sheet is closed and said a frame
+           after it opens (BQT item 28). -->
+      <div id="engineBudgetNoteSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 
       <!-- Phase 3 — which engine walks the disk. Four choices, saved the moment
            one is picked like the budget above; Automatic is the right answer for

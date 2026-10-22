@@ -28,7 +28,13 @@ async function openDupeViewer(kind, idx) {
   const seq = ++dupeViewer.seq;
   dupeViewer.totalCopies = list[idx].files.length;
   const paths = list[idx].files.slice(0, 8).map((f) => f.path); // the detail endpoint's own cap
+  // The summary's every line is said in #dupeViewerSummarySaid, a frame after
+  // it shows — this one in the task the sheet opens, which the sheet came on
+  // screen with already in it while the summary was a live region of its own
+  // (BQT item 28). Guarded: a page reader may lift this without sayAloud.
+  const say = (words) => { if (typeof sayAloud === 'function') sayAloud('dupeViewerSummarySaid', words); };
   $('dupeViewerSummary').textContent = 'Reading the copies…';
+  say('Reading the copies…');
   $('dupeViewerPanes').innerHTML = '';
   $('dupeViewerModal').classList.add('open');
   if (!wasOpen) document.addEventListener('keydown', dupeViewerKeys);
@@ -42,14 +48,15 @@ async function openDupeViewer(kind, idx) {
     if (seq !== dupeViewer.seq) return; // superseded by another open or a close
     // Read for the tree before — the rescan landed, or another tree is on
     // screen — so not shown over this one, whose groups are its own (review F2.3).
-    if (scanId !== treeScanId()) { $('dupeViewerSummary').textContent = treeChanged; return; }
+    if (scanId !== treeScanId()) { $('dupeViewerSummary').textContent = treeChanged; say(treeChanged); return; }
     dupeViewer.data = data;
     dupeViewer.keeper = data.recommendedKeep ? data.recommendedKeep.index : 0;
     renderDupeViewer();
   } catch (e) {
     if (seq !== dupeViewer.seq) return;
-    if (scanId !== treeScanId()) { $('dupeViewerSummary').textContent = treeChanged; return; }
+    if (scanId !== treeScanId()) { $('dupeViewerSummary').textContent = treeChanged; say(treeChanged); return; }
     $('dupeViewerSummary').textContent = 'Could not read the copies: ' + e.message;
+    say($('dupeViewerSummary').textContent);
   }
 }
 
@@ -61,6 +68,9 @@ function dupeSimilarity(d) {
 
 function closeDupeViewer() {
   dupeViewer.seq++; // any in-flight detail fetch belongs to a viewer that is gone
+  // Nothing of the summary is left said, so the next open's "Reading the
+  // copies…" is news again (BQT item 28). Guarded, as above.
+  if (typeof sayAloud === 'function') sayAloud('dupeViewerSummarySaid', '');
   closeModal('dupeViewerModal');
   document.removeEventListener('keydown', dupeViewerKeys);
 }
@@ -104,6 +114,9 @@ function renderDupeViewer() {
       ? ` · <span class="dv-absent">${escapeHtml(noDiffWhy)} — metadata comparison only</span>` : '') +
     (dupeViewer.totalCopies > d.files.length
       ? ` · <span class="dv-absent">comparing the first ${d.files.length} of ${dupeViewer.totalCopies} copies — the rest are not staged from here</span>` : '');
+  // Said in #dupeViewerSummarySaid, as every line of it is (BQT item 28): its
+  // text, one line. Guarded: a page reader may lift this without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('dupeViewerSummarySaid', $('dupeViewerSummary').textContent);
   $('dupeViewerPanes').innerHTML = d.files.map((f, i) => {
     const blocks = f.visualDiff && i !== ref
       ? `<div class="dv-diff" aria-hidden="true">${f.visualDiff.differingBlocks.map((b) =>

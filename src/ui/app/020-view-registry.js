@@ -507,16 +507,22 @@ function renderCapabilityNotice(view, reason) {
     host.id = 'capabilityNotice';
     host.className = 'card glass';
     host.style.cssText = 'display:none;margin:18px auto;max-width:640px;padding:18px 20px;';
-    host.setAttribute('role', 'status');
+    // Plain text: made and shown already filled, as a live region it was
+    // seldom announced. Its words are said in #capabilityNoticeSaid, a frame
+    // after it shows them (BQT item 28).
     const main = document.querySelector('main') || document.body;
     main.appendChild(host);
   }
-  if (!reason) { host.style.display = 'none'; return; }
+  // Guarded: a page reader may lift this function without sayAloud.
+  const say = (words) => { if (typeof sayAloud === 'function') sayAloud('capabilityNoticeSaid', words); };
+  if (!reason) { host.style.display = 'none'; say(''); return; }
+  const title = `${view.label} isn’t available on this computer`;
   host.innerHTML =
     `<div style="display:flex;gap:10px;align-items:flex-start;">${icon('alert', 18)}` +
-    `<div><b>${escapeHtml(view.label)} isn’t available on this computer</b>` +
+    `<div><b>${escapeHtml(title)}</b>` +
     `<div class="muted" style="margin-top:6px;line-height:1.5;">${escapeHtml(reason)}</div></div></div>`;
   host.style.display = 'block';
+  say(`${title}.\n${reason}`);
 }
 
 /** Reflect capability changes onto the tab bar itself. */

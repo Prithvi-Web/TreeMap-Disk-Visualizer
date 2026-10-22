@@ -5,6 +5,22 @@
        outside everything a scan hides (stopScan writes it, beginScanChrome
        clears it). -->
   <div id="stopAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <!-- a11y: a scan is a minutes-long process whose only report was a visual
+       counter. This is the one polite live region that speaks it — start, a
+       sentence every ten seconds, the finish and any failure. Visually hidden:
+       sighted users have the counter and the bar, and a second copy of the
+       same words on screen would be noise. It stood in the Dashboard's Scan
+       card, hidden with the Dashboard: a scan run from the map or Disk City —
+       a rescan, one behind a saved index's paint — finished, failed or
+       counted in silence, and "Starting scan…" was written there in the task
+       that brought the Dashboard back, so it came on screen already in it.
+       Here, outside every view, it is always rendered (BQT item 28). -->
+  <div id="scanAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <!-- What a view not available on this computer says, said aloud: the notice
+       is made and shown already filled (renderCapabilityNotice), so its words
+       are said here, a frame later, in the main part of the page, where the
+       notice is put and nothing hides it (BQT item 28). -->
+  <div id="capabilityNoticeSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <!-- ═══════════ Empty state ═══════════ -->
   <section id="emptyState">
     <!-- Two parts, one shown (renderEmptyState). The Dashboard's empty state is

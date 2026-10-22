@@ -434,9 +434,14 @@ function sayWorking(host, liveId) {
   watch.observe(host, { childList: true });
   workingSaid.set(liveId, { rows, watch });
   live.textContent = '';
-  requestAnimationFrame(() => {
+  requestAnimationFrame(function fill() {
     const now = workingSaid.get(liveId);
-    if (now && now.rows === rows) live.textContent = sentence;
+    if (!now || now.rows !== rows) return;
+    // A parent hides the region — the part's view is not up: said once it is
+    // on screen, a frame after (aloudWait, BQT item 28). Guarded: a page reader
+    // may lift this without it.
+    if (typeof aloudWait === 'function' && aloudWait(live, () => requestAnimationFrame(fill))) return;
+    live.textContent = sentence;
   });
 }
 
@@ -456,7 +461,12 @@ function sayWorking(host, liveId) {
    `heard`: the words reach the person another way as they change — focus
    moved onto the box reads them there — so they are kept as said, which a
    repaint with the same words is no news to, and the region is left empty:
-   said in it too, they would be heard twice (BQT item 27). */
+   said in it too, they would be heard twice (BQT item 27).
+   A box whose region a parent hides — its view not up, its sheet or pane
+   closed — is not on screen, whatever it says: words put in the region then
+   are never heard, and come on screen already in it when the parent comes
+   back. They wait until the region is on screen, and are said a frame after
+   (aloudWait, below; BQT item 28). */
 const aloudSaid = new Map(); // region id → the words it says, or is about to
 function sayAloud(liveId, text, heard = false) {
   const live = $(liveId);
@@ -465,7 +475,43 @@ function sayAloud(liveId, text, heard = false) {
   if (!live || aloudSaid.get(liveId) === words) return;
   aloudSaid.set(liveId, words);
   live.textContent = '';
-  if (words && !heard) requestAnimationFrame(() => { if (aloudSaid.get(liveId) === words) live.textContent = words; });
+  if (!words || heard) return;
+  requestAnimationFrame(function fill() {
+    if (aloudSaid.get(liveId) !== words) return;
+    // Guarded: a page reader may lift this without aloudWait.
+    if (typeof aloudWait === 'function' && aloudWait(live, () => requestAnimationFrame(fill))) return;
+    live.textContent = words;
+  });
+}
+
+/* ── Held until it is on screen (BQT item 28) ──
+   Whether a live region is on screen: a browser gives it a box while it, and
+   everything holding it, is displayed (an sr-only region's is one pixel), and
+   none while a parent hides it. aloudWait answers false for a region on
+   screen, so its words are put in it now; otherwise it watches the region —
+   a ResizeObserver hears its box come — runs `then` once it is on screen, and
+   answers true. The last `then` asked for a region is the one run: words that
+   changed while it waited are said as they are by then. Without a
+   ResizeObserver, words go in at once, as they always did. */
+const aloudWaiting = new Map(); // a region not on screen → what runs once it is
+let aloudWatch = null;
+function aloudWait(live, then) {
+  if (typeof live.getClientRects !== 'function' || live.getClientRects().length > 0) return false;
+  if (typeof ResizeObserver === 'undefined') return false;
+  if (!aloudWatch) {
+    aloudWatch = new ResizeObserver((entries) => {
+      for (const { target } of entries) {
+        if (!target.getClientRects().length || !aloudWaiting.has(target)) continue;
+        const go = aloudWaiting.get(target);
+        aloudWaiting.delete(target);
+        aloudWatch.unobserve(target);
+        go();
+      }
+    });
+  }
+  aloudWaiting.set(live, then);
+  aloudWatch.observe(live);
+  return true;
 }
 
 /**

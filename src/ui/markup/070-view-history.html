@@ -58,7 +58,15 @@
         <select id="cmpB" aria-label="Newer scan or snapshot"></select>
       </span>
       <button class="btn btn-primary" id="cmpRunBtn" aria-describedby="cmpInfo"><span data-icon="diff"></span>Compare</button>
-      <span class="muted" id="cmpInfo" role="status"></span>
+      <!-- Plain text, Compare's description: what it says is said in #cmpSaid (BQT item 28). -->
+      <span class="muted" id="cmpInfo"></span>
+      <!-- What the Compare panel says, said aloud: why Compare is held back,
+           and why the split view could not load. Each was a status region of
+           its own, written when the server answered — while this panel was
+           hidden, if another was picked meanwhile — so it came back already
+           filled, never heard. Their writers say them here, held while the
+           panel or the History view is hidden (BQT item 28). -->
+      <div id="cmpSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
     <div id="cmpBody"><div class="card glass"><div class="muted">Pick two scans of the same folder — scans from this session give a full file-level diff; history snapshots compare top-level folders.</div></div></div>
   </div>

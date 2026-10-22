@@ -114,11 +114,17 @@ function harness(opts: { status: unknown; results?: unknown[]; rootPath?: string
     braced('async function indexStatusFor('),
     braced('async function openFromIndex('),
     braced('async function buildIndexInBackground('),
+    // The line's news is said through sayAloud, as the page says it (BQT item 28): the map it keeps what each region
+    // says in, declared right above it, then sayAloud. Its frames run at once here.
+    line('const aloudSaid = new Map();'),
+    braced('function sayAloud('),
   ].join('\n');
   const { $, els } = makeDom();
   const announced: string[] = [];
+  let sayText = '';
   const say = el();
-  Object.defineProperty(say, 'textContent', { get: () => announced.at(-1) ?? '', set: (v: string) => { announced.push(v); } });
+  // Every sentence the region is given, in order; the emptying that comes before each, and as the line goes, is no sentence.
+  Object.defineProperty(say, 'textContent', { get: () => sayText, set: (v: string) => { sayText = v; if (v) announced.push(v); } });
   els.indexAnnounce = say;
   const calls: Call[] = [];
   const slept: number[] = [];
@@ -149,11 +155,11 @@ function harness(opts: { status: unknown; results?: unknown[]; rootPath?: string
     throw new Error(`unexpected request ${url}`);
   };
   const page = new Function('$', 'api', 'state', 'formatCount', 'renderIndexBadge', 'setTimeout',
-    'indexTree', 'finishScan', 'performance', 'INSTANT_OPEN_NODES',
+    'indexTree', 'finishScan', 'performance', 'INSTANT_OPEN_NODES', 'requestAnimationFrame',
     `'use strict'; ${src} return { buildIndexInBackground, openFromIndex };`)(
     $, api, state, formatCount, (info: unknown) => badges.push(info),
     (fn: () => void, ms: number) => { slept.push(ms); fn(); return 0; },
-    () => {}, async () => {}, { now: () => 0 }, 250_000,
+    () => {}, async () => {}, { now: () => 0 }, 250_000, (fn: () => void) => { fn(); },
   ) as { buildIndexInBackground: (p: string, stats: unknown) => Promise<void>; openFromIndex: (p: string, info: unknown) => Promise<boolean> };
   return {
     build: page.buildIndexInBackground,
@@ -418,6 +424,8 @@ test('the line is not a live region: a screen reader hears each change of state 
   assert.equal(h.lines.length, 1301, 'the line itself changed on every one of 1,301 polls');
   assert.deepEqual(h.announced, ['Indexing this folder for instant opening', 'Still indexing in the background'],
     'and was spoken twice: when the build began, and when it went on in the background');
+  assert.deepEqual([h.els.indexLine.hidden, h.els.indexAnnounce.textContent], [true, ''],
+    'the build over, the line goes and nothing of it is left said: "Still indexing" is no longer true (BQT item 28)');
   // Two short builds in a row: the first ends while its line still says
   // "Indexing", and the second, after the line cleared, is said again.
   const twice = harness({ status: statusFor(HOME_PROJECTS), results: [{ status: 'complete', root: {} }], rootPath: HOME_PROJECTS });

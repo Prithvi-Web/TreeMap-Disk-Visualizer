@@ -115,11 +115,18 @@ function indexAutoPlan(stats, autoBuild, exactRoot, stoppedAtCap) {
  * region: a screen reader hears it through #indexAnnounce, once each time the
  * kind of line changes, never once per count (Track U review of U-1, finding
  * 8; the scan's own counter speaks once every ten seconds for the same reason).
+ * Said through sayAloud, which holds the words while the Dashboard is not up —
+ * a build runs on whatever view is — and says them a frame after it comes
+ * back; and taken back as the line goes, so a later build is news again
+ * (BQT item 28). Its sentence has no count in it, so a poll that changes
+ * only the count says nothing new. Guarded: a page reader may lift this
+ * function without sayAloud.
  */
 function renderIndexLine(line) {
   const el = $('indexLine');
   if (!el) return;
-  if (!line) { el.hidden = true; el.textContent = ''; el.dataset.kind = ''; return; }
+  const say = (words) => { if (typeof sayAloud === 'function') sayAloud('indexAnnounce', words); };
+  if (!line) { el.hidden = true; el.textContent = ''; el.dataset.kind = ''; say(''); return; }
   const soFar = typeof line.processed === 'number' ? ` — ${formatCount(line.processed)} items so far` : '';
   const sentence =
     line.kind === 'offer'
@@ -131,11 +138,8 @@ function renderIndexLine(line) {
           : 'Indexing this folder for instant opening';
   el.textContent = sentence + soFar;
   el.hidden = false;
-  if (el.dataset.kind !== line.kind) {
-    el.dataset.kind = line.kind;
-    const say = $('indexAnnounce');
-    if (say) say.textContent = sentence;
-  }
+  el.dataset.kind = line.kind;
+  say(sentence);
 }
 
 /** Ask whether a folder can be served from the index. Never throws. */
