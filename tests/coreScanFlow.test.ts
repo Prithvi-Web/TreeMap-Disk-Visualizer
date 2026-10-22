@@ -1081,6 +1081,58 @@ test('the start screen\'s region says none of a Stop\'s words, which #stopAnnoun
   assert.ok(fSaid.length > 0 && fSaid.every((t) => t === ''), `nor a failure's: ${JSON.stringify(fSaid)}`);
 });
 
+test('the start screen\'s region says none of the words of a Stop still waiting on its cancel, of one whose finished scan could not be shown, nor of one the server would not stop — #stopAnnounce or the toast says each — but does say the last session\'s scan it could not reopen, which nothing else says (BQT item 32d)', async () => {
+  // Stopping: the Stop's cancel is still out (J02).
+  const held = { answer: (_a: { status: number; body: unknown }) => {} };
+  const s = page({ route: cancelAnswers('held', held) });
+  const sSaid = startLastSaid(s);
+  await boot(s);
+  await startFrom(s, /^Desktop$/);
+  s.$('scanBtn').focus();
+  void s.stopScan();
+  await turns();
+  assert.equal(s.$('startLast').textContent, 'Stopping the scan of /Users/x/Desktop…', 'control: the start screen says the Stop is waiting on its cancel');
+  assert.equal(s.$('stopAnnounce').textContent, s.$('startLast').textContent, 'control: and #stopAnnounce says the same words');
+  assert.ok(sSaid.length > 0 && sSaid.every((t) => t === ''), `the start screen's region says none of them: ${JSON.stringify(sSaid)}`);
+  held.answer({ status: 200, body: { cancelled: true } });
+  await turns();
+
+  // Unshown: the scan had finished before the Stop reached it, and its results could not be read.
+  const base = server({ roots: [] });
+  const u = page({ route: (m, url, b) => (url === '/api/scan/scan-1/cancel' ? { body: { cancelled: false, status: 'complete' } }
+    : url === '/api/scan/scan-1/stats' ? { status: 500, body: { error: 'The record could not be read.', code: 'INTERNAL' } }
+    : base(m, url, b)) });
+  const uSaid = startLastSaid(u);
+  await boot(u);
+  await startFrom(u, /^Desktop$/);
+  await pressStop(u);
+  const unshown = 'The scan of /Users/x/Desktop had already finished when you pressed Stop, but its results could not be shown: The record could not be read.';
+  assert.equal(u.$('startLast').textContent, unshown, 'control: the start screen says the finished scan could not be shown');
+  assert.equal(u.$('stopAnnounce').textContent, unshown, 'control: and #stopAnnounce says the same words');
+  assert.ok(uSaid.length > 0 && uSaid.every((t) => t === ''), `the start screen's region says none of them: ${JSON.stringify(uSaid)}`);
+
+  // Unstopped: the server refused the cancel, and the toast says so over every view.
+  const r = page({ route: cancelAnswers(500) });
+  const rSaid = startLastSaid(r);
+  await boot(r);
+  await startFrom(r, /^Desktop$/);
+  await pressStop(r);
+  assert.equal(r.$('startLast').textContent, 'TreeMap could not stop the scan of /Users/x/Desktop, so it may still be running: Internal server error.', 'control: the start screen says the scan may still be running');
+  assert.deepEqual(r.toasts, [['Could not stop the scan: Internal server error', 'error']], 'control: and the toast says the server would not stop it, and why');
+  assert.ok(rSaid.length > 0 && rSaid.every((t) => t === ''), `the start screen's region says none of it: ${JSON.stringify(rSaid)}`);
+
+  // The last session's scan, held by the server, that could not be reopened: nothing else says it.
+  const LAST = { scanId: 's9', rootPath: '/Users/x/corpus', totalSize: 8_800_000_000, finishedAt: 1_700_000_000_000 };
+  const c = page({ route: (m, url) => (url === '/api/scan/s9/stats' ? { status: 500, body: { error: 'The scan’s first frame could not be sent.', code: 'INTERNAL' } } : server({ scans: [LAST] })(m, url, null)) });
+  const cSaid = startLastSaid(c);
+  await boot(c);
+  const couldNot = 'Couldn’t reopen your last scan of /Users/x/corpus (The scan’s first frame could not be sent.).';
+  assert.equal(c.$('startLast').textContent, couldNot, 'control: the start screen names the scan it could not reopen, and why');
+  assert.equal(c.$('stopAnnounce').textContent, '', 'control: #stopAnnounce says nothing of it');
+  assert.deepEqual(c.toasts, [], 'control: nor does a toast');
+  assert.equal(cSaid.at(-1), couldNot, 'so the start screen\'s region says it');
+});
+
 test('(vii) a Stop that left focus on <body> — a mouse click that focuses nothing — still lands it on "Scan … again"', async () => {
   const h = page({ route: server({ roots: [] }) });
   await boot(h);
