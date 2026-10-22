@@ -2291,6 +2291,10 @@ function drawTreemap() {
     px.push({ n, x, y, w, h, frame: n.expanded, dpr });
   }
   state.treemap.pxRects = px;
+  // And the name tags it lays (below), none until then: a map with nothing
+  // to draw returns before it lays any, and the lens laid the last map's
+  // over "This folder is empty." (review F1.2, F1.4, F1.12).
+  state.treemap.tags = [];
   // What this paint marks, for the key (G27): each pass below records the
   // marking it draws as it draws it.
   const marks = { open: new Set(), staged: false, cloud: false, git: false };

@@ -249,27 +249,33 @@ function mapRects(nodes: any[], colourOf: (n: any) => number[], hideCloud = fals
 }
 /** mapRects' whole record of the paint: its rectangles (pxRects) and the top-level folders' name tags it laid (tags). */
 function mapState(nodes: any[], colourOf: (n: any) => number[], hideCloud = false, dpr = 1, size = 100, ctx: unknown = recordingCtx().ctx) {
+  const map = mapPainter(nodes, colourOf, hideCloud, dpr, size, ctx);
+  map.paint();
+  return map.state.treemap;
+}
+/** The real drawTreemap over a state of its own, to paint as often as a test likes: `state.treemap.nodes` is what the next paint draws. */
+function mapPainter(nodes: any[], colourOf: (n: any) => number[], hideCloud = false, dpr = 1, size = 100, ctx: unknown = recordingCtx().ctx) {
   const state = { treemap: { nodes, hideCloud, rootSize: 1e9, history: { active: false }, pxRects: [] as any[], tags: [] as any[] } };
-  load<() => void>(MAP_NAMES, {
+  const paint = load<() => void>(MAP_NAMES, {
     $: () => ({ clientWidth: size + 20 }), treemapCanvasHeight: () => size, window: { devicePixelRatio: dpr },
     tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: ctx,
     cssVar: () => '#0b0b0f', state, tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {},
     renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {}, cellRgb: colourOf, tmHatchPattern: () => null,
     tmPreview: { on: false }, roundRect() {}, formatBytes: (n: number) => `${n} B`,
-  }, 'drawTreemap')();
-  return state.treemap;
+  }, 'drawTreemap');
+  return { state, paint };
 }
 
-type LensOp = { kind: string; style?: unknown; lineWidth?: number; box: number[] | null; seg?: number[]; rule?: string; shapes?: number[][]; text?: string; at?: number[]; font?: string };
+type LensOp = { kind: string; style?: unknown; lineWidth?: number; box: number[] | null; seg?: number[]; rule?: string; shapes?: number[][]; text?: string; at?: number[]; font?: string; baseline?: string };
 /**
  * What the real lensPaint draws over `pxRects` with the cursor `at`, in order: each fill and stroke with its paint and the box it covered.
  * Only the map's ground, --tm-canvas-bg, reads as LENS_GROUND; every other variable is magenta (review F3.2), so a test that finds
  * LENS_GROUND knows the glass read the ground's variable and not another.
  */
 const LENS_GROUND = '#0b0b0f';
-function lensOps(pxRects: any[], colourOf: (n: any) => number[], at = { x: 25, y: 25 }, size = [120, 100], tags: any[] = []): LensOp[] {
+function lensOps(pxRects: any[], colourOf: (n: any) => number[], at = { x: 25, y: 25 }, size = [120, 100], tags: any[] = [], cells = false): LensOp[] {
   const ops: LensOp[] = [];
-  const st: Record<string, any> = { fillStyle: '', strokeStyle: '', lineWidth: 1, font: '' };
+  const st: Record<string, any> = { fillStyle: '', strokeStyle: '', lineWidth: 1, font: '', textBaseline: '' };
   let box: number[] | null = null;
   let pen: number[] | null = null;
   let segs: number[][] = [];
@@ -296,7 +302,7 @@ function lensOps(pxRects: any[], colourOf: (n: any) => number[], at = { x: 25, y
     closePath: () => closeSub(),
     clip: (rule?: string) => { closeSub(); ops.push({ kind: 'clip', rule, box: null, shapes: [...shapes] }); },
     fill: () => { closeSub(); ops.push({ kind: 'fill', style: st.fillStyle, box: box ?? (shapes.length === 1 ? shapes[0] : null) }); },
-    fillText: (t: string, x: number, y: number, maxW?: number) => { ops.push({ kind: 'text', style: st.fillStyle, box: null, text: t, at: maxW === undefined ? [x, y] : [x, y, maxW], font: st.font }); },
+    fillText: (t: string, x: number, y: number, maxW?: number) => { ops.push({ kind: 'text', style: st.fillStyle, box: null, text: t, at: maxW === undefined ? [x, y] : [x, y, maxW], font: st.font, baseline: st.textBaseline }); },
     stroke: () => {
       ops.push({ kind: 'stroke', style: st.strokeStyle, lineWidth: st.lineWidth, box });
       for (const seg of segs) ops.push({ kind: 'line', style: st.strokeStyle, lineWidth: st.lineWidth, box: null, seg });
@@ -311,7 +317,7 @@ function lensOps(pxRects: any[], colourOf: (n: any) => number[], at = { x: 25, y
   });
   load<(ctx: unknown, w: number, h: number) => void>(LENS_NAMES, {
     state: { lens: { held: true, pinned: false, at }, treemap: { pxRects, cells: [], tags } },
-    isCells: () => false, cssVar: (name: string) => (name === '--tm-canvas-bg' ? LENS_GROUND : '#ff00ff'), cellRgb: colourOf, altCellPath() {}, window: { devicePixelRatio: 1 },
+    isCells: () => cells, cssVar: (name: string) => (name === '--tm-canvas-bg' ? LENS_GROUND : '#ff00ff'), cellRgb: colourOf, altCellPath() {}, window: { devicePixelRatio: 1 },
   }, 'lensPaint')(ctx, size[0], size[1]);
   return ops;
 }
@@ -507,9 +513,65 @@ test('the lens shows a top-level folder\'s name tag as the map lays it — the l
   assert.notEqual(pill, -1, `the tag's half black is laid over its box after the lines (${JSON.stringify(ops.filter((op) => op.kind === 'fill' && op.style === 'rgba(0,0,0,0.5)'))})`);
   const name = ops.findIndex((op, i) => i > pill && op.kind === 'text' && op.text === 'Music' && near(op.at!, [music.x + 12, music.y + 14.5, music.w - 26]));
   assert.notEqual(name, -1, `and the folder's name where the map writes it, at most the folder less 26 wide (${JSON.stringify(ops.filter((op) => op.kind === 'text'))})`);
+  // In the map's own type, on its middle line, as pass 3 sets them before it lays a tag: the canvas's default, 10px
+  // sans-serif on its alphabetic baseline, wrote the name about 4 css px higher, 16 on the glass (review F1.10).
+  assert.equal(ops[name].font, '600 10.5px -apple-system, sans-serif', 'the name is written in the map\'s tag type');
+  assert.equal(ops[name].baseline, 'middle', 'on its middle line, as on the map');
   // The names the glass writes at its own size, about the cursor: none on the tag as it shows on the glass.
   const toLens = (x: number, y: number) => [t.x + t.w / 2 + (x - (t.x + t.w / 2)) * 4, t.y + t.h / 2 + (y - (t.y + t.h / 2)) * 4];
   const [tx0, ty0] = toLens(t.x, t.y), [tx1, ty1] = toLens(t.x + t.w, t.y + t.h);
   const onTag = ops.filter((op, i) => i > name && op.kind === 'text' && op.at!.length === 2 && op.at![0] < tx1 && op.at![0] + op.text!.length * 6 > tx0 && op.at![1] + 6 > ty0 && op.at![1] - 6 < ty1);
   assert.deepEqual(onTag.map((op) => op.text), [], 'no name the glass writes sits on the tag');
+});
+
+/** A folder 100×60 with its name tag, tiled by four files, beside a file, on a 120×100 map — the residual 8 map — and its colours. */
+const TAGGED = {
+  nodes: [
+    { name: 'Music', path: '/r/Music', size: 4e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 83.34, h: 60 },
+    ...[0, 1, 2, 3].map((k) => ({ name: `m${k}`, path: `/r/Music/m${k}`, size: 5e9, type: 'file', depth: 2, expanded: false, x: k * 20.835, y: 0, w: 20.835, h: 60 })),
+    { name: 'big.bin', path: '/r/big.bin', size: 2e10, type: 'file', depth: 1, expanded: false, x: 83.34, y: 0, w: 16.66, h: 100 },
+  ],
+  colourOf: (n: any) => ({ '/r/Music': [10, 132, 255], '/r/big.bin': [48, 209, 88] } as Record<string, number[]>)[n.path] ?? [255, 214, 10],
+};
+/**
+ * What the glass lays of a name tag in `ops`: the even-odd clip that cuts tags out of the lines, a tag's half black, and
+ * a folder's name as a tag writes it — squeezed to the folder less 26 (fillText's third argument), where the names the
+ * glass writes at its own size take two.
+ */
+function tagOps(ops: LensOp[]) {
+  return {
+    clips: ops.filter((op) => op.kind === 'clip' && op.rule === 'evenodd').length,
+    pills: ops.filter((op) => op.kind === 'fill' && op.style === 'rgba(0,0,0,0.5)').length,
+    names: ops.filter((op) => op.kind === 'text' && op.at!.length === 3).map((op) => op.text),
+  };
+}
+
+test('a map with nothing to draw leaves no name tag behind — an empty folder painted after one with a tag keeps none, and the magnifier, pinned or held over it, lays no tag, half black or clip of the folder before it (review F1.2, F1.4, F1.12)', () => {
+  // The tags were recorded only past the empty map's early return, so after "This folder is empty." the lens laid the
+  // previous folder's pill and name over the empty ground — something the map was not showing.
+  const map = mapPainter(TAGGED.nodes, TAGGED.colourOf, false, 1, 120);
+  map.paint();
+  const t = map.state.treemap.tags[0];
+  assert.equal(map.state.treemap.tags.length, 1, 'control: the folder\'s map lays its name tag');
+  const before = tagOps(lensOps(map.state.treemap.pxRects, TAGGED.colourOf, { x: t.x + t.w / 2, y: t.y + t.h / 2 }, [120, 100], map.state.treemap.tags));
+  assert.deepEqual(before, { clips: 1, pills: 1, names: ['Music'] }, 'control: and the glass over it lays that tag');
+  map.state.treemap.nodes = [];
+  map.paint();
+  assert.equal(map.state.treemap.pxRects.length, 0, 'control: the empty folder draws nothing');
+  assert.deepEqual(map.state.treemap.tags, [], 'the empty folder\'s paint lays no tag, and keeps none of the folder before it');
+  const after = tagOps(lensOps(map.state.treemap.pxRects, TAGGED.colourOf, { x: t.x + t.w / 2, y: t.y + t.h / 2 }, [120, 100], map.state.treemap.tags));
+  assert.deepEqual(after, { clips: 0, pills: 0, names: [] }, 'and the glass where the tag was lays none of it');
+});
+
+test('the magnifier over Circles or Voronoi lays no name tag — the rectangle map\'s tags, still in the state from its last paint, never reach the glass over the cells (review F1.8)', () => {
+  // Switching to Circles or Voronoi leaves the rectangle map's tags in state.treemap.tags: only the cells' layout, not
+  // the tags, belongs to the glass there.
+  const map = mapState(TAGGED.nodes, TAGGED.colourOf, false, 1, 120);
+  const t = map.tags[0];
+  assert.equal(map.tags.length, 1, 'control: the rectangle map left its tag in the state');
+  const at = { x: t.x + t.w / 2, y: t.y + t.h / 2 };
+  assert.deepEqual(tagOps(lensOps([], TAGGED.colourOf, at, [120, 100], map.tags)), { clips: 1, pills: 1, names: ['Music'] },
+    'control: the glass over the rectangle map lays it');
+  assert.deepEqual(tagOps(lensOps([], TAGGED.colourOf, at, [120, 100], map.tags, true)), { clips: 0, pills: 0, names: [] },
+    'over the cells the glass lays no tag, half black or clip');
 });
