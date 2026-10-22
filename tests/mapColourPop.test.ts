@@ -218,6 +218,10 @@ function lab([r8, g8, b8]: RGB): { L: number; C: number } {
   const L = 116 * f(Y) - 16;
   return { L, C: Math.hypot(500 * (f(X) - f(Y)), 200 * (f(Y) - f(Z))) };
 }
+/** lab(c).L for the colour whose luminance(c) is `Y`: the same arithmetic, without a and b. */
+function lstarOfY(Y: number): number {
+  return 116 * (Y > 216 / 24389 ? Math.cbrt(Y) : (24389 / 27 * Y + 16) / 116) - 16;
+}
 const lerp = (a: RGB, b: RGB, t: number) => a.map((v, i) => v + (b[i] - v) * t) as RGB;
 const fmt = (n: number) => n.toFixed(2);
 
@@ -2490,18 +2494,22 @@ function tileLook(raster: ReturnType<typeof rasterCtx>, px: Painted[], inBox: (r
       const t = Math.max(0, Math.min(1, ((y + 0.5) / dpr - r.y) / r.h));
       const fill = lerp(r.stops[0], r.stops[1], t), ref = lerp(own[0], own[1], t);
       const shades = r.tex ? [...lineShades, lerp(r.tex.stops[0] as RGB, r.tex.stops[1] as RGB, t)] : lineShades;
+      // What holds along the row, found once — the fill's and the reference's luminance and L*, each shade's step from
+      // the fill — and each pixel's luminance once: every sum is as it was, bit for bit, at a third of the cost, so the
+      // "no hard step" sweep can measure every colour the map paints (review F2.1).
+      const yFill = luminance(fill), yRef = luminance(ref), lRef = lab(ref).L, lFill = lab(fill as RGB).L;
+      const steps = shades.map((sh) => { const d = sh.map((v, i) => v - fill[i]); return { d, n: d.reduce((a, v) => a + v * v, 0) }; });
       for (let x = x0; x < x1; x++) {
         if (skip && skip(x, y)) continue;
-        const p = raster.at(x, y), c = contrast(p, fill);
+        const p = raster.at(x, y), yp = luminance(p), c = (Math.max(yp, yFill) + 0.05) / (Math.min(yp, yFill) + 0.05);
         total++;
-        if (c > 1.05 && (luminance(p) < luminance(fill)) === darker) apart++;
+        if (c > 1.05 && (yp < yFill) === darker) apart++;
         strongest = Math.max(strongest, c);
-        if (luminance(p) < 0.03) black++;
-        sum += luminance(p); solid += luminance(ref); dL += lab(p).L - lab(ref).L; L += lab(ref).L; moved += lab(fill as RGB).L - lab(ref).L;
+        if (yp < 0.03) black++;
+        sum += yp; solid += yRef; dL += lstarOfY(yp) - lRef; L += lRef; moved += lFill - lRef;
         // How far p lies from the fill toward a shade, along the line between them: the share of the pixel that shade covers.
         let k = 0;
-        for (const sh of shades) {
-          const d = sh.map((v, i) => v - fill[i]), n = d.reduce((a, v) => a + v * v, 0);
+        for (const { d, n } of steps) {
           if (n > 0) k = Math.max(k, Math.min(1, d.reduce((a, v, i) => a + v * (p[i] - fill[i]), 0) / n));
         }
         ink += k;
@@ -2520,6 +2528,50 @@ const TAPER_COLOURS: Array<{ name: string; rgb: RGB }> = [
   { name: 'size ramp 6 GB', rgb: ramp.sizeRgb(6e9) },
   ...OTHER_COLOURS.filter((c) => c.name === 'Reclaim not scored' || c.name === 'Age band C_ORANGE'),
 ];
+
+/**
+ * The "no hard step at 8 px" checks on colour `c` at device pixel ratio `dpr` in `theme` (painted with `palette`): uniform
+ * 9×9 grids of tiles 1 to 18 px, their middle 7×7 measured (tileLook) — the seams' share of the pixels from 5 px, the mean
+ * lightness against the tile's own solid colour from 3 px, under 2 L* a step, and the shade a textured leaf is filled
+ * with, under 2 L* a size up to 7 px. The tests below say why each bound is what it is.
+ */
+function assertNoHardStep(theme: string, palette: Record<string, string>, c: { name: string; rgb: RGB }, dpr: number) {
+  const looks: Array<ReturnType<typeof tileLook> & { s: number }> = [];
+  for (let s = 1; s <= 18; s++) {
+    const n = 9, g = uniformGrid(s * Math.max(1, 1 / dpr), n, 4e8);
+    const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, () => c.rgb, undefined, false, dpr);
+    // The middle tiles: the outer ring meets the map's edge.
+    const inner = (r: Painted) => { const [i, j] = /g(\d+)\.(\d+)$/.exec(r.n.path)!.slice(1).map(Number); return i > 0 && j > 0 && i < n - 1 && j < n - 1; };
+    looks.push({ s, ...tileLook(raster, px, inner, dpr, (r) => LEAF_STOPS(c.rgb, r.h, null)) });
+  }
+  const where = `${theme}, ${c.name}, dpr ${dpr}`;
+  const table = looks.map((l) => `${l.s}px ${(l.apart * 100).toFixed(1)}% (ink ${(l.ink * 100).toFixed(1)}%) ${l.dL.toFixed(1)}L* (fill ${l.moved.toFixed(1)})`).join(', ');
+  // A seam's width in painter's px: a texture's one, a line's a whole number of device pixels (lineCss).
+  const seam = (s: number) => (s >= OUTLINED_PX && dpr >= 1 ? lineCss(dpr) : 1);
+  for (const l of looks) {
+    if (l.s < 5) continue;
+    const want = 1 - ((l.s - seam(l.s)) / l.s) ** 2;
+    if (Number.isInteger(dpr)) assert.ok(Math.abs(l.apart - want) < 0.02, `${where}: ${l.s} px tiles — one 1 px seam each, ${(l.apart * 100).toFixed(1)}% of their pixels (${table})`);
+    assert.ok(Math.abs(l.ink - want) < 0.015, `${where}: ${l.s} px tiles — one 1 px seam each, covering ${(l.ink * 100).toFixed(1)}% of their area, where one covers ${(want * 100).toFixed(1)}% (${table})`);
+  }
+  for (let k = 1; k < looks.length; k++) {
+    const a = looks[k - 1], b = looks[k];
+    if (b.s < OUTLINED_PX) {
+      const moved = Math.abs(b.moved - a.moved);
+      assert.ok(moved <= 2, `${where}: from ${a.s} to ${b.s} px the shade a textured leaf is filled with moves ${moved.toFixed(1)} L*, over 2 — ${table}`);
+    }
+    if (a.s < 3) continue;
+    if (a.s >= 5) {
+      const step = Math.abs(b.ink - a.ink), before = a.s > 5 ? Math.abs(a.ink - looks[k - 2].ink) : Infinity;
+      // (Where the line is thinner than the texture's seam, its share steps down at 8 px: the lightness is held there all the same.)
+      if (!(b.s === OUTLINED_PX && seam(OUTLINED_PX) < 1 - 1e-9)) {
+        assert.ok(step <= before + 0.005, `${where}: from ${a.s} to ${b.s} px the seams' share steps ${(step * 100).toFixed(1)} points, more than the step before it (${(before * 100).toFixed(1)}) — ${table}`);
+      }
+    }
+    const dL = Math.abs(b.dL - a.dL), bound = 2;
+    assert.ok(dL <= bound, `${where}: from ${a.s} to ${b.s} px the mean lightness steps ${dL.toFixed(1)} L*, over ${bound} — ${table}`);
+  }
+}
 
 test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 1 to 18 px, the share of pixels a line or a texture takes (from 5 px) and the mean lightness against the tile\'s own solid colour (from 3 px) change smoothly from one size to the next — under 2 L* a step, 7 to 8 px too, at every ratio — and the shade a leaf with a texture is filled with moves under 2 L* a size, from none at 1 px to the whole at 7, in both themes, on the size ramp, Reclaim\'s "not scored" grey and an Age band, at device pixel ratios 0.667, 0.8, 1, 1.25, 1.5, 1.75 and 2 (review F3.2, F3.6; residual 3; review F1.6, F1.11)', () => {
   // 7 px tiles were one flat block and 8 px tiles a heavy 2 px grid (each leaf drew its own outline, so neighbours met at
@@ -2552,44 +2604,69 @@ test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 1 
   const runs = [...TAPER_COLOURS.map((c) => ({ c, dpr: 1 })), { c: TAPER_COLOURS[1], dpr: 2 },
     ...[1.25, 1.5, 1.75].map((dpr) => ({ c: TAPER_COLOURS[1], dpr })), { c: grey, dpr: 1.5 }, { c: TAPER_COLOURS[1], dpr: 0.8 }, { c: grey, dpr: 0.667 }];
   for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
-    for (const { c, dpr } of runs) {
-      const looks: Array<ReturnType<typeof tileLook> & { s: number }> = [];
-      for (let s = 1; s <= 18; s++) {
-        const n = 9, g = uniformGrid(s * Math.max(1, 1 / dpr), n, 4e8);
-        const { raster, px } = rasterPaint(g.tiles, palette, g.W, g.H, () => c.rgb, undefined, false, dpr);
-        // The middle tiles: the outer ring meets the map's edge.
-        const inner = (r: Painted) => { const [i, j] = /g(\d+)\.(\d+)$/.exec(r.n.path)!.slice(1).map(Number); return i > 0 && j > 0 && i < n - 1 && j < n - 1; };
-        looks.push({ s, ...tileLook(raster, px, inner, dpr, (r) => LEAF_STOPS(c.rgb, r.h, null)) });
-      }
-      const where = `${theme}, ${c.name}, dpr ${dpr}`;
-      const table = looks.map((l) => `${l.s}px ${(l.apart * 100).toFixed(1)}% (ink ${(l.ink * 100).toFixed(1)}%) ${l.dL.toFixed(1)}L* (fill ${l.moved.toFixed(1)})`).join(', ');
-      // A seam's width in painter's px: a texture's one, a line's a whole number of device pixels (lineCss).
-      const seam = (s: number) => (s >= OUTLINED_PX && dpr >= 1 ? lineCss(dpr) : 1);
-      for (const l of looks) {
-        if (l.s < 5) continue;
-        const want = 1 - ((l.s - seam(l.s)) / l.s) ** 2;
-        if (Number.isInteger(dpr)) assert.ok(Math.abs(l.apart - want) < 0.02, `${where}: ${l.s} px tiles — one 1 px seam each, ${(l.apart * 100).toFixed(1)}% of their pixels (${table})`);
-        assert.ok(Math.abs(l.ink - want) < 0.015, `${where}: ${l.s} px tiles — one 1 px seam each, covering ${(l.ink * 100).toFixed(1)}% of their area, where one covers ${(want * 100).toFixed(1)}% (${table})`);
-      }
-      for (let k = 1; k < looks.length; k++) {
-        const a = looks[k - 1], b = looks[k];
-        if (b.s < OUTLINED_PX) {
-          const moved = Math.abs(b.moved - a.moved);
-          assert.ok(moved <= 2, `${where}: from ${a.s} to ${b.s} px the shade a textured leaf is filled with moves ${moved.toFixed(1)} L*, over 2 — ${table}`);
+    for (const { c, dpr } of runs) assertNoHardStep(theme, palette, c, dpr);
+  }
+});
+
+test('owner\'s refinement: no hard step at 8 px on every colour the map paints — the whole size ramp, every Reclaim score and "not scored", every Age band, the History diff colours and the Trash cell — at 100 % and 150 %, in both themes: the fill a leaf with lines is given is the one nearest its target that a try found, never wherever a fourth try left it (review F2.1)', () => {
+  // The fill of a leaf with lines (tmEdgedFill), and the pull on a textured leaf (tmTexturePull), are solved by the
+  // secant through the shifts tried — but the mean lightness moves in steps (each fill is whole sRGB values, about
+  // 0.3 L* apart) and stops where the colour meets sRGB's edge, and a secant through two tries on one step was flung
+  // far off and kept, the fourth try being the last: Reclaim 67's 8 px tiles were left at a shift of 2.3 where 6.5 had
+  // been found, 3.8 L* darker than its 9 px tiles — and its textured leaves were pulled darker to meet them, 3.3 to
+  // 6.6 L* under the solid colour — Reclaim 66's 13 px tiles at a shift of −2.8, 5.7 L* darker than its 12 px and 5.5
+  // than its 14 px; Reclaim 43's 13 px 3.2 L* lighter than its 14 px; and the 17 or 18 px tiles of Reclaim 7 and 65 and
+  // the size ramp at 0.35 2.2 to 2.3 L* off their neighbours. The sweep above painted five colours at 100 %, and none
+  // of these. Every colour, at a whole ratio and a fractional one.
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    for (const dpr of [1, 1.5]) for (const c of EVERY_COLOUR) assertNoHardStep(theme, palette, c, dpr);
+  }
+});
+
+/** The page's tmSolveFill, and the most a fill's L* is shifted. */
+const SOLVE_FILL = load<{ solve: (mean: (t: number) => { fill: number; mean: number }, want: number) => { fill: number; mean: number }; max: number }>(
+  ['tmSolveFill'], {}, '{ solve: tmSolveFill, max: TM_FILL_SHIFT_MAX }', (s) => { s.solve((t) => ({ fill: t, mean: t < 0.5 ? -1 : 1 }), 0); });
+
+test('tmSolveFill answers with the try nearest its target — within 0.1 L*, or as near as any shift reaches — on means that climb in uneven steps and stop at sRGB\'s edge, as tmLinedMean\'s do, asking the mean at most 14 times (review F2.1)', () => {
+  // tmLinedMean against the shift, as measured on Reclaim 67's 8 px tile (review F2.1): rising nearly in step with the
+  // shift, flat past sRGB's edge either way.
+  const knots: Array<[number, number]> = [[-30, -14.95], [-10, -14.95], [-3, -11.52], [0, -8.79], [1, -7.79], [2, -6.79], [3, -6.05], [5, -4.32], [8, -1.34], [12, 2.26], [20, 5.17], [30, 5.17]];
+  const curve = (t: number) => {
+    const at = knots.findIndex(([x]) => x >= t), k = Math.max(1, at < 0 ? knots.length - 1 : at), [x0, y0] = knots[k - 1], [x1, y1] = knots[k];
+    return y0 + ((Math.min(x1, Math.max(x0, t)) - x0) * (y1 - y0)) / (x1 - x0);
+  };
+  // A fill is whole sRGB values: its three channels each round at a step of their own, weighed as luminance weighs them,
+  // so the mean climbs in uneven steps — blue's a hair high, which is where two tries can land a thousandth apart. Every
+  // step is wider than the gap the solve stops at, so the nearest any shift reaches is reachable.
+  const W = [0.2126, 0.7152, 0.0722];
+  let cases = 0, saturated = 0, split = 0;
+  for (const [q, phases] of [[0.3, [0, 1 / 3, 2 / 3]], [0.36, [0, 0.15, 0.5]]] as const) {
+    for (const scale of [0.6, 1, 1.4]) {
+      for (const offset of [0, 0.25, 0.5, 0.75]) {
+        const shiftOf = (t: number) => phases.reduce((a, ph, c) => a + W[c] * q * Math.round(t / q + ph + offset), 0);
+        const level = (t: number) => scale * curve(shiftOf(t));
+        // Every level any shift reaches, a thousandth of an L* of shift apart.
+        const levels: number[] = [];
+        for (let i = -SOLVE_FILL.max * 1000; i <= SOLVE_FILL.max * 1000; i++) levels.push(level(i / 1000));
+        for (let want = -16; want <= 7; want += 0.29) {
+          let asks = 0;
+          const tried = new Map<number, number>();
+          const got = SOLVE_FILL.solve((t) => { asks++; const m = level(t); tried.set(t, m); return { fill: t, mean: m }; }, want);
+          const reach = levels.reduce((a, m) => Math.min(a, Math.abs(m - want)), Infinity);
+          const where = `steps of ${q}, scale ${scale}, offset ${offset}, target ${want.toFixed(2)}`;
+          assert.ok(tried.get(got.fill) === got.mean, `${where}: the answer is one of the tries`);
+          assert.ok(Math.abs(got.mean - want) <= Math.max(0.1, reach) + 1e-9,
+            `${where}: the try kept lies ${Math.abs(got.mean - want).toFixed(3)} L* from the target, where a shift reaches ${reach.toFixed(3)} — tries ${[...tried].map(([t, m]) => `${t.toFixed(2)}:${(m - want).toFixed(2)}`).join(' ')}`);
+          assert.ok(asks <= 14, `${where}: the mean was asked ${asks} times`);
+          cases++;
+          if (want > scale * knots[knots.length - 1][1] + 0.1 || want < scale * knots[0][1] - 0.1) saturated++;
+          if ([...tried.values()].some((m) => m > want) && [...tried.values()].some((m) => m < want) && asks > 4) split++;
         }
-        if (a.s < 3) continue;
-        if (a.s >= 5) {
-          const step = Math.abs(b.ink - a.ink), before = a.s > 5 ? Math.abs(a.ink - looks[k - 2].ink) : Infinity;
-          // (Where the line is thinner than the texture's seam, its share steps down at 8 px: the lightness is held there all the same.)
-          if (!(b.s === OUTLINED_PX && seam(OUTLINED_PX) < 1 - 1e-9)) {
-            assert.ok(step <= before + 0.005, `${where}: from ${a.s} to ${b.s} px the seams' share steps ${(step * 100).toFixed(1)} points, more than the step before it (${(before * 100).toFixed(1)}) — ${table}`);
-          }
-        }
-        const dL = Math.abs(b.dL - a.dL), bound = 2;
-        assert.ok(dL <= bound, `${where}: from ${a.s} to ${b.s} px the mean lightness steps ${dL.toFixed(1)} L*, over ${bound} — ${table}`);
       }
     }
   }
+  // Controls: targets past sRGB's edge, and searches that went past the fourth try with tries either side of the target.
+  assert.ok(saturated > 50 && split > 50 && cases > 1500, `control — ${cases} searches, ${saturated} past sRGB's edge, ${split} split between tries either side past the fourth try`);
 });
 
 /**

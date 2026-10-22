@@ -154,6 +154,7 @@ const MAP_NAMES = ['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT
   'tmClipOutTags', 'TM_TAG_RADIUS',
   // A leaf's fill moved for its lines or its texture, so neither 8 px nor any size under it is a step (residuals 3 and 5).
   'tmPaintLeaf', 'tmLayLeaf', 'tmLabelAt', 'tmEdgedFill', 'tmTexturedFill', 'tmTexturePull', 'TM_PULL_MIN', 'tmLinedMean', 'tmSolveFill',
+  'tmCanonicalLeaf', 'TM_SOLVE_TRIES', 'TM_SOLVE_GAP',
   'tmUnionArea', 'tmTextureMean', 'tmCushionL', 'tmLineBoundL', 'tmLstarOf', 'tmLstar', 'tmLab', 'tmFromLab', 'TM_D65', 'tmShiftL',
   'TM_SHIFT_CHROMA', 'TM_LIFT_CHROMA', 'TM_TEXTURE_SHARE', 'TM_FILL_SHIFT_MAX', 'TM_TONE_MEMO', 'TM_TONE_MEMO_MAX', 'TM_TONE_MEMO_KEEP', 'tmToneSearch',
   // A container's indigo dashes, clear of every line and band (residual 6).

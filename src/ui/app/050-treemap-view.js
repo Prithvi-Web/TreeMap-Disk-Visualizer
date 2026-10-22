@@ -1106,26 +1106,56 @@ function tmLinedMean(base, h, washes, lines) {
     return { fill, mean: (1 - lined) * tmLstar(mix(seen[0], seen[1], 0.5)) + held + moved - solid };
   };
 }
+/** The most shifts tmSolveFill tries past the first, and the least gap between two either side of its target it splits. */
+const TM_SOLVE_TRIES = 12;
+const TM_SOLVE_GAP = 0.02;
 /**
  * The fill that brings `mean` (tmLinedMean) to `want`, moving L* the way that
  * does — up when its lines darken it past that, down when they lighten it —
- * as far as TM_LIFT_CHROMA lets the colour go, by the secant through the
- * shifts tried (the mean only ever moves one way with the shift, and nearly
- * in step with it); and the mean it gets there.
+ * as far as TM_LIFT_CHROMA lets the colour go; and the mean it gets there.
+ * The mean only ever moves one way with the shift, and nearly in step with
+ * it, so the secant through the last two shifts tried finds it in two or
+ * three tries. But it moves in steps — each fill is whole sRGB values, a few
+ * tenths of an L* apart — and stops moving where the colour meets sRGB's
+ * edge, and a secant through two tries on nearly one step is flung far off:
+ * kept as the last of four tries, it left Reclaim 67's 8 px tiles 3.8 L*
+ * darker than its 9 px ones, and Reclaim 66's 13 px tiles 5.7 L* darker than
+ * its 12 px (review F2.1). So once two tries lie either side of `want`, each
+ * try is kept between them — the secant's, where it falls there, else
+ * halfway — until they are TM_SOLVE_GAP apart (a step no shift between them
+ * crosses); the answer is the try nearest `want`, the later on a tie, never
+ * merely the last; and short of `want`, a try that leaves the mean on the
+ * step it was on is followed by one twice as far, until a shift can go no
+ * further — the colour at sRGB's edge.
  */
 function tmSolveFill(mean, want) {
-  let s0 = 0, e0 = mean(0).mean - want;
-  if (Math.abs(e0) <= 0.05) return mean(0);
-  const dir = e0 < 0 ? 1 : -1;
-  // A first step as if the mean moved as the fill does where no line lies.
-  let s1 = Math.min(TM_FILL_SHIFT_MAX, -e0 * dir) * dir, got = mean(s1), e1 = got.mean - want;
-  for (let i = 0; i < 4 && Math.abs(e1) > 0.1 && Math.abs(e1 - e0) > 1e-3; i++) {
-    const next = Math.max(-TM_FILL_SHIFT_MAX, Math.min(TM_FILL_SHIFT_MAX, s1 - (e1 * (s1 - s0)) / (e1 - e0)));
+  const first = mean(0), e = first.mean - want;
+  if (Math.abs(e) <= 0.05) return first;
+  const dir = e < 0 ? 1 : -1, short = (err) => Math.sign(err) === Math.sign(e);
+  let best = first, bestErr = Math.abs(e);
+  // The shift furthest along that leaves the mean short of `want`, and the nearest past it, once a try is.
+  let lo = 0, hi = null;
+  // The try before, and the next: a first step as if the mean moved as the fill does where no line lies.
+  let s0 = 0, e0 = e, s1 = Math.min(TM_FILL_SHIFT_MAX, -e * dir) * dir;
+  for (let i = 0; i <= TM_SOLVE_TRIES; i++) {
+    const got = mean(s1), e1 = got.mean - want;
+    if (Math.abs(e1) <= bestErr) [best, bestErr] = [got, Math.abs(e1)];
+    if (bestErr <= 0.1) break;
+    if (short(e1)) lo = s1; else hi = s1;
+    const flat = !(Math.abs(e1 - e0) > 1e-3), secant = s1 - (e1 * (s1 - s0)) / (e1 - e0);
+    let next;
+    if (hi === null) {
+      // Short of it still: on by the secant — twice as far where the last try left the mean on the same step — as far as
+      // a shift goes: past that, the colour is at sRGB's edge.
+      next = Math.max(-TM_FILL_SHIFT_MAX, Math.min(TM_FILL_SHIFT_MAX, flat ? s1 + (s1 - s0) : secant));
+      if (!((next - lo) * dir > 1e-9)) break;
+    } else {
+      if (Math.abs(hi - lo) < TM_SOLVE_GAP) break;
+      next = !flat && secant > Math.min(lo, hi) && secant < Math.max(lo, hi) ? secant : (lo + hi) / 2;
+    }
     [s0, e0, s1] = [s1, e1, next];
-    got = mean(s1);
-    e1 = got.mean - want;
   }
-  return got;
+  return best;
 }
 /** The area of the union of `rects` ([{ x, y, w, h }]): each one's, less where two overlap (a corner where two lines meet). */
 function tmUnionArea(rects) {
@@ -1157,15 +1187,21 @@ function tmUnionArea(rects) {
  * sides: a line beside a tile that keeps its fill moves only as far as that
  * tile lets it; the rest move with the fill (tmLinedMean). The
  * tile is judged where it shows: a folder's band laid over its edge is the
- * folder's. A tile its lines darken (or lighten) no more than that texture
- * would keeps its colour, and so does one whose lines and texture would move
- * it opposite ways, and one with lines of both tones — a grey between a dark
- * file and a light one, whose line beside the light one, a dark shade of it,
- * stood out from both until the lighter lines darkened its fill, and then
- * none did, so both files laid lines there, side by side. `g` is the
- * neighbourhood (tmNeighbourhood), whose `fills` keeps what each alike tile
- * was filled with and `textures` each colour's tmTextureMean, and `washes`
- * the History diff washes over the tile.
+ * folder's. What it is brought to is its colour's canonical leaf's
+ * (tmCanonicalLeaf): that texture's lightness where the canonical leaf's
+ * lines move it the way the texture does, else its solid colour's — judged on
+ * that leaf, not on this one's lines, since a cushion can turn a leaf's lines
+ * the other tone: Reclaim's grey-olive at 18 px took light lines where at 17
+ * px it took dark ones, and was brought to its texture's lightness where the
+ * rest were brought to their colour's, 2.3 L* lighter (review F2.1). A tile
+ * its lines move toward that, and no further, keeps its colour, and so does
+ * one with lines of both tones — a grey between a dark file and a light one,
+ * whose line beside the light one, a dark shade of it, stood out from both
+ * until the lighter lines darkened its fill, and then none did, so both files
+ * laid lines there, side by side. `g` is the neighbourhood (tmNeighbourhood),
+ * whose `fills` keeps what each alike tile was filled with and `targets` what
+ * each colour's leaves are brought to, and `washes` the History diff washes
+ * over the tile.
  */
 function tmEdgedFill(r, g, base, washes) {
   // Its box as a person sees it: less the bands of the folders whose edge it lies along, laid over its own edge.
@@ -1188,12 +1224,12 @@ function tmEdgedFill(r, g, base, washes) {
   const lines = shown.map((l) => ({ ...l, a: (covered / area) * (l.w * l.h) / sum, light: l.L > fillL }));
   // Lines of both tones: a shade lighter or darker would leave no shade of it standing out from one side or the other.
   if (lines.some((l) => l.light) && lines.some((l) => !l.light)) return base;
-  // How far its lines take it from its colour, against how far the texture would.
+  // How far its lines take it from its colour, against where its colour's canonical leaf is brought.
   const solid = tmCushionL(tmLeafStops(base, r.h, null), washes), d0 = lines.reduce((a, l) => a + l.a * (l.L - solid), 0);
   const tkey = `${base}|${washes.join(';')}`;
-  if (!g.textures.has(tkey)) g.textures.set(tkey, tmTextureMean(base, washes, g.dpr));
-  const texture = g.textures.get(tkey), want = Math.sign(d0) === Math.sign(texture) ? texture : 0;
-  if (Math.abs(d0) <= Math.abs(want) + 0.05) return base;
+  if (!g.targets.has(tkey)) g.targets.set(tkey, tmCanonicalLeaf(base, g.dpr, washes).want);
+  const want = g.targets.get(tkey);
+  if (Math.abs(d0 - want) <= 0.05 || (Math.sign(d0) === Math.sign(want) && Math.abs(d0) <= Math.abs(want))) return base;
   // What lies beyond each side (tmAcross): a tile that keeps its fill — a texture's, a folder's own — bounds the line
   // beside it; a leaf with lines of its own is moved as this one is, and a line or the map's edge sets none.
   const across = {};
@@ -1214,6 +1250,24 @@ function tmEdgedFill(r, g, base, washes) {
   if (!g.fills.has(key)) g.fills.set(key, tmSolveFill(tmLinedMean(base, r.h, washes, lines), want).fill);
   return g.fills.get(key);
 }
+/**
+ * The leaf with lines of its own that every lined leaf of colour `base` is
+ * judged by, at device pixel ratio `dpr`, through `washes`: TM_DENSE_PX
+ * painter's px square, its top and left lines one line's width (tmLinePx),
+ * each toned against a tile alike. As { mean, d0, texture, want }: its mean
+ * L* less its solid cushion's as its fill is shifted (tmLinedMean), that at
+ * no shift — how far its lines take it — the mean a texture gives a tile one
+ * painter's px smaller (tmTextureMean), and what it is brought to: that
+ * texture's lightness where its lines move it the way the texture does, else
+ * its solid colour's (tmEdgedFill, tmTexturePull).
+ */
+function tmCanonicalLeaf(base, dpr, washes) {
+  const lw = tmLinePx(1, dpr) / tmPxScale(dpr), lined = 1 - (1 - lw / TM_DENSE_PX) ** 2, h = TM_DENSE_PX * tmPxScale(dpr);
+  const seen = tmSeenThrough(tmLeafStops(base, h, null), washes), tone = tmTone(base, seen, TM_EDGE_MIN);
+  const mean = tmLinedMean(base, h, washes, [{ a: lined, L: tmLstar(tone.rgb), light: tone.light, cap: tone.light ? -Infinity : Infinity }]), d0 = mean(0).mean;
+  const texture = tmTextureMean(base, washes, dpr), want = Math.sign(d0) === Math.sign(texture) ? texture : 0;
+  return { mean, d0, texture, want };
+}
 /** The least pull worth a texture's leaves (tmTexturePull), in mean L*: under it they keep their colour. */
 const TM_PULL_MIN = 0.25;
 /**
@@ -1226,15 +1280,10 @@ const TM_PULL_MIN = 0.25;
  * 1 L* keeps 85 % of its chroma — so an 8 px leaf of the size ramp's amber
  * stood 5.5 L* darker than a 7 px one, whose texture is faint (1.375:1); the
  * texture's leaves are darkened a shade instead, so the step at 8 px is no
- * step (residual 3). The lined leaf is the canonical one: TM_DENSE_PX
- * painter's px square, its top and left lines one line's width (tmLinePx),
- * each toned against a tile alike.
+ * step (residual 3). The lined leaf is the canonical one (tmCanonicalLeaf).
  */
 function tmTexturePull(base, dpr, washes) {
-  const lw = tmLinePx(1, dpr) / tmPxScale(dpr), lined = 1 - (1 - lw / TM_DENSE_PX) ** 2, h = TM_DENSE_PX * tmPxScale(dpr);
-  const seen = tmSeenThrough(tmLeafStops(base, h, null), washes), tone = tmTone(base, seen, TM_EDGE_MIN);
-  const mean = tmLinedMean(base, h, washes, [{ a: lined, L: tmLstar(tone.rgb), light: tone.light, cap: tone.light ? -Infinity : Infinity }]), d0 = mean(0).mean;
-  const texture = tmTextureMean(base, washes, dpr), want = Math.sign(d0) === Math.sign(texture) ? texture : 0;
+  const { mean, d0, texture, want } = tmCanonicalLeaf(base, dpr, washes);
   const reached = Math.abs(d0) <= Math.abs(want) + 0.05 ? d0 : tmSolveFill(mean, want).mean;
   const gap = reached - texture;
   return Math.abs(gap) < TM_PULL_MIN ? 0 : gap;
@@ -1469,7 +1518,7 @@ function tmSideAt(r, side) {
  * lookup — with the map's size and its ground; and for the paint, which
  * shades of a leaf's colour stand out from both sides of a shared edge
  * (`shared`, tmShareOk), what each alike leaf with lines is filled with
- * (`fills`) and each colour's texture's lightness (`textures`, tmEdgedFill).
+ * (`fills`) and what each colour's lined leaves are brought to (`targets`, tmEdgedFill).
  */
 function tmNeighbourhood(px, kids, dpr, w, h, ground) {
   const folders = new Map();
@@ -1488,7 +1537,7 @@ function tmNeighbourhood(px, kids, dpr, w, h, ground) {
     }
     sides.set(parent, at);
   }
-  return { dpr, w, h, ground, kids, folderOf, keyOf, sides, shared: new Map(), fills: new Map(), textures: new Map() };
+  return { dpr, w, h, ground, kids, folderOf, keyOf, sides, shared: new Map(), fills: new Map(), targets: new Map() };
 }
 /**
  * The colours a tile shows the screen beside a line: its cushion and highlight,
