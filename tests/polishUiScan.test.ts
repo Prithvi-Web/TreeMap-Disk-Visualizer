@@ -457,7 +457,30 @@ test('with no refused field, a 0-byte root is probed — a 403 turns "clean" int
   assert.equal(h.els.accessRow.hidden, false);
   assert.equal(h.els.scanStatus.cls.has('error'), true, 'the status line stops saying "Scanned 0 files"');
   assert.match(h.els.scanStatus.innerHTML, /would not let TreeMap look inside|not allowed to read/i);
-  assert.ok(h.toasts.some((t) => /Full Disk Access/.test(t)), 'and a toast says what to do');
+  // What to do is the row's to say, and the row is said aloud (#accessSaid): in the toast as well, the
+  // advice was said twice (BQT item 29, BQS review L1).
+  assert.equal(h.els.accessHint.textContent, NOT_GRANTED.advice, 'control: the row says what to do');
+  assert.deepEqual(h.toasts, ['macOS would not let TreeMap look inside this folder.'], 'and the toast says what happened, without the advice the row shows');
+});
+
+test('the toast for a refused scanned folder carries the Full Disk Access advice only where the row does not show it (BQT item 29)', async () => {
+  const refusedRoot = { stats: { fileCount: 0, dirCount: 1 }, root: { path: '/Users/x/Documents', size: 0, children: [] }, scanId: 's1', refuse: ['/Users/x/Documents'] };
+  // A row that does not come on screen: its hidden flag stays up whatever is written to it.
+  const h = refusedHarness(refusedRoot);
+  Object.defineProperty(h.$('accessRow'), 'hidden', { get: () => true, set: () => {} });
+  await h.probe();
+  assert.equal(h.els.accessRow.hidden, true, 'control: the row is not on screen');
+  assert.deepEqual(h.toasts, [`macOS would not let TreeMap look inside this folder. ${NOT_GRANTED.advice}`], 'the toast says what to do, since nothing else does');
+  // The row on screen, saying other words than the advice: the toast keeps it too.
+  const other = refusedHarness(refusedRoot);
+  Object.defineProperty(other.$('accessHint'), 'textContent', { get: () => 'Something else.', set: () => {} });
+  await other.probe();
+  assert.equal(other.els.accessRow.hidden, false, 'control: the row is on screen');
+  assert.deepEqual(other.toasts, [`macOS would not let TreeMap look inside this folder. ${NOT_GRANTED.advice}`], 'a row that does not say the advice leaves it in the toast');
+  // Off macOS there is no advice to give, row or not.
+  const win = refusedHarness({ ...refusedRoot, root: { path: 'C:\\Users\\x\\Documents', size: 0, children: [] }, refuse: ['C:\\Users\\x\\Documents'], platform: 'win32' });
+  await win.probe();
+  assert.deepEqual(win.toasts, ['TreeMap is not allowed to read this folder.'], 'elsewhere the toast says what happened');
 });
 
 test('the probe checks Desktop, Documents and Downloads under a home-folder scan, and drops a stale answer', async () => {

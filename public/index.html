@@ -12125,7 +12125,13 @@ async function probeRefusedFolders() {
     const line = mac
       ? 'macOS would not let TreeMap look inside this folder.'
       : 'TreeMap is not allowed to read this folder.';
-    const fix = mac ? ' ' + accessHintFor(fullDiskAccessInfo()) : '';
+    // What to do is the row's to say: renderRefusedFolders just painted it with
+    // this advice, and #accessSaid says it aloud. In the toast as well, it was
+    // said twice (BQT item 29, BQS review L1). Only where the row does not show
+    // it — not on screen, or saying something else — does the toast carry it.
+    const advice = mac ? accessHintFor(fullDiskAccessInfo()) : '';
+    const rowSaysIt = !$('accessRow').hidden && $('accessHint').textContent === advice;
+    const fix = advice && !rowSaysIt ? ' ' + advice : '';
     const el = $('scanStatus');
     el.classList.add('error');
     el.innerHTML = escapeHtml(line);
