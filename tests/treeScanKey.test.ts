@@ -2014,15 +2014,17 @@ test('the welcome tour\'s cleanup wins are asked of the scan the tree on screen 
   assert.equal(tour.winsAwaitScan, false);
   assert.equal(focused.at(-1), true, 'the card held focus: it keeps it, on what it now offers');
 
-  // Waiting, then a Stop puts the older tree back (putBackHeldTree emits TOPIC.scan): asked of that tree's scan.
+  // Waiting, then a Stop puts the older tree back (putBackHeldTree emits TOPIC.scan): asked of that tree's scan. The
+  // Stop is recorded first (stopScan, BQR-1 item 12a), so the emit is no landing: the wins are asked again all the same.
   Object.assign(state, INDEX_RUNNING);
   tour.step = 'map';
   await fns.wins();
   const put = asks.length;
-  Object.assign(state, STOPPED);
+  Object.assign(state, STOPPED, { scanGen: 4, lastStop: { gen: 4, noted: null } });
   landed();
   await turns();
   assert.deepEqual(asks.slice(put).map((a) => a.scanId), ['scan-old'], 'a Stop that puts the older tree back: asked of its scan');
+  state.lastStop = null; // the scans below are begun after it
   cardHoldsFocus = false;
   Object.assign(state, INDEX_RUNNING);
   tour.step = 'map';
@@ -2032,6 +2034,17 @@ test('the welcome tour\'s cleanup wins are asked of the scan the tree on screen 
   await turns();
   assert.equal(focused.at(-1), false, 'focus elsewhere — the map, a field — is not pulled to the card when a scan lands');
   cardHoldsFocus = true;
+
+  // The emit asks waiting wins again whatever it is (95061ba9) — the index paint too, which is no landing: only the
+  // card's own move to the map waits for a landing (review F1.6).
+  Object.assign(tour, { winsAwaitScan: false, step: 'map' });
+  Object.assign(state, INDEX_STOPPED);
+  await fns.wins();
+  assert.deepEqual([tour.step, tour.winsAwaitScan], ['unknown', true], 'control: nothing coming — the wins wait for a scan');
+  Object.assign(state, INDEX_RUNNING); // finishScan's index paint: the saved index's tree, its scan due
+  landed();
+  await turns();
+  assert.equal(tour.step, 'map', 'the index paint asks the waiting wins again: the scan they wait for is coming');
 
   // Nothing coming: said; a scan of the folder starting, a Stop, and its landing each re-judge the card.
   const quiet = asks.length;
