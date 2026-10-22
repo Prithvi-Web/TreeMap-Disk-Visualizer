@@ -1587,13 +1587,22 @@ fn a_sealed_store_is_released_when_a_later_sink_fails_to_finish() -> TestResult 
     }
     assert_eq!(watch.aborts.load(Ordering::SeqCst), 1, "aborted once");
     // Every column the sink made went into the sealed store (the walk reads access
-    // times, so none was dropped at the seal), the seal gave back the pages past each
-    // column's room and released none whole, and the abort releases the rest of them all.
+    // times, so none was dropped at the seal), the seal released none whole, and the
+    // abort releases the rest of them all. On POSIX the seal gave back the pages past
+    // each column's room; Windows frees a region only whole, so there it gave back
+    // nothing and the abort releases every byte (`AnonRows::settle`).
     let released = (*lock(&watch.released)).ok_or("no abort measured")?;
     let sealed = (*lock(&watch.sealed)).ok_or("no seal measured")?;
+    assert_eq!(sealed.unmaps, 0, "the seal keeps every mapping: {sealed:?}");
+    #[cfg(unix)]
     assert!(
-        sealed.unmaps == 0 && sealed.bytes_unmapped > 0,
-        "the seal gives back the pages past the rooms, and keeps every mapping: {sealed:?}"
+        sealed.bytes_unmapped > 0,
+        "the seal gives back the pages past the rooms: {sealed:?}"
+    );
+    #[cfg(windows)]
+    assert_eq!(
+        sealed.bytes_unmapped, 0,
+        "Windows frees a region only whole: the seal gives back nothing: {sealed:?}"
     );
     assert_eq!(
         (
