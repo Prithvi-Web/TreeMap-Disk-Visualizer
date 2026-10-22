@@ -4737,9 +4737,10 @@ test('owner\'s outlines: the SVG export\'s name tags are the canvas\'s — each 
 /**
  * The real drawTreemap loaded once, to paint `tiles` as often as a test likes at `size()` css px each time — a window
  * dragged — onto a fresh recording context, each tone search (tmToneSearch) counted. Its helpers are resolved painting
- * every tile one flat grey, so the questions that run asks are none of the map's.
+ * every tile one flat grey, so the questions that run asks are none of the map's. `over` stands in for page
+ * declarations by name — the tone memo and its bounds (review F2.2).
  */
-function dragPainter(tiles: Tile[], palette: Record<string, string>, size: () => [number, number], dpr: number) {
+function dragPainter(tiles: Tile[], palette: Record<string, string>, size: () => [number, number], dpr: number, over: Record<string, unknown> = {}) {
   const search = load<(base: RGB, groups: unknown) => unknown>(['tmToneSearch'], {}, 'tmToneSearch', (f) => { f([128, 128, 128], [[[[0, 0, 0]], 3]]); });
   let searches = 0, resolving = true;
   const state = { treemap: { nodes: tiles, hideCloud: false, rootSize: 1e12, history: { active: false, diff: false }, pxRects: [] as Painted[], colorMode: 'size', mode: 'treemap', query: '' } };
@@ -4755,6 +4756,7 @@ function dragPainter(tiles: Tile[], palette: Record<string, string>, size: () =>
     roundRect: (c: { roundRect: (x: number, y: number, w: number, h: number, r: number) => void }, x: number, y: number, w: number, h: number, r: number) => c.roundRect(x, y, w, h, r),
     formatBytes: (n: number) => `${Math.round(n)} B`,
     tmToneSearch: (base: RGB, groups: unknown) => { searches++; return search(base, groups); },
+    ...over,
   }, 'drawTreemap', (d) => d());
   resolving = false;
   return {
@@ -4791,6 +4793,46 @@ test('a window drag repaints the map without asking its colours again — the re
     const a = last.ops.map((op) => JSON.stringify(op)), b = fresh.ops.map((op) => JSON.stringify(op));
     const at = a.findIndex((op, i) => op !== b[i]);
     assert.ok(a.length === b.length && at === -1, `${where}: the repaint at ${W} css px is the paint a painter that never painted lays there — ${a.length} ops against ${b.length}, the first unlike at ${at}: ${a[at]} against ${b[at]}`);
+  }
+});
+
+test('the tone memo keeps to its bounds — a paint that finds it holding more than TM_TONE_MEMO_KEEP answers empties it first and asks each question afresh, one under it asks none again, and within a paint it never holds more than TM_TONE_MEMO_MAX — every paint laid as a painter that never painted lays it — on the realistic map 1043×741 at 150 %, in both themes (review F2.2)', () => {
+  // 36ea3528 kept tmToneFor's answers from one paint to the next, with two bounds: emptied before a paint once past
+  // TM_TONE_MEMO_KEEP (60,000 answers, about 16 MB), and started again within a paint at TM_TONE_MEMO_MAX. No test ran
+  // either: the drag's memo holds some 3,300 answers, and deleting the line that empties it left every test green
+  // (review F2.2). Here the painter is handed its own memo and small bounds, and the questions are counted.
+  const tiles = realisticNodes(), dpr = 1.5, size = (): [number, number] => [1043, 741];
+  /** A Map that remembers the most entries it held at once. */
+  class Held<K, V> extends Map<K, V> {
+    most = 0;
+    override set(k: K, v: V) { super.set(k, v); this.most = Math.max(this.most, this.size); return this; }
+  }
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const where = `${theme}, dpr ${dpr}`;
+    const fresh = dragPainter(tiles, palette, size, dpr).paint().ops.map((op) => JSON.stringify(op));
+    const unlike = (ops: unknown[]) => {
+      const a = ops.map((op) => JSON.stringify(op)), at = a.findIndex((op, i) => op !== fresh[i]);
+      return a.length === fresh.length && at === -1 ? '' : `${a.length} ops against ${fresh.length}, the first unlike at ${at}: ${a[at]} against ${fresh[at]}`;
+    };
+    // Past KEEP: a paint may leave the next at most ten answers.
+    const kept = new Held<string, unknown>();
+    const keep = dragPainter(tiles, palette, size, dpr, { TM_TONE_MEMO: kept, TM_TONE_MEMO_KEEP: 10, TM_TONE_MEMO_MAX: 200000 });
+    const first = keep.paint(), left = kept.size, second = keep.paint();
+    assert.ok(first.searches > 500 && left > 10, `${where}: control — the first paint asks ${first.searches} tone questions and leaves ${left} answers`);
+    assert.equal(unlike(second.ops), '', `${where}: the paint that empties the memo is the paint a painter that never painted lays`);
+    assert.equal(second.searches, first.searches, `${where}: the paint that finds ${left} answers kept, past 10, empties them first and asks each of its questions afresh`);
+    assert.equal(kept.size, second.searches, `${where}: and the memo then holds that paint's answers alone`);
+    // Under KEEP: the next paint asks none of them again.
+    const keepAll = dragPainter(tiles, palette, size, dpr, { TM_TONE_MEMO: new Map(), TM_TONE_MEMO_KEEP: 60000, TM_TONE_MEMO_MAX: 200000 });
+    keepAll.paint();
+    assert.equal(keepAll.paint().searches, 0, `${where}: a paint that finds the memo under 60,000 answers asks none of its questions again`);
+    // Within a paint, MAX: at most 100 answers at once.
+    const held = new Held<string, unknown>();
+    const capped = dragPainter(tiles, palette, size, dpr, { TM_TONE_MEMO: held, TM_TONE_MEMO_KEEP: 60000, TM_TONE_MEMO_MAX: 100 });
+    const one = capped.paint();
+    assert.equal(unlike(one.ops), '', `${where}: a paint whose memo starts again at 100 answers is the paint a painter that never painted lays`);
+    assert.ok(held.most <= 100, `${where}: within a paint the memo held ${held.most} answers at once, past 100`);
+    assert.ok(one.searches > first.searches, `${where}: control — starting again at 100 answers, the paint asked ${one.searches} questions, more than the ${first.searches} it asks with every answer kept`);
   }
 });
 
