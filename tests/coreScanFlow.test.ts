@@ -2313,9 +2313,11 @@ test('BQJ-1b review F3.8: a folder budget saved or removed by keyboard leaves fo
 
 test('K06, review F3.6: a budget removed by keyboard from among several leaves focus on the budget now in its place — the one that followed it — or, the last removed, on the one before it; never the first of the list', async () => {
   // With two budgets the budget now in the removed one's place was also the first: the test above could not tell
-  // the rule from "always the first Edit button", which jumps a keyboard user to the top of the list.
+  // the rule from "always the first Edit button", which jumps a keyboard user to the top of the list. Five, and each
+  // case removes one while at least two remain, so the first, the last and the one before or after are all apart
+  // (review F1.4: removing the first from the one budget left could not fail).
   const at = (n: number) => `${MAIL}/V${n}`;
-  let saved = [1, 2, 3, 4].map((n) => ({ path: at(n), maxBytes: n * 1_000_000_000 }));
+  let saved = [1, 2, 3, 4, 5].map((n) => ({ path: at(n), maxBytes: n * 1_000_000_000 }));
   const base = server({ roots: [] });
   const mail = { name: 'Mail', path: MAIL, size: 37_700_000, type: 'dir', children: [] };
   const h = page({ index: true, realBudgets: true, root: mail, settledScanId: 'scan-mail', route: (m, url, b) => {
@@ -2333,7 +2335,7 @@ test('K06, review F3.6: a budget removed by keyboard from among several leaves f
   const edits = () => h.$('budgetList').children.filter((c) => c.attrs['data-budget-edit']).map((c) => c.attrs['data-budget-edit']);
   const editFor = (p: string) => h.$('budgetList').children.find((c) => c.attrs['data-budget-edit'] === p);
   await h.loadBudgets!();
-  assert.deepEqual(edits(), [at(1), at(2), at(3), at(4)], 'control: the card lists the four budgets in order');
+  assert.deepEqual(edits(), [at(1), at(2), at(3), at(4), at(5)], 'control: the card lists the five budgets in order');
   const removeByKeyboard = async (p: string) => {
     const opener = editFor(p)!;
     h.given.closeModal = () => { opener.focus(); };
@@ -2342,12 +2344,14 @@ test('K06, review F3.6: a budget removed by keyboard from among several leaves f
     await turns();
     assert.equal(editFor(p), undefined, `control: ${p}'s row is gone`);
   };
-  await removeByKeyboard(at(2));
-  assert.equal(h.dom.activeElement, editFor(at(3)), 'a middle one removed: focus is on the budget that followed it, now in its place — not the first');
-  await removeByKeyboard(at(4));
-  assert.equal(h.dom.activeElement, editFor(at(3)), 'the last one removed: focus is on the one before it');
   await removeByKeyboard(at(1));
-  assert.equal(h.dom.activeElement, editFor(at(3)), 'the first one removed: focus is on the one that followed it');
+  assert.equal(h.dom.activeElement, editFor(at(2)), 'the first one removed: focus is on the one that followed it, now first — not the last');
+  await removeByKeyboard(at(3));
+  assert.deepEqual(edits(), [at(2), at(4), at(5)], 'control: three left');
+  assert.equal(h.dom.activeElement, editFor(at(4)), 'a middle one removed: focus is on the budget that followed it, now in its place — not the first');
+  await removeByKeyboard(at(5));
+  assert.deepEqual(edits(), [at(2), at(4)], 'control: two left');
+  assert.equal(h.dom.activeElement, editFor(at(4)), 'the last one removed: focus is on the one before it — not the first');
 });
 
 /* BQJ-1b review F1.12: the Dashboard's Cost to keep, Drive health and folder
