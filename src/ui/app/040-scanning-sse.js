@@ -440,6 +440,25 @@ function sayWorking(host, liveId) {
   });
 }
 
+/* ── Words said aloud from a box that is hidden while it has nothing to say (review F2.2) ──
+   Such a box goes from not displayed to displayed with its words already in
+   it, and a screen reader seldom announces a live region that appears filled
+   (sayWorking, above). So the box is plain text, and its words are said in an
+   sr-only live region of their own, outside whatever hides the box (`liveId`): emptied
+   now and given the words a frame later, once the box is on screen with them,
+   so they are a change a screen reader hears. Words the region already says
+   are not said again (a query run once more, to the same message, is no
+   news), and words taken away before their frame are never said. */
+const aloudSaid = new Map(); // region id → the words it says, or is about to
+function sayAloud(liveId, text) {
+  const live = $(liveId);
+  const words = text || '';
+  if (!live || aloudSaid.get(liveId) === words) return;
+  aloudSaid.set(liveId, words);
+  live.textContent = '';
+  if (words) requestAnimationFrame(() => { if (aloudSaid.get(liveId) === words) live.textContent = words; });
+}
+
 /**
  * How much tree the instant open asks the index for.
  *

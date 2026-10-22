@@ -203,6 +203,11 @@ function tmSetQueryMessage(text, isError) {
   box.classList.toggle('okmsg', !isError);
   input.classList.toggle('badq', Boolean(isError));
   input.setAttribute('aria-invalid', isError ? 'true' : 'false');
+  // The box and its bar come on screen with the words already in them, which a
+  // screen reader seldom announces: the words are said in #tmQuerySaid, which
+  // stands outside the bar (review F2.2). Guarded: a page reader may lift this
+  // function without it.
+  if (typeof sayAloud === 'function') sayAloud('tmQuerySaid', text);
   tmSyncQueryBar();
 }
 

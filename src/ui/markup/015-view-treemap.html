@@ -22,7 +22,7 @@
           <!-- The short placeholder fits the field at its floor; the page
                swaps in the longest of TM_SEARCH_PLACEHOLDERS that fits once
                the field is laid out (QA fourth pass E14c). -->
-          <input type="text" id="tmSearch" placeholder="Highlight…" aria-label="Highlight matching files in the treemap"
+          <input type="text" id="tmSearch" placeholder="Highlight…" aria-label="Highlight matching files in the treemap" aria-describedby="tmQueryErr"
                  role="combobox" aria-expanded="false" aria-controls="tmQueryHints" aria-autocomplete="list"
                  autocomplete="off" spellcheck="false">
           <!-- FX wiring: same overlay-strip trick as #gsearch — the field
@@ -129,8 +129,16 @@
              other, so they get a way into the cart. Staging only: nothing is
              deleted here, and the count is stated before anything moves. -->
         <button class="pill" id="tmStageMatches" hidden title="Add every file this query matched to the Clean Up cart">Stage matches</button>
-        <div class="tm-queryerr" id="tmQueryErr" role="status" aria-live="polite" hidden></div>
+        <!-- Plain text: its words are said in #tmQuerySaid (review F2.2). -->
+        <div class="tm-queryerr" id="tmQueryErr" hidden></div>
       </div>
+      <!-- What the match bar says, said aloud (review F2.2). The bar and its
+           message box are hidden while there is nothing to say, so they come
+           on screen with the words already in them, which a screen reader
+           seldom announces. This region stands outside the bar, so nothing
+           hides it while the map is up; tmSetQueryMessage says the words
+           here, a frame after the box shows them. -->
+      <div id="tmQuerySaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
     <div class="tm-foot">
       <div id="tmLegend" class="tm-legend"></div>
