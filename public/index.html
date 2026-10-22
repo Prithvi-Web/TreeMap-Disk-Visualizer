@@ -13851,7 +13851,7 @@ function tmSetEmpty(text) {
  *     ever meets a tile's fill;
  *   - a folder is framed inside its own box by a band tmBandWidth px wide, by
  *     its size and depth: 3 px for a top-level folder 96 px or more across its
- *     thinner side, 2 px from 32 px (from 48 px for a nested one), 1 px from
+ *     thinner side, 2 px from 64 px (a nested one too), 1 px from
  *     TM_DENSE_PX, and none under it — a folder that small reads by texture,
  *     its own fill's (seamed from its corner) and its contents', as a small
  *     leaf does. Each stretch of a band is toned
@@ -13968,12 +13968,17 @@ function tmLeafKind(r) {
   const m = Math.min(r.w, r.h) / tmPxScale(r.dpr || 1);
   return tmReaches(m, TM_DENSE_PX) ? 'edged' : tmReaches(m, TM_TEXTURE_PX) ? 'textured' : 'solid';
 }
-/** Folder `r`'s band, in css px (tmLinePx): by its thinner side in painter's px and its depth, and none when it is thinner than TM_DENSE_PX. */
+/**
+ * Folder `r`'s band, in css px (tmLinePx): by its thinner side in painter's
+ * px and its depth — 3 for a top-level folder 96 px or more across, 2 from
+ * 64 px, 1 from TM_DENSE_PX — and none when it is thinner than that. 2 px
+ * came from 32 px (48 nested): corpus/Mail, 58×52 px in the corpus map, stood
+ * at 39.5 % band, its own 2 px band a fifth of that (residual 9).
+ */
 function tmBandWidth(r) {
   const dpr = r.dpr || 1, m = Math.min(r.w, r.h) / tmPxScale(dpr);
   if (!tmReaches(m, TM_DENSE_PX)) return 0;
-  if (r.n.depth <= 1) return tmLinePx(tmReaches(m, 96) ? 3 : tmReaches(m, 32) ? 2 : 1, dpr);
-  return tmLinePx(tmReaches(m, 48) ? 2 : 1, dpr);
+  return tmLinePx(r.n.depth <= 1 && tmReaches(m, 96) ? 3 : tmReaches(m, 64) ? 2 : 1, dpr);
 }
 /** A texture's contrast against the tile it lies on, by the tile's thinner side `s` px: 1.1:1 at 2 px, rising to 1.375:1 at 7. */
 function tmTextureContrast(s) {

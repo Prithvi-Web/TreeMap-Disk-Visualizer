@@ -1465,14 +1465,16 @@ const lineCss = (dpr: number) => devicePx(1, dpr) / dpr;
 const OUTLINED_PX = 8;
 /**
  * The band a folder is framed by, as the owner's refinement has it (20 Oct 2026): by the folder's thinner side and
- * depth — 3 px for a top-level folder 96 px or more across, 2 px from 32 px (from 48 px nested), 1 px from 8 px, and
- * none under 8 px — in css px at device pixel ratio `dpr`, a whole number of device pixels wide (devicePx: at 150 % a 1 px
- * band is one device pixel, residual 4), and under a ratio of 1 in device pixels, sizes and widths (review F3.6).
+ * depth — 3 px for a top-level folder 96 px or more across, 2 px from 64 px (nested too), 1 px from 8 px, and none under
+ * 8 px — in css px at device pixel ratio `dpr`, a whole number of device pixels wide (devicePx: at 150 % a 1 px band is one
+ * device pixel, residual 4), and under a ratio of 1 in device pixels, sizes and widths (review F3.6). (2 px came from 32 px,
+ * 48 px nested, until corpus/Mail — 58×52 px in the corpus map — stood at 39.5% band, its own 2 px band a fifth of that:
+ * residual 9.)
  */
+const bandStep = (m: number, depth: number) => (m < OUTLINED_PX ? 0 : depth <= 1 && m >= 96 ? 3 : m >= 64 ? 2 : 1);
 const bandOf = (r: { w: number; h: number; n: Tile }, dpr = 1) => {
-  const scale = Math.max(1, 1 / dpr), m = Math.min(r.w, r.h) / scale;
-  if (m < OUTLINED_PX) return 0;
-  return devicePx(r.n.depth <= 1 ? (m >= 96 ? 3 : m >= 32 ? 2 : 1) : (m >= 48 ? 2 : 1), dpr) / dpr;
+  const scale = Math.max(1, 1 / dpr), m = Math.min(r.w, r.h) / scale, step = bandStep(m, r.n.depth);
+  return step ? devicePx(step, dpr) / dpr : 0;
 };
 /** The folders of `px`, deepest first: the order pass 2.7 lays their bands in. */
 const tmFramesDeepestFirstOf = (px: Painted[]) => px.filter((p) => p.frame).sort((a, b) => b.n.depth - a.n.depth);
@@ -1720,9 +1722,9 @@ test('owner\'s outlines: in the History diff a line is measured as the screen sh
   }
 });
 
-test('owner\'s outlines: a folder\'s band is heavier and higher-contrast than a leaf\'s line beside the same colour — 2 px here, for a top-level folder 54 px across and a nested one 48 px across (the owner\'s refinement sizes a band by its folder), and on the size ramp always the stronger line', () => {
+test('owner\'s outlines: a folder\'s band is heavier and higher-contrast than a leaf\'s line beside the same colour — 2 px here, for a top-level folder 72 px across and a nested one 66 px across (the owner\'s refinement sizes a band by its folder: 2 px from 64 px, residual 9), and on the size ramp always the stronger line', () => {
   for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
-    const b = colourBlocks(EVERY_COLOUR, 16, 16);
+    const b = colourBlocks(EVERY_COLOUR, 22, 22);
     const { raster, px } = rasterPaint(b.tiles, palette, b.W, b.H, b.colour);
     const { edges } = measureEdges(raster, px);
     for (const [i, c] of EVERY_COLOUR.entries()) {
@@ -1732,13 +1734,17 @@ test('owner\'s outlines: a folder\'s band is heavier and higher-contrast than a 
       const inBox = (e: { tile: [number, number]; r: Painted }) => e.tile[0] >= e.r.x && e.tile[0] < e.r.x + e.r.w && e.tile[1] >= e.r.y && e.tile[1] < e.r.y + e.r.h;
       const frame = Math.min(...mine.filter((e) => e.kind === 'frame' && inBox(e)).map((e) => contrast(raster.at(...e.line), raster.at(...e.tile))));
       assert.ok(Number.isFinite(leaf) && Number.isFinite(frame), `${theme}, ${c.name}: control — both lines measured`);
-      assert.ok(frame >= leaf, `${theme}, ${c.name}: a folder's band (${fmt(frame)}:1) is no weaker than a leaf's outline (${fmt(leaf)}:1)`);
+      // Where the top-level folder's own cushion, light at its top and dark at its foot, leaves no shade as strong as the
+      // leaf's line against both — a mid grey's, 72 px tall — its band takes the strongest there is (tmSeamParts).
+      const own = px.find((r) => r.n.path === `/m/t${i}`)!.bg!;
+      const reach = Math.max(...([[0, 0, 0], [255, 255, 255]] as RGB[]).map((shade) => Math.min(...own.map((stop) => contrast(shade, stop)))));
+      assert.ok(frame >= Math.min(leaf, reach) - 0.05, `${theme}, ${c.name}: a folder's band (${fmt(frame)}:1) is no weaker than a leaf's outline (${fmt(leaf)}:1), or than the strongest shade its own cushion leaves (${fmt(reach)}:1)`);
       if (i < RAMP_COLOURS.length) assert.ok(frame > leaf + 0.5, `${theme}, ${c.name}: on the size ramp the band (${fmt(frame)}:1) is clearly the stronger line than the leaf's outline (${fmt(leaf)}:1)`);
     }
     const top = px.find((r) => r.n.depth === 1)!, nested = px.find((r) => r.n.depth === 2)!;
-    assert.deepEqual([Math.min(top.w, top.h), Math.min(nested.w, nested.h)], [54, 48], `${theme}: control — the folders' thinner sides`);
-    assert.equal(top.bands!.find((x) => x.y === top.y)!.h, 2, `${theme}: a top-level folder 54 px across has a 2 px band`);
-    assert.equal(nested.bands!.find((x) => x.y === nested.y)!.h, 2, `${theme}: a nested folder 48 px across has a 2 px band, twice a leaf's line`);
+    assert.deepEqual([Math.min(top.w, top.h), Math.min(nested.w, nested.h)], [72, 66], `${theme}: control — the folders' thinner sides`);
+    assert.equal(top.bands!.find((x) => x.y === top.y)!.h, 2, `${theme}: a top-level folder 72 px across has a 2 px band`);
+    assert.equal(nested.bands!.find((x) => x.y === nested.y)!.h, 2, `${theme}: a nested folder 66 px across has a 2 px band, twice a leaf's line`);
   }
 });
 
@@ -2668,23 +2674,26 @@ function offsetGrid(s: number, cols: number, rows: number, ox: number, oy: numbe
 }
 
 /**
- * Folders exactly at the band steps, off whole css px: rows of top-level folders 8, 32 and 96 css px across their
- * thinner side, and in a top-level folder of their own, rows of nested folders 8 and 48 css px across.
+ * Folders at and between the band steps, off whole css px: rows of top-level folders 8, 32, 64 and 96 css px across their
+ * thinner side, and in a top-level folder of their own, rows of nested folders 8, 48 and 64 css px across — 32 and 48 px
+ * a 1 px band now, between the 1 px step and the 2 px one (residual 9).
  */
 function offsetFolders() {
-  const W = 302, H = 276, pct = (v: number, of: number) => (v / of) * 100, tiles: Tile[] = [];
+  const W = 302, H = 400, pct = (v: number, of: number) => (v / of) * 100, tiles: Tile[] = [];
   const dir = (path: string, depth: number, x: number, y: number, w: number, h: number): Tile =>
     ({ name: path.slice(path.lastIndexOf('/') + 1), path, size: 1e9, type: 'dir', depth, expanded: true, x: pct(x, W), y: pct(y, H), w: pct(w, W), h: pct(h, H) });
   for (let j = 0; j < 20; j++) tiles.push(dir(`/b/s8-${j}`, 1, 0.7 + 8 * j, 0.3, 8, 24));
   for (let j = 0; j < 8; j++) tiles.push(dir(`/b/s32-${j}`, 1, 0.7 + 32 * j, 24.3, 32, 40));
-  for (let j = 0; j < 3; j++) tiles.push(dir(`/b/s96-${j}`, 1, 0.7 + 96 * j, 64.3, 96, 110));
-  tiles.push(dir('/b/T', 1, 0.7, 174.3, 300, 100));
-  for (let j = 0; j < 6; j++) tiles.push(dir(`/b/T/n48-${j}`, 2, 3.7 + 48 * j, 177.3, 48, 60));
-  for (let j = 0; j < 30; j++) tiles.push(dir(`/b/T/n8-${j}`, 2, 3.7 + 8 * j, 240.3, 8, 20));
+  for (let j = 0; j < 4; j++) tiles.push(dir(`/b/s64-${j}`, 1, 0.7 + 64 * j, 64.3, 64, 70));
+  for (let j = 0; j < 3; j++) tiles.push(dir(`/b/s96-${j}`, 1, 0.7 + 96 * j, 134.3, 96, 110));
+  tiles.push(dir('/b/T', 1, 0.7, 244.3, 300, 150));
+  for (let j = 0; j < 4; j++) tiles.push(dir(`/b/T/n64-${j}`, 2, 3.7 + 64 * j, 247.3, 64, 70));
+  for (let j = 0; j < 6; j++) tiles.push(dir(`/b/T/n48-${j}`, 2, 3.7 + 48 * j, 320.3, 48, 50));
+  for (let j = 0; j < 30; j++) tiles.push(dir(`/b/T/n8-${j}`, 2, 3.7 + 8 * j, 372.3, 8, 20));
   return { tiles, W, H };
 }
 
-test('owner\'s refinement at 125, 150 and 175 %: the 8 px step, the 2 px texture step and the band steps are taken by size on the device\'s pixels — every one of a grid of identical 8 px tiles lined, and at 150 % every one of a grid of identical 2 px tiles textured, each painted pixel for pixel as its neighbour, never some classed a step down by the float noise in a snapped width; and every folder exactly 8, 32, 48 or 96 px across banded as that size asks, in both themes (review F1.1, F2.6)', () => {
+test('owner\'s refinement at 125, 150 and 175 %: the 8 px step, the 2 px texture step and the band steps are taken by size on the device\'s pixels — every one of a grid of identical 8 px tiles lined, and at 150 % every one of a grid of identical 2 px tiles textured, each painted pixel for pixel as its neighbour, never some classed a step down by the float noise in a snapped width; and every folder exactly 8, 32, 48, 64 or 96 px across banded as that size asks, in both themes (review F1.1, F2.6)', () => {
   // A tile 12 device px wide at 150 % is 8 css px; its width as two snapped edges' difference was 7.999999999999998, and
   // `>= 8` classed it textured: a 1.375:1 seam beside identical tiles parted by 3.3:1 lines — a speckle at exactly the
   // step the owner asked to taper. The same noise took a band a step thinner.
@@ -2931,7 +2940,7 @@ function darkShare(raster: ReturnType<typeof rasterCtx>, box: { x: number; y: nu
   return n / (box.w * box.h);
 }
 
-test('owner\'s refinement: thinner frames — a corner as dense as /System/Library\'s is at most 25% folder band with at most 22% of its pixels under luminance 0.08, and a folder like corpus/Mail (58×52 px of 24 mailboxes of tiny files) at most 40% band, reading as the colour of what it holds — in both themes, at device pixel ratios 1, 1.25, 1.5, 1.75 and 2 (residual 4)', () => {
+test('owner\'s refinement: thinner frames — a corner as dense as /System/Library\'s is at most 25% folder band with at most 22% of its pixels under luminance 0.08, and a folder like corpus/Mail (58×52 px of 24 mailboxes of tiny files) at most 33% band, the owner\'s aim under his 40%, reading as the colour of what it holds — in both themes, at device pixel ratios 1, 1.25, 1.5, 1.75 and 2 (residuals 4 and 9)', () => {
   // A line or a band is the most whole device pixels no wider than its css width: at 175 % two device pixels for a 1 px
   // line or band — the nearest — put corpus/Mail at 42.5% band.
   const dense = denseCornerNodes();
@@ -2955,8 +2964,9 @@ test('owner\'s refinement: thinner frames — a corner as dense as /System/Libra
     // (At 125, 150 and 175 % a file of 1 css px can cover under one css px² once laid on whole device pixels, and is not
     // drawn: its folder's own fill stands for it.)
     assert.ok(boxes === 24 && (!Number.isInteger(dpr) || files > 300), `${theme}: control — Mail's 24 mailboxes (${boxes}) and their tiny files (${files}) are drawn`);
+    // (It was 38.4% at 100 and 200 %, 39.5% on the shots at 1440: its own band was 2 px, a fifth of that — residual 9.)
     const mb = bandShare(m.px, mail.mail);
-    assert.ok(mb <= 0.4, `${theme}: corpus/Mail is ${(mb * 100).toFixed(1)}% band`);
+    assert.ok(mb <= 0.33, `${theme}: corpus/Mail is ${(mb * 100).toFixed(1)}% band`);
     // It reads as what it holds: most of its pixels show the tiles — within 1.5:1 of the map with no line or band laid.
     const bare = rasterPaint(mail.tiles, palette, mail.W, mail.H, undefined, undefined, false, dpr, lineCalls(m.px)).raster;
     const mb2 = dev(mail.mail);
@@ -3361,16 +3371,16 @@ test('owner\'s refinement: a folder\'s texture lies inside its own box — its l
 });
 
 /**
- * Two nested folders, each with one file at one end and its own fill past it (review F2.5): H, 80×60 px, its file B down
- * its left 30 px; V, 80×60 px, its file C across its top 24 px — in a top-level folder of its own, on a 200×160 map.
+ * Two nested folders, each with one file at one end and its own fill past it (review F2.5): H, 80×70 px, its file B down
+ * its left 30 px; V, 80×70 px, its file C across its top 24 px — in a top-level folder of its own, on a 200×160 map.
  */
 function seamFolders() {
   const W = 200, H = 160, pct = (v: number, of: number) => (v / of) * 100;
   const node = (path: string, depth: number, dir: boolean, x: number, y: number, w: number, h: number): Tile =>
     ({ name: path.slice(path.lastIndexOf('/') + 1), path, size: dir ? 1e10 : 5e9, type: dir ? 'dir' : 'file', depth, expanded: dir, x: pct(x, W), y: pct(y, H), w: pct(w, W), h: pct(h, H) });
   return {
-    W, H, tiles: [node('/s', 1, true, 0, 0, 200, 160), node('/s/H', 2, true, 10, 10, 80, 60), node('/s/V', 2, true, 110, 10, 80, 60),
-      node('/s/H/B', 3, false, 10, 10, 30, 60), node('/s/V/C', 3, false, 110, 10, 80, 24)],
+    W, H, tiles: [node('/s', 1, true, 0, 0, 200, 160), node('/s/H', 2, true, 10, 10, 80, 70), node('/s/V', 2, true, 110, 10, 80, 70),
+      node('/s/H/B', 3, false, 10, 10, 30, 70), node('/s/V/C', 3, false, 110, 10, 80, 24)],
   };
 }
 
@@ -4039,7 +4049,7 @@ test('owner\'s outlines on a page zoomed out (device pixel ratio under 1): every
       const banded = px.filter((r) => r.frame).map((r) => {
         // Its thinner side in painter's px: device px under a ratio of 1, css px from 1 up.
         const d = Math.min(dev(r.x + r.w) - dev(r.x), dev(r.y + r.h) - dev(r.y)), m = dpr < 1 ? d : d / dpr;
-        const want = m < OUTLINED_PX ? 0 : (r.n.depth <= 1 ? (m >= 96 ? 3 : m >= 32 ? 2 : 1) : (m >= 48 ? 2 : 1)) * scale * dpr;
+        const want = bandStep(m, r.n.depth) * scale * dpr;
         return { r, m, want, got: Math.round((r.lw || 0) * dpr) };
       });
       if (what === 'the realistic map') assert.ok(banded.some(({ m }) => m >= 4 && m < 8) && banded.some(({ m }) => m >= 8 && m < 32), `${what}, dpr ${dpr}: control — folders 4 to 7 px across, and 8 to 31`);
@@ -4117,7 +4127,7 @@ test('owner\'s outlines at every ratio from 100 to 300 %: every leaf\'s line and
       // Each folder's band: by its size in painter's px, 1 to 3, as many whole device pixels as fit in that.
       const misbanded = px.filter((r) => r.frame).map((r) => {
         const m = Math.min(Math.round((r.x + r.w) * dpr) - Math.round(r.x * dpr), Math.round((r.y + r.h) * dpr) - Math.round(r.y * dpr)) / dpr;
-        const painter = m < OUTLINED_PX - 1e-6 ? 0 : (r.n.depth <= 1 ? (m >= 96 - 1e-6 ? 3 : m >= 32 - 1e-6 ? 2 : 1) : (m >= 48 - 1e-6 ? 2 : 1));
+        const painter = bandStep(m + 1e-6, r.n.depth);
         return { r, want: painter ? devicePx(painter, dpr) : 0, got: (r.lw || 0) * dpr };
       }).filter(({ want, got }) => Math.abs(want - got) > 1e-6).map(({ r, want, got }) => `${r.n.path}: ${got.toFixed(2)} device px of band where ${want} is asked`);
       assert.deepEqual(misbanded.slice(0, 6), [], `${where}: ${misbanded.length} folders banded off their size`);
