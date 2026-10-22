@@ -954,16 +954,28 @@ function tmTextureContrast(s) {
 /**
  * A cushion's texture, stop by stop: the shade of each stop nearest it that
  * reaches `target` against it, in 256 steps — toward black when the tile's own
- * colour `base` is light, toward white when it is dark.
+ * colour `base` is light, toward white when it is dark. For a stop of whole
+ * numbers each step moves every channel one way, so its contrast with the
+ * stop only grows, and the first step that reaches `target` is found by
+ * halving: nine tries, where trying each took up to 256 for every leaf with a
+ * texture (review F1.13). Any other stop is tried step by step.
  */
 function tmTextureStops(stops, base, target) {
   const toward = tmLuminance(base) >= 0.18 ? [0, 0, 0] : [255, 255, 255];
   return stops.map((c) => {
-    for (let k = 1; k <= 256; k++) {
-      const m = mix(c, toward, k / 256);
-      if (tmContrast(m, c) >= target) return m;
+    if (tmContrast(mix(c, toward, 1), c) < target) return toward;
+    if (!c.every(Number.isInteger)) {
+      for (let k = 1; k <= 256; k++) {
+        const m = mix(c, toward, k / 256);
+        if (tmContrast(m, c) >= target) return m;
+      }
     }
-    return toward;
+    let lo = 0, hi = 256; // the step at `hi` reaches the target; every step to `lo` falls short
+    while (hi - lo > 1) {
+      const k = (lo + hi) >> 1;
+      if (tmContrast(mix(c, toward, k / 256), c) >= target) hi = k; else lo = k;
+    }
+    return mix(c, toward, hi / 256);
   });
 }
 /** CIE L* of the sRGB colour `c` ([r, g, b], 0–255), from its relative luminance. */
@@ -1269,10 +1281,12 @@ function tmToneFor(base, groups) {
   }
   return { rgb: got.rgb.slice(), light: got.light, ok: got.ok };
 }
-/** tmToneFor's answers for the paint under way, by question; drawTreemap empties it. */
+/** tmToneFor's answers, by question: kept across paints, drawTreemap empties it before a paint once it holds more than TM_TONE_MEMO_KEEP. */
 const TM_TONE_MEMO = new Map();
-/** The most answers TM_TONE_MEMO keeps before it starts again. */
+/** The most answers TM_TONE_MEMO keeps before it starts again, within one paint. */
 const TM_TONE_MEMO_MAX = 200000;
+/** The most answers a paint leaves TM_TONE_MEMO for the next, about 16 MB: a dense map's drag asks some 50,000. */
+const TM_TONE_MEMO_KEEP = 60000;
 /** tmToneFor's search, unkept. */
 function tmToneSearch(base, groups) {
   // Each colour's luminance once; and the luminances a shade may not take against it — between (b + 0.05) / t − 0.05
@@ -2341,7 +2355,12 @@ function drawTreemap() {
   const washes = tmDiffWashes(px);
   const kids = tmKidsOf(px);
   const pulls = new Map(); // each colour's pull on the leaves with a texture (tmTexturedFill)
-  TM_TONE_MEMO.clear(); // the tones this paint asks for (tmToneFor)
+  // tmToneFor's answers depend on the colours alone, and are kept from one
+  // paint to the next while there are few enough of them: a window drag
+  // repaints the same colours at every step, and asked again they took a
+  // fifth of each paint — a drag's repaints ran 1.4 to 1.7 times as long as
+  // before the fills were moved (review F1.13).
+  if (TM_TONE_MEMO.size > TM_TONE_MEMO_KEEP) TM_TONE_MEMO.clear();
 
   // Pass 0: a folder's own fill, where no rectangle covers it (J51) — its
   // files under the map's size floor, or past the server's cap. Laid in the

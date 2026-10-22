@@ -4656,3 +4656,92 @@ test('owner\'s outlines: the SVG export\'s name tags are the canvas\'s — each 
     if (squeezed) assert.equal(name!.a.lengthAdjust, 'spacingAndGlyphs', `${r.n.name}: squeezed, glyphs and all, as the canvas's maxWidth does`);
   }
 });
+
+/**
+ * The real drawTreemap loaded once, to paint `tiles` as often as a test likes at `size()` css px each time — a window
+ * dragged — onto a fresh recording context, each tone search (tmToneSearch) counted. Its helpers are resolved painting
+ * every tile one flat grey, so the questions that run asks are none of the map's.
+ */
+function dragPainter(tiles: Tile[], palette: Record<string, string>, size: () => [number, number], dpr: number) {
+  const search = load<(base: RGB, groups: unknown) => unknown>(['tmToneSearch'], {}, 'tmToneSearch', (f) => { f([128, 128, 128], [[[[0, 0, 0]], 3]]); });
+  let searches = 0, resolving = true;
+  const state = { treemap: { nodes: tiles, hideCloud: false, rootSize: 1e12, history: { active: false, diff: false }, pxRects: [] as Painted[], colorMode: 'size', mode: 'treemap', query: '' } };
+  let rec = recordingCtx();
+  const ctx = new Proxy({}, { get: (_t, k: string) => (rec.ctx as any)[k], set: (_t, k: string, v) => { (rec.ctx as any)[k] = v; return true; } });
+  const draw = load<() => void>(['drawTreemap'], {
+    $: () => ({ clientWidth: size()[0] + 20 }), treemapCanvasHeight: () => size()[1], window: { devicePixelRatio: dpr },
+    tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: ctx,
+    cssVar: (name: string) => palette[name] ?? 'rgba(0,0,0,0)',
+    state, tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
+    cellRgb: (n: Tile) => (resolving ? [128, 128, 128] : ramp.sizeRgb(n.size)), tmPreview: { on: false },
+    tmHatchPattern: () => hatchOf(palette['--warn'] || '#FF9F0A'),
+    roundRect: (c: { roundRect: (x: number, y: number, w: number, h: number, r: number) => void }, x: number, y: number, w: number, h: number, r: number) => c.roundRect(x, y, w, h, r),
+    formatBytes: (n: number) => `${Math.round(n)} B`,
+    tmToneSearch: (base: RGB, groups: unknown) => { searches++; return search(base, groups); },
+  }, 'drawTreemap', (d) => d());
+  resolving = false;
+  return {
+    paint() {
+      rec = recordingCtx();
+      searches = 0;
+      draw();
+      return { searches, ops: rec.ops };
+    },
+  };
+}
+
+test('a window drag repaints the map without asking its colours again — the realistic map 1043×741 css px, repainted 5 css px wider at each of seven steps as a drag repaints it, asks at most a fifth of the first paint\'s tone questions afresh at each step, and lays each step as a painter that never painted before lays it — at 150 % and 2×, in both themes (review F1.13)', () => {
+  // The shades the lines take (tmToneFor) depend on the colours alone, but their answers were dropped at every paint:
+  // a drag repainted the same colours at every step and asked each again, a fifth of each paint, and the map's resize
+  // repaints ran 1.4 to 1.7 times as long as before the fills were moved (review F1.13). Counted, not timed.
+  const tiles = realisticNodes();
+  for (const dpr of [1.5, 2]) for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const where = `${theme}, dpr ${dpr}`;
+    let W = 1043;
+    const drag = dragPainter(tiles, palette, () => [W, 741], dpr);
+    const first = drag.paint();
+    assert.ok(first.searches > 500, `${where}: control — the first paint asks ${first.searches} tone questions`);
+    let last = first;
+    const asked: number[] = [];
+    for (let step = 1; step <= 7; step++) {
+      W = 1043 + 5 * step;
+      last = drag.paint();
+      asked.push(last.searches);
+    }
+    assert.ok(asked.every((n) => n <= first.searches / 5), `${where}: the drag's repaints ask ${asked.join(', ')} tone questions afresh, where the first paint asked ${first.searches}`);
+    const fresh = dragPainter(tiles, palette, () => [W, 741], dpr).paint();
+    // Op for op as recorded — each gradient's stops and span, each rectangle, each text — less the gradients' own addColorStop.
+    const a = last.ops.map((op) => JSON.stringify(op)), b = fresh.ops.map((op) => JSON.stringify(op));
+    const at = a.findIndex((op, i) => op !== b[i]);
+    assert.ok(a.length === b.length && at === -1, `${where}: the repaint at ${W} css px is the paint a painter that never painted lays there — ${a.length} ops against ${b.length}, the first unlike at ${at}: ${a[at]} against ${b[at]}`);
+  }
+});
+
+test('a texture\'s shade is found by halving — at most nine tries a stop, where trying each of 256 steps took up to 256 for every leaf with a texture — and is the shade trying each step finds, for every colour of the size ramp, Age and Reclaim, at every texture contrast from 1.1:1 to 1.375:1, on a cushion of every height (review F1.13)', () => {
+  const mix = load<(a: RGB, b: RGB, t: number) => RGB>(['mix'], {}, 'mix');
+  const contrastOf = load<(a: RGB, b: RGB) => number>(['tmContrast'], {}, 'tmContrast', (f) => { f([1, 2, 3], [4, 5, 6]); });
+  const lum = load<(c: RGB) => number>(['tmLuminance'], {}, 'tmLuminance', (f) => { f([1, 2, 3]); });
+  let tries = 0;
+  const stopsOf = load<(stops: RGB[], base: RGB, target: number) => RGB[]>(['tmTextureStops'], {
+    tmContrast: (a: RGB, b: RGB) => { tries++; return contrastOf(a, b); }, mix, tmLuminance: lum,
+  }, 'tmTextureStops', (f) => { f([[100, 120, 140]], [100, 120, 140], 1.2); });
+  const leafStops = LEAF_STOPS;
+  /** Each of 256 steps in turn, as the painter tried them. */
+  const stepwise = (stops: RGB[], base: RGB, target: number) => {
+    const toward: RGB = lum(base) >= 0.18 ? [0, 0, 0] : [255, 255, 255];
+    return stops.map((c) => {
+      for (let k = 1; k <= 256; k++) { const m = mix(c, toward, k / 256); if (contrastOf(m, c) >= target) return m; }
+      return toward;
+    });
+  };
+  const colours: RGB[] = [...Array.from({ length: 33 }, (_, i) => ramp.sizeRgb(10 ** (5 + i * 0.17))), ...OTHER_COLOURS.map((c) => c.rgb), [0, 0, 0], [255, 255, 255], [128, 128, 128]];
+  let worst = 0;
+  for (const base of colours) for (const h of [2, 7, 20, 60]) for (const target of [1.1, 1.155, 1.21, 1.265, 1.32, 1.375]) {
+    const cushion = leafStops(base, h, null);
+    tries = 0;
+    const got = stopsOf(cushion, base, target);
+    worst = Math.max(worst, tries / cushion.length);
+    assert.deepEqual(got, stepwise(cushion, base, target), `rgb(${base}), ${h} px, ${target}:1: the shade halving finds is the one trying each step finds`);
+  }
+  assert.ok(worst <= 9, `a stop takes at most nine tries, one to see the last step reach the contrast and eight to halve 256 — the most here ${worst}`);
+});
