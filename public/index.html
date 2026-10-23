@@ -39987,6 +39987,11 @@ $('cmpRunBtn').addEventListener('click', async () => {
   state.compare.result = pair;
   cmpCountsDrop(); // the rewrite below would strand a live counts handle
   body.innerHTML = `<div class="card glass dup-progress">${icon('loader', 20, REDUCED ? '' : 'spin')}<span>Comparing…</span></div>`;
+  // The card the last comparison drew is gone, and with it the split view's
+  // note: what #cmpSaid said of it ("No split view: …") is taken back, so a
+  // split view drawn now is never said to have failed, and the same failure
+  // again is news (BQU item 37). Guarded: a page reader may lift this without sayAloud.
+  if (typeof sayAloud === 'function') sayAloud('cmpSaid', '');
   // FX: the md ring marks the diff computing — on with the progress card,
   // dropped (the card is innerHTML-transient) before every rewrite that
   // settles it: render, error, and the history view's unmount.

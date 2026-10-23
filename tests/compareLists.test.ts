@@ -345,6 +345,86 @@ test('F05: while Compare is held back, its reason is announced and is the button
   assert.deepEqual(h.said.at(-1), ['cmpSaid', ''], 'a pick a person makes takes the line, and its words, away');
 });
 
+test('the split view\'s failure is said in #cmpSaid, and a compare started again takes it back first — so a split view drawn the second time is never said to have failed, and the same failure again is said again (BQU item 37)', async () => {
+  const T0 = 1_700_000_000_000;
+  const snaps = [snap('n1', '/c/corpus', T0), snap('n2', '/c/corpus', T0 + 3_600_000)];
+  const frames: Array<() => void> = [];
+  const frame = () => { for (const fn of frames.splice(0)) fn(); };
+  const turns = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
+  /** How /api/snapshots/tree answers: failing with these words, or (null) with the trees. */
+  let split: string | null = 'Too many requests';
+  // #cmpSaid as a browser keeps one: each text it is given recorded.
+  const said: string[] = [];
+  let text = '';
+  const cmpSaid = { get textContent() { return text; }, set textContent(v: string) { text = v; said.push(v); } };
+  const button: { click?: () => Promise<void> } = {};
+  const ctx = { setTransform() {}, fillRect() {}, strokeRect() {}, save() {}, restore() {}, beginPath() {}, rect() {}, clip() {}, fillStyle: '', strokeStyle: '' };
+  const els: Record<string, unknown> = {
+    cmpA: fakeSelect(), cmpB: fakeSelect(), cmpBody: { innerHTML: '' }, cmpInfo: { textContent: '' }, cmpSaid,
+    cmpRunBtn: { disabled: false, addEventListener: (_t: string, fn: () => Promise<void>) => { button.click = fn; } },
+    cmpSplitNote: { textContent: '' }, cmpSplitCard: { hidden: false }, cmpSplitFoot: { innerHTML: '' },
+    cmpSplitRange: { value: '50', setAttribute() {}, addEventListener() {} },
+    cmpSplitCanvas: { clientWidth: 200, clientHeight: 100, width: 0, height: 0, getContext: () => ctx },
+  };
+  const state = { root: { path: '/c/corpus' }, compare: { options: [] as unknown[], result: null as unknown } };
+  const noop = () => {};
+  let initSplit: (root: string, a: number, b: number) => Promise<void> = async () => {};
+  const deps: Record<string, unknown> = {
+    state, $: (id: string) => els[id] ?? assert.fail(`the compare view touched #${id}`),
+    api: async (url: string) => {
+      if (url === '/api/scans') return { scans: [] };
+      if (url.startsWith('/api/snapshots?')) return { snapshots: snaps };
+      if (url.startsWith('/api/snapshots/compare?')) {
+        const q = new URLSearchParams(url.slice(url.indexOf('?') + 1));
+        const at = (id: string | null) => ({ takenAt: snaps.find((x) => x.id === id)!.takenAt });
+        return { entries: [], totalDelta: 0, a: at(q.get('a')), b: at(q.get('b')) };
+      }
+      if (url.startsWith('/api/snapshots/tree?')) {
+        if (split) throw new Error(split);
+        return { snapshot: { takenAt: Number(/[?&]at=(\d+)/.exec(url)![1]) }, nodes: [] };
+      }
+      return assert.fail(`unexpected request ${url}`);
+    },
+    formatWhen: MINUTE_CLOCK.minute, formatWhenSeconds: MINUTE_CLOCK.second, formatBytes: (n: number) => `${n} B`, escapeHtml: (x: unknown) => String(x),
+    toast: (m: string) => assert.fail(`the page reported: ${m}`), icon: () => '', REDUCED: true,
+    cmpCountsDrop: noop, fxHuntBeamSync: noop, coverageRules: () => null, cmpCoverage: () => null,
+    // The card a comparison draws, as renderCompare draws it: a pair of snapshots of one folder gets the split view.
+    renderCompare: (r: { splitRoot?: string; whenA: number; whenB: number }) => { if (r.splitRoot) void initSplit(r.splitRoot, r.whenA, r.whenB); },
+    requestAnimationFrame: (fn: () => void) => frames.push(fn), window: { devicePixelRatio: 1 }, cssVar: () => '', sizeColor: () => '',
+  };
+  const aloud = /\nconst (\w+) = new Map\(\);[^\n]*\nfunction sayAloud\(/.exec(INDEX);
+  assert.ok(aloud, 'control: sayAloud keeps what each region says in a map declared right above it');
+  const names = ['lastPathSegment', 'loadCompareOptions', 'parseCmp', 'cmpSyncResult', 'cmpOptionLabels', 'cmpPairRefusal', 'cmpWhenPair', 'initCmpSplit', 'cmpSplitDraw', 'sayAloud', 'asSentences'];
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const page = new Function(...keys, `'use strict';\nlet cmpSplit = null; let cmpSplitSeq = 0; const ${aloud[1]} = new Map();\n${names.map(declOf).join('\n')}\n${runButtonSource()}\n` +
+    'return { load: loadCompareOptions, init: initCmpSplit };')(...keys.map((k) => deps[k])) as { load: () => Promise<void>; init: typeof initSplit };
+  initSplit = page.init;
+  await page.load();
+
+  await button.click!();
+  await turns();
+  frame();
+  assert.equal(text, 'No split view: Too many requests', 'control: the split view could not be read, and that is said');
+
+  said.length = 0;
+  const again = button.click!(); // the same picks, Compare pressed again
+  assert.equal(text, '', 'a compare started takes back what the region said of the last one, at once');
+  await again;
+  await turns();
+  frame();
+  assert.deepEqual(said, ['', '', 'No split view: Too many requests'],
+    'and the same failure again is said again — the region emptied as the compare starts and as the words come, then given them a frame later: a press that failed is not left unsaid');
+
+  split = null;
+  said.length = 0;
+  await button.click!();
+  await turns();
+  frame();
+  assert.equal(text, '', 'the split view drawn this time, nothing says it failed');
+  assert.deepEqual(said, [''], 'control: the region was emptied as the compare started, and given nothing since');
+});
+
 test('C08: the lists are wired to keep the result honest when a person changes them', () => {
   assert.match(INDEX, /\$\('cmpA'\)\.addEventListener\('change', cmpSyncResult\);/);
   assert.match(INDEX, /\$\('cmpB'\)\.addEventListener\('change', cmpSyncResult\);/);
