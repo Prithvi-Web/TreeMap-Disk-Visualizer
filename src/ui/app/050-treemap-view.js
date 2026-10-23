@@ -737,12 +737,18 @@ function tmNodeCapNote() {
   return note;
 }
 
-/** The note over an empty map. Empty text hides it; the note is a live region, so it is also read out. */
+/**
+ * The note over an empty map. Empty text hides it. Its words are said in
+ * #tmEmptySaid a frame after it shows them — the same note again, as a repaint
+ * of the same empty map gives it, is no news — and taken back as it goes
+ * (BQU item 24). Guarded: a page reader may lift this without sayAloud.
+ */
 function tmSetEmpty(text) {
   const el = $('tmEmpty');
   if (!el) return;
   el.textContent = text;
   el.hidden = !text;
+  if (typeof sayAloud === 'function') sayAloud('tmEmptySaid', text);
 }
 
 /**

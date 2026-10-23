@@ -4463,8 +4463,14 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <!-- The note over a map with nothing to draw. A folder whose every file
            is under the 4 KB floor, or that really is empty, used to paint a
            blank canvas and say nothing at all — indistinguishable from a
-           renderer that had failed. role="status" so it is read out too. -->
-      <div id="tmEmpty" class="tm-empty-note" role="status" aria-live="polite" hidden></div>
+           renderer that had failed. Plain text: what it says is said in
+           #tmEmptySaid. -->
+      <div id="tmEmpty" class="tm-empty-note" hidden></div>
+      <!-- What the empty map's note says, said aloud (BQU item 24). The note is
+           hidden while the map has something to draw, so it comes on screen
+           with its words already in it, which a screen reader seldom
+           announces: tmSetEmpty says them here a frame after it shows them. -->
+      <div id="tmEmptySaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
       <!-- v4 §4.3 — the simulated "after". The banner is not decoration: a map
            that shows space you do not have yet has to say so, all the time it
            is on screen. Plain text: what it says is said in #tmPreviewSaid. -->
@@ -13776,12 +13782,18 @@ function tmNodeCapNote() {
   return note;
 }
 
-/** The note over an empty map. Empty text hides it; the note is a live region, so it is also read out. */
+/**
+ * The note over an empty map. Empty text hides it. Its words are said in
+ * #tmEmptySaid a frame after it shows them — the same note again, as a repaint
+ * of the same empty map gives it, is no news — and taken back as it goes
+ * (BQU item 24). Guarded: a page reader may lift this without sayAloud.
+ */
 function tmSetEmpty(text) {
   const el = $('tmEmpty');
   if (!el) return;
   el.textContent = text;
   el.hidden = !text;
+  if (typeof sayAloud === 'function') sayAloud('tmEmptySaid', text);
 }
 
 /**

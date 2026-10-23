@@ -99,6 +99,9 @@ const SAID: ReadonlyArray<{ box: string; region: string; parts?: string[]; sayer
   // The index line was never a live region (its count changes on every poll); its news was written straight into
   // #indexAnnounce, in the Dashboard, by a build that runs on whatever view is up (BQT item 28).
   { box: 'indexLine', region: 'indexAnnounce' },
+  // The note over a map with nothing to draw was a live region hidden while it had nothing to say, shown already filled
+  // by tmSetEmpty (BQU item 24).
+  { box: 'tmEmpty', region: 'tmEmptySaid' },
 ];
 
 /** The boxes that were never a status a person needs to hear as it changes, with why. */
@@ -777,6 +780,24 @@ test('the note on drives mounted inside the scanned folder says itself in its ow
   assert.deepEqual([p.$('mountsNote').hidden, p.$('mountsNoteSaid').textContent], [true, ''], 'nothing to say: the note goes and the region is emptied');
 });
 
+/* ── the map's empty-folder note ── */
+
+test('the note over a map with nothing to draw says itself in its own region a frame after it shows, once however often the map is repainted, and its region is emptied when the note goes (BQU item 24)', () => {
+  const p = page(['function tmSetEmpty(']);
+  p.$('tmEmpty').hidden = true;
+  p.fns.tmSetEmpty('This folder is empty.');
+  assert.deepEqual([p.$('tmEmpty').hidden, p.$('tmEmpty').textContent], [false, 'This folder is empty.'], 'control: the note is shown');
+  assert.equal(p.$('tmEmptySaid').textContent, '', 'nothing is said before the frame: the note comes on screen in this task');
+  p.frame();
+  assert.equal(p.$('tmEmptySaid').textContent, 'This folder is empty.', 'a frame later the region says it');
+  p.$('tmEmptySaid').said.length = 0;
+  p.fns.tmSetEmpty('This folder is empty.'); // a repaint of the same empty map: a resize, a theme change
+  p.frame();
+  assert.deepEqual(p.$('tmEmptySaid').said, [], 'the same note again is no news: a repaint says nothing');
+  p.fns.tmSetEmpty('');
+  assert.deepEqual([p.$('tmEmpty').hidden, p.$('tmEmptySaid').textContent], [true, ''], 'a map drawn: the note goes and the region is emptied at once');
+});
+
 /* ── the History view's calendar and journal ── */
 
 test('the calendar\'s note on what it could not count says itself in its own region a frame after it shows, and its region is emptied whenever the note goes (BQS)', () => {
@@ -1064,7 +1085,6 @@ function wordsWritten(id: string): string[] {
 /** The live regions under a parent that hides them, whose words are written straight, with why each is still heard. */
 const WRITTEN_STRAIGHT: ReadonlyMap<string, string> = new Map([
   ['tmKbAnnounce', 'written only as j and k move the highlight on the map, which has focus: the map is on screen'],
-  ['tmEmpty', 'hidden by its own `hidden` too, and its writer, tmSetEmpty (050-treemap-view.js), is another batch\'s, which fixes it there (RESIDUALS item 24); tests/workingSaidAloud.test.ts names it waiting the same way'],
   ['missingBody', 'the Missing Gigabytes card itself: what it shows as its view opens is the view, read as it is reached; what it announces is the statement that comes later, while the view is up — an answer for a view that has gone is dropped'],
 ]);
 

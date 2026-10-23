@@ -87,14 +87,6 @@ test('the two checks above see every working row in the page: no live region car
     'every call passes its count, height and sentence as the checks above read them: a sentence held in a variable would go unseen');
 });
 
-/**
- * The live regions still left hidden while they have nothing to say, each waiting for the batch that owns its writer,
- * with why. Named here so that nothing else can join them; the batch's fix takes its name off.
- */
-const WAITING: ReadonlyMap<string, string> = new Map([
-  ['tmEmpty', 'its writer, tmSetEmpty (050-treemap-view.js), is another batch\'s, which fixes it there; until that batch merges it is the one live region left hidden'],
-]);
-
 /** Every opening tag in the page — the markup and the script's own templates. */
 const TAGS = [...INDEX.matchAll(/<[a-z][a-z0-9]*\b[^<>]*>/gi)].map((m) => m[0]);
 /** A live region is told by its role or its aria-live. */
@@ -136,13 +128,12 @@ test('no live region in the page is hidden while it has nothing to say, and no s
   // does announce a box shown filled. So the box is plain text, and sayAloud says its words a frame after it shows them.
   const hidden = TAGS.filter((t) => isLive(t) && /\shidden(?:[\s>=])/.test(t)).map(idOf);
   assert.ok(hidden.every((id) => !id.startsWith('<')), `control: each hidden live region has an id: ${hidden.join(', ')}`);
-  assert.deepEqual(hidden.filter((id) => !WAITING.has(id)), [],
-    'no live region ships hidden but those waiting for their batch, named with why (#tmEmpty)');
+  assert.deepEqual(hidden, [], 'no live region ships hidden: the last, the map\'s empty-folder note, is plain since BQU item 24');
   const live = [...new Set(TAGS.filter(isLive).map(idOf).filter((id) => !id.startsWith('<')))];
   assert.ok(['stopAnnounce', 'scanAnnounce', 'tmKbAnnounce', 'tmQuerySaid', 'toasts'].every((id) => live.includes(id)), `control: the page's live regions are found by their ids (${live.join(', ')})`);
-  const shown = live.filter((id) => !WAITING.has(id)).flatMap((id) => hidingsOf(id).map((w) => `#${id}: ${w}`));
+  const shown = live.flatMap((id) => hidingsOf(id).map((w) => `#${id}: ${w}`));
   assert.deepEqual(shown, [], 'nor does the script show or hide one: it would be shown already filled, as a box hidden in the markup is');
-  assert.ok(hidingsOf('tmEmpty').length > 0, 'control: the check sees a live region the script shows and hides — #tmEmpty, which waits for its batch');
+  assert.ok(hidingsOf('tmEmpty').length > 0, 'control: the check sees a box the script shows and hides — #tmEmpty, plain now, its words said in #tmEmptySaid');
 });
 
 test('each part has a live region of its own beside its host, empty, in the page from the start — never inside the host, whose every write would take it away (BQR-1 item 11)', () => {

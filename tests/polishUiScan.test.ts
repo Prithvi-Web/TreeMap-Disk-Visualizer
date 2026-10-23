@@ -954,7 +954,11 @@ test('nothing above the 4 KB floor: the map re-asks without the floor, and an em
   assert.equal(els.tmEmpty.textContent, 'This folder is empty.');
   fn('');
   assert.equal(els.tmEmpty.hidden, true, 'a painted map hides the note');
-  assert.match(INDEX, /<div id="tmEmpty"[^>]*role="status"/, 'the note is announced');
+  // The note is plain text and its words are said in #tmEmptySaid, beside it, a frame after it shows them: hidden while
+  // it had nothing to say, a live region of its own came on screen already filled and was seldom announced (BQU item 24).
+  assert.match(INDEX, /<div id="tmEmpty" class="tm-empty-note" hidden><\/div>/, 'the note is no live region of its own');
+  assert.match(INDEX, /<div id="tmEmptySaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"><\/div>/, 'its words have one');
+  assert.match(setEmpty, /sayAloud\('tmEmptySaid', text\)/, 'and the note is announced there');
   const sun = load.slice(0, floorAt);
   assert.match(sun, /tmSetEmpty\(''\)/, 'the sunburst and cell renderers clear a note the rectangle map left');
 });
