@@ -507,13 +507,14 @@ export type Painted = { n: Tile; x: number; y: number; w: number; h: number; fra
  * name tag drawn: what a name tag should lie over (review F3.1). With `bareKeepsTags` too, the name tags are laid
  * all the same: the map without the calls `bare` names alone.
  *
- * Every raster paint of the file is laid by one painter, compiled at the first (rasterPainter): compiled afresh for
- * each paint, as it was, the "no hard step" sweep on every colour alone took 269 to 348 s of the file's 784 to 851 s on
- * Node 20, the version CI runs, which projected the file past CI's 20-minute limit a file on its Windows runner (about 1.6
- * times as slow). Shared, the file took 488 s. What a compiled painter carries from one paint to the next is
- * its answers kept — the tone memo (TM_TONE_MEMO) and the luminances (tmLumCache), each a function of its question
- * alone — so it lays every raster byte for byte as a painter compiled for that paint alone lays it, which a test below
- * holds it to (rasterPaintFresh). The tests of the memo's own bounds compile painters of their own (dragPainter).
+ * Every raster paint of a test file is laid by one painter, compiled at the first (rasterPainter): compiled afresh for
+ * each paint, as it was, the "no hard step" sweep on every colour alone took 269 to 348 s of mapColourPop.test.ts's 784 to
+ * 851 s on Node 20, the version CI runs, which projected that file past CI's 20-minute limit a file on its Windows runner
+ * (about 1.6 times as slow). Shared, it took 488 s, before its sweeps were split from it. What a compiled painter carries
+ * from one paint to the next is its answers kept — the tone memo (TM_TONE_MEMO) and the luminances (tmLumCache), each a
+ * function of its question alone — so it lays every raster byte for byte as a painter compiled for that paint alone lays
+ * it, which "the raster harness" test in tests/mapColourPop.test.ts holds it to (rasterPaintFresh there). The tests of
+ * the memo's own bounds compile painters of their own (dragPainter).
  */
 export function rasterPaint(tiles: Tile[], palette: Record<string, string>, W: number, H: number,
   colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.size), history = { active: false, diff: false }, hideCloud = false, dpr = 1, bare?: Set<string>, bareKeepsTags = false) {
@@ -934,7 +935,7 @@ export const TAPER_COLOURS: Array<{ name: string; rgb: RGB }> = [
  * The "no hard step at 8 px" checks on colour `c` at device pixel ratio `dpr` in `theme` (painted with `palette`): uniform
  * 9×9 grids of tiles 1 to 18 px, their middle 7×7 measured (tileLook) — the seams' share of the pixels from 5 px, the mean
  * lightness against the tile's own solid colour from 3 px, under 2 L* a step, and the shade a textured leaf is filled
- * with, under 2 L* a size up to 7 px. The tests below say why each bound is what it is.
+ * with, under 2 L* a size up to 7 px. The tests in tests/mapNoHardStep.test.ts say why each bound is what it is.
  */
 export function assertNoHardStep(theme: string, palette: Record<string, string>, c: { name: string; rgb: RGB }, dpr: number) {
   const looks: Array<ReturnType<typeof tileLook> & { s: number }> = [];
