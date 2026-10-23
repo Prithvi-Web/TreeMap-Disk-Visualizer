@@ -1358,6 +1358,10 @@ function rasterCtx(W: number, H: number, ground: RGB) {
     taggedShare: () => tag.reduce((n, v) => n + (v > 0 ? 1 : 0), 0) / (W * H),
     /** The paint the name tags were filled with. */
     tagPaint: () => tagPaint,
+    /** The device pixels themselves, r, g, b each — to hold two rasters to each other byte for byte. */
+    pixels: () => px,
+    /** The share of each device pixel a name tag covers. */
+    tags: () => tag,
   };
 }
 
@@ -1378,46 +1382,106 @@ type Painted = { n: Tile; x: number; y: number; w: number; h: number; frame: boo
  * With `bare` (lineCalls of the same map), the map as it would be with no leaf outline, no folder band and no
  * name tag drawn: what a name tag should lie over (review F3.1). With `bareKeepsTags` too, the name tags are laid
  * all the same: the map without the calls `bare` names alone.
+ *
+ * Every raster paint of the file is laid by one painter, compiled at the first (rasterPainter): compiled afresh for
+ * each paint, as it was, the "no hard step" sweep on every colour alone took 269 to 348 s of the file's 784 to 851 s on
+ * Node 20, the version CI runs, which projected the file past CI's 20-minute limit a file on its Windows runner (about 1.6
+ * times as slow). Shared, the file took 488 s. What a compiled painter carries from one paint to the next is
+ * its answers kept — the tone memo (TM_TONE_MEMO) and the luminances (tmLumCache), each a function of its question
+ * alone — so it lays every raster byte for byte as a painter compiled for that paint alone lays it, which a test below
+ * holds it to (rasterPaintFresh). The tests of the memo's own bounds compile painters of their own (dragPainter).
  */
 function rasterPaint(tiles: Tile[], palette: Record<string, string>, W: number, H: number,
   colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.size), history = { active: false, diff: false }, hideCloud = false, dpr = 1, bare?: Set<string>, bareKeepsTags = false) {
-  const state = { treemap: { nodes: tiles, hideCloud, rootSize: 1e12, history, pxRects: [] as Painted[], colorMode: 'size', mode: 'treemap', query: '' } };
-  const canvas = { style: {}, width: 0, height: 0 };
+  const call = { tiles, palette, W, H, colour, history, hideCloud, dpr };
+  for (let again = false; ; again = true) {
+    SHARED_PAINTER ??= rasterPainter(call);
+    try {
+      return rasterLay(SHARED_PAINTER, call, bare, bareKeepsTags);
+    } catch (e) {
+      // A helper this paint reaches that no paint before it did (a hatch, a hollow cell, a wash): the painter is
+      // compiled again, its helpers resolved on this paint, and the paint laid afresh on a raster of its own.
+      if (again || (e as Error).name !== 'ReferenceError') throw e;
+      SHARED_PAINTER = null;
+    }
+  }
+}
+
+/** rasterPaint's paint as a painter compiled for it alone lays it, as every raster paint was laid until the painter was shared. */
+function rasterPaintFresh(...args: Parameters<typeof rasterPaint>) {
+  const [tiles, palette, W, H, colour = (n: Tile) => ramp.sizeRgb(n.size), history = { active: false, diff: false }, hideCloud = false, dpr = 1, bare, bareKeepsTags = false] = args;
+  const call = { tiles, palette, W, H, colour, history, hideCloud, dpr };
+  return rasterLay(rasterPainter(call), call, bare, bareKeepsTags);
+}
+
+/** What a raster paint asks the painter for: the map, its css size and device pixel ratio, its theme and its colouring. */
+type RasterCall = { tiles: Tile[]; palette: Record<string, string>; W: number; H: number; colour: (n: Tile) => RGB; history: { active: boolean; diff: boolean }; hideCloud: boolean; dpr: number };
+/** The real drawTreemap, compiled, with the page it reads: the paint it is asked for (`call`) and the context it lays on (`onto`). */
+type RasterPainter = {
+  call: RasterCall; onto: () => any; draw: () => void; busy: boolean;
+  state: { treemap: { pxRects?: unknown } }; canvas: { style: Record<string, string>; width: number; height: number }; buffer: { width: number; height: number };
+};
+/** The one painter every rasterPaint lays with, compiled at the first. */
+let SHARED_PAINTER: RasterPainter | null = null;
+const treemapState = (c: RasterCall) => ({ nodes: c.tiles, hideCloud: c.hideCloud, rootSize: 1e12, history: c.history, pxRects: [] as Painted[], colorMode: 'size', mode: 'treemap', query: '' });
+
+/**
+ * The real drawTreemap compiled, its page read through `p.call` and `p.onto` at each paint. Resolving its helpers runs
+ * the painter on `call`, once per helper it turns out to need, each run stopping where a helper is missing — on a
+ * context that keeps what a run left (a clip, a save) that would carry into the next. So they are resolved on a
+ * recording context, and the grid gets clean paints of its own from the painter they resolved.
+ */
+function rasterPainter(call: RasterCall): RasterPainter {
+  const resolving = recordingCtx().ctx;
+  const p: RasterPainter = { call, onto: () => resolving, draw: () => {}, busy: false, state: { treemap: treemapState(call) }, canvas: { style: {}, width: 0, height: 0 }, buffer: { width: 0, height: 0 } };
   const deps = {
-    $: () => ({ clientWidth: W + 20 }), treemapCanvasHeight: () => H, window: { devicePixelRatio: dpr },
-    tmCanvas: canvas, tmBuffer: { width: 0, height: 0 },
-    cssVar: (name: string) => palette[name] ?? 'rgba(0,0,0,0)',
-    state, tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
-    cellRgb: colour, tmPreview: { on: false },
+    $: () => ({ clientWidth: p.call.W + 20 }), treemapCanvasHeight: () => p.call.H, window: { get devicePixelRatio() { return p.call.dpr; } },
+    tmCanvas: p.canvas, tmBuffer: p.buffer,
+    tmBufCtx: new Proxy({}, { get: (_t, k: string) => p.onto()[k], set: (_t, k: string, v) => { p.onto()[k] = v; return true; } }),
+    cssVar: (name: string) => p.call.palette[name] ?? 'rgba(0,0,0,0)',
+    state: p.state, tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
+    cellRgb: (n: Tile) => p.call.colour(n), tmPreview: { on: false },
     // The page's fallback ink, as tmHatchPattern has it.
-    tmHatchPattern: () => hatchOf(palette['--warn'] || '#FF9F0A'),
+    tmHatchPattern: () => hatchOf(p.call.palette['--warn'] || '#FF9F0A'),
     roundRect: (c: { roundRect: (x: number, y: number, w: number, h: number, r: number) => void }, x: number, y: number, w: number, h: number, r: number) => c.roundRect(x, y, w, h, r),
     formatBytes: (n: number) => `${Math.round(n)} B`,
   };
-  // Resolving the helpers runs the painter, once per helper it turns out to need, each run stopping where a
-  // helper is missing — on a context that keeps what a run left (a clip, a save) that would carry into the
-  // next. So they are resolved on a recording context, and the grid gets one clean paint of its own from the
-  // painter they resolved.
-  let into: any = recordingCtx().ctx;
-  const ctx = new Proxy({}, { get: (_t, k: string) => into[k], set: (_t, k: string, v) => { into[k] = v; return true; } });
-  const draw = load<() => void>(['drawTreemap'], { ...deps, tmBufCtx: ctx }, 'drawTreemap', (d) => d());
-  // The grid is the canvas the painter sized, and starts as the card the canvas sits on — what a cleared pixel
-  // shows — and the painter lays the theme's --tm-canvas-bg over it, as on screen: so what the page reckons its
-  // ground to be is measured too.
-  const raster = rasterCtx(canvas.width, canvas.height, cardGround(palette));
-  const onGrid = !bare ? raster.ctx : new Proxy(raster.ctx, {
-    get(t, k: string) {
-      if (k === 'strokeRect' || k === 'fillRect') {
-        return (...a: number[]) => { if (!bare.has([k, k === 'strokeRect' ? t.strokeStyle : t.fillStyle, ...a].join('|'))) t[k](...a); };
-      }
-      if (k === 'fill' && !bareKeepsTags) return () => {}; // the name tags, the only shapes this raster fills
-      return t[k];
-    },
-    set(t, k: string, v) { t[k] = v; return true; },
-  });
-  into = onGrid;
-  draw();
-  return { raster, px: state.treemap.pxRects };
+  p.draw = load<() => void>(['drawTreemap'], deps, 'drawTreemap', (d) => d());
+  return p;
+}
+
+/** `call` laid by the painter `p` onto a raster of the canvas it sizes for it (rasterPaint). */
+function rasterLay(p: RasterPainter, call: RasterCall, bare?: Set<string>, bareKeepsTags = false) {
+  if (p.busy) throw new Error('a raster paint was started inside another, on the painter that is laying it');
+  p.call = call;
+  p.state.treemap = treemapState(call);
+  // The grid is the canvas the painter sized — made when the paint first reaches for its context, which drawTreemap
+  // does once it has sized its canvas (held below) — and starts as the card the canvas sits on, what a cleared pixel
+  // shows; the painter lays the theme's --tm-canvas-bg over it, as on screen: so what the page reckons its ground to
+  // be is measured too.
+  let raster: ReturnType<typeof rasterCtx> | null = null;
+  let grid: any = null;
+  const open = () => {
+    raster = rasterCtx(p.canvas.width, p.canvas.height, cardGround(call.palette));
+    grid = !bare ? raster.ctx : new Proxy(raster.ctx, {
+      get(t, k: string) {
+        if (k === 'strokeRect' || k === 'fillRect') {
+          return (...a: number[]) => { if (!bare.has([k, k === 'strokeRect' ? t.strokeStyle : t.fillStyle, ...a].join('|'))) t[k](...a); };
+        }
+        if (k === 'fill' && !bareKeepsTags) return () => {}; // the name tags, the only shapes this raster fills
+        return t[k];
+      },
+      set(t, k: string, v) { t[k] = v; return true; },
+    });
+    return grid;
+  };
+  p.onto = () => grid ?? open();
+  p.busy = true;
+  try { p.draw(); } finally { p.busy = false; }
+  const r = (raster ?? (open(), raster)) as unknown as ReturnType<typeof rasterCtx>;
+  assert.deepEqual([p.canvas.width, p.canvas.height, p.buffer.width, p.buffer.height], [r.W, r.H, r.W, r.H],
+    `the raster is the canvas the painter sized for this paint, ${call.W}×${call.H} css px at ${call.dpr}: it sized it only after it began laying`);
+  return { raster: r, px: p.state.treemap.pxRects as Painted[] };
 }
 
 /** The calls a paint draws its leaf lines (pass 2.6) and folder bands (pass 2.7) with, as rasterPaint's `bare` leaves them out. */
@@ -2528,6 +2592,54 @@ const TAPER_COLOURS: Array<{ name: string; rgb: RGB }> = [
   { name: 'size ramp 6 GB', rgb: ramp.sizeRgb(6e9) },
   ...OTHER_COLOURS.filter((c) => c.name === 'Reclaim not scored' || c.name === 'Age band C_ORANGE'),
 ];
+
+/** Whether two raster paints laid the same device pixels, name tags and rectangles, byte for byte; '' when they did, else where they part. */
+function rasterUnlike(a: ReturnType<typeof rasterPaint>, b: ReturnType<typeof rasterPaint>): string {
+  if (a.raster.W !== b.raster.W || a.raster.H !== b.raster.H) return `${a.raster.W}×${a.raster.H} device px against ${b.raster.W}×${b.raster.H}`;
+  const bytes = (v: Float64Array | Float32Array) => Buffer.from(v.buffer, v.byteOffset, v.byteLength);
+  const [pa, pb] = [a.raster.pixels(), b.raster.pixels()];
+  if (!bytes(pa).equals(bytes(pb))) {
+    const i = pa.findIndex((v, k) => !Object.is(v, pb[k]));
+    return `device pixel ${Math.floor(i / 3) % a.raster.W},${Math.floor(i / 3 / a.raster.W)} is ${pa[i]} against ${pb[i]} (channel ${i % 3})`;
+  }
+  if (!bytes(a.raster.tags()).equals(bytes(b.raster.tags()))) return 'the name tags cover other pixels';
+  if (a.raster.tagPaint() !== b.raster.tagPaint()) return `the name tags are filled ${a.raster.tagPaint()} against ${b.raster.tagPaint()}`;
+  const ja = JSON.stringify(a.px), jb = JSON.stringify(b.px);
+  if (ja !== jb) { const at = [...ja].findIndex((ch, k) => ch !== jb[k]); return `the rectangles recorded part at ${ja.slice(Math.max(0, at - 60), at + 60)} against ${jb.slice(Math.max(0, at - 60), at + 60)}`; }
+  return '';
+}
+
+test('the raster harness: the one painter every raster paint shares lays each raster byte for byte as a painter compiled for that paint alone — uniform grids of every size from 1 to 18 px on colours from across the size ramp and the other colourings, at device pixel ratios 0.667, 0.8, 1, 1.25, 1.5, 1.75 and 2, in both themes; the realistic map, with its lines and tags left out and with its tags kept; online-only files hidden; a staged block; the History diff; a container\'s dashes — so sharing it, its answers kept from paint to paint, changes no measurement in this file (BQV)', () => {
+  const cases: Array<{ what: string; args: Parameters<typeof rasterPaint> }> = [];
+  let k = 0;
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    for (const dpr of [0.667, 0.8, 1, 1.25, 1.5, 1.75, 2]) {
+      for (let i = 0; i < 3; i++, k++) {
+        // 17 and 5 share no factor with the 133 colours and the 18 sizes: 42 colours, every size from 1 to 18 px.
+        const c = EVERY_COLOUR[(k * 17) % EVERY_COLOUR.length], s = 1 + ((k * 5) % 18), g = uniformGrid(s * Math.max(1, 1 / dpr), 9, 4e8);
+        cases.push({ what: `${theme}, ${c.name}, ${s} px tiles, dpr ${dpr}`, args: [g.tiles, palette, g.W, g.H, () => c.rgb, undefined, false, dpr] });
+      }
+    }
+    for (const dpr of [1, 1.5]) {
+      const real = realisticNodes(), { px } = rasterPaint(real, palette, REAL_W, REAL_H, undefined, undefined, false, dpr);
+      cases.push({ what: `${theme}, the realistic map, dpr ${dpr}`, args: [real, palette, REAL_W, REAL_H, undefined, undefined, false, dpr] });
+      cases.push({ what: `${theme}, the realistic map with no line, band or tag, dpr ${dpr}`, args: [real, palette, REAL_W, REAL_H, undefined, undefined, false, dpr, lineCalls(px)] });
+      cases.push({ what: `${theme}, the realistic map with no line or band, its tags kept, dpr ${dpr}`, args: [real, palette, REAL_W, REAL_H, undefined, undefined, false, dpr, lineCalls(px), true] });
+    }
+    cases.push({ what: `${theme}, online-only files hidden in a folder with its own fill, dpr 1.25`, args: [cloudInFilledFolder(), palette, 200, 200, undefined, undefined, true, 1.25] });
+    cases.push({ what: `${theme}, a staged block in a nested folder, dpr 1.75`, args: [stagedInNestedFolder(), palette, 400, 200, undefined, undefined, false, 1.75] });
+    const b = colourBlocks(Object.keys(PREV).map((kind) => ({ name: kind, rgb: [0, 0, 0] as RGB, prev: PREV[kind] })), 16, 16);
+    cases.push({ what: `${theme}, the History diff, dpr 0.8`, args: [b.tiles, palette, b.W, b.H, (n) => DIFF_PAGE.diffRgb(n), { active: true, diff: true }, false, 0.8] });
+    const m = containerMap();
+    cases.push({ what: `${theme}, a container's dashes, dpr 2`, args: [m.tiles, palette, m.W, m.H, undefined, undefined, false, 2] });
+  }
+  for (const { what, args } of cases) {
+    const shared = rasterPaint(...args), fresh = rasterPaintFresh(...args);
+    assert.ok(shared.px.length > 0 && shared.raster.W > 0, `${what}: control — the paint laid ${shared.px.length} rectangles`);
+    assert.equal(rasterUnlike(shared, fresh), '', `${what}: the shared painter lays the raster a painter compiled for this paint alone lays`);
+  }
+  assert.equal(cases.length, 2 * (7 * 3 + 2 * 3 + 4), 'every case was laid both ways');
+});
 
 /**
  * The "no hard step at 8 px" checks on colour `c` at device pixel ratio `dpr` in `theme` (painted with `palette`): uniform

@@ -48,16 +48,29 @@ function declSource(name: string): string {
   return assert.fail(`${name} never closes`);
 }
 
+/** Each declaration's source, sliced once: the painter pulls in some eighty helpers, and every key paints it. */
+const DECLS = new Map<string, string>();
+const declOnce = (name: string) => { if (!DECLS.has(name)) DECLS.set(name, declSource(name)); return DECLS.get(name)!; };
+/**
+ * The helpers, in order, each set of names turned out to need, by the names, the dependencies and the returns: found
+ * once, then compiled afresh for every paint without being found again. Found again at every keyFor, each of some eighty
+ * tries compiled the painter and ran it until it reached a helper not yet pulled in: 67 s of this file's 68 on Node 20,
+ * the version CI runs.
+ */
+const PULLED = new Map<string, string[]>();
+
 /** `names` and every top-level helper they turn out to need, found by running them. */
 function load<T>(names: string[], deps: Record<string, unknown>, returns: string, run: (fn: T) => void): T {
   const keys = Object.keys(deps);
-  const pulled = [...names];
+  const memo = `${names.join(',')}|${keys.join(',')}|${returns}`;
+  const pulled = [...(PULLED.get(memo) ?? names)];
   for (let attempt = 0; attempt < 128; attempt++) {
-    const src = `'use strict'; ${pulled.map(declSource).join('\n')}\nreturn ${returns};`;
+    const src = `'use strict'; ${pulled.map(declOnce).join('\n')}\nreturn ${returns};`;
     try {
       // eslint-disable-next-line @typescript-eslint/no-implied-eval
       const fn = new Function(...keys, src)(...keys.map((k) => deps[k])) as T;
       run(fn);
+      PULLED.set(memo, pulled);
       return fn;
     } catch (e) {
       // A constant used before it is declared (one pulled in later) moves ahead of the rest.
