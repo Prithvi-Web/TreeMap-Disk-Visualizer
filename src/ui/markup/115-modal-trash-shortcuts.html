@@ -1,10 +1,11 @@
 <div id="tooltip" role="tooltip"></div>
 <!-- ═══════════ Trash contents (Feature 8) ═══════════ -->
 <div class="modal-backdrop" id="trashModal" role="dialog" aria-modal="true" aria-label="Trash contents">
-  <!-- A toast raised while this sheet is open, said in it too: the stack outside
-       every sheet may be left out of what a screen reader reads while focus
-       is in one (toastSayInSheet, BQT item 26). -->
-  <div id="trashModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <!-- What is said outside this sheet while it would not be heard there,
+       said in it: a toast raised while focus is in the sheet, and the
+       scan's voice, from the page the sheet makes inert (sayInSheet;
+       BQT item 26, BQU items 33 and 34). -->
+  <div id="trashModalOutsideSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:560px;max-width:92vw;">
     <div class="modal-head">
       <h3><span data-icon="trash" data-size="17"></span>Trash <span class="num" id="trashModalMeta"></span></h3>
@@ -23,10 +24,11 @@
      from GET /api/scan/:scanId/refused. Nothing in it commits, so it opens on
      itself (the focus net's fallback), and closes like every sheet. -->
 <div class="modal-backdrop" id="refusedModal" role="dialog" aria-modal="true" aria-label="Folders TreeMap could not read">
-  <!-- A toast raised while this sheet is open, said in it too: the stack outside
-       every sheet may be left out of what a screen reader reads while focus
-       is in one (toastSayInSheet, BQT item 26). -->
-  <div id="refusedModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <!-- What is said outside this sheet while it would not be heard there,
+       said in it: a toast raised while focus is in the sheet, and the
+       scan's voice, from the page the sheet makes inert (sayInSheet;
+       BQT item 26, BQU items 33 and 34). -->
+  <div id="refusedModalOutsideSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:620px;max-width:92vw;">
     <div class="modal-head">
       <h3><span data-icon="alert" data-size="17"></span>Folders TreeMap could not read <span class="num" id="refusedModalMeta"></span></h3>
@@ -42,10 +44,11 @@
 
 <!-- ═══════════ Keyboard shortcuts (Feature 6) ═══════════ -->
 <div class="modal-backdrop" id="shortcutsModal" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
-  <!-- A toast raised while this sheet is open, said in it too: the stack outside
-       every sheet may be left out of what a screen reader reads while focus
-       is in one (toastSayInSheet, BQT item 26). -->
-  <div id="shortcutsModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <!-- What is said outside this sheet while it would not be heard there,
+       said in it: a toast raised while focus is in the sheet, and the
+       scan's voice, from the page the sheet makes inert (sayInSheet;
+       BQT item 26, BQU items 33 and 34). -->
+  <div id="shortcutsModalOutsideSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:540px;max-width:92vw;">
     <div class="modal-head">
       <h3><span data-icon="keyboard" data-size="18"></span>Keyboard shortcuts</h3>

@@ -98,7 +98,7 @@ function matchBar() {
   const $ = (id: string) => { let e = els.get(id); if (!e) { e = new El(); els.set(id, e); } return e; };
   const frames: Array<() => void> = [];
   let synced = 0;
-  const lifted = ['function tmSetQueryMessage(', 'function sayAloud('].map(pageFn).join('\n');
+  const lifted = ['function tmSetQueryMessage(', 'function sayAloud(', 'function asSentences('].map(pageFn).join('\n');
   const aloud = /\nconst (\w+) = new Map\(\);[^\n]*\nfunction sayAloud\(/.exec(INDEX);
   assert.ok(aloud, 'control: sayAloud keeps what each region says in a map declared right above it');
   const set = new Function('$', 'requestAnimationFrame', 'tmSyncQueryBar',

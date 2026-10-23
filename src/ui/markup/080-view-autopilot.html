@@ -25,10 +25,11 @@
        <body> inert, so a sheet inside <main> made its own page inert and
        nothing in it could be clicked, typed into or focused (B31). -->
   <div class="modal-backdrop" id="apModal" role="dialog" aria-modal="true" aria-labelledby="apModalTitle">
-    <!-- A toast raised while this sheet is open, said in it too: the stack outside
-         every sheet may be left out of what a screen reader reads while focus
-         is in one (toastSayInSheet, BQT item 26). -->
-    <div id="apModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+    <!-- What is said outside this sheet while it would not be heard there,
+         said in it: a toast raised while focus is in the sheet, and the
+         scan's voice, from the page the sheet makes inert (sayInSheet;
+         BQT item 26, BQU items 33 and 34). -->
+    <div id="apModalOutsideSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     <div class="modal" style="width:620px;">
       <div class="modal-head">
         <h3 id="apModalTitle"><span data-icon="sparkles"></span>New policy</h3>

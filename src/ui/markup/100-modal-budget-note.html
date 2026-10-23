@@ -1,9 +1,10 @@
 <!-- ═══════════ Budget modal (Feature 15) ═══════════ -->
 <div class="modal-backdrop" id="budgetModal" role="dialog" aria-modal="true" aria-labelledby="budgetTitle">
-  <!-- A toast raised while this sheet is open, said in it too: the stack outside
-       every sheet may be left out of what a screen reader reads while focus
-       is in one (toastSayInSheet, BQT item 26). -->
-  <div id="budgetModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <!-- What is said outside this sheet while it would not be heard there,
+       said in it: a toast raised while focus is in the sheet, and the
+       scan's voice, from the page the sheet makes inert (sayInSheet;
+       BQT item 26, BQU items 33 and 34). -->
+  <div id="budgetModalOutsideSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:440px;">
     <div class="modal-head">
       <h3 id="budgetTitle"><span data-icon="gauge"></span>Set folder budget</h3>
@@ -43,10 +44,11 @@
      suppressing note also pauses Smart suggestions and Autopilot for the
      whole subtree — words for the human, a matching pause for the machine. -->
 <div class="modal-backdrop" id="noteModal" role="dialog" aria-modal="true" aria-labelledby="noteTitle">
-  <!-- A toast raised while this sheet is open, said in it too: the stack outside
-       every sheet may be left out of what a screen reader reads while focus
-       is in one (toastSayInSheet, BQT item 26). -->
-  <div id="noteModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <!-- What is said outside this sheet while it would not be heard there,
+       said in it: a toast raised while focus is in the sheet, and the
+       scan's voice, from the page the sheet makes inert (sayInSheet;
+       BQT item 26, BQU items 33 and 34). -->
+  <div id="noteModalOutsideSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:460px;">
     <div class="modal-head">
       <h3 id="noteTitle"><span data-icon="doc"></span>Folder note</h3>

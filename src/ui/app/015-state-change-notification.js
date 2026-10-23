@@ -276,10 +276,10 @@ function toastAction(msg, label, fn, kind = 'success', ms = 12000, { focus = fal
     `<button class="pill" type="button" aria-describedby="${msgId}" style="margin-left:10px;flex:none;">` + escapeHtml(label) + '</button>';
   const btn = el.querySelector('button');
   const back = focus ? document.activeElement : null;
-  // Raised over an open sheet, its message is said in the sheet too, as a
-  // toast's is (toastSayInSheet, BQT item 26) — unless it takes focus, which
-  // leaves the sheet for its button, read with the message it describes.
-  // Guarded: a page reader may lift this without it.
+  // Raised over an open sheet, its message is said in the sheet too while focus
+  // is in it, as a toast's is (toastSayInSheet, BQT item 26, BQU item 34) —
+  // unless it takes focus, which leaves the sheet for its button, read with the
+  // message it describes. Guarded: a page reader may lift this without it.
   const unsay = !focus && typeof toastSayInSheet === 'function' ? toastSayInSheet(msg) : null;
   // Gone once, and its choice made once: the toast stays on screen, and
   // clickable, for the 320ms it fades, so a double-click — or a click as it

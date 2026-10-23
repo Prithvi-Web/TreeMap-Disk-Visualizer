@@ -350,6 +350,15 @@ class El {
   displayed: () => boolean = () => !this.hidden;
   /** Whether a browser renders it: displayed, and every element that holds it too. */
   rendered(): boolean { return this.displayed() && (!this.parent || this.parent.rendered()); }
+  /** Made inert, as syncModalLayers makes the page under an open sheet (BQU item 33). */
+  inert = false;
+  hasAttribute(name: string): boolean { return name === 'inert' && this.inert; }
+  /** As far as the page asks it: the nearest of it and its holders that is inert. */
+  closest(sel: string): El | null {
+    assert.equal(sel, '[inert]', 'control: the page asks the fake only for the inert element that holds it');
+    for (let e: El | null = this; e; e = e.parent) if (e.inert) return e;
+    return null;
+  }
   /** As a browser answers: one box while it is rendered, none while it or anything holding it is not. */
   getClientRects(): Array<{ width: number; height: number }> { return this.rendered() ? [{ width: 1, height: 1 }] : []; }
   id = '';
@@ -389,7 +398,8 @@ class El {
   removed = false;
   focus(): void {}
   select(): void {}
-  contains(): boolean { return false; }
+  /** Whether `other` is this element or one it holds. */
+  contains(other: El): boolean { for (let e: El | null = other; e; e = e.parent) if (e === this) return true; return false; }
 }
 
 /** Let the microtasks and a few turns pass: a count, never a time. */
@@ -420,7 +430,7 @@ function page(decls: string[], given: Record<string, unknown> = {}, none: string
   const scope: Record<string, unknown> = {
     $, escapeHtml, formatCount: (n: number) => n.toLocaleString('en-US'), requestAnimationFrame: (fn: () => void) => frames.push(fn), ...given,
   };
-  const all = [...decls, 'function sayAloud('];
+  const all = [...decls, 'function sayAloud(', 'function asSentences('];
   const own = new Set(all.map(nameOf));
   const proxy = new Proxy(scope, {
     has: (t, k) => typeof k === 'string' && k in t && !own.has(k),
@@ -723,11 +733,12 @@ test('the index badge says what it shows in its own region a frame after it show
 
 const REFRESH_FAILED = 'Index may be out of date — the refresh failed, so what is shown may be older.';
 
-test('a quiet rescan that fails takes "Up to date" off the index badge it turns amber: the badge says the refresh failed and what is shown may be older, and its region says that a frame later (BQT item 25)', () => {
+test('a quiet rescan that fails takes "Up to date" off the index badge it turns amber: the badge says the refresh failed and what is shown may be older — and the toast is what says it: neither the badge\'s region nor the scan\'s says it again (BQT item 25, BQU item 35)', () => {
   const noop = () => {};
   const st = { scanning: true, view: 'dashboard', heldBehindIndex: null };
+  const toasted: string[] = [];
   const p = page(['function renderIndexBadge(', 'function quietRescanFailed('], {
-    formatDate: () => '21 Oct 2026', state: st, endScanChrome: noop, restoreDashboardPanels: noop, icon: () => '', toast: noop,
+    formatDate: () => '21 Oct 2026', state: st, endScanChrome: noop, restoreDashboardPanels: noop, icon: () => '', toast: (m: string) => { toasted.push(m); },
     withFocusKept: (f: () => void) => f(), switchView: noop, tourScanFailed: noop, liveScanEnded: noop, drainScanQueue: noop,
   });
   p.fns.renderIndexBadge({ indexed: true, path: '/r', root: { path: '/r', state: 'ready', live: true } });
@@ -737,9 +748,15 @@ test('a quiet rescan that fails takes "Up to date" off the index badge it turns 
   assert.equal(p.$('indexBadge').classList.contains('stale'), true, 'control: the badge turns amber');
   assert.equal(p.$('indexBadge').textContent, REFRESH_FAILED, 'and its words say what happened, never "Up to date" beside an amber dot');
   assert.doesNotMatch(p.$('indexBadge').title, /updates itself/, 'nor does its tooltip promise an index kept current');
-  assert.equal(p.$('indexBadgeSaid').textContent, '', 'new words: the region is emptied at once');
+  assert.deepEqual(toasted, ['Couldn’t refresh this folder: That folder no longer exists.'], 'control: the toast says the refresh failed, and why');
+  assert.equal(p.$('indexBadgeSaid').textContent, '', 'the badge\'s old words are taken back at once');
   p.frame();
-  assert.equal(p.$('indexBadgeSaid').textContent, REFRESH_FAILED, 'and a frame later says them');
+  p.frame();
+  assert.equal(p.$('indexBadgeSaid').textContent, '', 'and its new words are not said there: the toast says the refresh failed, and on the Dashboard it was heard a third time');
+  assert.deepEqual(p.$('scanAnnounce').said, [''], 'nor does the scan\'s region say it: it is emptied, its count over');
+  p.fns.renderIndexBadge({ indexed: true, path: '/r', root: { path: '/r', state: 'stale', live: true, staleReason: 'A change was missed.' } });
+  p.frame();
+  assert.equal(p.$('indexBadgeSaid').textContent, 'Index may be out of date. A change was missed. Scan again to refresh it.', 'control: the badge\'s next news, which no toast says, is said in its region');
 });
 
 /** The refused-folder row's painters over Els, on a Mac without Full Disk Access. */
@@ -838,84 +855,171 @@ test('the journal\'s portable-session note says itself in its own region a frame
   assert.deepEqual([p.$('journalPortable').hidden, p.$('journalPortableSaid').textContent], [true, ''], 'a session that keeps a journal: the note goes and the region is emptied');
 });
 
-/* ── a toast raised over an open sheet (BQT item 26) ── */
+/* ── who is heard while a sheet is open (BQT item 26; BQU items 33, 34, 36, 40, 41) ── */
 
-test('every sheet is a modal dialog with a live region of its own for toasts, empty in the page from the start, as its own child — inside the dialog (BQT item 26)', () => {
+test('every sheet is a modal dialog with a live region of its own for what is said outside it, empty in the page from the start, as its own child — inside the dialog (BQT item 26, BQU item 33)', () => {
   const sheets = [...INDEX.matchAll(/<div class="modal-backdrop" id="(\w+)"[^>]*>/g)].map((m) => ({ id: m[1], tag: m[0] }));
   assert.ok(sheets.length >= 15, `control: the page's sheets are found (${sheets.length})`);
   assert.equal(INDEX.split('class="modal-backdrop"').length - 1, sheets.length, 'control: each found once');
   for (const { id, tag } of sheets) {
     assert.match(tag, /\srole="dialog"[^>]*\saria-modal="true"/, `#${id} is a modal dialog`);
-    assert.equal(INDEX.split(regionMarkup(`${id}ToastSaid`)).length, 2, `#${id}ToastSaid: exactly one empty live region in the markup`);
-    const holders = ancestorsOf(`${id}ToastSaid`);
-    assert.equal(idIn(holders[holders.length - 1]), id, `#${id}ToastSaid stands in #${id} itself, so it is inside the dialog whatever the dialog shows`);
+    assert.equal(INDEX.split(regionMarkup(`${id}OutsideSaid`)).length, 2, `#${id}OutsideSaid: exactly one empty live region in the markup`);
+    const holders = ancestorsOf(`${id}OutsideSaid`);
+    assert.equal(idIn(holders[holders.length - 1]), id, `#${id}OutsideSaid stands in #${id} itself, so it is inside the dialog whatever the dialog shows`);
   }
+  assert.doesNotMatch(INDEX, /ToastSaid/, 'and no region is left under the name it had while it said only toasts');
 });
 
-/** toast() and its sheet's voice lifted from the page, over Els: the sheet on top is the test's to say, timers run by hand. */
+/** What a sheet's region and the toasts are lifted with. */
+const SHEET = ['const sheetSaid', 'function sheetStackLeftOut(', 'function sayInSheet(', 'function toastSayInSheet('];
+
+/**
+ * toast() and the sheets' voice lifted from the page, over Els: the sheet on top and where focus is are the test's to
+ * say, timers run by hand — one toast's at a time, or every one up.
+ */
 function toasts() {
   let top: El | null = null;
-  const timers: Array<() => void> = [];
-  const p = page(['const TOAST_MIN_MS', 'const TOAST_MS_PER_CHAR', 'const toastSheetSaid', 'function toastSayInSheet(', 'function toast('], {
-    icon: () => '<svg aria-hidden="true"></svg>', topModal: () => top, document: { createElement: () => new El() },
-    setTimeout: (fn: () => void) => { timers.push(fn); return timers.length; },
+  const timers: Array<{ fn: () => void; ms: number }> = [];
+  const doc = { createElement: () => new El(), activeElement: null as El | null };
+  const p = page(['const TOAST_MIN_MS', 'const TOAST_MS_PER_CHAR', ...SHEET, 'function toast('], {
+    icon: () => '<svg aria-hidden="true"></svg>', topModal: () => top, document: doc,
+    setTimeout: (fn: () => void, ms: number) => { timers.push({ fn, ms }); return timers.length; },
   });
-  /** A sheet opened on top, by its id. */
-  const open = (id: string) => { const sheet = p.$(id); sheet.id = id; sheet.classList.add('open'); top = sheet; return sheet; };
+  /** A sheet opened on top, by its id, with focus moved into it as the page moves it. */
+  const open = (id: string) => {
+    const sheet = p.$(id);
+    sheet.id = id;
+    sheet.classList.add('open');
+    sheet.setAttribute('aria-modal', 'true');
+    const field = new El();
+    field.parent = sheet;
+    doc.activeElement = field;
+    top = sheet;
+    return sheet;
+  };
   /** Every toast up runs out its time and goes. */
-  const expire = () => { for (let i = 0; i < 4; i++) for (const fn of timers.splice(0)) fn(); };
-  return { ...p, open, close: () => { top?.classList.remove('open'); top = null; }, expire };
+  const expire = () => { for (let i = 0; i < 4; i++) for (const t of timers.splice(0)) t.fn(); };
+  /** The toast that would go first runs out its time and goes, and nothing else: its fade, then its removal. */
+  const expireOne = () => {
+    const soonest = timers.reduce((a, b) => (b.ms < a.ms ? b : a));
+    timers.splice(timers.indexOf(soonest), 1);
+    soonest.fn(); // the fade starts: its removal is the timer it sets
+    const removal = timers.pop()!;
+    removal.fn();
+  };
+  return { ...p, open, close: () => { top?.classList.remove('open'); top = null; doc.activeElement = null; }, expire, expireOne, doc };
 }
 
-test('a toast raised while a sheet is open is said in that sheet\'s own region too, a frame later — while focus is in a sheet the stack outside it may be left out of what a screen reader reads — and its region is emptied as the toast goes; with no sheet open the stack alone says it (BQT item 26)', () => {
+test('a toast raised while focus is in a sheet is said in that sheet\'s own region too, a frame later — the stack outside every sheet is left out of what a screen reader reads then — and its region is emptied as the toast goes; with no sheet open the stack alone says it (BQT item 26)', () => {
   const t = toasts();
   t.fns.toast('Asked it to scan — its own screen will show the result');
   t.frame();
   assert.equal(t.$('toasts').children.length, 1, 'control: with no sheet open the toast is up in the stack, which says it');
-  assert.deepEqual([...['settingsModal', 'cleanModal', 'confirmModal']].map((id) => t.$(`${id}ToastSaid`).said), [[], [], []], 'and no sheet\'s region says it again');
+  assert.deepEqual([...['settingsModal', 'cleanModal', 'confirmModal']].map((id) => t.$(`${id}OutsideSaid`).said), [[], [], []], 'and no sheet\'s region says it again');
 
   t.open('settingsModal');
-  t.fns.toast('Settings saved — ignore rules apply from the next scan');
   t.fns.toast('Could not save the scanning budget: offline', 'error');
-  assert.equal(t.$('toasts').children.length, 3, 'control: the toasts are up in the stack as ever');
-  assert.equal(t.$('settingsModalToastSaid').textContent, '', 'nothing is said in the sheet before the frame: the region is emptied');
+  assert.equal(t.$('settingsModalOutsideSaid').textContent, '', 'nothing is said in the sheet before the frame: the region is emptied');
   t.frame();
-  assert.equal(t.$('settingsModalToastSaid').textContent, 'Settings saved — ignore rules apply from the next scan Could not save the scanning budget: offline',
-    'a frame later the sheet\'s region says them — both toasts raised before the frame');
+  assert.equal(t.$('settingsModalOutsideSaid').textContent, 'Could not save the scanning budget: offline', 'a frame later the sheet\'s region says it');
   t.expire();
-  assert.equal(t.$('settingsModalToastSaid').textContent, '', 'the toasts gone, nothing of them is left said in the sheet');
+  assert.equal(t.$('settingsModalOutsideSaid').textContent, '', 'the toast gone, nothing of it is left said in the sheet');
   t.fns.toast('Could not save the scanning budget: offline', 'error');
   t.frame();
-  assert.equal(t.$('settingsModalToastSaid').textContent, 'Could not save the scanning budget: offline', 'the same words again are a new toast, and are said again');
+  assert.equal(t.$('settingsModalOutsideSaid').textContent, 'Could not save the scanning budget: offline', 'the same words again are a new toast, and are said again');
   t.expire();
 
   // Raised as its sheet closes — Save, then the sheet goes: the stack is no longer left out, and says it alone.
   t.fns.toast('Settings saved — ignore rules apply from the next scan');
   t.close();
   t.frame();
-  assert.equal(t.$('settingsModalToastSaid').textContent, '', 'a sheet closed before the frame says nothing: its region is not on screen, and the stack is heard again');
+  assert.equal(t.$('settingsModalOutsideSaid').textContent, '', 'a sheet closed before the frame says nothing: its region is not on screen, and the stack is heard again');
+});
+
+test('toasts raised in one frame are said in the sheet each as a sentence of its own — a stop between them where one has none — never run together as one (BQU item 40)', () => {
+  const t = toasts();
+  t.open('settingsModal');
+  t.fns.toast('Settings saved — ignore rules apply from the next scan');
+  t.fns.toast('Could not save the scanning budget: offline', 'error');
+  assert.equal(t.$('toasts').children.length, 2, 'control: both toasts are up in the stack');
+  t.frame();
+  assert.equal(t.$('settingsModalOutsideSaid').textContent, 'Settings saved — ignore rules apply from the next scan. Could not save the scanning budget: offline',
+    'both, each its own sentence: "…from the next scan" and "Could not save…" are not heard as one');
+  t.expire();
+  t.fns.toast('The Trash is empty.');
+  t.fns.toast('Could not read the Undo Vault: offline', 'error');
+  t.frame();
+  assert.equal(t.$('settingsModalOutsideSaid').textContent, 'The Trash is empty. Could not read the Undo Vault: offline', 'one that ends with its own stop is given no second');
+});
+
+test('a sheet\'s region is emptied only as the last of the toasts it says goes: toasts of different lengths, which stay up for different times, going one at a time (BQU item 41)', () => {
+  const t = toasts();
+  t.open('settingsModal');
+  t.fns.toast('Saved.');
+  t.fns.toast('Could not save the scanning budget: the server did not answer in time, so the budget you picked is not in use yet', 'error');
+  t.frame();
+  const both = 'Saved. Could not save the scanning budget: the server did not answer in time, so the budget you picked is not in use yet';
+  assert.equal(t.$('settingsModalOutsideSaid').textContent, both, 'control: the sheet says both');
+  t.expireOne();
+  assert.equal(t.$('toasts').children.filter((c) => !c.removed).length, 1, 'control: the shorter toast has gone, the longer is still up');
+  assert.equal(t.$('settingsModalOutsideSaid').textContent, both, 'with one of its toasts still up, the region still says them');
+  t.expireOne();
+  assert.equal(t.$('toasts').children.filter((c) => !c.removed).length, 0, 'control: the longer toast has gone too');
+  assert.equal(t.$('settingsModalOutsideSaid').textContent, '', 'and only now, the last of them gone, the region is emptied');
+});
+
+test('a toast raised while focus is outside the open sheet — on another toast\'s button — is said in the stack alone: the stack is read then, and said in the sheet too it would be heard twice (BQU item 34)', () => {
+  const t = toasts();
+  t.open('cleanModal');
+  const button = new El(); // a toast's own button: #toasts stands outside every sheet
+  button.parent = t.$('toasts');
+  t.doc.activeElement = button;
+  t.fns.toast('Moved 3 items to the Trash');
+  t.frame();
+  assert.equal(t.$('toasts').children.length, 1, 'control: the toast is up in the stack, which is read with focus outside the sheet');
+  assert.equal(t.$('cleanModalOutsideSaid').textContent, '', 'and the sheet does not say it again');
+  t.expire();
+  // Focus back in the sheet: the stack is left out again, and the sheet says the next toast.
+  const field = new El();
+  field.parent = t.$('cleanModal');
+  t.doc.activeElement = field;
+  t.fns.toast('Moved 2 items to the Trash');
+  t.frame();
+  assert.equal(t.$('cleanModalOutsideSaid').textContent, 'Moved 2 items to the Trash', 'control: with focus in the sheet, the sheet says it');
+  // A sheet that is no modal dialog leaves the stack read wherever focus is.
+  const u = toasts();
+  const sheet = u.open('trashModal');
+  sheet.setAttribute('aria-modal', 'false');
+  u.fns.toast('Moved 3 items to the Trash');
+  u.frame();
+  assert.equal(u.$('trashModalOutsideSaid').textContent, '', 'a sheet that is not modal leaves nothing out, and says nothing again');
 });
 
 test('a toast with a button raised over an open sheet is said in the sheet too, unless it takes focus — which leaves the sheet for its button, read with the message it describes (BQT item 26)', () => {
   let top: El | null = null;
   const timers: Array<() => void> = [];
-  const p = page(['let toastActionSeq', 'const sheetToasts', 'const toastSheetSaid', 'function toastSayInSheet(', 'function toastAction('], {
-    icon: () => '<svg aria-hidden="true"></svg>', topModal: () => top, document: { createElement: () => new El(), activeElement: null },
+  const doc = { createElement: () => new El(), activeElement: null as El | null };
+  const p = page(['let toastActionSeq', 'const sheetToasts', ...SHEET, 'function toastAction('], {
+    icon: () => '<svg aria-hidden="true"></svg>', topModal: () => top, document: doc,
     modalFocusables: () => [], modalFocusInto: () => {}, setTimeout: (fn: () => void) => { timers.push(fn); return timers.length; },
   });
   const sheet = p.$('browseModal');
   sheet.id = 'browseModal';
   sheet.classList.add('open');
+  sheet.setAttribute('aria-modal', 'true');
+  const field = new El();
+  field.parent = sheet;
+  doc.activeElement = field;
   top = sheet;
   p.fns.toastAction('No folder is named Photo here. Did you mean “Photos”?', 'Open Photos', () => {}, 'error', 12000, { focus: true, sheet: 'browseModal' });
   p.frame();
-  assert.deepEqual(p.$('browseModalToastSaid').said, [], 'one that takes focus is read where focus lands, and is not said in the sheet');
+  assert.deepEqual(p.$('browseModalOutsideSaid').said, [], 'one that takes focus is read where focus lands, and is not said in the sheet');
   p.fns.toastAction('These results expire in about 5 minutes — scan again to keep them fresh.', 'Scan again', () => {});
-  assert.equal(p.$('browseModalToastSaid').textContent, '', 'one that leaves focus where it is: the sheet\'s region is emptied at once');
+  assert.equal(p.$('browseModalOutsideSaid').textContent, '', 'one that leaves focus where it is: the sheet\'s region is emptied at once');
   p.frame();
-  assert.equal(p.$('browseModalToastSaid').textContent, 'These results expire in about 5 minutes — scan again to keep them fresh.', 'and says its message a frame later');
+  assert.equal(p.$('browseModalOutsideSaid').textContent, 'These results expire in about 5 minutes — scan again to keep them fresh.', 'and says its message a frame later');
   for (let i = 0; i < 4; i++) for (const fn of timers.splice(0)) fn();
-  assert.equal(p.$('browseModalToastSaid').textContent, '', 'the toast gone, nothing of it is left said');
+  assert.equal(p.$('browseModalOutsideSaid').textContent, '', 'the toast gone, nothing of it is left said');
 });
 
 /* ───────────── live regions hidden by a parent (BQT item 28; the fake's hidden parents, item 32a) ─────────────
@@ -963,11 +1067,15 @@ test('the open-file warning, read back as it is shown, is read with its dialog o
   }
 });
 
-/** A ResizeObserver as a browser runs one, as far as aloudWait reaches: at each layout the test runs, told of each element it watches whose box came or went. */
+/**
+ * A ResizeObserver as a browser runs one, as far as aloudWait reaches: at each layout the test runs, told of each
+ * element it watches whose box came or went — and, as a browser does, of an element it has just been given that is
+ * rendered, at the first layout after (its last reported box is none).
+ */
 class FakeResizeObserver {
   private readonly watched = new Map<El, number>();
   constructor(private readonly cb: (entries: Array<{ target: El }>) => void) {}
-  observe(el: El): void { this.watched.set(el, el.getClientRects().length); }
+  observe(el: El): void { this.watched.set(el, 0); }
   unobserve(el: El): void { this.watched.delete(el); }
   layout(): void {
     const changed = [...this.watched].filter(([el, had]) => el.getClientRects().length !== had).map(([el]) => el);
@@ -980,17 +1088,54 @@ function resizeObservers() {
   const made: FakeResizeObserver[] = [];
   return { ResizeObserver: class extends FakeResizeObserver { constructor(cb: (entries: Array<{ target: El }>) => void) { super(cb); made.push(this); } }, layout: () => { for (const r of made) r.layout(); } };
 }
-const WAIT = ['const aloudWaiting', 'let aloudWatch', 'function aloudWait('];
+/**
+ * The MutationObserver a page gets, as far as it reaches here: what each watches, and `inert` — an element made inert
+ * or no longer, told to each observer of the inert attribute, as a browser tells it, a microtask later (the test calls
+ * it where the microtask would run).
+ */
+function mutationObservers() {
+  const made: Array<{ cb: (records: unknown[]) => void; watches: Array<{ target: El; opts: { attributeFilter?: string[] } }> }> = [];
+  class FakeMutationObserver {
+    readonly watches: Array<{ target: El; opts: { attributeFilter?: string[] } }> = [];
+    constructor(readonly cb: (records: unknown[]) => void) { made.push(this); }
+    observe(target: El, opts: { attributeFilter?: string[] }): void { this.watches.push({ target, opts }); }
+    takeRecords(): unknown[] { return []; }
+    disconnect(): void { this.watches.length = 0; }
+  }
+  const inert = (el: El, on: boolean) => {
+    const oldValue = el.inert ? '' : null;
+    el.inert = on;
+    for (const o of made) {
+      if (o.watches.some((w) => (w.opts.attributeFilter || []).includes('inert') && w.target.contains(el))) o.cb([{ target: el, attributeName: 'inert', oldValue }]);
+    }
+  };
+  return { MutationObserver: FakeMutationObserver, inert, made };
+}
+const WAIT = ['const aloudWaiting', 'const aloudShown', 'let aloudWatch', 'let aloudInertWatch', 'function aloudReachable(', 'function aloudKnow(', 'function aloudWait('];
+
+/** A page over Els with aloudWait, and a frame run as a browser runs one: the frame callbacks, then layout, which tells the ResizeObservers. */
+function waitingPage(decls: string[], given: Record<string, unknown> = {}) {
+  const ro = resizeObservers();
+  const mo = mutationObservers();
+  const body = new El();
+  const main = new El();
+  main.parent = body;
+  const p = page([...WAIT, ...decls], { ResizeObserver: ro.ResizeObserver, MutationObserver: mo.MutationObserver, document: { body, activeElement: null }, ...given });
+  const frame = () => { p.frame(); ro.layout(); };
+  return { ...p, ro, mo, body, main, frame };
+}
 
 test('a box\'s words wait while a parent hides its region — another view up, its sheet or pane closed — and are said a frame after the region comes on screen; words changed meanwhile are said as they are then, and words taken back are never said (BQT item 28)', () => {
-  const ro = resizeObservers();
-  const p = page(WAIT, { ResizeObserver: ro.ResizeObserver });
+  const p = waitingPage([]);
   const view = p.$('view-dashboard');
+  view.parent = p.main;
   const live = p.$('accessSaid');
   live.parent = view;
+  p.fns.aloudKnow(live); // as the page loads: every region is shown to the watch
+  p.frame();
   p.fns.sayAloud('accessSaid', 'On screen at once.');
   p.frame();
-  assert.equal(live.textContent, 'On screen at once.', 'control: a region on screen says its words a frame later, as before');
+  assert.equal(live.textContent, 'On screen at once.', 'control: a region on screen a frame already says its words a frame later, as before');
 
   view.hidden = true; // the map is up, the Dashboard hidden
   p.fns.sayAloud('accessSaid', '69 folders could not be read.');
@@ -999,8 +1144,8 @@ test('a box\'s words wait while a parent hides its region — another view up, i
   p.frame();
   assert.equal(live.textContent, '', 'nor on any later frame while it stays hidden');
   view.hidden = false;
-  ro.layout();
-  assert.equal(live.textContent, '', 'the view back: nothing yet — the region has only just come on screen');
+  p.frame();
+  assert.equal(live.textContent, '', 'the view back: nothing in the frame it comes on screen in');
   p.frame();
   assert.equal(live.textContent, '69 folders could not be read.', 'a frame later the region says the words: a change, which is heard');
 
@@ -1011,7 +1156,7 @@ test('a box\'s words wait while a parent hides its region — another view up, i
   p.fns.sayAloud('accessSaid', 'The words now.');
   p.frame();
   view.hidden = false;
-  ro.layout();
+  p.frame();
   p.frame();
   assert.deepEqual(live.said.filter(Boolean), ['The words now.'], 'words changed while it waited are said as they are when it comes back, once');
 
@@ -1021,17 +1166,47 @@ test('a box\'s words wait while a parent hides its region — another view up, i
   p.frame();
   p.fns.sayAloud('accessSaid', '');
   view.hidden = false;
-  ro.layout();
+  p.frame();
   p.frame();
   assert.deepEqual(live.said.filter(Boolean), [], 'words taken back while it waited are never said');
 });
 
+test('words given in the task that opens a sheet — before the sheet opens or after — go in a frame after the sheet\'s first: never in the frame it comes on screen, which renders the region already filled (BQU item 36)', () => {
+  for (const order of ['the words, then the sheet', 'the sheet, then the words']) {
+    const p = waitingPage([]);
+    const sheet = p.$('dupeViewerModal');
+    sheet.displayed = () => sheet.classList.contains('open');
+    const live = p.$('dupeViewerSummarySaid');
+    live.parent = sheet;
+    p.fns.aloudKnow(live);
+    /** Each frame's rendering of the region, as layout leaves it: on screen or not, and its words. */
+    const rendered: Array<{ on: boolean; text: string }> = [];
+    const frame = () => { p.frame(); rendered.push({ on: live.getClientRects().length > 0, text: live.textContent }); };
+    frame(); // the page's first frame: the sheet closed
+    if (order === 'the words, then the sheet') {
+      p.fns.sayAloud('dupeViewerSummarySaid', 'Reading the copies…');
+      sheet.classList.add('open');
+    } else {
+      sheet.classList.add('open');
+      p.fns.sayAloud('dupeViewerSummarySaid', 'Reading the copies…');
+    }
+    for (let i = 0; i < 4; i++) frame();
+    const first = rendered.findIndex((r) => r.on);
+    assert.ok(first > 0, `${order}: control: the sheet comes on screen at a frame after the first`);
+    assert.deepEqual(rendered[first], { on: true, text: '' }, `${order}: the frame the sheet comes on screen in renders its region empty`);
+    assert.equal(rendered[first + 1].text, 'Reading the copies…', `${order}: the next gives it the words — a change, which is heard`);
+  }
+});
+
 test('a part\'s working sentence waits the same way while a parent hides its region, and is said a frame after it comes on screen — unless the part has answered meanwhile (BQT item 28)', () => {
-  const ro = resizeObservers();
+  // What sees a part's rows go: each watch of a host's children, told by the test as a browser would be.
   const watchers: Array<() => void> = [];
-  const p = page([...WAIT, 'const workingSaid', 'function sayWorking('], {
-    ResizeObserver: ro.ResizeObserver,
-    MutationObserver: class { constructor(cb: () => void) { watchers.push(cb); } observe() {} disconnect() {} },
+  const p = waitingPage(['const workingSaid', 'function sayWorking('], {
+    MutationObserver: class {
+      constructor(private readonly cb: () => void) {}
+      observe(_t: unknown, opts: { childList?: boolean }) { if (opts.childList) watchers.push(this.cb); }
+      disconnect() {}
+    },
   });
   const rows = { isConnected: true, getAttribute: (k: string) => (k === 'aria-label' ? 'Reading disk layout…' : null) };
   const host = { firstElementChild: rows };
@@ -1043,9 +1218,10 @@ test('a part\'s working sentence waits the same way while a parent hides its reg
   p.frame();
   assert.equal(live.textContent, '', 'its view hidden, the working sentence is not put where it would never be heard');
   view.hidden = false;
-  ro.layout();
   p.frame();
-  assert.equal(live.textContent, 'Reading disk layout…', 'and is said a frame after the view comes back, the part still working');
+  assert.equal(live.textContent, '', 'nor in the frame its view comes back in');
+  p.frame();
+  assert.equal(live.textContent, 'Reading disk layout…', 'and is said a frame after, the part still working');
 
   view.hidden = true;
   const again = { isConnected: true, getAttribute: () => 'Reading disk layout…' };
@@ -1054,9 +1230,210 @@ test('a part\'s working sentence waits the same way while a parent hides its reg
   again.isConnected = false; // the part answered: its rows are gone
   for (const w of watchers) w();
   view.hidden = false;
-  ro.layout();
+  p.frame();
   p.frame();
   assert.equal(live.textContent, '', 'a part that answered while hidden says nothing when its view comes back');
+});
+
+test('a region in the page under an open sheet — inert, so not heard wherever focus is — holds its words, and says them a frame after the sheet goes: never in the frame the page comes out from under it; words changed meanwhile are said as they are then, and words taken back never (BQU item 33)', () => {
+  const p = waitingPage(['const workingSaid', 'function sayWorking(']);
+  const view = p.$('view-dashboard');
+  view.parent = p.main;
+  const live = p.$('indexBadgeSaid');
+  live.parent = view;
+  p.fns.aloudKnow(live);
+  p.frame();
+  /** Each frame's rendering of the region: heard (on screen, not inert) or not, and its words. */
+  const rendered: Array<{ heard: boolean; text: string }> = [];
+  const frame = () => { p.frame(); rendered.push({ heard: live.getClientRects().length > 0 && !live.closest('[inert]'), text: live.textContent }); };
+
+  p.mo.inert(p.main, true); // a sheet opens: syncModalLayers makes the page inert
+  p.fns.sayAloud('indexBadgeSaid', 'Index may be out of date. A change was missed.');
+  frame();
+  frame();
+  assert.deepEqual(rendered.map((r) => r.text), ['', ''], 'under the sheet nothing is put in the region: inert, it would never be heard');
+  p.mo.inert(p.main, false); // the sheet goes
+  frame();
+  frame();
+  assert.deepEqual(rendered.slice(2), [{ heard: true, text: '' }, { heard: true, text: 'Index may be out of date. A change was missed.' }],
+    'the frame the page comes out from under the sheet renders the region empty, and the next says the words: a change, which is heard');
+
+  // Words changed while it waited are said as they are; taken back, never.
+  live.said.length = 0;
+  p.mo.inert(p.main, true);
+  p.fns.sayAloud('indexBadgeSaid', 'Words that go stale.');
+  p.frame();
+  p.fns.sayAloud('indexBadgeSaid', 'Up to date — updates itself as files change');
+  p.mo.inert(p.main, false);
+  p.frame();
+  p.frame();
+  assert.deepEqual(live.said.filter(Boolean), ['Up to date — updates itself as files change'], 'words changed under the sheet are said as they are once it goes, once');
+  live.said.length = 0;
+  p.mo.inert(p.main, true);
+  p.fns.sayAloud('indexBadgeSaid', 'Words taken back.');
+  p.fns.sayAloud('indexBadgeSaid', '');
+  p.mo.inert(p.main, false);
+  p.frame();
+  p.frame();
+  assert.deepEqual(live.said.filter(Boolean), [], 'words taken back under the sheet are never said');
+
+  // Words given in the task the sheet goes in, once the page is out from under it: the page was not heard in the
+  // last frame, so they wait for the next one too.
+  rendered.length = 0;
+  p.mo.inert(p.main, true);
+  p.frame();
+  p.mo.inert(p.main, false);
+  p.fns.sayAloud('indexBadgeSaid', 'Index may be out of date. The watch stopped.');
+  frame();
+  frame();
+  assert.deepEqual(rendered, [{ heard: true, text: '' }, { heard: true, text: 'Index may be out of date. The watch stopped.' }],
+    'words given as the page comes out from under the sheet are not in the frame it comes out in, but the next');
+
+  // A part's working sentence the same way.
+  const rows = { isConnected: true, getAttribute: (k: string) => (k === 'aria-label' ? 'Reading disk layout…' : null) };
+  const working = p.$('topologyWorking');
+  working.parent = view;
+  p.fns.aloudKnow(working);
+  p.frame();
+  p.mo.inert(p.main, true);
+  p.fns.sayWorking({ firstElementChild: rows }, 'topologyWorking');
+  p.frame();
+  assert.equal(working.textContent, '', 'a working sentence given under the sheet waits too');
+  p.mo.inert(p.main, false);
+  p.frame();
+  assert.equal(working.textContent, '', 'and is not put in as the page comes out');
+  p.frame();
+  assert.equal(working.textContent, 'Reading disk layout…', 'but a frame after');
+});
+
+/** The scan's voice and the sheets' lifted from the page, over Els: the page under its main part, the sheet on top the test's. */
+function scanVoice() {
+  let top: El | null = null;
+  const timers: Array<{ fn: () => void; ms: number }> = [];
+  const doc = { body: null as unknown as El, activeElement: null as El | null };
+  const p = waitingPage(['const TOAST_MIN_MS', 'const TOAST_MS_PER_CHAR', ...SHEET, 'const scanVoiceSheet', 'const scanVoiceHeld', 'function scanVoiceSays(', 'function scanVoiceChanged('], {
+    topModal: () => top, document: doc, scanVoiceWatch: { takeRecords: () => [] },
+    setTimeout: (fn: () => void, ms: number) => { timers.push({ fn, ms }); return timers.length; },
+  });
+  doc.body = p.body;
+  const scan = p.$('scanAnnounce');
+  scan.parent = p.main;
+  const stop = p.$('stopAnnounce');
+  stop.parent = p.main;
+  const sheet = p.$('settingsModal');
+  sheet.id = 'settingsModal';
+  sheet.parent = p.body;
+  sheet.displayed = () => sheet.classList.contains('open');
+  sheet.setAttribute('aria-modal', 'true');
+  const sheetLive = p.$('settingsModalOutsideSaid');
+  sheetLive.parent = sheet;
+  for (const r of [scan, stop, sheetLive]) p.fns.aloudKnow(r);
+  p.frame();
+  /** The scan's code writes the region straight; the page's watch hands the change on a microtask later. */
+  const write = (live: El, words: string) => { live.textContent = words; p.fns.scanVoiceChanged(live); };
+  /** A sheet opens over the page, focus moved into it; or it goes. */
+  const open = () => { sheet.classList.add('open'); top = sheet; p.mo.inert(p.main, true); const f = new El(); f.parent = sheet; doc.activeElement = f; };
+  const close = () => { sheet.classList.remove('open'); top = null; doc.activeElement = null; };
+  return { ...p, scan, stop, sheet, sheetLive, write, open, close, doc, timers };
+}
+
+test('the scan\'s voice is heard whatever is open: what #scanAnnounce or #stopAnnounce is given while a sheet is open is said in the sheet on top a frame later, wherever focus is in the page, and taken back there as the scan\'s words change or as a toast of them would go; with no sheet open nothing touches it (BQU item 33)', () => {
+  const v = scanVoice();
+  v.write(v.scan, 'Scanning…');
+  v.frame();
+  assert.equal(v.scan.textContent, 'Scanning…', 'control: with no sheet open the scan\'s region says it, as it always has');
+  assert.deepEqual(v.sheetLive.said, [], 'and no sheet says it again');
+
+  v.open();
+  v.frame();
+  v.write(v.scan, '1,200 items scanned so far');
+  assert.equal(v.sheetLive.textContent, '', 'a sheet open, the page under it inert: the sheet\'s region is emptied at once');
+  v.frame();
+  assert.equal(v.sheetLive.textContent, '1,200 items scanned so far', 'and says the scan\'s words a frame later, where they are heard');
+  assert.equal(v.scan.textContent, '1,200 items scanned so far', 'the region keeps them: inert, it is not heard, and it comes back from under the sheet holding what it holds — no change');
+
+  // Focus on a toast's button, outside the sheet: the page is inert all the same, and the sheet is heard.
+  const button = new El();
+  button.parent = v.$('toasts');
+  v.doc.activeElement = button;
+  v.write(v.scan, '2,400 items scanned so far');
+  v.frame();
+  assert.equal(v.sheetLive.textContent, '2,400 items scanned so far', 'with focus outside the sheet the scan is still said in it: the page stays inert wherever focus is');
+  v.write(v.scan, '');
+  assert.equal(v.sheetLive.textContent, '', 'the scan\'s words taken back: what the sheet said of them goes too');
+
+  v.write(v.stop, 'You stopped the scan of /Users/x/Desktop.');
+  v.frame();
+  assert.equal(v.sheetLive.textContent, 'You stopped the scan of /Users/x/Desktop.', 'a Stop\'s words the same way');
+  const life = v.timers.at(-1);
+  assert.ok(life, 'the words said in the sheet are given a time to go');
+  assert.equal(life.ms, Math.max(4200, 'You stopped the scan of /Users/x/Desktop.'.length * 60), 'control: they stay as long as a toast of them would');
+  life.fn();
+  assert.equal(v.sheetLive.textContent, '', 'and then go, so the sheet holds no news that is over');
+});
+
+test('what the scan\'s voice is given as a sheet goes, while the page is still inert, is held — the region empty — and said a frame after the page is heard again; with no sheet ever open it stands as written (BQU items 33, 36)', () => {
+  const v = scanVoice();
+  v.open();
+  v.frame();
+  /** Each frame's rendering of the scan's region: heard or not, and its words. */
+  const rendered: Array<{ heard: boolean; text: string }> = [];
+  const frame = () => { v.frame(); rendered.push({ heard: !v.scan.closest('[inert]'), text: v.scan.textContent }); };
+  // "Scan this folder" in the folder picker: the sheet goes, and the scan starts, in one task — before the net lifts inert.
+  v.close();
+  v.write(v.scan, 'Scanning…');
+  assert.equal(v.scan.textContent, '', 'the page still inert: the words are held back, the region empty');
+  assert.equal(v.fns.scanVoiceSays(v.scan), 'Scanning…', 'what the region says, or holds back, is still the scan\'s words');
+  v.mo.inert(v.main, false); // the net lifts inert
+  frame();
+  frame();
+  assert.deepEqual(rendered, [{ heard: true, text: '' }, { heard: true, text: 'Scanning…' }],
+    'the frame the page comes out from under the sheet renders the region empty, and the next says the words: a change, which is heard');
+  assert.deepEqual(v.sheetLive.said.filter(Boolean), [], 'and the sheet, gone, says nothing of it');
+  v.write(v.scan, '1 item scanned so far');
+  assert.equal(v.scan.textContent, '1 item scanned so far', 'heard again, the region stands as written');
+});
+
+test('a sheet opened in the task its words come in says them a frame after its first, never in the frame it comes on screen in — the scan\'s words, and a toast raised as it opens (BQU item 36)', () => {
+  const v = scanVoice();
+  /** Each frame's rendering of the sheet's region: on screen or not, and its words. */
+  const rendered: Array<{ on: boolean; text: string }> = [];
+  const frame = () => { v.frame(); rendered.push({ on: v.sheetLive.getClientRects().length > 0, text: v.sheetLive.textContent }); };
+  v.open();
+  v.write(v.scan, '1,200 items scanned so far');
+  frame();
+  frame();
+  assert.deepEqual(rendered, [{ on: true, text: '' }, { on: true, text: '1,200 items scanned so far' }],
+    'the frame the sheet comes on screen in renders its region empty, and the next says the words: a change, which is heard');
+});
+
+test('the scan\'s voice is watched as it is written: a change to #scanAnnounce or #stopAnnounce — its text replaced, or its text node\'s words — reaches scanVoiceChanged once for that region, and nothing else does (BQU item 33)', () => {
+  const head = "if (typeof MutationObserver !== 'undefined') {\n  const voice = ['scanAnnounce', 'stopAnnounce'].map($);";
+  const at = INDEX.indexOf(head);
+  assert.notEqual(at, -1, 'control: the watch is set up as the page loads');
+  let depth = 0;
+  let end = at;
+  for (let i = INDEX.indexOf('{', at); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) { end = i + 1; break; }
+  }
+  const els = new Map<string, El>();
+  const $ = (id: string) => { let e = els.get(id); if (!e) { e = new El(); els.set(id, e); } return e; };
+  const watched: Array<{ target: El; opts: Record<string, boolean> }> = [];
+  let deliver: (records: Array<{ target: El }>) => void = () => {};
+  const changed: El[] = [];
+  new Function('$', 'MutationObserver', 'scanVoiceChanged', `let scanVoiceWatch = null;\n${INDEX.slice(at, end)}`)(
+    $, class { constructor(cb: (records: Array<{ target: El }>) => void) { deliver = cb; } observe(target: El, opts: Record<string, boolean>) { watched.push({ target, opts }); } },
+    (live: El) => { changed.push(live); });
+  assert.deepEqual(watched.map((w) => [w.target, w.opts]), [[$('scanAnnounce'), { childList: true, characterData: true, subtree: true }], [$('stopAnnounce'), { childList: true, characterData: true, subtree: true }]],
+    'each region is watched for its text replaced and for its text node changed');
+  const words = new El(); // the text node a write leaves in #stopAnnounce
+  words.parent = $('stopAnnounce');
+  deliver([{ target: $('scanAnnounce') }, { target: $('scanAnnounce') }, { target: words }]);
+  assert.deepEqual(changed, [$('scanAnnounce'), $('stopAnnounce')], 'two records of one region hand it on once, and a text node\'s change hands on the region that holds it');
+  changed.length = 0;
+  deliver([{ target: $('indexBadgeSaid') }]);
+  assert.deepEqual(changed, [], 'a change anywhere else hands on nothing');
 });
 
 /* ── the audit ── */
@@ -1082,26 +1459,54 @@ function wordsWritten(id: string): string[] {
   return out;
 }
 
-/** The live regions under a parent that hides them, whose words are written straight, with why each is still heard. */
+/**
+ * The live regions whose words are written straight, not through sayAloud or sayWorking, with why each is still heard:
+ * none is written while what holds it hides it, or while a sheet makes the page under it inert.
+ */
 const WRITTEN_STRAIGHT: ReadonlyMap<string, string> = new Map([
-  ['tmKbAnnounce', 'written only as j and k move the highlight on the map, which has focus: the map is on screen'],
+  ['tmKbAnnounce', 'written only as j and k move the highlight on the map, which has focus: the map is on screen, and no sheet is open — a sheet takes focus'],
   ['missingBody', 'the Missing Gigabytes card itself: what it shows as its view opens is the view, read as it is reached; what it announces is the statement that comes later, while the view is up — an answer for a view that has gone is dropped'],
+  ['scanAnnounce', 'the scan\'s voice: outside every view, always on screen, and what it is given while a sheet is open is said in the sheet on top, and held as a sheet goes until the page is heard again (scanVoiceChanged)'],
+  ['stopAnnounce', 'the Stop\'s voice, beside the scan\'s, said in a sheet the same way (scanVoiceChanged)'],
 ]);
 
-test('every live region under a parent that hides it at times is said through sayAloud or sayWorking, which hold its words until it is on screen — none is written straight but those named with why; the scan\'s voice and the Stop\'s stand outside every view (BQT item 28)', () => {
+/** The children of <body> syncModalLayers never makes inert, by id: read from its own test of each child. */
+function neverInert(): string[] {
+  const sync = pageFn('function syncModalLayers(');
+  const line = sync.split('\n').find((l) => /\} else if \(.*\) el\.inert = !!top;$/.test(l.trim()));
+  assert.ok(line && line.includes('!MODAL_OVERLAYS.includes(el.id)'), 'control: syncModalLayers makes every other child of <body> inert while a sheet is open');
+  const ids = [...line.matchAll(/el\.id !== '(\w+)'/g)].map((m) => m[1]);
+  const overlays = /const MODAL_OVERLAYS = \[([^\]]*)\];/.exec(INDEX);
+  assert.ok(overlays, 'control: the overlays a sheet leaves reachable are listed');
+  return [...ids, ...[...overlays[1].matchAll(/'(\w+)'/g)].map((m) => m[1])];
+}
+
+test('every live region in the page is said through sayAloud or sayWorking, which hold its words until it is heard — on screen, and out from under any sheet — or is a sheet\'s own region, the toast stack, or one named with why; and every one but the toast stack is in a part of the page a sheet makes inert (BQT item 28, BQU item 33)', () => {
   const held = LIVE_IDS.filter((id) => hidingHolders(id).length > 0);
-  for (const id of ['accessSaid', 'confirmOpenHandlesSaid', 'journalPortableSaid', 'startLastSaid', 'apQuerySaid', 'cleanWorking', 'nlSaid', 'settingsModalToastSaid']) {
+  for (const id of ['accessSaid', 'confirmOpenHandlesSaid', 'journalPortableSaid', 'startLastSaid', 'apQuerySaid', 'cleanWorking', 'nlSaid', 'settingsModalOutsideSaid']) {
     assert.ok(held.includes(id), `control: the audit finds #${id} under a parent that hides it (${hidingHolders(id).join(', ')})`);
   }
-  assert.match(pageFn('function sayAloud('), /aloudWait\(live, /, 'sayAloud holds words while its region is not on screen');
+  assert.match(pageFn('function sayAloud('), /aloudWait\(live, /, 'sayAloud holds words while its region is not heard');
   assert.match(pageFn('function sayWorking('), /aloudWait\(live, /, 'and so does sayWorking');
-  const straight = held.filter((id) => !WRITTEN_STRAIGHT.has(id)).flatMap((id) => wordsWritten(id).map((w) => `#${id} (under ${hidingHolders(id).join(', ')}): ${w}`));
-  assert.deepEqual(straight, [], 'no live region under a parent that hides it is written straight: its words would go unheard, or come on screen already in it');
-  for (const id of WRITTEN_STRAIGHT.keys()) assert.ok(held.includes(id) && wordsWritten(id).length > 0, `control: #${id}, named here, is still under a parent that hides it and written straight`);
-  // A sheet's toast region is written by toastSayInSheet alone, by a name it builds, and only while its sheet is open.
-  assert.ok(LIVE_IDS.filter((id) => id.endsWith('ToastSaid')).every((id) => held.includes(id)), 'control: every sheet\'s toast region is under its sheet');
-  assert.match(pageFn('function toastSayInSheet('), /top\.classList\.contains\('open'\)\) live\.textContent = /, 'and is given its words only while its sheet is still open');
+  assert.match(pageFn('function aloudReachable('), /closest\('\[inert\]'\)/, 'and a region in the page a sheet makes inert is not heard');
+  const own = (id: string) => id.endsWith('OutsideSaid') || id === 'toasts';
+  const straight = LIVE_IDS.filter((id) => !own(id) && !WRITTEN_STRAIGHT.has(id)).flatMap((id) => wordsWritten(id).map((w) => `#${id}: ${w}`));
+  assert.deepEqual(straight, [], 'no live region is written straight: its words would go unheard under a parent that hides it or a sheet, or come back already in it');
+  for (const id of WRITTEN_STRAIGHT.keys()) assert.ok(LIVE_IDS.includes(id) && wordsWritten(id).length > 0, `control: #${id}, named here, is a live region still written straight`);
+  // Every live region but the toast stack stands in a part of the page that is inert while a sheet is open: the page's
+  // main part, the sidebar, or a sheet (inert under the one on top).
+  const exempt = neverInert();
+  assert.ok(exempt.includes('toasts'), 'control: the toast stack is never made inert');
+  const outsideInert = LIVE_IDS.filter((id) => exempt.includes(id) || ancestorsOf(id).slice(1).some((t) => exempt.includes(idIn(t))));
+  assert.deepEqual(outsideInert, ['toasts'], 'the toast stack alone stands where no sheet makes it inert: every other region is held, or said in the sheet');
+  // A sheet's own region is written by sayInSheet alone, by a name it builds, and only while its sheet is still open.
+  assert.ok(LIVE_IDS.filter((id) => id.endsWith('OutsideSaid')).every((id) => held.includes(id)), 'control: every sheet\'s region is under its sheet');
+  assert.match(pageFn('function sayInSheet('), /if \(sheetSaid\.get\(live\) !== now \|\| !sheet\.classList\.contains\('open'\)\) \{ now\.waiting = false; return; \}/,
+    'and is given its words only while its sheet is still open');
   for (const id of ['scanAnnounce', 'stopAnnounce']) assert.deepEqual(hidingHolders(id), [], `#${id} stands outside every view, every sheet and the start screen: a scan and a Stop are heard wherever a person is`);
+  // The scan's voice is watched as it is written, and every region is shown to the watch as the page loads.
+  assert.match(INDEX, /const voice = \['scanAnnounce', 'stopAnnounce'\]\.map\(\$\);/, 'the scan\'s two regions are the ones watched');
+  assert.match(INDEX, /\ndocument\.querySelectorAll\('\[aria-live\]'\)\.forEach\(aloudKnow\);/, 'every live region is shown to the watch as the page loads, so its first words wait for no extra frame');
 });
 
 test('the live regions the script makes are three, each said where it is seen: a part\'s working rows (their sentence said by sayWorking), the Missing Gigabytes "Updating…" (part of its card), and a chart\'s walk (filled only as the arrow keys walk the focused chart) — no notice the script shows already filled is one (BQT item 28)', () => {

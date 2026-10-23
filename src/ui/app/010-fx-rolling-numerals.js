@@ -454,47 +454,85 @@ applySideNav(sideNavPref() === 'rail' || sideNavNarrow.matches);
 // peer's refusal — can be read before it goes (BQL-a review F3.6).
 const TOAST_MIN_MS = 4200;
 const TOAST_MS_PER_CHAR = 60;
-/* ── A toast raised over an open sheet, said in the sheet too (BQT item 26) ──
-   Every sheet is a modal dialog (aria-modal="true"), and while focus is in one
-   Chromium leaves what stands outside it out of the accessibility tree: the
-   toast stack, outside every sheet, may then never be announced. So a toast
-   raised while a sheet is open is also said in that sheet's own live region,
-   #<sheet>ToastSaid, there from the start — the BQS way: emptied now and given
-   the words a frame later, with those of every toast raised before that frame,
-   so the same words again are a change too. A sheet closed by then says
-   nothing: the stack is heard again. The region is emptied as the last of its
-   toasts goes. With no sheet open the stack alone says a toast, as it always
-   has. Answers what takes the words back as the toast goes, or null. */
-const toastSheetSaid = new Map(); // a sheet's region → { words, waiting, up }: what it says, or is about to, for how many toasts
-function toastSayInSheet(msg) {
-  const top = typeof topModal === 'function' ? topModal() : null;
-  const live = top ? $(top.id + 'ToastSaid') : null;
+/** Lines said on one line, as sentences: each but the last ends with a stop where it has none, so a screen reader pauses there — an sr-only region is one line, where a line break is only a space (BQS; BQU item 40). */
+function asSentences(lines) {
+  const kept = lines.map((l) => String(l).trim()).filter(Boolean);
+  return kept.map((l, i) => (i < kept.length - 1 && !/[.!?…:]$/.test(l) ? `${l}.` : l)).join(' ');
+}
+
+/* ── Who is heard while a sheet is open (BQT item 26; BQU items 33, 34, 36, 40) ──
+   Every sheet is a modal dialog (aria-modal="true"). While one is open, two
+   things keep what stands outside it from being heard:
+   - the page under it — its main part, every view and every live region in
+     them — is inert (syncModalLayers), and nothing inert is read, wherever
+     focus is;
+   - while focus is in the sheet, Chromium leaves what stands outside it out of
+     what a screen reader reads: the toast stack too, which stands outside
+     every sheet and is never inert. With focus outside the sheet — on a
+     toast's own button — the stack is read, and heard.
+   So each sheet holds a live region of its own, #<sheet>OutsideSaid, empty in
+   the page from the start, which says what is said outside it while it would
+   not be heard there: a toast raised while focus is in the sheet (toast,
+   toastAction), and the scan's voice (scanVoiceChanged, 040), which reports a
+   scan running, ending or stopped whatever is open. A toast heard in the stack
+   and said here too would be heard twice, so it is said here only while the
+   stack is left out, as judged in the frame its words go in (BQU item 34).
+   Every other live region in the page speaks of its own view, which the person
+   comes back to: its words wait, and are said a frame after the sheet goes
+   (aloudWait, 040; BQU item 33).
+   The sheet's region says them the BQS way: emptied now and given the words a
+   frame after the sheet has been on screen — a sheet opened in this task waits
+   for its first frame (aloudWait; BQU item 36) — with those of everything said
+   before that frame, each its own sentence (asSentences; BQU item 40), so the
+   same words again are a change too. A sheet closed by then says nothing: the
+   page and the stack are heard again. The region is emptied as the last of
+   what it says goes. Answers what takes the words back, or null. */
+const sheetSaid = new Map(); // a sheet's region → { parts, waiting, up }: what it says, or is about to, and for how many
+/** Whether the stack outside `sheet` is left out of what a screen reader reads: focus is in it, and it is modal. */
+function sheetStackLeftOut(sheet) {
+  const at = document.activeElement;
+  return sheet.getAttribute('aria-modal') === 'true' && !!at && sheet.contains(at);
+}
+/** Say `words` in `sheet`'s own region; `stack`: they are the toast stack's, said here only while it is left out. */
+function sayInSheet(sheet, words, stack) {
+  const live = sheet ? $(sheet.id + 'OutsideSaid') : null;
   if (!live) return null;
-  let said = toastSheetSaid.get(live);
-  if (said && said.waiting) said.words += ' ' + msg;
-  else {
-    const now = { words: String(msg), waiting: true, up: 0 };
+  let said = sheetSaid.get(live);
+  if (!said || !said.waiting) {
+    const now = { parts: [], waiting: true, up: 0 };
     said = now;
-    toastSheetSaid.set(live, now);
+    sheetSaid.set(live, now);
     live.textContent = '';
-    requestAnimationFrame(() => {
+    requestAnimationFrame(function fill() {
+      if (sheetSaid.get(live) !== now || !sheet.classList.contains('open')) { now.waiting = false; return; }
+      // Guarded: a page reader may lift this without aloudWait.
+      if (typeof aloudWait === 'function' && aloudWait(live, () => requestAnimationFrame(fill))) return;
       now.waiting = false;
-      if (toastSheetSaid.get(live) === now && top.classList.contains('open')) live.textContent = now.words;
+      live.textContent = asSentences(now.parts.filter((p) => !p.stack || sheetStackLeftOut(sheet)).map((p) => p.words));
     });
   }
+  const part = { words: String(words), stack: !!stack };
+  said.parts.push(part);
   said.up++;
   const mine = said;
   return () => {
-    if (--mine.up > 0 || toastSheetSaid.get(live) !== mine) return;
-    toastSheetSaid.delete(live);
+    // Taken back before its frame (the scan's words changed in the same one): never said.
+    if (mine.waiting) mine.parts = mine.parts.filter((p) => p !== part);
+    if (--mine.up > 0 || sheetSaid.get(live) !== mine) return;
+    sheetSaid.delete(live);
     live.textContent = '';
   };
+}
+/** A toast raised while a sheet is open: said in it too, while focus is in it (above). */
+function toastSayInSheet(msg) {
+  const top = typeof topModal === 'function' ? topModal() : null;
+  return top ? sayInSheet(top, msg, true) : null;
 }
 function toast(msg, kind = 'success', ms = Math.max(TOAST_MIN_MS, String(msg).length * TOAST_MS_PER_CHAR)) {
   const el = document.createElement('div');
   el.className = 'toast ' + kind;
   el.innerHTML = icon(kind === 'error' ? 'alert' : 'checkCircle', 16) + '<span>' + escapeHtml(msg) + '</span>';
-  // Raised over an open sheet, said in it too (above). Guarded: a page reader may lift this without it.
+  // Raised over an open sheet, said in it too while focus is in it (above). Guarded: a page reader may lift this without it.
   const unsay = typeof toastSayInSheet === 'function' ? toastSayInSheet(msg) : null;
   $('toasts').appendChild(el);
   setTimeout(() => { el.classList.add('out'); setTimeout(() => { el.remove(); if (unsay) unsay(); }, 320); }, ms);

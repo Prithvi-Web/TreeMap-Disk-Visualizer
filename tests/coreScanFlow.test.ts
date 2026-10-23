@@ -1079,6 +1079,9 @@ test('the start screen\'s region says none of a Stop\'s words, which #stopAnnoun
   assert.equal(f.$('startLast').textContent, 'The scan of /Users/x/Desktop failed: The disk is busy.', 'control: a failure names the folder');
   assert.deepEqual(f.toasts.map((t) => t[0]), ['The disk is busy.'], 'control: and the toast says why');
   assert.ok(fSaid.length > 0 && fSaid.every((t) => t === ''), `nor a failure's: ${JSON.stringify(fSaid)}`);
+  // Nor does the scan's own region, outside every view: "Scan failed — The disk is busy." there was heard beside the
+  // toast on every view — the toast is the failure's one voice, and the region is emptied (BQU item 35).
+  assert.equal(f.$('scanAnnounce').textContent, '', 'the scan\'s region says nothing of the failure, and no longer says "Scanning…"');
 });
 
 test('the start screen\'s region says none of the words of a Stop still waiting on its cancel, of one whose finished scan could not be shown, nor of one the server would not stop — #stopAnnounce or the toast says each — but does say the last session\'s scan it could not reopen, which nothing else says (BQT item 32d)', async () => {
@@ -2591,7 +2594,9 @@ test('J02: a Stop that lands after the scan has finished says so and shows the f
     `the toast says it had finished, not "Scan complete" (${JSON.stringify(h.toasts)})`);
   assert.deepEqual(h.indexBuilds, [], 'and nothing is indexed behind it: the person asked for the work to stop');
   assert.doesNotMatch(h.$('startLast').textContent, /You stopped/, 'and nothing says the person stopped it');
-  assert.equal(h.$('stopAnnounce').textContent, `The scan of ${DOCS} had already finished when you pressed Stop — its results are on screen.`, 'it is said that it had finished');
+  // The toast says it had finished, with its counts: #stopAnnounce, which said so as the cancel answered, is
+  // emptied, so it is heard once (BQU item 35).
+  assert.equal(h.$('stopAnnounce').textContent, '', 'it is said that it had finished, by the toast alone');
   // Review F1.3: focus was on "Scan Documents again", which the tree took off screen. It went to the
   // view's first control, the System card's Trash row — J01's hazard: a second Enter opened the Trash sheet.
   assert.equal(h.$('trashFact').painted(), true, 'control: the Trash row is on screen, first among the Dashboard\'s controls');
@@ -2706,14 +2711,14 @@ test('J02 (review F1.3): a Stop that proves to have come after the scan finished
 test('J02 (review F1.2): a Stop pressed before POST /api/scan answers says only that it is stopping until the cancel sent when the request answers has answered — a scan that had finished is shown, a confirmed one is "You stopped…", and a request that fails is stopped; a Stop before any request was sent stopped it outright', async () => {
   const DESK = '/Users/x/Desktop';
   const finishedTree = { name: 'Desktop', path: DESK, size: 7_000_000, type: 'dir', children: [] };
-  /** Scan requests wait for the test; the cancel of the late scan answers `cancel`; the finished scan can be read. */
-  const run = (cancel: () => Answer) => {
+  /** Scan requests wait for the test; the cancel of the late scan answers `cancel`; the finished scan, `tree`, can be read. */
+  const run = (cancel: () => Answer, tree: Record<string, unknown> = finishedTree, files = 7) => {
     const posts: Array<(a: { status: number; body: unknown }) => void> = [];
     const base = server({ roots: [], scanAnswer: () => new Promise((r) => { posts.push(r); }) });
     const h = page({ index: true, route: (m, url, b) => {
       if (m === 'POST' && url === '/api/scan/scan-late/cancel') return cancel();
-      if (url === '/api/scan/scan-late/stats') return { body: { scanId: 'scan-late', status: 'complete', fileCount: 7, dirCount: 1, durationMs: 20 } };
-      if (url === '/api/scan/scan-late/result') return { body: { scanId: 'scan-late', status: 'complete', root: finishedTree } };
+      if (url === '/api/scan/scan-late/stats') return { body: { scanId: 'scan-late', status: 'complete', fileCount: files, dirCount: 1, durationMs: 20 } };
+      if (url === '/api/scan/scan-late/result') return { body: { scanId: 'scan-late', status: 'complete', root: tree } };
       return base(m, url, b);
     } });
     return { h, posts };
@@ -2738,7 +2743,18 @@ test('J02 (review F1.2): a Stop pressed before POST /api/scan answers says only 
   assert.equal(h.state.scanId, 'scan-late', 'with its scan behind them');
   assert.ok(h.toasts.some(([m]) => m.startsWith('The scan had already finished when you pressed Stop')), `said so (${JSON.stringify(h.toasts)})`);
   assert.doesNotMatch(h.$('startLast').textContent, /You stopped/, 'and nothing says the person stopped it');
-  assert.equal(h.$('stopAnnounce').textContent, `The scan of ${DESK} had already finished when you pressed Stop — its results are on screen.`,
+  assert.equal(h.$('stopAnnounce').textContent, '', 'and the toast alone says so: #stopAnnounce leaves it to it (BQU item 35)');
+  // A finished scan of a folder that held nothing raises no toast: #stopAnnounce says it, of the folder that request
+  // asked for (review F2.6).
+  const empty = run(() => ({ body: { scanId: 'scan-late', cancelled: false, status: 'complete' } }), { name: 'Desktop', path: DESK, size: 0, type: 'dir', children: [] }, 0);
+  await boot(empty.h);
+  await startFrom(empty.h, /^Desktop$/);
+  await pressStop(empty.h);
+  empty.posts[0]({ status: 202, body: { scanId: 'scan-late', incremental: false } });
+  await turns();
+  assert.equal(empty.h.state.scanId, 'scan-late', 'control: the finished scan is shown');
+  assert.deepEqual(empty.h.toasts.filter(([m]) => m.startsWith('The scan had already finished')), [], 'control: a folder that held nothing raises no toast');
+  assert.equal(empty.h.$('stopAnnounce').textContent, `The scan of ${DESK} had already finished when you pressed Stop — its results are on screen.`,
     'and the live region says so, of the folder that request asked for (review F2.6)');
 
   // A confirmed cancel: stopped, said once it answers.

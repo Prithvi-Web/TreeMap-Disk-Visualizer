@@ -21,10 +21,11 @@
      scanned, because "this leaves no trace" is a promise the user has to be
      told about to rely on. -->
 <div class="modal-backdrop" id="portableModal" role="dialog" aria-modal="true" aria-labelledby="portableTitle">
-  <!-- A toast raised while this sheet is open, said in it too: the stack outside
-       every sheet may be left out of what a screen reader reads while focus
-       is in one (toastSayInSheet, BQT item 26). -->
-  <div id="portableModalToastSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <!-- What is said outside this sheet while it would not be heard there,
+       said in it: a toast raised while focus is in the sheet, and the
+       scan's voice, from the page the sheet makes inert (sayInSheet;
+       BQT item 26, BQU items 33 and 34). -->
+  <div id="portableModalOutsideSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="modal" style="width:560px;">
     <div class="modal-head">
       <h3 id="portableTitle"><span data-icon="disc"></span>Portable session</h3>

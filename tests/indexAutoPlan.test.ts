@@ -118,6 +118,7 @@ function harness(opts: { status: unknown; results?: unknown[]; rootPath?: string
     // says in, declared right above it, then sayAloud. Its frames run at once here.
     line('const aloudSaid = new Map();'),
     braced('function sayAloud('),
+    braced('function asSentences('),
   ].join('\n');
   const { $, els } = makeDom();
   const announced: string[] = [];

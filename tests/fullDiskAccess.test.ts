@@ -473,7 +473,7 @@ function pageHarness(opts: {
   const src = block('/* ── Refused folders ── */', '/* ── end refused folders ── */') +
     block('/* ── Full Disk Access recheck ── */', '/* ── end Full Disk Access recheck ── */') +
     INDEX.slice(INDEX.indexOf('async function startScanRequest('), INDEX.indexOf('function quietRescanFailed(')) +
-    `\nconst ${aloud[1]} = new Map();\n${braced('function sayAloud(')}\n`;
+    `\nconst ${aloud[1]} = new Map();\n${braced('function sayAloud(')}\n${braced('function asSentences(')}\n`;
   const frames: Array<() => void> = [];
   const els: Record<string, El> = {};
   // The row's parts, as the shipped markup nests them: hiding the row hides

@@ -437,17 +437,22 @@ function quietRescanFailed(e) {
   const el = $('scanStatus');
   el.classList.add('error');
   el.innerHTML = icon('alert', 14) + '<span>Showing the saved index — the refresh failed: ' + escapeHtml(why) + '</span>';
-  $('scanAnnounce').textContent = 'Couldn’t refresh this folder: ' + why;
+  // The toast is what says it (BQU item 35): the scan's own region, outside
+  // every view, said it in the same words, and on the Dashboard the badge's
+  // region said it a third time. The region is emptied — what it said of the
+  // refresh, "Checking for changes…" or a count, is over.
+  $('scanAnnounce').textContent = '';
   // Amber, the badge kept the words it was painted with: "Up to date — updates
   // itself as files change" beside the dot that says it may not be. Its words
-  // say what happened (BQT item 25), and are said in #indexBadgeSaid as every
-  // paint of it is (BQS); guarded, as there.
+  // say what happened (BQT item 25). The toast says it, so they are kept as
+  // said in #indexBadgeSaid, which says nothing of it (sayAloud's `heard`);
+  // guarded, as there.
   const badge = $('indexBadge');
   const failed = 'Index may be out of date — the refresh failed, so what is shown may be older.';
   badge.classList.add('stale');
   badge.innerHTML = '<span class="dot"></span><span>' + failed + '</span>';
   badge.title = 'The refresh of this folder failed, so what is shown comes from its saved index and may be older.';
-  if (typeof sayAloud === 'function') sayAloud('indexBadgeSaid', badge.hidden ? '' : failed);
+  if (typeof sayAloud === 'function') sayAloud('indexBadgeSaid', badge.hidden ? '' : failed, true);
   toast('Couldn’t refresh this folder: ' + why, 'error');
   // The view on screen says what it will now never be drawn from: Disk City's
   // "loading this folder…" and the Reclaim legend's "scoring starts once this
@@ -785,7 +790,10 @@ function failScan(message, err = null) {
   const status = $('scanStatus');
   status.classList.add('error');
   status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml(message) + '</span>';
-  $('scanAnnounce').textContent = 'Scan failed — ' + message;
+  // The toast says why, and is the failure's one voice (BQU item 35): the
+  // scan's region, outside every view, said it too. It is emptied: what it
+  // said of the scan — "Scanning…", a count — is over.
+  $('scanAnnounce').textContent = '';
   restoreDashboardPanels();
   toast(message, 'error');
   // With no tree on screen the start screen comes back naming the folder and
@@ -957,8 +965,15 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0, afterStop =
       `${files === null ? '' : `<b>${formatCount(files)}</b> ${filesWord}, `}${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`
     : `<span class="num">Scanned ${files === null ? '' : `<b>${formatCount(files)}</b> ${filesWord} `}` +
       `in ${took} — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`);
+  // One voice for the finish (BQU item 35): a scan that completed now, with
+  // something in it, is said by its toast (below), and the region is emptied —
+  // its count is over; said there too, the finish was heard twice. A paint
+  // from the saved index, a reopened scan and a folder that held nothing raise
+  // no toast, and the region says them — but one shown after a Stop, which
+  // #stopAnnounce says (showFinishedAfterStop).
+  const toasted = !!state.scanId && !reopenedAt && !(root.size === 0 && !files);
   const said = reopenedAt ? 'Reopened the last scan — ' : state.scanId ? 'Scan finished — ' : 'Folder opened from the saved index — ';
-  $('scanAnnounce').textContent = said + (files === null ? '' : `${formatCount(files)} ${filesWord}, `) + formatBytes(root.size);
+  $('scanAnnounce').textContent = toasted || afterStop ? '' : said + (files === null ? '' : `${formatCount(files)} ${filesWord}, `) + formatBytes(root.size);
   // Blanked, not merely skipped. Skipping leaves the tiles holding the PREVIOUS
   // scan's numbers, which is the same lie in slower motion: the headline and the
   // engine row go quiet while Files and Folders keep stating another folder's
@@ -984,13 +999,14 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0, afterStop =
     // (renderRefusedFolders, on TOPIC.scan) speaks for it once it has looked.
     // A partial scan says so in the same breath as its total.
     const refusedDirs = stats && stats.refused && stats.refused.dirs > 0 ? stats.refused.dirs : 0;
-    const empty = root.size === 0 && !files;
-    if (!empty) {
+    if (toasted) {
       const counted = `${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} ${filesWord}`}` +
         (refusedDirs ? ` — ${formatCount(refusedDirs)} folder${refusedDirs === 1 ? '' : 's'} could not be read` : '');
       // One toast for the one crossing. A scan that finished before the Stop
-      // pressed for it reached the server says so (J02), not "Scan complete".
-      if (afterStop) toast(`The scan had already finished when you pressed Stop — ${counted}`);
+      // pressed for it reached the server says so (J02), not "Scan complete":
+      // the toast, with its counts, is what says that — #stopAnnounce, which
+      // showFinishedAfterStop gave the same news, is emptied (BQU item 35).
+      if (afterStop) { toast(`The scan had already finished when you pressed Stop — ${counted}`); $('stopAnnounce').textContent = ''; }
       else toast(`Scan complete — ${counted}`);
     }
     fxScanDonePulse();
@@ -2104,7 +2120,10 @@ async function scanTheBox() {
       // And the check is over: the live region stops saying one is running,
       // however it ended — an offer, a press dropped — unless a scan started
       // meanwhile has said its own sentence there (final review F2.4).
-      if ($('scanAnnounce').textContent === checking) $('scanAnnounce').textContent = '';
+      // What the region says, or holds back while the page comes out from under
+      // a sheet (scanVoiceSays, 040); guarded: a page reader may lift this without it.
+      const saying = typeof scanVoiceSays === 'function' ? scanVoiceSays($('scanAnnounce')) : $('scanAnnounce').textContent;
+      if (saying === checking) $('scanAnnounce').textContent = '';
     }
   }
   // A newer press took over — Enter, or the folder offered, chosen — and

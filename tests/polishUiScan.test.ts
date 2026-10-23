@@ -915,7 +915,8 @@ test('a failed background rescan clears the spinner, the skeletons and the Stop 
   assert.equal(els.scanStatus.cls.has('error'), true);
   assert.match(els.scanStatus.innerHTML, /saved index/i, 'the tree on screen is named for what it is');
   assert.match(els.scanStatus.innerHTML, /Showing the saved index — the refresh failed: That folder no longer exists\./, 'with the reason');
-  assert.equal(els.scanAnnounce?.textContent, 'Couldn’t refresh this folder: That folder no longer exists.', 'a screen reader hears it too');
+  // The toast says it, once: the scan's region, outside every view, said it in the same words (BQU item 35).
+  assert.equal(els.scanAnnounce?.textContent, '', 'the scan\'s region leaves it to the toast, and holds nothing of the refresh that ended');
   assert.equal(els.indexBadge.cls.has('stale'), true, '"Index live — always current" is no longer claimed');
   // Nor in words: amber beside "Up to date — updates itself as files change" said two things (BQT item 25).
   assert.doesNotMatch(els.indexBadge.innerHTML, /Up to date/, 'the badge no longer says it is up to date');
@@ -1111,12 +1112,13 @@ test('when the server says when results expire, the page warns two minutes ahead
 
 /* ══════════════ a11y-keyboard-5 — a screen reader hears the scan ══════════════ */
 
-test('the scan speaks: start, progress every ten seconds, finish and failure', () => {
+test('the scan speaks: start, progress every ten seconds, and a finish no toast says — a failure, and a finish a toast says, are the toast\'s alone (BQU item 35)', () => {
   assert.match(INDEX, /<div id="scanAnnounce"[^>]*role="status"[^>]*aria-live="polite"[^>]*aria-atomic="true"/, 'one polite live region');
   assert.match(INDEX, /<div class="progress-track" id="progressTrack" role="progressbar" aria-label="Scan progress"/, 'the bar is a progressbar');
   assert.match(slice('function beginScanChrome(', 'function endScanChrome('), /\$\('scanAnnounce'\)\.textContent = /, 'start');
-  assert.match(braced('function failScan('), /\$\('scanAnnounce'\)\.textContent = /, 'failure');
-  assert.match(slice('async function finishScan', 'if (!state.scanId) {'), /\$\('scanAnnounce'\)\.textContent = /, 'completion');
+  // A failure, and a finish a toast says, are the toast's to say: the region is emptied then, its count over (BQU item 35).
+  assert.match(braced('function failScan('), /\$\('scanAnnounce'\)\.textContent = '';[\s\S]*toast\(message, 'error'\)/, 'failure: said by its toast, the region emptied');
+  assert.match(slice('async function finishScan', 'if (!state.scanId) {'), /\$\('scanAnnounce'\)\.textContent = toasted \|\| afterStop \? '' : /, 'completion: said in the region only where no toast says it');
   const follow = slice('function followScanProgress(', 'async function startCloudScan(');
   assert.match(follow, /lastAnnounced/, 'progress is throttled — every frame would drown the user');
   assert.match(follow, /secs - lastAnnounced >= 10/, 'to one sentence every ten seconds');
@@ -1595,15 +1597,49 @@ test('clearDonut takes the ring off: the handle is destroyed and the canvas, cen
   assert.equal(cleared.length, 2, 'but the canvas is wiped all the same');
 });
 
+test('a scan\'s finish is said by one voice: its toast where one is raised — the scan\'s region emptied, so the finish is not heard twice and no count of a scan that ended is left in it — and the region where none is: a saved index\'s paint, a reopened scan, a folder that held nothing (BQU item 35)', async () => {
+  const h = finishScanHarness();
+  h.$('scanAnnounce').textContent = '2,400 items scanned so far';
+  await h.finishScan({ path: '/Users/x/corpus', size: 8800 }, 50, { fileCount: 12, durationMs: 50 });
+  assert.deepEqual(h.toasts, ['Scan complete — 8800 B across 12 files'], 'control: the toast says the finish');
+  assert.equal(h.els.scanAnnounce.textContent, '', 'and the scan\'s region says nothing of it: said there too it was heard twice, on every view');
+
+  const index = finishScanHarness();
+  index.state.scanId = null;
+  await index.finishScan({ path: '/Users/x/corpus', size: 8800 }, 50, { fileCount: 12, durationMs: 50 });
+  assert.deepEqual(index.toasts, [], 'control: a paint from the saved index raises no toast');
+  assert.equal(index.els.scanAnnounce.textContent, 'Folder opened from the saved index — 12 files, 8800 B', 'and the region says it');
+
+  const empty = finishScanHarness();
+  await empty.finishScan({ path: '/Users/x/Empty', size: 0, children: [] }, 50, { fileCount: 0, durationMs: 50 });
+  assert.deepEqual(empty.toasts, [], 'control: a folder that held nothing raises no toast');
+  assert.equal(empty.els.scanAnnounce.textContent, 'Scan finished — 0 files, 0 B', 'and the region says it');
+
+  // A scan that had finished before the Stop pressed for it: showFinishedAfterStop said so in #stopAnnounce, and the
+  // toast says it with its counts — the toast alone.
+  const after = finishScanHarness();
+  after.$('stopAnnounce').textContent = 'The scan of /Users/x/corpus had already finished when you pressed Stop — its results are on screen.';
+  await after.finishScan({ path: '/Users/x/corpus', size: 8800 }, 50, { fileCount: 12, durationMs: 50 }, { afterStop: true } as { reopenedAt?: number });
+  assert.deepEqual(after.toasts, ['The scan had already finished when you pressed Stop — 8800 B across 12 files'], 'control: the toast says it had finished');
+  assert.deepEqual([after.els.stopAnnounce.textContent, after.els.scanAnnounce.textContent], ['', ''], 'and neither region says it again');
+  const afterEmpty = finishScanHarness();
+  const stopWords = 'The scan of /Users/x/Empty had already finished when you pressed Stop — its results are on screen.';
+  afterEmpty.$('stopAnnounce').textContent = stopWords;
+  await afterEmpty.finishScan({ path: '/Users/x/Empty', size: 0, children: [] }, 50, { fileCount: 0, durationMs: 50 }, { afterStop: true } as { reopenedAt?: number });
+  assert.deepEqual(afterEmpty.toasts, [], 'control: an empty one raises no toast');
+  assert.deepEqual([afterEmpty.els.stopAnnounce.textContent, afterEmpty.els.scanAnnounce.textContent], [stopWords, ''], '#stopAnnounce alone says it then');
+});
+
 test('one file is "1 file" — the status line, the toast, the announcement, the reopened line and the engine row (B34)', async () => {
   // B34: scanning …/Installer.dmg said "Scanned 1 files", "across 1 files" and "scanned 1 items".
   const h = finishScanHarness();
   await h.finishScan({ path: '/Users/x/Installer.dmg', size: 2e9 }, 10, { fileCount: 1, dirCount: 0, scanned: 1, engine: 'native', durationMs: 10 });
   assert.match(h.els.scanStatus.innerHTML, /Scanned <b>1<\/b> file in /, 'the status line');
   assert.deepEqual(h.toasts, ['Scan complete — 2000000000 B across 1 file'], 'the toast');
-  assert.match(h.els.scanAnnounce.textContent, /— 1 file, /, 'what a screen reader hears');
+  assert.equal(h.els.scanAnnounce.textContent, '', 'the toast is what a screen reader hears: the scan\'s region leaves the finish to it (BQU item 35)');
   await h.finishScan({ path: '/Users/x/Installer.dmg', size: 2e9 }, 10, { fileCount: 1, durationMs: 10 }, { reopenedAt: 1 });
   assert.match(h.els.scanStatus.innerHTML, /<b>1<\/b> file, /, 'the reopened line');
+  assert.match(h.els.scanAnnounce.textContent, /— 1 file, /, 'and what a screen reader hears of a reopened scan, which no toast says');
   await h.finishScan({ path: '/Users/x/corpus', size: 8800 }, 10, { fileCount: 2, durationMs: 10 });
   assert.match(h.els.scanStatus.innerHTML, /Scanned <b>2<\/b> files in /, 'two are still files');
   assert.match(h.toasts[h.toasts.length - 1], /across 2 files$/);

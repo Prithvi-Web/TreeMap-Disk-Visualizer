@@ -416,7 +416,9 @@ function skeletonRows(n, h = 38, label = '') {
    stopped. Newer rows given the same region take it over (the Clean Up sheet's
    panes share one); parts that can work at the same time each have their own,
    so each is said. The rows keep their label, so a part says what it is doing
-   when it is reached by reading. */
+   when it is reached by reading. A region not heard — its view not up, or a
+   sheet open over it — says the sentence once it is, a frame after (aloudWait,
+   below; BQT item 28, BQU items 33 and 36). */
 const workingSaid = new Map(); // region id → { rows, watch }: the working rows it speaks for, and what sees them go
 function sayWorking(host, liveId) {
   const live = $(liveId);
@@ -437,9 +439,7 @@ function sayWorking(host, liveId) {
   requestAnimationFrame(function fill() {
     const now = workingSaid.get(liveId);
     if (!now || now.rows !== rows) return;
-    // A parent hides the region — the part's view is not up: said once it is
-    // on screen, a frame after (aloudWait, BQT item 28). Guarded: a page reader
-    // may lift this without it.
+    // Guarded: a page reader may lift this without aloudWait.
     if (typeof aloudWait === 'function' && aloudWait(live, () => requestAnimationFrame(fill))) return;
     live.textContent = sentence;
   });
@@ -457,21 +457,19 @@ function sayWorking(host, liveId) {
    A box shown on lines of its own — what innerText reads of one, a block a
    line — is said as sentences: the region is on one line (sr-only), where a
    line break is only a space, so each line but the last ends with a stop where
-   it has none, and a screen reader pauses there (BQS).
+   it has none, and a screen reader pauses there (asSentences, 010; BQS).
    `heard`: the words reach the person another way as they change — focus
-   moved onto the box reads them there — so they are kept as said, which a
-   repaint with the same words is no news to, and the region is left empty:
-   said in it too, they would be heard twice (BQT item 27).
-   A box whose region a parent hides — its view not up, its sheet or pane
-   closed — is not on screen, whatever it says: words put in the region then
-   are never heard, and come on screen already in it when the parent comes
-   back. They wait until the region is on screen, and are said a frame after
-   (aloudWait, below; BQT item 28). */
+   moved onto the box reads them there, or a toast says the same news — so
+   they are kept as said, which a repaint with the same words is no news to,
+   and the region is left empty: said in it too, they would be heard twice
+   (BQT item 27, BQU item 35).
+   A region not heard — a parent hides it (its view not up, its sheet or pane
+   closed), or a sheet is open over it — gets the words once it is, a frame
+   after (aloudWait, below; BQT item 28, BQU items 33 and 36). */
 const aloudSaid = new Map(); // region id → the words it says, or is about to
 function sayAloud(liveId, text, heard = false) {
   const live = $(liveId);
-  const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
-  const words = lines.map((l, i) => (i < lines.length - 1 && !/[.!?…:]$/.test(l) ? `${l}.` : l)).join(' ');
+  const words = asSentences(String(text || '').split('\n'));
   if (!live || aloudSaid.get(liveId) === words) return;
   aloudSaid.set(liveId, words);
   live.textContent = '';
@@ -484,34 +482,141 @@ function sayAloud(liveId, text, heard = false) {
   });
 }
 
-/* ── Held until it is on screen (BQT item 28) ──
-   Whether a live region is on screen: a browser gives it a box while it, and
-   everything holding it, is displayed (an sr-only region's is one pixel), and
-   none while a parent hides it. aloudWait answers false for a region on
-   screen, so its words are put in it now; otherwise it watches the region —
-   a ResizeObserver hears its box come — runs `then` once it is on screen, and
-   answers true. The last `then` asked for a region is the one run: words that
-   changed while it waited are said as they are by then. Without a
-   ResizeObserver, words go in at once, as they always did. */
-const aloudWaiting = new Map(); // a region not on screen → what runs once it is
-let aloudWatch = null;
-function aloudWait(live, then) {
-  if (typeof live.getClientRects !== 'function' || live.getClientRects().length > 0) return false;
-  if (typeof ResizeObserver === 'undefined') return false;
+/* ── Held until it is heard, and said a frame after (BQT item 28; BQU items 33, 36) ──
+   A live region is heard as its words change while it is on screen and
+   reachable: a browser gives it a box while it, and everything holding it, is
+   displayed (an sr-only region's is one pixel), and none while a parent hides
+   it; and while a sheet is open the page under it — its main part, every view
+   and every region in them — is inert (syncModalLayers), as is a sheet under
+   the one on top, and nothing inert is read. Words put in a region that is
+   not heard are lost; and words put in a region in the very frame it comes on
+   screen, or out from under a sheet, are part of what it shows as it appears,
+   and a region that appears already filled is seldom announced. So a region's
+   words go in only a frame after one that laid it out on screen and
+   reachable: a ResizeObserver watches every region it is shown (aloudKnow) for
+   good, and hears at each layout whether its box came or went; the page's
+   inert going is heard as it goes (a MutationObserver), and a region it held
+   is laid out again before it counts as heard. aloudWait answers false for a
+   region the last layout laid out on screen that is still on screen and
+   reachable, so its words go in now; otherwise it runs `then` once a layout
+   has, and answers true. What it judges is the frame before the one the
+   words go in, never what the page holds as they go in: a sheet or a view
+   opened in the task that gave its words — before them or after — has not
+   been laid out yet, and gets them a frame after its first (BQU item 36).
+   The last `then` asked for a region is the one run: words that changed while
+   it waited are said as they are by then. A region under a sheet says its
+   words once the sheet goes: each such region speaks of its own view, which
+   the person comes back to — all but the scan's voice, said in the sheet
+   (scanVoiceChanged, below; BQU item 33). Without a ResizeObserver, words go
+   in at once, as they always did. */
+const aloudWaiting = new Map(); // a region not yet heard → what runs once it is
+const aloudShown = new Map(); // a region the watch is shown → whether its last layout gave it a box
+let aloudWatch = null; // the ResizeObserver every region shown to it stays with
+let aloudInertWatch = null; // the MutationObserver that hears the page's inert go
+function aloudReachable(live) {
+  return live.getClientRects().length > 0 && !(typeof live.closest === 'function' && live.closest('[inert]'));
+}
+/** The watch shown this region, from now on: its next layout says whether it has a box. */
+function aloudKnow(live) {
+  if (!live || aloudShown.has(live) || typeof ResizeObserver === 'undefined') return;
   if (!aloudWatch) {
     aloudWatch = new ResizeObserver((entries) => {
       for (const { target } of entries) {
-        if (!target.getClientRects().length || !aloudWaiting.has(target)) continue;
+        aloudShown.set(target, target.getClientRects().length > 0);
+        if (!aloudWaiting.has(target) || !aloudShown.get(target) || !aloudReachable(target)) continue;
         const go = aloudWaiting.get(target);
         aloudWaiting.delete(target);
-        aloudWatch.unobserve(target);
         go();
       }
     });
   }
-  aloudWaiting.set(live, then);
+  if (!aloudInertWatch && typeof MutationObserver !== 'undefined' && typeof document !== 'undefined' && document.body) {
+    // As the page or a sheet comes out from under a sheet, each region it holds
+    // is laid out again before it is heard: shown afresh, the watch tells of
+    // it at the next layout, the first in which it is reachable.
+    aloudInertWatch = new MutationObserver((records) => {
+      for (const r of records) {
+        if (r.oldValue === null || r.target.hasAttribute('inert')) continue; // made inert, or left so: nothing comes out
+        for (const region of aloudShown.keys()) {
+          if (!r.target.contains(region)) continue;
+          aloudShown.set(region, false);
+          aloudWatch.unobserve(region);
+          aloudWatch.observe(region);
+        }
+      }
+    });
+    aloudInertWatch.observe(document.body, { attributes: true, attributeFilter: ['inert'], attributeOldValue: true, subtree: true });
+  }
+  aloudShown.set(live, false);
   aloudWatch.observe(live);
+}
+function aloudWait(live, then) {
+  if (typeof live.getClientRects !== 'function' || typeof ResizeObserver === 'undefined') return false;
+  aloudKnow(live);
+  if (aloudShown.get(live) && aloudReachable(live)) return false;
+  aloudWaiting.set(live, then);
   return true;
+}
+// Every live region in the page, shown to the watch as the page loads: its
+// first layout says whether it is on screen, so its first words wait for none.
+document.querySelectorAll('[aria-live]').forEach(aloudKnow);
+
+/* ── The scan's voice, heard whatever is open (BQU item 33) ──
+   #scanAnnounce and #stopAnnounce stand in the page's main part, outside every
+   view, and are written straight by the scan's own code. A scan runs, ends
+   and is stopped whatever is open, but while a sheet is open the page under
+   it is inert, and nothing in it is heard: so what either is given while a
+   sheet is open is said in the sheet on top (sayInSheet, 010), wherever focus
+   is in it, and taken back there as the scan's words change, or as a toast of
+   those words would go. It stays in the region too: inert, it is not heard
+   there, and the region comes back from under the sheet holding the words it
+   holds, which is no change. What either is given as a sheet goes, before the
+   page is heard again, is held and put back a frame after it is (aloudWait).
+   With no sheet open, nothing here touches either. scanVoiceSays answers the
+   words a region holds, or holds back. */
+const scanVoiceSheet = new Map(); // a scan region → what takes back its words from the sheet that says them
+const scanVoiceHeld = new Map(); // a scan region → { words } it holds back until the page is heard again
+let scanVoiceWatch = null;
+function scanVoiceSays(live) {
+  const held = scanVoiceHeld.get(live);
+  return held ? held.words : live.textContent;
+}
+function scanVoiceChanged(live) {
+  const words = live.textContent;
+  const back = scanVoiceSheet.get(live);
+  if (back) { scanVoiceSheet.delete(live); back(); }
+  scanVoiceHeld.delete(live);
+  if (!words) return;
+  const top = typeof topModal === 'function' ? topModal() : null;
+  if (top) {
+    const unsay = sayInSheet(top, words, false);
+    if (!unsay) return;
+    scanVoiceSheet.set(live, unsay);
+    setTimeout(() => { if (scanVoiceSheet.get(live) !== unsay) return; scanVoiceSheet.delete(live); unsay(); },
+      Math.max(TOAST_MIN_MS, words.length * TOAST_MS_PER_CHAR));
+    return;
+  }
+  const fill = () => {
+    if (scanVoiceHeld.get(live) !== held) return;
+    if (aloudWait(live, () => requestAnimationFrame(fill))) return;
+    scanVoiceHeld.delete(live);
+    live.textContent = words;
+    scanVoiceWatch.takeRecords(); // its own write: nothing for it to route
+  };
+  const held = { words };
+  if (!aloudWait(live, () => requestAnimationFrame(fill))) return; // heard now: the words stand as written
+  scanVoiceHeld.set(live, held);
+  live.textContent = '';
+  scanVoiceWatch.takeRecords();
+}
+if (typeof MutationObserver !== 'undefined') {
+  const voice = ['scanAnnounce', 'stopAnnounce'].map($);
+  scanVoiceWatch = new MutationObserver((records) => {
+    const changed = new Set();
+    for (const r of records) { const live = voice.find((v) => v === r.target || v.contains(r.target)); if (live) changed.add(live); }
+    for (const live of changed) scanVoiceChanged(live);
+  });
+  for (const live of voice) scanVoiceWatch.observe(live, { childList: true, characterData: true, subtree: true });
 }
 
 /**
