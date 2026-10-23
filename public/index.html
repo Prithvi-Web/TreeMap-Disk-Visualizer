@@ -12524,8 +12524,11 @@ async function probeRefusedFolders() {
     // this advice, and #accessSaid says it aloud. In the toast as well, it was
     // said twice (BQT item 29, BQS review L1). Only where the row does not show
     // it — not on screen, or saying something else — does the toast carry it.
+    // On screen is the row and what holds it: the row stands in the Dashboard,
+    // and painted while another view is up — a quiet rescan keeps the map —
+    // it shows the advice nowhere (BQU item 38).
     const advice = mac ? accessHintFor(fullDiskAccessInfo()) : '';
-    const rowSaysIt = !$('accessRow').hidden && $('accessHint').textContent === advice;
+    const rowSaysIt = $('accessRow').getClientRects().length > 0 && $('accessHint').textContent === advice;
     const fix = advice && !rowSaysIt ? ' ' + advice : '';
     const el = $('scanStatus');
     el.classList.add('error');

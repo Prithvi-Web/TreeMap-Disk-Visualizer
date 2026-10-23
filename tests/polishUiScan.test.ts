@@ -54,6 +54,10 @@ type El = {
   setAttribute: (k: string, v: string) => void; getAttribute: (k: string) => string | null; removeAttribute: (k: string) => void;
   closest: () => null; querySelector: (sel: string) => El | null; querySelectorAll: () => El[];
   addEventListener: (n: string, fn: () => void) => void; focus: () => void; appendChild: (c: El) => El; remove: () => void;
+  /** The element that holds this one, where a test says: hidden, it hides this one too. */
+  parentEl: El | null;
+  /** As a browser answers: one box while it and every element holding it is shown, none otherwise. */
+  getClientRects: () => Array<Record<string, never>>;
 };
 
 function el(): El {
@@ -73,6 +77,8 @@ function el(): El {
     querySelectorAll: () => [],
     addEventListener: (n, fn) => { (e.listeners[n] ??= []).push(fn); },
     focus: () => {}, appendChild: (c) => { e.children.push(c); return c; }, remove: () => {},
+    parentEl: null,
+    getClientRects: () => { for (let x: El | null = e; x; x = x.parentEl) if (x.hidden) return []; return [{}]; },
   };
   return e;
 }
@@ -481,6 +487,23 @@ test('the toast for a refused scanned folder carries the Full Disk Access advice
   const win = refusedHarness({ ...refusedRoot, root: { path: 'C:\\Users\\x\\Documents', size: 0, children: [] }, refuse: ['C:\\Users\\x\\Documents'], platform: 'win32' });
   await win.probe();
   assert.deepEqual(win.toasts, ['TreeMap is not allowed to read this folder.'], 'elsewhere the toast says what happened');
+});
+
+test('the toast for a refused scanned folder leaves out the Full Disk Access advice only while the row is on screen — not while the row\'s own view, the Dashboard, is not up, as on the map after a quiet rescan (BQU item 38)', async () => {
+  const refusedRoot = { stats: { fileCount: 0, dirCount: 1 }, root: { path: '/Users/x/Documents', size: 0, children: [] }, scanId: 's1', refuse: ['/Users/x/Documents'] };
+  const away = refusedHarness(refusedRoot);
+  const view = away.$('view-dashboard');
+  away.$('accessRow').parentEl = view;
+  view.hidden = true; // the map is up
+  await away.probe();
+  assert.equal(away.els.accessRow.hidden, false, 'control: the row is painted, its own flag down');
+  assert.equal(away.els.accessHint.textContent, NOT_GRANTED.advice, 'control: and it holds the advice');
+  assert.deepEqual(away.toasts, [`macOS would not let TreeMap look inside this folder. ${NOT_GRANTED.advice}`],
+    'the toast says what to do: the row, in a view that is not up, shows it nowhere');
+  const up = refusedHarness(refusedRoot);
+  up.$('accessRow').parentEl = up.$('view-dashboard');
+  await up.probe();
+  assert.deepEqual(up.toasts, ['macOS would not let TreeMap look inside this folder.'], 'control: with the Dashboard up the row shows the advice, and the toast leaves it out');
 });
 
 test('the probe checks Desktop, Documents and Downloads under a home-folder scan, and drops a stale answer', async () => {
