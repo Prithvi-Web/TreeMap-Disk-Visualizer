@@ -5,7 +5,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-mapRatioSweeps-data-');
 
 import {
-  DARK, DENSE_PX, EDGE_BAR, EVERY_COLOUR, REAL_H, REAL_W, bandStep, colourBlocks, denseCornerNodes, devicePx,
+  DARK, DENSE_PX, EDGE_BAR, EVERY_COLOUR, LIGHT, REAL_H, REAL_W, bandStep, colourBlocks, denseCornerNodes, devicePx,
   hashColouring, measureEdges, partings, rasterPaint, realisticNodes, type RGB, type Tile,
 } from './fixtures/mapRaster';
 
@@ -89,6 +89,25 @@ test('owner\'s outlines at every ratio from 100 to 300 %: every leaf\'s line and
         return { r, want: painter ? devicePx(painter, dpr) : 0, got: (r.lw || 0) * dpr };
       }).filter(({ want, got }) => Math.abs(want - got) > 1e-6).map(({ r, want, got }) => `${r.n.path}: ${got.toFixed(2)} device px of band where ${want} is asked`);
       assert.deepEqual(misbanded.slice(0, 6), [], `${where}: ${misbanded.length} folders banded off their size`);
+    }
+  }
+});
+
+test('owner\'s outlines at 125 and 175 %: every leaf\'s line and every folder\'s band reaches 3:1 against the tile beside it on the device\'s pixels, and every leaf of 8 px and up is parted from what lies beside it by a line, on every colour the map paints — the colour blocks of the whole size ramp, Age, every Reclaim score, "not scored", the History diff colours and the Trash cell, in both themes, as at 50 to 90 %, 100 %, 150 % and 200 % (item 44)', () => {
+  // The colour blocks are measured at 100 % (every leaf shape), at 150 and 200 % and on a page zoomed out to 50 to 90 %
+  // (mapColourPop.test.ts), and the dense corner and the realistic map at every ratio from 105 to 300 % (above), by size,
+  // Age and Reclaim, in the dark theme; at 125 and 175 %, Windows' display scalings, no test painted every colour.
+  const b = colourBlocks(EVERY_COLOUR, 16, 16);
+  for (const dpr of [1.25, 1.75]) {
+    for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+      const where = `the colour blocks, ${theme}, dpr ${dpr}`;
+      const { raster, px } = rasterPaint(b.tiles, palette, b.W, b.H, b.colour, undefined, false, dpr);
+      const m = measureEdges(raster, px, dpr);
+      assert.ok(m.edges.length > EVERY_COLOUR.length * 9 * 8 * dpr, `${where}: control — ${m.edges.length} places a line meets a tile`);
+      assert.deepEqual(m.under, [], `${where}: lines under ${EDGE_BAR}:1 against the tile beside them, on the device's pixels`);
+      const p = partings(raster, px, dpr);
+      assert.ok(p.looked > 500 * dpr, `${where}: control — ${p.looked} places along the sides of leaves of 8 px and up`);
+      assert.deepEqual(p.unparted, [], `${where}: leaves of 8 px and up not parted from what lies beside them by a line`);
     }
   }
 });

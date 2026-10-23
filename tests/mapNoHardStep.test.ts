@@ -12,7 +12,8 @@ import {
  * The owner's refinement "no hard step at 8 px" (20 Oct 2026), swept on uniform grids of tiles 1 to 18 px: the share of
  * pixels a line or a texture takes, and the mean lightness against the tile's own solid colour, change smoothly from one
  * size to the next. Split from tests/mapColourPop.test.ts (BQV), whose sweeps had grown past CI's 20-minute limit a test
- * file; the harness is tests/fixtures/mapRaster.ts.
+ * file; the harness is tests/fixtures/mapRaster.ts. Every colour at 67, 80, 125, 175 and 200 % is
+ * tests/mapNoHardStepLowRatios.test.ts and tests/mapNoHardStepHighRatios.test.ts (item 44).
  */
 
 test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 1 to 18 px, the share of pixels a line or a texture takes (from 5 px) and the mean lightness against the tile\'s own solid colour (from 3 px) change smoothly from one size to the next — under 2 L* a step, 7 to 8 px too, at every ratio — and the shade a leaf with a texture is filled with moves under 2 L* a size, from none at 1 px to the whole at 7, in both themes, on the size ramp, Reclaim\'s "not scored" grey and an Age band, at device pixel ratios 0.667, 0.8, 1, 1.25, 1.5, 1.75 and 2 (review F3.2, F3.6; residual 3; review F1.6, F1.11)', () => {
