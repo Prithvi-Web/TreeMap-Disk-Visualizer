@@ -838,6 +838,45 @@ test('the Undo Vault tab prints a copy\'s reason in the cart\'s words, and an ol
   assert.ok(INDEX.includes('<div class="why">Deleted because it ${escapeHtml(capsuleReason(e.reason))}</div>'), 'the tab reads every reason through it');
 });
 
+/**
+ * The owner's pronouns are not stated, so the repository says "the owner" — in its code, its comments, its tests
+ * and its docs — and never a pronoun guessed for them (BQU item 42). Every gendered personal pronoun is held out
+ * of every text file of the repository's own: the words are built from parts here, so this file does not say them.
+ * Third-party notices (build/) and the vendored dependencies are not the repository's words.
+ */
+const GENDERED = new RegExp(String.raw`\b(?:${['h' + 'e', 'sh' + 'e', 'h' + 'is', 'h' + 'im', 'h' + 'er', 'h' + 'ers', 'h' + 'imself', 'h' + 'erself'].join('|')})\b`, 'i');
+const OWN_TEXT = /\.(?:ts|js|cjs|mjs|html|css|md|json|rs|toml|ya?ml|sh|service|txt)$/;
+
+/** Every text file of the repository's own words under `dir`, in path order: no dependencies, build output or binaries. */
+function ownTextUnder(dir: string): string[] {
+  const out: string[] = [];
+  const walk = (at: string): void => {
+    if (!fs.existsSync(at)) return;
+    for (const entry of fs.readdirSync(at, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (['node_modules', 'target', 'dist', 'prebuilt'].includes(entry.name)) continue;
+      const full = path.join(at, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (OWN_TEXT.test(entry.name)) out.push(full);
+    }
+  };
+  walk(path.join(ROOT, dir));
+  return out;
+}
+
+test('nothing the repository writes calls the owner by a pronoun guessed for them: no gendered personal pronoun in its sources, tests, scripts, docs, workflows or top-level documents — "the owner" (BQU item 42)', () => {
+  const files = [
+    ...['src', 'tests', 'scripts', 'docs', 'electron', 'bench', 'native', 'vscode-extension', 'deploy', '.github'].flatMap(ownTextUnder),
+    ...fs.readdirSync(ROOT).filter((name) => name.endsWith('.md')).map((name) => path.join(ROOT, name)),
+  ];
+  assert.ok(files.some((f) => f.endsWith(path.join('src', 'ui', 'app', '050-treemap-view.js'))) && files.length > 500, `control: the repository's own text files are read (${files.length})`);
+  const found = files.flatMap((f) => fs.readFileSync(f, 'utf8').split('\n')
+    .map((line, i) => ({ line, i }))
+    .filter(({ line }) => GENDERED.test(line))
+    .map(({ line, i }) => `${path.relative(ROOT, f)}:${i + 1}: ${line.trim().slice(0, 120)}`));
+  assert.deepEqual(found, [], 'the owner is "the owner"');
+  assert.ok(GENDERED.test(`over ${'h' + 'is'} 40 %`) && !GENDERED.test('the theme, this, history, where, ethernet'), 'control: the check finds the words alone, never inside another word');
+});
+
 test('what a program reads keeps its name: ids, the setting key, the routes', () => {
   for (const id of ['id="cleanupBtn"', 'id="cleanupGoalValue"', 'id="cleanupGoalUnit"', 'id="cleanupGoalClear"', 'id="cartDock"', 'data-pane="rules"', 'data-pane="empty"', 'data-pane="video"', 'data-dupmode="near"']) {
     assert.ok(INDEX.includes(id), `${id} is still in the page`);

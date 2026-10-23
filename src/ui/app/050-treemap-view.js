@@ -875,9 +875,10 @@ function tmPxScale(dpr) {
  * No line or band is wider than its css width, so it takes no more of the map
  * at any ratio than at 100 %, where the owner's budgets are set: at 150 % two
  * device pixels for a 1 px line put the dense corner's pixels under luminance
- * 0.08 at 25.1 %, over his 22 %, and at 175 % two (the nearest) put corpus/Mail
- * at 42.5 % band, over his 40 %. At 150 % a 1 px line is one device pixel, a
- * 2 px band three and a 3 px band four; at 175 % one, three and five.
+ * 0.08 at 25.1 %, over the owner's 22 %, and at 175 % two (the nearest) put
+ * corpus/Mail at 42.5 % band, over the owner's 40 %. At 150 % a 1 px line is
+ * one device pixel, a 2 px band three and a 3 px band four; at 175 % one, three
+ * and five.
  */
 function tmLinePx(px, dpr) {
   if (dpr < 1) return px * tmPxScale(dpr);

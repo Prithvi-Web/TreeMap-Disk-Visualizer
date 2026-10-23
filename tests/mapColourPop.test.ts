@@ -2579,7 +2579,7 @@ test('owner\'s refinement: no hard step at 8 px — on uniform grids of tiles 1 
   // a smaller leaf draws a 1 px texture where they would meet: a 1 px seam per tile at every size, whose share falls as
   // 1 − ((s − 1)/s)² — each step smaller than the one before (5.4 points from 5 to 6 px, 3.1 from 7 to 8). That is the
   // bound: no step bigger than the one before it, by more than half a point. The seam is the owner's faint texture
-  // (1.4:1 at 7 px) below 8 px and his 3:1 line from 8 px, so the mean lightness stepped most at 7→8 px — 6.3 L* on the
+  // (1.4:1 at 7 px) below 8 px and the owner's 3:1 line from 8 px, so the mean lightness stepped most at 7→8 px — 6.3 L* on the
   // size ramp's amber (from 3.4 L* under the solid fill to 9.7), and a lone 8 px row among 7 px rows read as a dark stripe
   // (residual 3). A leaf with lines is now filled a shade lighter (or darker, under light lines) by just enough that it
   // keeps the mean lightness a 7 px tile's texture gives (tmEdgedFill), its chroma kept whole; on amber, orange and red,
@@ -3035,7 +3035,7 @@ function darkShare(raster: ReturnType<typeof rasterCtx>, box: { x: number; y: nu
   return n / (box.w * box.h);
 }
 
-test('owner\'s refinement: thinner frames — a corner as dense as /System/Library\'s is at most 25% folder band with at most 22% of its pixels under luminance 0.08, and a folder like corpus/Mail (58×52 px of 24 mailboxes of tiny files) at most 33% band, the owner\'s aim under his 40%, reading as the colour of what it holds — in both themes, at device pixel ratios 1, 1.25, 1.5, 1.75 and 2 (residuals 4 and 9)', () => {
+test('owner\'s refinement: thinner frames — a corner as dense as /System/Library\'s is at most 25% folder band with at most 22% of its pixels under luminance 0.08, and a folder like corpus/Mail (58×52 px of 24 mailboxes of tiny files) at most 33% band, the owner\'s aim, under the owner\'s 40% limit, reading as the colour of what it holds — in both themes, at device pixel ratios 1, 1.25, 1.5, 1.75 and 2 (residuals 4 and 9)', () => {
   // A line or a band is the most whole device pixels no wider than its css width: at 175 % two device pixels for a 1 px
   // line or band — the nearest — put corpus/Mail at 42.5% band.
   const dense = denseCornerNodes();
@@ -4322,7 +4322,7 @@ test('owner\'s outlines at every ratio from 100 to 300 %: every leaf\'s line and
   // At 150 % a 1 css px line covered a device pixel and half the next, and the half-covered pixel was a blend of the line
   // and its tile; laid two whole device pixels wide instead (the nearest above), the dense corner's pixels under luminance
   // 0.08 rose from 22% to 25.1%, over the owner's budget, and at 175 % two (the nearest) put corpus/Mail at 42.5% band,
-  // over his 40%. The painter takes the most whole device pixels no wider than the css width, and at least one: no line
+  // over the owner's 40%. The painter takes the most whole device pixels no wider than the css width, and at least one: no line
   // takes more of the map at any ratio than at 100 %, where the owner's budgets hold (the thinner-frames test).
   const b = colourBlocks(EVERY_COLOUR, 16, 16), real = realisticNodes(), dense = denseCornerNodes();
   const onDevice = (v: number, dpr: number) => Math.abs(v * dpr - Math.round(v * dpr)) < 1e-6;
