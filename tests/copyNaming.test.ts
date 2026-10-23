@@ -851,8 +851,10 @@ const OWN_TEXT = /\.(?:ts|js|cjs|mjs|html|css|md|json|rs|toml|ya?ml|sh|service|t
 function ownTextUnder(dir: string): string[] {
   const out: string[] = [];
   const walk = (at: string): void => {
-    if (!fs.existsSync(at)) return;
-    for (const entry of fs.readdirSync(at, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    let entries: fs.Dirent[];
+    // Not there, or gone since its parent was read: nothing to read. Any other failure is the test's.
+    try { entries = fs.readdirSync(at, { withFileTypes: true }); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return; throw e; }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       if (['node_modules', 'target', 'dist', 'prebuilt'].includes(entry.name)) continue;
       const full = path.join(at, entry.name);
       if (entry.isDirectory()) walk(full);
@@ -869,7 +871,11 @@ test('nothing the repository writes calls the owner by a pronoun guessed for the
     ...fs.readdirSync(ROOT).filter((name) => name.endsWith('.md')).map((name) => path.join(ROOT, name)),
   ];
   assert.ok(files.some((f) => f.endsWith(path.join('src', 'ui', 'app', '050-treemap-view.js'))) && files.length > 500, `control: the repository's own text files are read (${files.length})`);
-  const found = files.flatMap((f) => fs.readFileSync(f, 'utf8').split('\n')
+  /** A file's text, or none where it went between the listing and the read (another test's file, made and removed). */
+  const textOf = (f: string): string => {
+    try { return fs.readFileSync(f, 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return ''; throw e; }
+  };
+  const found = files.flatMap((f) => textOf(f).split('\n')
     .map((line, i) => ({ line, i }))
     .filter(({ line }) => GENDERED.test(line))
     .map(({ line, i }) => `${path.relative(ROOT, f)}:${i + 1}: ${line.trim().slice(0, 120)}`));
