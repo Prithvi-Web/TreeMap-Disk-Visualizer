@@ -1622,3 +1622,28 @@ test('a view that is not available on this computer says so in its own region, a
   assert.equal(INDEX.split(regionMarkup('capabilityNoticeSaid')).length, 2, 'its region is in the page from the start, empty');
   assert.deepEqual(hidingHolders('capabilityNoticeSaid'), [], 'and stands where the notice is put, in the page\'s main part, which nothing hides');
 });
+
+test('a view opened from its own tab, which gives the reason it is not available in its title — read as focus lands on it, selection following focus — says in its region only that it is not available: the reason is said once (BQU item 39)', () => {
+  const reason = 'Reading which applications own what needs macOS.';
+  const main = new El();
+  const doc = { createElement: () => new El(), querySelector: () => main, body: main, activeElement: null as El | null };
+  const p = page(['function renderCapabilityNotice('], { document: doc, icon: () => '<svg aria-hidden="true"></svg>' }, ['capabilityNotice']);
+  const tab = (view: string, title: string) => { const t = new El(); t.setAttribute('role', 'tab'); t.dataset.view = view; t.title = title; return t; };
+  doc.activeElement = tab('apps', reason); // arrowed onto in the sidebar, or clicked
+  p.fns.renderCapabilityNotice({ id: 'apps', label: 'Apps' }, reason);
+  p.frame();
+  assert.equal(p.$('capabilityNoticeSaid').textContent, 'Apps isn’t available on this computer.', 'the tab, focused, reads the reason: the region says only that the view is not available');
+  p.fns.renderCapabilityNotice({ id: 'apps', label: 'Apps' }, null);
+  // Opened any other way — the command palette, a link — focus is not on its tab: the region says the reason too.
+  doc.activeElement = tab('security', reason); // another view, not available for the same reason
+  p.fns.renderCapabilityNotice({ id: 'apps', label: 'Apps' }, reason);
+  p.frame();
+  assert.equal(p.$('capabilityNoticeSaid').textContent, `Apps isn’t available on this computer. ${reason}`,
+    'focus on another view\'s tab, though it gives the same reason, does not read it of this view: the reason is said in the region');
+  p.fns.renderCapabilityNotice({ id: 'apps', label: 'Apps' }, null);
+  doc.activeElement = tab('apps', 'Apps');
+  p.fns.renderCapabilityNotice({ id: 'apps', label: 'Apps' }, reason);
+  p.frame();
+  assert.equal(p.$('capabilityNoticeSaid').textContent, `Apps isn’t available on this computer. ${reason}`, 'and a tab whose title is not the reason reads no reason: the region says it');
+  assert.match(pageFn('function applyCapabilitiesToTabs('), /btn\.title = reason \|\| view\.label;/, 'control: an unavailable view\'s tab gives its reason as its title');
+});

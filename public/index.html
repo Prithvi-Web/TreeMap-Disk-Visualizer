@@ -8853,7 +8853,16 @@ function renderCapabilityNotice(view, reason) {
     `<div><b>${escapeHtml(title)}</b>` +
     `<div class="muted" style="margin-top:6px;line-height:1.5;">${escapeHtml(reason)}</div></div></div>`;
   host.style.display = 'block';
-  say(`${title}.\n${reason}`);
+  // The view's tab gives the reason in its title (applyCapabilitiesToTabs),
+  // which is read with the tab as focus lands on it — and in the sidebar's
+  // tablist selection follows focus, so a view opened from its tab is opened
+  // with focus on it. Then the reason is said there, and the region says only
+  // that the view is not available: said in both, the reason was heard twice
+  // (BQU item 39). Opened any other way, the region says both.
+  const at = document.activeElement;
+  const tabSaysIt = !!at && typeof at.getAttribute === 'function' && at.getAttribute('role') === 'tab'
+    && !!at.dataset && at.dataset.view === view.id && at.title === reason;
+  say(tabSaysIt ? `${title}.` : `${title}.\n${reason}`);
 }
 
 /** Reflect capability changes onto the tab bar itself. */
