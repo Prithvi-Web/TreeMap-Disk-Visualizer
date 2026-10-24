@@ -172,7 +172,7 @@ export async function readJsonFile<T>(name: string, fallback: T): Promise<T> {
  * Best-effort throughout: this runs while something is already wrong, and
  * failing to make a backup must not turn a degraded read into a hard error.
  */
-async function preserveCorrupt(name: string, err: unknown): Promise<void> {
+export async function preserveCorrupt(name: string, err: unknown, what = 'could not be parsed'): Promise<void> {
   try {
     const dir = appDataDir();
     const source = path.join(dir, name);
@@ -189,7 +189,7 @@ async function preserveCorrupt(name: string, err: unknown): Promise<void> {
     const target = kept === null ? backup : `${backup}-${String(Date.now())}`;
     await fsp.copyFile(source, target);
     console.error(
-      `[treemap] ${name} could not be parsed (${err instanceof Error ? err.message : String(err)}). ` +
+      `[treemap] ${name} ${what} (${err instanceof Error ? err.message : String(err)}). ` +
         `The original is kept at ${target}.`,
     );
   } catch {

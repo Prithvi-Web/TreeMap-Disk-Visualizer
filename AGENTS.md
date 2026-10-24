@@ -1196,7 +1196,9 @@ read-what-you-saw) permission to act.
   the note as the stated reason, in previews and run records alike. Both
   mutating routes are in the pinned destructive list because writing or
   deleting a note arms or disarms automation over real files. A `notes.json`
-  that cannot be parsed is never written over: all three routes answer
+  that cannot be parsed, or parses but is not the store TreeMap writes (an
+  object holding a `notes` list, each row naming a folder and carrying
+  text), is never written over: all three routes answer
   `500 NOTES_UNREADABLE` with the reason, never an empty list, and every
   consumer of the pauses refuses the same way until it is repaired or
   removed (the unreadable original is kept beside it).

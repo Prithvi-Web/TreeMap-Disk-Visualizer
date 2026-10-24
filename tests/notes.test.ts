@@ -728,6 +728,43 @@ test('a corrupt notes.json is never written over — listing, saving and removin
   }
 });
 
+test('a notes.json that parses but is not the store TreeMap writes is unreadable too: its pauses hold, it is kept and copied aside, never read as "no notes" or written over (review F1.8)', async () => {
+  await clearNotes();
+  const dataDir = process.env.TREEMAP_DATA_DIR!;
+  const notesFile = path.join(dataDir, 'notes.json');
+  const copies = (): string[] => fs.readdirSync(dataDir).filter((f) => f.startsWith('notes.json.corrupt')).map((f) => fs.readFileSync(path.join(dataDir, f), 'utf8'));
+  const shapes = [
+    '[{"path":"/Users/x/archive","text":"keep","suppress":true}]', // a bare list
+    'null',
+    '"notes"',
+    '{"notes":{"path":"/Users/x/archive","text":"keep","suppress":true}}', // one note, not a list
+    '{"notes":[{"path":"/Users/x/archive","suppress":true}]}', // a pausing row with no text
+    '{"notes":[{"text":"keep","suppress":true}]}', // a row with no path
+    '{"note":[{"path":"/Users/x/archive","text":"keep","suppress":true}]}', // a misspelt key
+  ];
+  try {
+    for (const raw of shapes) {
+      fs.writeFileSync(notesFile, raw);
+      await assert.rejects(suppressedNoteRoots(), (e: any) => e.code === 'NOTES_UNREADABLE', `the pauses still hold: ${raw}`);
+      await assert.rejects(listNotes(), (e: any) => e.code === 'NOTES_UNREADABLE', `never "no notes": ${raw}`);
+      await assert.rejects(setNote(path.join(os.homedir(), 'other'), 'new note'), (e: any) => e.code === 'NOTES_UNREADABLE', raw);
+      await assert.rejects(deleteNote('/Users/x/archive'), (e: any) => e.code === 'NOTES_UNREADABLE', raw);
+      assert.equal(fs.readFileSync(notesFile, 'utf8'), raw, `kept exactly as it was: ${raw}`);
+      assert.ok(copies().includes(raw), `and copied aside: ${raw}`);
+    }
+    // Control: an absent file and the store TreeMap writes still read.
+    fs.writeFileSync(notesFile, JSON.stringify({ notes: [{ path: '/Users/x/archive', text: 'keep', suppress: true, createdMs: 1, updatedMs: 1 }] }));
+    assert.deepEqual((await listNotes()).map((n) => n.path), ['/Users/x/archive']);
+    fs.rmSync(notesFile, { force: true });
+    assert.deepEqual(await listNotes(), []);
+  } finally {
+    fs.rmSync(notesFile, { force: true });
+    for (const f of fs.readdirSync(dataDir)) {
+      if (f.startsWith('notes.json.corrupt')) fs.rmSync(path.join(dataDir, f), { force: true });
+    }
+  }
+});
+
 test('the page says why the notes could not be read, rather than booting with none (hunt C05)', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'ui', 'app', '160-folder-budgets.js'), 'utf8');
   const body = src.slice(src.indexOf('async function loadNotes'), src.indexOf('let noteTarget'));

@@ -1,5 +1,5 @@
 import path from 'path';
-import { readJsonFileChecked, writeJsonFile } from './storage';
+import { preserveCorrupt, readJsonFileChecked, writeJsonFile } from './storage';
 import { canonicalDirOf, isInside, realPlaceNow, sanitizePath } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
 
@@ -81,21 +81,52 @@ function normalizeRows(raw: unknown): FolderNote[] {
 }
 
 /**
- * The store, or NOTES_UNREADABLE when notes.json is there but cannot be parsed (the hunt, C05). An
- * empty list in its place let the next save write that one note over the file and lift every pause
- * the file held, with nothing said: listing, saving and removing a note refuse instead, so nothing is
- * written over it until a person repairs or removes it.
+ * Why `value`, parsed from notes.json, is not the store TreeMap writes, or null when it is (review
+ * F1.8): an object holding a `notes` list whose every row names a folder and carries text. Anything
+ * else — a bare list, null, one note where the list should be, a pausing row with no text — read as no
+ * notes, so every pause it held lifted and the next save wrote over it with no copy kept.
+ */
+function notStoreShape(value: unknown): string | null {
+  const rows = value && typeof value === 'object' && !Array.isArray(value) ? (value as { notes?: unknown }).notes : undefined;
+  if (!Array.isArray(rows)) return 'it holds no list of notes';
+  const bad = rows.findIndex((n: unknown) =>
+    !n || typeof n !== 'object' || typeof (n as FolderNote).path !== 'string'
+    || typeof (n as FolderNote).text !== 'string' || (n as FolderNote).text.length === 0);
+  return bad === -1 ? null : `note ${bad + 1} names no folder or has no text`;
+}
+
+/**
+ * notes.json's notes, or why it cannot be read: it cannot be parsed (the hunt, C05), or it parses but
+ * is not the store TreeMap writes (review F1.8) — then its bytes are copied aside, as an unparseable
+ * file's are. A file that is not there is no notes.
+ */
+async function readNotesFile(): Promise<{ ok: true; notes: FolderNote[] } | { ok: false; detail: string }> {
+  const read = await readJsonFileChecked<NoteStore>(NOTES_FILE);
+  if (!read.ok) return read.reason === 'corrupt' ? { ok: false, detail: read.detail || 'invalid JSON' } : { ok: true, notes: [] };
+  const wrong = notStoreShape(read.value);
+  if (wrong !== null) {
+    await preserveCorrupt(NOTES_FILE, new Error(wrong), 'is not a notes store TreeMap can read');
+    return { ok: false, detail: wrong };
+  }
+  return { ok: true, notes: normalizeRows(read.value.notes) };
+}
+
+/**
+ * The store, or NOTES_UNREADABLE when notes.json is there but cannot be read (the hunt, C05; review
+ * F1.8). An empty list in its place let the next save write that one note over the file and lift every
+ * pause the file held, with nothing said: listing, saving and removing a note refuse instead, so nothing
+ * is written over it until a person repairs or removes it.
  */
 async function load(): Promise<NoteStore> {
-  const read = await readJsonFileChecked<NoteStore>(NOTES_FILE);
-  if (!read.ok && read.reason === 'corrupt') {
+  const read = await readNotesFile();
+  if (!read.ok) {
     throw new AppError(
       500,
       'NOTES_UNREADABLE',
-      `notes.json could not be read (${read.detail || 'invalid JSON'}), so your notes cannot be shown or changed, and nothing is written over the file. The pauses they carry still hold: suggestions and automatic cleanup refuse rather than run unpaused. The unreadable original was kept beside the file; repair or remove it to use notes again.`,
+      `notes.json could not be read (${read.detail}), so your notes cannot be shown or changed, and nothing is written over the file. The pauses they carry still hold: suggestions and automatic cleanup refuse rather than run unpaused. The unreadable original was kept beside the file; repair or remove it to use notes again.`,
     );
   }
-  return { notes: read.ok ? normalizeRows(read.value?.notes) : [] };
+  return { notes: read.notes };
 }
 
 export async function listNotes(): Promise<FolderNote[]> {
@@ -177,16 +208,15 @@ export async function deleteNote(rawPath: string): Promise<boolean> {
  * is preserved beside the file by the storage layer.
  */
 export async function suppressedNoteRoots(): Promise<string[]> {
-  const read = await readJsonFileChecked<NoteStore>(NOTES_FILE);
-  if (!read.ok && read.reason === 'corrupt') {
+  const read = await readNotesFile();
+  if (!read.ok) {
     throw new AppError(
       500,
       'NOTES_UNREADABLE',
-      `notes.json could not be read (${read.detail ?? 'invalid JSON'}). The pauses your notes carry cannot be honoured, so suggestions and automatic cleanup are refusing rather than running unsuppressed. The unreadable original was kept beside the file.`,
+      `notes.json could not be read (${read.detail}). The pauses your notes carry cannot be honoured, so suggestions and automatic cleanup are refusing rather than running unsuppressed. The unreadable original was kept beside the file.`,
     );
   }
-  const notes = read.ok ? normalizeRows(read.value?.notes) : [];
-  return notes.filter((n) => n.suppress).map((n) => path.resolve(n.path));
+  return read.notes.filter((n) => n.suppress).map((n) => path.resolve(n.path));
 }
 
 /**
