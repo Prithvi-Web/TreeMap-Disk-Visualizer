@@ -258,6 +258,8 @@ if (window.treemapDesktop) {
     // box when it starts, never while it waits.
     queueScan(p);
   });
+  // A folder the shell holds behind the scan running is said as the queue says its own (review HA-L3, HA-L11).
+  window.treemapDesktop.onScanQueued?.((held) => sayShellQueued(held));
   // The application menu's own items (electron/lib/menu.js) — Settings… (⌘,),
   // File › Rescan, View › Command Palette… and Toggle Sidebar, Help ›
   // Keyboard Shortcuts — reach the page as commands (hunt C18). The menu's

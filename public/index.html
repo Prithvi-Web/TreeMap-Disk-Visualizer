@@ -13000,8 +13000,26 @@ function queueScan(p) {
   if (!state.scanning) { $('pathInput').value = p; void startScan(p); return; }
   if (scanQueue.includes(p)) return;
   scanQueue.push(p);
-  const before = scanQueue.length - 1;
-  toast(before === 0 ? `Queued ${p} — it scans next` : `Queued ${p} — ${before} folder${before === 1 ? '' : 's'} before it`, 'success', 5000);
+  toast(queuedSentence(p, scanQueue.length - 1), 'success', 5000);
+}
+/** What the queue says of a folder waiting with `before` folders ahead of it (hunt C19). */
+function queuedSentence(p, before) {
+  return before === 0 ? `Queued ${p} — it scans next` : `Queued ${p} — ${before} folder${before === 1 ? '' : 's'} before it`;
+}
+/**
+ * A folder the desktop shell holds behind the scan running — File › Scan
+ * folder…, the tray, a dock drop, "Scan with TreeMap", a second launch — is
+ * said as this queue says its own (review HA-L3, HA-L11): it went unsaid
+ * until a Stop called it dropped. This queue scans before the shell's
+ * folders, so its waiting folders are counted ahead of it, and `before`
+ * counts the shell's own. One asked for again while it is being scanned is
+ * said to be. A Stop counts the shell's folders with this queue's (stopScan).
+ */
+function sayShellQueued(held) {
+  if (!held || typeof held.path !== 'string' || !held.path) return;
+  if (held.scanning === true) { toast(`Already scanning ${held.path}`, 'success', 5000); return; }
+  const ahead = Number.isInteger(held.before) && held.before > 0 ? held.before : 0;
+  toast(queuedSentence(held.path, scanQueue.length + ahead), 'success', 5000);
 }
 function drainScanQueue() {
   if (state.scanning || !scanQueue.length) return;
@@ -45331,6 +45349,8 @@ if (window.treemapDesktop) {
     // box when it starts, never while it waits.
     queueScan(p);
   });
+  // A folder the shell holds behind the scan running is said as the queue says its own (review HA-L3, HA-L11).
+  window.treemapDesktop.onScanQueued?.((held) => sayShellQueued(held));
   // The application menu's own items (electron/lib/menu.js) — Settings… (⌘,),
   // File › Rescan, View › Command Palette… and Toggle Sidebar, Help ›
   // Keyboard Shortcuts — reach the page as commands (hunt C18). The menu's

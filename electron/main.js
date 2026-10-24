@@ -158,10 +158,34 @@ function pumpSoon() {
  * one at a time; the page is pushed the next one when it reports the last
  * finished (see preload.js for the contract).
  */
-function requestScans(rawPaths) {
+function requestScans(rawPaths, { tell = true } = {}) {
+  const running = scanQueue.current;
   const result = scanQueue.enqueue(rawPaths);
   if (result.queued.length > 0) pumpScanQueue();
+  if (tell) tellHeld([...result.queued, ...result.ignored.map((raw) => (typeof raw === 'string' && raw ? toScannableDir(raw) : null))], running);
   return result;
+}
+
+/**
+ * A folder the shell holds behind a running scan is said to the page, which
+ * says it as its own queue says its folders (review HA-L3, HA-L11): nothing
+ * was said until a Stop called it dropped, or it started on its own.
+ * `treemap:scan-queued` carries { path, before } — `before`, the folders the
+ * shell holds ahead of it (the page counts its own queue in, which scans
+ * first) — or { path, scanning: true } for a folder asked for again while it
+ * is the one being scanned. A folder pushed to the page at once is not
+ * "queued", and the page's own request-scans call is answered, never told.
+ */
+function tellHeld(dirs, running = null) {
+  if (!pageReady()) return;
+  const told = new Set();
+  for (const dir of dirs) {
+    if (!dir || told.has(dir)) continue;
+    told.add(dir);
+    const before = scanQueue.pending.indexOf(dir);
+    if (before >= 0) mainWindow.webContents.send('treemap:scan-queued', { path: dir, before });
+    else if (running !== null && dir === running) mainWindow.webContents.send('treemap:scan-queued', { path: dir, scanning: true });
+  }
 }
 
 /** One folder (a dock drop, "Open With", the tray): the same queue. */
@@ -206,7 +230,7 @@ ipcMain.handle('treemap:resolve-scan-path', (_event, p) => {
 
 ipcMain.handle('treemap:request-scans', (_event, paths) => {
   if (!Array.isArray(paths)) return null;
-  return requestScans(paths.filter((p) => typeof p === 'string'));
+  return requestScans(paths.filter((p) => typeof p === 'string'), { tell: false });
 });
 
 /**
@@ -342,6 +366,8 @@ function createWindow(port) {
   win.webContents.on('did-finish-load', () => {
     scanQueue.reset();
     pumpScanQueue();
+    // Folders held while the page was away (a dock drop of several with the window closed) are said now.
+    tellHeld(scanQueue.pending);
     if (pendingCommand) {
       const name = pendingCommand;
       pendingCommand = null;

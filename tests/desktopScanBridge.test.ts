@@ -353,22 +353,52 @@ test('C18: the page registers the menu\'s commands with the bridge', () => {
 
 /* ═════════════════════ C19 — the queue says what is true ═════════════════════ */
 
-test('C19: only the first folder waiting scans next; the others are told how many are before them; the box names the folder that starts', () => {
+/** The page's scan queue, lifted whole out of the built page; startScan starts a scan the queue then waits behind. */
+function pageQueue() {
   const { $ } = makeDom();
   const started: string[] = [];
   const toasts: string[] = [];
-  const state = { scanning: false };
+  const state: { scanning: boolean; scanningPath?: string } = { scanning: false };
   const at = INDEX.indexOf('const scanQueue = [];');
   const src = INDEX.slice(at, INDEX.indexOf('/* ── end scan queue ── */', at));
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const q = new Function('state', 'startScan', 'toast', 'subscribe', 'TOPIC', '$', 'setTimeout',
-    `'use strict'; ${src} return { queueScan, clearScanQueue };`)(
-    state, (p: string) => { started.push(p); state.scanning = true; }, (m: string) => toasts.push(m), () => {}, { scan: 'scan' }, $, () => 0,
-  ) as { queueScan: (p: string) => void; clearScanQueue: () => number };
+    `'use strict'; ${src} return { queueScan, clearScanQueue, sayShellQueued: typeof sayShellQueued === 'function' ? sayShellQueued : null };`)(
+    state, (p: string) => { started.push(p); state.scanning = true; state.scanningPath = p; }, (m: string) => toasts.push(m), () => {}, { scan: 'scan' }, $, () => 0,
+  ) as { queueScan: (p: string) => void; clearScanQueue: () => number; sayShellQueued: ((held: unknown) => void) | null };
+  return { q, $, started, toasts, state };
+}
+
+test('C19: only the first folder waiting scans next; the others are told how many are before them; the box names the folder that starts', () => {
+  const { q, $, started, toasts } = pageQueue();
   q.queueScan('/A'); q.queueScan('/B'); q.queueScan('/C'); q.queueScan('/D');
   assert.deepEqual(started, ['/A']);
   assert.equal($('pathInput').value, '/A', 'the box names the folder being scanned, not the last one queued');
   assert.deepEqual(toasts, ['Queued /B — it scans next', 'Queued /C — 1 folder before it', 'Queued /D — 2 folders before it']);
   assert.equal(q.clearScanQueue(), 3, 'emptied, the queue says how many were waiting');
   assert.equal(q.clearScanQueue(), 0);
+});
+
+test('review HA-L3/HA-L11: a folder the desktop shell holds behind the scan running is said as the page\'s own queue says its folders, the page\'s waiting folders counted before it; one being scanned already is said to be', () => {
+  const { q, toasts } = pageQueue();
+  assert.equal(typeof q.sayShellQueued, 'function', 'the page answers the shell\'s notice');
+  const say = q.sayShellQueued!;
+  q.queueScan('/Running');
+  say({ path: '/Dock', before: 0 });
+  assert.deepEqual(toasts, ['Queued /Dock — it scans next'], 'a dock drop behind the scan running, with nothing else waiting');
+  q.queueScan('/Mine'); // the page's own drop: its queue scans before the shell's folders
+  say({ path: '/Second', before: 1 });
+  assert.deepEqual(toasts.slice(1), ['Queued /Mine — it scans next', 'Queued /Second — 2 folders before it'],
+    'the page\'s one waiting folder and the shell\'s one before it');
+  say({ path: '/Running', scanning: true });
+  assert.deepEqual(toasts.slice(3), ['Already scanning /Running'], 'asked for again while it scans');
+  for (const junk of [null, {}, { path: 5, before: 0 }, { path: '', before: 0 }]) say(junk);
+  assert.equal(toasts.length, 4, 'a notice that names no folder says nothing');
+});
+
+test('review HA-L3/HA-L11: the page registers for the shell\'s queued notices', () => {
+  const at = INDEX.indexOf('window.treemapDesktop.onScanPath(');
+  assert.notEqual(at, -1);
+  const block = INDEX.slice(at, INDEX.indexOf('function desktopCommand(', at));
+  assert.match(block, /window\.treemapDesktop\.onScanQueued\?\.\(\(held\) => sayShellQueued\(held\)\)/);
 });

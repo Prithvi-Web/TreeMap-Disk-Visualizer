@@ -43,6 +43,13 @@
  * Shell → page
  *  - onScanPath(cb)              cb(folder) — scan this folder now (dock drop, second
  *                                  launch, tray, the File menu, the scan queue).
+ *  - onScanQueued(cb)            cb({ path, before }) — the shell holds this folder behind
+ *                                  the scan running, with `before` of its own folders ahead
+ *                                  of it (the page's own queue scans first); or
+ *                                  cb({ path, scanning: true }) — asked for again while it
+ *                                  is the folder being scanned. Say it as the page's own
+ *                                  queue says its folders. Never sent for requestScans,
+ *                                  whose answer the page has.
  *  - onCommand(cb)               cb(name) for a menu item the page owns:
  *                                  'settings' | 'palette' | 'sidebar' | 'shortcuts' | 'rescan'.
  *                                  One chosen while the page is still loading is sent
@@ -70,6 +77,10 @@ contextBridge.exposeInMainWorld('treemapDesktop', {
   /** Fires when the shell hands the page a folder to scan. */
   onScanPath(callback) {
     ipcRenderer.on('treemap:scan-path', (_event, p) => callback(p));
+  },
+  /** Fires when the shell holds a folder behind the scan running (see the header). */
+  onScanQueued(callback) {
+    ipcRenderer.on('treemap:scan-queued', (_event, held) => callback(held));
   },
   /** Fires for a menu item the page implements (see the header). */
   onCommand(callback) {
