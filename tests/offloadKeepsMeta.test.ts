@@ -12,6 +12,7 @@ process.env.TREEMAP_NO_GDU = '1';
 import { createScanRecord } from '../src/services/diskScanner';
 import { getOffloadIndex, getOffloadJob, prepareOffload, setOffloadFileMetaFaultForTests, startOffload, startRestore } from '../src/services/offload';
 import { setTrashStepForTests } from '../src/services/cleaner';
+import { buildOpenApiDocument } from '../src/api/openapi';
 import type { FileNode, OffloadJob, ScanResult } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
@@ -186,4 +187,18 @@ test('a drive that cannot hold a copy\'s dates is said, never a reason to undo t
   } finally {
     refuse();
   }
+});
+
+test('a date finer than a millisecond is recorded as the fraction it is, and the published schema says a number, not an integer (review F1.7, F1.20)', async () => {
+  const { proj, paths: [file], scan } = project('fraction', { 'fine.txt': 0o644 });
+  fs.utimesSync(file, 1_577_934_245.123456, 1_577_934_300.654321); // as APFS, ext4 and NTFS keep them
+  await offloadAndRestore('fraction', proj, scan, (dest) => {
+    assert.equal(fs.statSync(path.join(dest, 'proj', 'fine.txt')).mtime.getTime(), 1_577_934_300_654, 'the copy has it to the millisecond');
+  });
+  const [entry] = (await getOffloadIndex()).entries.filter((e) => e.originalPath === file);
+  assert.equal(Number.isInteger(entry.mtimeMs), false, `a fraction of a millisecond: ${entry.mtimeMs}`);
+  assert.equal(Math.trunc(entry.mtimeMs as number), 1_577_934_300_654);
+  assert.equal(fs.statSync(file).mtime.getTime(), 1_577_934_300_654, 'and Restore puts it back to the millisecond');
+  const props = (buildOpenApiDocument() as { components: { schemas: Record<string, { properties: Record<string, { type: string }> }> } }).components.schemas.OffloadEntry.properties;
+  assert.deepEqual([props.mtimeMs.type, props.atimeMs.type], ['number', 'number']);
 });

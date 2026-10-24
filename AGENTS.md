@@ -631,10 +631,11 @@ OpenAPI 3 spec).
      or may have, while it was being copied has a copy that matches what was
      read — so it verifies — but may mix old and new, so that copy is removed
      and never recorded for Restore, and its item stays.
-     Each copy keeps its original's modified and last-opened dates and, off
-     Windows (which has no POSIX permission bits), its permission bits — left
-     readable by this user, so Restore can always read it — and the record
-     keeps them exact, so Restore puts them back on each file it writes. A
+     Each copy keeps its original's modified and last-opened dates, to the
+     millisecond, and, off Windows (which has no POSIX permission bits), its
+     permission bits — left readable by this user, so Restore can always read
+     it — and the record keeps them (a date as milliseconds, with any finer
+     part as a fraction), so Restore puts them back on each file it writes. A
      drive that cannot hold them is said in the job's warning, never a reason
      to undo; folders are made anew. The record
      Restore reads (`offload-manifest.json`, app-data) is saved first; the
