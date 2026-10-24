@@ -31179,15 +31179,22 @@ function cityScaleHeights(values) {
   return (v) => (v === null ? null : CITY_MIN_H + Math.pow((v - lo) / span, 0.82) * CITY_MAX_H);
 }
 
-/** Days since a node changed, or null when it does not say. */
+/**
+ * Days since a node changed, or null when it does not say. The Treemap's
+ * Trash cell (maybeInjectTrash) carries the moment the map was drawn, which
+ * is no date of the Trash: "Last changed: today" was invented (hunt C22).
+ */
 function cityAgeDays(n) {
-  if (!n || typeof n.modifiedAt !== 'number' || n.modifiedAt <= 0) return null;
+  if (!n || n.isTrash || typeof n.modifiedAt !== 'number' || n.modifiedAt <= 0) return null;
   return Math.max(0, (Date.now() - n.modifiedAt) / 86400000);
 }
 
 
 /** Base colour for a building, as [r,g,b]. */
 function cityRgb(n, mode) {
+  // The Trash beside a home folder wears its own grey-blue, as on the Treemap
+  // (drawTreemap): it is no item of the folder, and its date is none (C22).
+  if (n.isTrash) return [108, 122, 137];
   // The Treemap's own ramp: the city opens in it (G16), so both views of one
   // folder open in the same colours.
   if (mode === 'size') return sizeRgb(n.size);
@@ -31344,7 +31351,9 @@ function buildCity() {
   for (let i = 0; i < drawn.length; i++) {
     const n = drawn[i];
     const h = scale(metrics[i]);
-    if (h === null) unknownHeight++;
+    // The Trash cell has no date and no count to wait for (C22): drawn flat,
+    // and not one of the buildings the line says are "with no date yet".
+    if (h === null && !n.isTrash) unknownHeight++;
     blocks.push({
       x: n.x, y: n.y, w: n.w, h: n.h,
       z: h === null ? CITY_MIN_H : h,
@@ -32594,7 +32603,11 @@ function cityFetchFacts() {
   // Asked of the scan the city stands on — the tree on screen's, not a scan
   // running behind it, which answers "unavailable" (treeScanId, review F2.2).
   if (!treeScanId() || !c.blocks.length) return;
-  const paths = c.blocks.map((b) => b.n.path).filter((p) => p && !p.startsWith('cloud://') && !p.includes('!/')).slice(0, TM_SCORE_CAP);
+  // Never the Trash cell: its path ("\0trash") is no path, and the fact
+  // route's sanitizer refuses the whole batch it rides in, so every building
+  // of that batch stayed "still counting…" for good (hunt C22).
+  const paths = c.blocks.filter((b) => !b.n.isTrash).map((b) => b.n.path)
+    .filter((p) => p && !p.startsWith('cloud://') && !p.includes('!/') && !p.includes('\0')).slice(0, TM_SCORE_CAP);
 
   if (c.colour === 'reclaim') {
     void ensureScores(paths, () => {
@@ -32705,11 +32718,14 @@ function cityShowCard(b, px, py) {
   const score = reclaim.scores.get(b.n.path);
   const share = state.treemap.rootSize ? (b.n.size / state.treemap.rootSize) * 100 : null;
 
+  // The Trash cell stands beside the folder, not in it: no share of it, and
+  // nothing ever counts it (cityFetchFacts), so never "still counting…" (C22).
+  const trash = !!b.n.isTrash;
   const rows = [['Size', formatBytes(b.n.size)]];
-  if (share !== null && share >= 0.1) rows.push(['Share of this folder', share.toFixed(1) + '%']);
+  if (share !== null && share >= 0.1 && !trash) rows.push(['Share of this folder', share.toFixed(1) + '%']);
   rows.push(['Last changed', days === null ? 'not recorded' : cityAgeWords(days)]);
   if (count) rows.push(['Holds', `${formatCount(count.files)} files · ${formatCount(count.dirs)} folders`]);
-  else if (c.height === 'files') rows.push(['Holds', 'still counting…']);
+  else if (c.height === 'files') rows.push(['Holds', trash ? 'not counted' : 'still counting…']);
   if (c.colour === 'reclaim') {
     rows.push(['Reclaim score', score === undefined || score === null
       ? 'not scored'
@@ -32721,7 +32737,8 @@ function cityShowCard(b, px, py) {
     `<div class="cc-head"><span class="cc-dot" style="background:${swatch}"></span>` +
     `<span class="cc-name">${escapeHtml(b.n.name)}</span></div>` +
     rows.map(([k, v]) => `<div class="cc-row"><span>${escapeHtml(k)}</span><b>${escapeHtml(v)}</b></div>`).join('') +
-    (b.n.type === 'dir' ? `<div class="cc-hint">Click to go inside · Esc to come back out</div>` : '');
+    (trash ? '<div class="cc-hint">Click to see what is in the Trash</div>'
+      : b.n.type === 'dir' ? `<div class="cc-hint">Click to go inside · Esc to come back out</div>` : '');
   card.dataset.path = b.n.path;
   card.dataset.k = cityCardKey(b); // what this card was built from — a later fact invalidates it
   card.dataset.px = String(px); // where the pointer was: cityRefreshCard rebuilds it there
@@ -32774,6 +32791,9 @@ function cityAgeWords(days) {
  */
 function cityDrillInto(node) {
   if (!node) return;
+  // The Trash cell opens the Trash sheet, as on the Treemap: loading its
+  // path asked the server for "\0trash" and said its null-byte refusal (C22).
+  if (node.isTrash) { openTrashModal(); return; }
   const step = tmStepToward(state.treemap.rootPath, node.path);
   if (step && step !== node.path) { loadCity(step); return; }
   if (node.type !== 'dir') return;

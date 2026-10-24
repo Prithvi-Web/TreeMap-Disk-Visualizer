@@ -260,3 +260,97 @@ test('C21: back in the Treemap, a grammar query whose answer the unmount cleared
   page.rejudge(); // and its mount on the way back
   assert.deepEqual(applied, ['size>1gb'], 'the total, its explanation and the Stage offer come back with the highlights');
 });
+
+/* ══════════════ C22 — Disk City's Trash building ══════════════ */
+
+/** What maybeInjectTrash adds beside a home folder's map, as Disk City is handed it. */
+const TRASH_CELL = () => ({ name: 'Trash', path: '\0trash', size: 4e9, type: 'dir', modifiedAt: Date.now(), depth: 1, expanded: false, isTrash: true, x: 80, y: 0, w: 20, h: 100 });
+
+test('C22: a click on the Trash building opens the Trash sheet — it is no folder to go inside', () => {
+  const loaded: string[] = [];
+  let sheets = 0;
+  const drill = load<(n: unknown) => void>(['cityDrillInto', 'tmStepToward', 'tmIsInside'], {
+    state: { treemap: { rootPath: '/home/u' } },
+    loadCity: (p: string) => { loaded.push(p); },
+    openTrashModal: () => { sheets++; },
+  }, 'cityDrillInto');
+  drill(TRASH_CELL());
+  assert.deepEqual(loaded, [], 'never loadCity("\\0trash"), which the server refuses with a null-byte error said aloud');
+  assert.equal(sheets, 1, 'the Trash sheet, as the Treemap\'s Trash cell opens');
+  drill({ path: '/home/u/Movies', type: 'dir' });
+  assert.deepEqual(loaded, ['/home/u/Movies'], 'a folder still opens');
+});
+
+/** The real cityShowCard for one building, in a height mode. */
+function cityCard(n: Record<string, unknown>, height = 'staleness') {
+  const card = { hidden: true, innerHTML: '', dataset: {} as Record<string, string>, style: {} as Record<string, string>, offsetWidth: 230, offsetHeight: 90 };
+  const state = { treemap: { rootSize: 1e10 }, city: { counts: new Map(), height, colour: 'size' } };
+  const show = load<(b: unknown, x: number, y: number) => void>(
+    ['cityShowCard', 'cityAgeDays', 'cityAgeWords', 'cityCardKey'], {
+      $: (id: string) => (id === 'cityCard' ? card : { clientWidth: 800, clientHeight: 600 }),
+      state, reclaim: { scores: new Map() },
+      formatBytes: (b: number) => `${b} B`, formatCount: (k: number) => String(k), escapeHtml: (s: string) => s,
+    }, 'cityShowCard');
+  show({ n, rgb: [1, 2, 3] }, 10, 10);
+  return card.innerHTML;
+}
+
+test('C22: the Trash building\'s card invents no date, offers no way inside, and is not "still counting" for ever', () => {
+  const html = cityCard(TRASH_CELL());
+  assert.match(html, /Last changed<\/span><b>not recorded/, 'the map\'s Trash cell carries the moment it was drawn, never a date of the Trash');
+  assert.doesNotMatch(html, /Click to go inside/);
+  assert.match(html, /Click to see what is in the Trash/);
+  assert.doesNotMatch(html, /Share of this folder/, 'the Trash is beside the folder, no share of it');
+  const files = cityCard(TRASH_CELL(), 'files');
+  assert.doesNotMatch(files, /still counting/, 'nothing ever counts the Trash cell');
+  assert.match(files, /Holds<\/span><b>not counted/);
+  // A real folder keeps its words.
+  const folder = cityCard({ path: '/home/u/Movies', name: 'Movies', size: 1e9, type: 'dir', modifiedAt: Date.now() - 3 * 86400000 }, 'files');
+  assert.match(folder, /Click to go inside · Esc to come back out/);
+  assert.match(folder, /Share of this folder<\/span><b>10\.0%/);
+  assert.match(folder, /still counting/);
+  assert.doesNotMatch(folder, /not recorded/);
+});
+
+test('C22: the Trash building wears the Trash\'s own grey-blue in every colour mode, never the colour of a date it does not have', () => {
+  const cityRgb = load<(n: unknown, m: string) => number[]>(['cityRgb'], {
+    sizeRgb: () => [9, 9, 9], kindFor: () => ({ tint: '#ffffff' }), hexToRgb: () => [8, 8, 8], ageRgb: () => [7, 7, 7],
+    reclaim: { scores: new Map() }, C_RC_UNSCORED: [6, 6, 6], reclaimRgb: () => [5, 5, 5],
+  }, 'cityRgb');
+  for (const mode of ['size', 'type', 'age', 'reclaim']) assert.deepEqual(cityRgb(TRASH_CELL(), mode), [108, 122, 137], mode);
+  assert.deepEqual(cityRgb({ path: '/home/u/x', size: 1 }, 'age'), [7, 7, 7], 'a building of the folder keeps the mode\'s colour');
+});
+
+test('C22: the Files height never sends the Trash cell\'s path to the fact route, where it refuses the whole batch', async () => {
+  const sent: string[][] = [];
+  const blocks = [{ n: TRASH_CELL() }, { n: { path: '/home/u/Movies', type: 'dir' } }, { n: { path: '/home/u/Music', type: 'dir' } }];
+  const state = { scanId: 's1', scanning: false, view: 'city', city: { blocks, colour: 'size', height: 'files', countsAsked: new Set<string>(), counts: new Map() } };
+  const fetch = load<() => void>(['treeScanId', 'TM_SCORE_CAP', 'RECLAIM_BATCH', 'cityFetchFacts', 'cityLoadCounts'], {
+    state, ensureScores() {}, buildCity() {}, cityInvalidate() {}, renderCityTable() {}, cityRefreshCard() {}, window: {},
+    api: async (_url: string, init: { body: string }) => { sent.push(JSON.parse(init.body).paths); return { providers: { subtreeCount: { available: true, values: {} } } }; },
+  }, 'cityFetchFacts');
+  fetch();
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  assert.deepEqual(sent, [['/home/u/Movies', '/home/u/Music']]);
+});
+
+test('C22: the Trash building is not one the city\'s line says has "no date yet"', () => {
+  const nodes = [
+    { path: '/home/u/Movies', name: 'Movies', size: 6e9, type: 'dir', modifiedAt: Date.now() - 9 * 86400000, depth: 1, x: 0, y: 0, w: 40, h: 100 },
+    { path: '/home/u/Music', name: 'Music', size: 2e9, type: 'dir', depth: 1, x: 40, y: 0, w: 40, h: 100 }, // no date: really waiting
+    TRASH_CELL(),
+  ];
+  const state = {
+    scanId: 's1', scanning: false,
+    treemap: { rootPath: '/home/u', nodes, nodesFor: null as unknown },
+    city: { zoom: 1, height: 'staleness', colour: 'size', counts: new Map() } as Record<string, unknown>,
+  };
+  state.treemap.nodesFor = { scanId: 's1', path: '/home/u', nodes, size: 1e10, minSize: 4000 };
+  const build = load<() => void>(['treeScanId', 'tmParentPath', 'isoProject', 'isoBounds', 'isoBehind', 'isoDepthOrder', 'CITY_MAX_H', 'CITY_MIN_H',
+    'cityAgeDays', 'cityMetric', 'cityScaleHeights', 'cityVisibleNodes', 'cityContentBounds', 'buildCity'], {
+    state, cityRgb: () => [1, 2, 3], cityJitter: (rgb: number[]) => rgb,
+  }, 'buildCity');
+  build();
+  assert.equal((state.city.blocks as unknown[]).length, 3, 'control: all three are drawn');
+  assert.equal(state.city.unknownHeight, 1, 'only Music, whose date may yet be known');
+});
