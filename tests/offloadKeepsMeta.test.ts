@@ -1,7 +1,9 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-offloadKeepsMeta-data-');
@@ -106,6 +108,37 @@ test('an offload\'s copies and its Restore keep each file\'s modified date, and 
   }
   const recorded = (await getOffloadIndex()).entries.filter((e) => e.originalPath.startsWith(proj + path.sep));
   assert.ok(recorded.every((e) => e.mtimeMs === OLD.getTime()), 'the record keeps each modified date');
+});
+
+test('an offload\'s copies and its Restore keep each file\'s last-opened date too, and the record keeps it (review F1.18)', async () => {
+  const { proj, paths, scan } = project('atimes', { 'opened.txt': 0o644 });
+  await offloadAndRestore('atimes', proj, scan, (dest) => {
+    assert.equal(fs.statSync(path.join(dest, 'proj', 'opened.txt')).atime.toISOString(), OLDER.toISOString(), 'the copy keeps its last-opened date');
+  });
+  assert.equal(fs.statSync(paths[0]).atime.toISOString(), OLDER.toISOString(), 'the restored file has its last-opened date back');
+  const recorded = (await getOffloadIndex()).entries.filter((e) => e.originalPath.startsWith(proj + path.sep));
+  assert.deepEqual(recorded.map((e) => e.atimeMs), [OLDER.getTime()], 'the record keeps it');
+});
+
+/**
+ * An original this account can read with no owner bits at all — another account's file shared by its
+ * group or other bits, which no test can make — is stood in for, where the system can, by an access
+ * list that lets this user read a file of mode 0o044 (macOS `chmod +a`). Its copy, made by this user,
+ * must stay readable to them, or Restore could never read it back (review F1.18).
+ */
+test('a copy of an original readable here with no owner bits is left readable by its owner, so Restore can read it back', { skip: process.platform !== 'darwin' ? 'an access list that lets an owner read past its own mode is macOS\'s (chmod +a)' : false }, async () => {
+  const { proj, paths: [shared], scan } = project('ownerless', { 'shared.txt': 0o644 });
+  fs.chmodSync(shared, 0o044);
+  execFileSync('chmod', ['+a', `user:${os.userInfo().username} allow read`, shared], { env: { ...process.env } });
+  fs.utimesSync(shared, OLDER, OLD);
+  assert.equal(fs.readFileSync(shared, 'utf8'), 'the contents of shared.txt\n', 'readable here, though its mode gives its owner nothing');
+  await offloadAndRestore('ownerless', proj, scan, (dest) => {
+    const copy = path.join(dest, 'proj', 'shared.txt');
+    assert.equal(fs.statSync(copy).mode & 0o777, 0o444, 'its own bits, and readable by its owner');
+    assert.equal(fs.readFileSync(copy, 'utf8'), 'the contents of shared.txt\n');
+  });
+  const recorded = (await getOffloadIndex()).entries.filter((e) => e.originalPath === shared);
+  assert.deepEqual(recorded.map((e) => e.mode), [0o044], 'the record keeps the original\'s own bits');
 });
 
 test('an offload\'s copies and its Restore keep each file\'s permissions: a private file stays private, a script stays runnable', { skip: process.platform === 'win32' ? 'Windows has no POSIX permission bits; a mode there is only the read-only attribute' : false }, async () => {
