@@ -294,6 +294,38 @@ fileRouter.get('/files/preview', guardQueryPath('path'), async (req: Request, re
   if (!insideAnyScanRoot(target)) {
     throw new AppError(403, 'OUTSIDE_SCAN_ROOT', withUnfinishedScan('Preview is only available for files inside a scanned folder', target));
   }
+  // The response may end while the route is still waiting — on the lstat below, a thumbnail render, or
+  // the open: the near-duplicate strip cancels most of its requests as rows scroll away. Its 'close'
+  // has then already fired, so it is watched from before the first wait (hunt HF-L2; review F1.9 watched
+  // it only from before the open), and a file opened for a response already gone is closed at once
+  // rather than streamed into nothing and left to the garbage collector.
+  let over = false;
+  let stream: fs.ReadStream | null = null;
+  let handle: fs.promises.FileHandle | null = null;
+  // Destroy the source when the response is over, whichever way it ended.
+  //
+  // `Readable.pipe` unpipes on the destination's 'close'/'error' but never
+  // destroys the source, so an aborted preview leaves this ReadStream paused
+  // mid-file with its descriptor still open — and nothing ever collects it.
+  // That is the common case, not the rare one: the near-duplicate strip asks
+  // for one image per visible row (which is why the preview lane allows a 300
+  // burst / 150 per second at all), and scrolling cancels nearly every one of
+  // those requests as its row leaves the viewport. Hundreds of stranded
+  // descriptors later the process hits EMFILE and the whole server dies, not
+  // just previews.
+  //
+  // `res` always emits 'close', on a clean finish as well as on an abort. On
+  // a clean finish the stream has already ended and closed itself (or none was
+  // opened: a thumbnail, text or meta answer), so this is a no-op there; it
+  // changes nothing about the bytes, headers or status of a completed
+  // response. Destroying rather than piping through `stream.pipeline` is
+  // deliberate: pipeline destroys `res` on a source error, which would replace
+  // the 500 the stream's error handler below sends with a bare socket hang-up.
+  res.on('close', () => {
+    over = true;
+    stream?.destroy();
+    handle?.close().catch(() => undefined); // already closed by the stream, or by this
+  });
   let st: fs.Stats;
   try {
     st = await fs.promises.lstat(target);
@@ -337,37 +369,6 @@ fileRouter.get('/files/preview', guardQueryPath('path'), async (req: Request, re
       res.json({ type: 'meta', size: st.size, mtime: st.mtimeMs, ext, reason: 'Image larger than 10 MB' });
       return;
     }
-    // The response may end while the file is being opened: the near-duplicate strip cancels most of
-    // its requests as rows scroll away. Its 'close' has then already fired, so it is watched from
-    // before the open, and a file opened for a response already gone is closed at once rather than
-    // streamed into nothing and left to the garbage collector (review F1.9).
-    let over = false;
-    let stream: fs.ReadStream | null = null;
-    let handle: fs.promises.FileHandle | null = null;
-    // Destroy the source when the response is over, whichever way it ended.
-    //
-    // `Readable.pipe` unpipes on the destination's 'close'/'error' but never
-    // destroys the source, so an aborted preview leaves this ReadStream paused
-    // mid-file with its descriptor still open — and nothing ever collects it.
-    // That is the common case, not the rare one: the near-duplicate strip asks
-    // for one image per visible row (which is why the preview lane allows a 300
-    // burst / 150 per second at all), and scrolling cancels nearly every one of
-    // those requests as its row leaves the viewport. Hundreds of stranded
-    // descriptors later the process hits EMFILE and the whole server dies, not
-    // just previews.
-    //
-    // `res` always emits 'close', on a clean finish as well as on an abort. On
-    // a clean finish the stream has already ended and closed itself, so this is
-    // a no-op there; it changes nothing about the bytes, headers or status of a
-    // completed response. Destroying rather than piping through
-    // `stream.pipeline` is deliberate: pipeline destroys `res` on a source
-    // error, which would replace the 500 the stream's error handler below
-    // sends with a bare socket hang-up.
-    res.on('close', () => {
-      over = true;
-      stream?.destroy();
-      handle?.close().catch(() => undefined); // already closed by the stream, or by this
-    });
     // Opened before anything is sent (hunt C87): a file TreeMap may not read reaches the error handler
     // as the text branch's does — 403 PERMISSION_DENIED, { error, code } — not a bare 500 typed as an image.
     handle = await fs.promises.open(target, 'r');

@@ -324,3 +324,42 @@ test('a preview aborted while its file is still being opened closes that file on
     await srv.close();
   }
 });
+
+test('a preview aborted while the route is still looking at the file (before the open) closes the file it then opens (hunt HF-L2)', async () => {
+  const srv = await listen();
+  const track = trackReadStreams();
+  const handles = trackOpens();
+  // Hold the route's first look at the fixture, the lstat that comes before the open.
+  const promises = fs.promises as unknown as { lstat: typeof fs.promises.lstat };
+  const realLstat = promises.lstat;
+  let arrive!: () => void;
+  const entered = new Promise<void>((resolve) => { arrive = resolve; });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  promises.lstat = (async (...args: Parameters<typeof fs.promises.lstat>) => {
+    if (args[0] === IMG) {
+      arrive();
+      await gate;
+    }
+    return realLstat(...args);
+  }) as typeof fs.promises.lstat;
+  try {
+    const r = http.request({ host: '127.0.0.1', port: srv.port, path: previewUrl(IMG), method: 'GET' });
+    r.on('error', () => undefined); // the abort is the point
+    r.end();
+    await entered; // the route is waiting on the lstat
+    r.destroy();
+    await waitFor(async () => (await srv.connections()) === 0, 'the server seeing the client go', 5);
+    release();
+    await waitFor(() => handles.opened.length === 1 && (handles.opened[0].fd === -1 || track.opened.length > 0), 'the route going on past the open', 5);
+    for (let turn = 0; turn < 20; turn++) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(handles.opened[0].fd, -1, 'the file opened for a response already gone is closed, not left to the garbage collector');
+    assert.ok(track.opened.every((s) => s.closed), 'and no read stream is left holding it');
+  } finally {
+    release();
+    promises.lstat = realLstat;
+    track.restore();
+    handles.restore();
+    await srv.close();
+  }
+});
