@@ -2030,9 +2030,23 @@ const scanQueue = [];
 function queueScan(p) {
   if (!p) return;
   if (!state.scanning) { $('pathInput').value = p; void startScan(p); return; }
-  if (scanQueue.includes(p)) return;
+  // The folder being scanned is not queued to be walked again straight after
+  // — two files dropped from one folder scanned it twice, the second called
+  // "it scans next" — and it is said once a scan, not once a file (review HA-L12).
+  if (sameFolder(p, state.scanningPath)) {
+    const said = `${state.scanningPath}\u0000${state.scanGen}`;
+    if (alreadyScanningSaid !== said) { alreadyScanningSaid = said; toast(`Already scanning ${p}`, 'success', 5000); }
+    return;
+  }
+  if (scanQueue.some((q) => sameFolder(q, p))) return;
   scanQueue.push(p);
   toast(queuedSentence(p, scanQueue.length - 1), 'success', 5000);
+}
+let alreadyScanningSaid = null;
+/** One folder however its end is spelled: `/x/Photos` and `/x/Photos/` (and Windows' `\`) are one; the root stays itself. */
+function sameFolder(a, b) {
+  const end = (s) => s.replace(/(.)[\\/]+$/, '$1');
+  return typeof a === 'string' && typeof b === 'string' && end(a) === end(b);
 }
 /** What the queue says of a folder waiting with `before` folders ahead of it (hunt C19). */
 function queuedSentence(p, before) {

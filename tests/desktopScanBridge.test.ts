@@ -358,7 +358,7 @@ function pageQueue() {
   const { $ } = makeDom();
   const started: string[] = [];
   const toasts: string[] = [];
-  const state: { scanning: boolean; scanningPath?: string } = { scanning: false };
+  const state: { scanning: boolean; scanningPath?: string; scanGen?: number } = { scanning: false, scanGen: 1 };
   const at = INDEX.indexOf('const scanQueue = [];');
   const src = INDEX.slice(at, INDEX.indexOf('/* ── end scan queue ── */', at));
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -401,4 +401,21 @@ test('review HA-L3/HA-L11: the page registers for the shell\'s queued notices', 
   assert.notEqual(at, -1);
   const block = INDEX.slice(at, INDEX.indexOf('function desktopCommand(', at));
   assert.match(block, /window\.treemapDesktop\.onScanQueued\?\.\(\(held\) => sayShellQueued\(held\)\)/);
+});
+
+test('review HA-L12: a folder asked for again while it is being scanned — two files dropped from one folder — is not scanned twice; it is said, once, to be scanning already', () => {
+  const { q, started, toasts, state } = pageQueue();
+  q.queueScan('/Users/x/Photos');
+  q.queueScan('/Users/x/Photos'); // the second file's folder
+  q.queueScan('/Users/x/Photos/'); // the same folder, spelled with a separator at its end
+  q.queueScan('/Users/x/Photos'); // a third file
+  assert.deepEqual(started, ['/Users/x/Photos'], 'scanned once');
+  assert.equal(q.clearScanQueue(), 0, 'nothing waits to walk it again');
+  assert.deepEqual(toasts, ['Already scanning /Users/x/Photos'], 'said once, not once a file');
+  q.queueScan('/Users/x/Photos/Trips');
+  q.queueScan('/Users/x/Photos/Trips/');
+  assert.deepEqual(toasts.slice(1), ['Queued /Users/x/Photos/Trips — it scans next'], 'a folder waiting is queued once, however it is spelled');
+  state.scanGen = 2; // the next scan of it
+  q.queueScan('/Users/x/Photos');
+  assert.deepEqual(toasts.slice(2), ['Already scanning /Users/x/Photos'], 'said again for another scan of it');
 });
