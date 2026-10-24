@@ -10088,8 +10088,12 @@ function renderWhatsNew(prev, curr, diff, change = 'unknown') {
     }
     // Unknown coverage names no mover either: a folder counted again after a
     // rule was removed is not one that grew (review L1).
+    // "The most" only where every item was compared (review F1.4): one not compared, or known only to
+    // have grown by at least its amount, may have grown more.
     if (mover && known) {
-      parts.push(`<span class="wn-mover" title="${escapeHtml(mover.path)}">${escapeHtml(mover.name)} grew the most (+${formatBytes(mover.delta)})</span>`);
+      const whole = !diff.notCompared && !(diff.entries || []).some((e) => e.atLeast);
+      const grew = whole ? `grew the most (+${formatBytes(mover.delta)})` : `grew by ${mover.atLeast ? 'at least ' : '+'}${formatBytes(mover.delta)}`;
+      parts.push(`<span class="wn-mover" title="${escapeHtml(mover.path)}">${escapeHtml(mover.name)} ${grew}</span>`);
     }
   }
   const headline = parts.length ? "What's new" : 'Nothing changed';
@@ -40426,11 +40430,14 @@ function snapshotNotComparedHtml(n) {
 /** Shared red/green delta row (Trends + Compare). */
 function deltaRow(en, maxD, opts = {}) {
   const up = en.delta > 0;
-  const removed = en.sizeB === null;
+  // Known gone only when the other list held every item (review F1.4): a bounded row may still be there.
+  const removed = en.sizeB === null && !en.atLeast;
   // A folder a changed "Don't scan" rule left out was never deleted (B24): it
   // is called that, and offered no snapshot hunt.
   const ruled = opts.rules ? coverageExplains(en, opts.rules) : null;
-  const label = ruled || (en.sizeA === null ? 'new' : removed ? 'removed' : up ? 'grew' : 'shrank');
+  // In only one list, the other cut (review F1.4): the change is at least the amount shown.
+  const label = ruled || (en.atLeast ? (up ? 'new, or grew by at least' : 'removed, or shrank by at least')
+    : en.sizeA === null ? 'new' : removed ? 'removed' : up ? 'grew' : 'shrank');
   const ext = en.type === 'file' ? (en.name.split('.').pop() || '').toLowerCase() : undefined;
   // B4: only a *removed* row has anything to recover, so only it gets the
   // action. Offering "check snapshots" beside a file that is still on disk
@@ -40934,8 +40941,11 @@ function renderCompare(r) {
   // Left out, or let back in, by a changed "Don't scan" rule: neither added
   // nor removed (B24).
   let ruled = 0;
+  // Known only to have changed by at least their amount (review F1.4): neither added nor removed.
+  let bounded = 0;
   for (const en of r.entries) {
     if (coverageExplains(en, r.rules || null)) { ruled++; continue; }
+    if (en.atLeast) { bounded++; continue; }
     counts[en.sizeA === null ? 'added' : en.sizeB === null ? 'removed' : en.delta > 0 ? 'grew' : 'shrank']++;
   }
   const up = r.totalDelta > 0;
@@ -40972,7 +40982,8 @@ function renderCompare(r) {
       <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>${cmpWhenPair(r.whenA, r.whenB).join(' → ')}${r.deep ? '' : ' · top-level folders only'}</h2>
       <div class="muted num" style="margin-bottom:12px;">${total}
         &nbsp;·&nbsp; ${countsLead}<span class="cmp-ct" data-n="${counts.added}">${counts.added}</span> added · <span class="cmp-ct" data-n="${counts.removed}">${counts.removed}</span> removed · <span class="cmp-ct" data-n="${counts.grew}">${counts.grew}</span> grew · <span class="cmp-ct" data-n="${counts.shrank}">${counts.shrank}</span> shrank${
-        ruled ? ` · ${ruled} changed by your “Don’t scan” rules` : ''}${listedNote}</div>
+        ruled ? ` · ${ruled} changed by your “Don’t scan” rules` : ''}${
+        bounded ? ` · ${formatCount(bounded)} in only one scan’s list of the largest 100, each changed by at least what is shown` : ''}${listedNote}</div>
       ${r.rules ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} Your “Don’t scan” rules changed between these two scans, so part of this difference is what was scanned, not what is on disk.</div>` : ''}
       ${r.notCompared ? snapshotNotComparedHtml(r.notCompared) : ''}
       ${r.unlistedFolders ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} ${formatCount(r.unlistedFolders)} folder${r.unlistedFolders === 1 ? '' : 's'} one of these scans could not list in full (refused, unreadable, not entered, or holding an entry it could not look at), so what only one scan listed in ${r.unlistedFolders === 1 ? 'it' : 'them'} is not compared — not called removed or added.</div>` : ''}

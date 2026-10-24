@@ -499,8 +499,12 @@ function renderWhatsNew(prev, curr, diff, change = 'unknown') {
     }
     // Unknown coverage names no mover either: a folder counted again after a
     // rule was removed is not one that grew (review L1).
+    // "The most" only where every item was compared (review F1.4): one not compared, or known only to
+    // have grown by at least its amount, may have grown more.
     if (mover && known) {
-      parts.push(`<span class="wn-mover" title="${escapeHtml(mover.path)}">${escapeHtml(mover.name)} grew the most (+${formatBytes(mover.delta)})</span>`);
+      const whole = !diff.notCompared && !(diff.entries || []).some((e) => e.atLeast);
+      const grew = whole ? `grew the most (+${formatBytes(mover.delta)})` : `grew by ${mover.atLeast ? 'at least ' : '+'}${formatBytes(mover.delta)}`;
+      parts.push(`<span class="wn-mover" title="${escapeHtml(mover.path)}">${escapeHtml(mover.name)} ${grew}</span>`);
     }
   }
   const headline = parts.length ? "What's new" : 'Nothing changed';

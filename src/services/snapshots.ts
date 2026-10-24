@@ -466,29 +466,41 @@ function listMayLeaveOut(s: Snapshot): boolean {
   return s.topEntries.length >= MAX_TOP_ENTRIES;
 }
 
+/** The size no item a cut list left out can be larger than: its smallest kept item's (review F1.4). */
+function listFloor(s: Snapshot): number {
+  return s.topEntries.reduce((min, e) => Math.min(min, e.size), Infinity);
+}
+
 /**
  * Size deltas between two snapshots (top-level entries matched by path). A path in only one list is
  * removed or new only when the other list holds every item (hunt C46); missing from a list that may have
- * left it out, it crossed the largest-100 line or went or came — not known — so it is left out and
- * counted in `notCompared`, never called removed or new with its whole size as the change.
+ * left it out, it crossed the largest-100 line or went or came, so it is never called removed or new
+ * with its whole size as the change. Left out of a cut list, though, it was no larger than that list's
+ * smallest kept item (review F1.4): an item larger than that changed by at least the difference, and is
+ * a row saying so (`atLeast`); one no larger is not known to have changed at all, and is counted in
+ * `notCompared`.
  */
 export function diffSnapshots(a: Snapshot, b: Snapshot): SnapshotDiff {
   const inB = new Map(b.topEntries.map((e) => [e.path, e]));
   const inA = new Set(a.topEntries.map((e) => e.path));
   const aMayLeaveOut = listMayLeaveOut(a);
   const bMayLeaveOut = listMayLeaveOut(b);
+  const aFloor = listFloor(a);
+  const bFloor = listFloor(b);
   let notCompared = 0;
   const deltas: SnapshotDeltaEntry[] = [];
   for (const e of a.topEntries) {
     const now = inB.get(e.path);
     if (now !== undefined) deltas.push({ name: e.name, path: e.path, type: e.type, sizeA: e.size, sizeB: now.size, delta: now.size - e.size });
-    else if (bMayLeaveOut) notCompared++;
-    else deltas.push({ name: e.name, path: e.path, type: e.type, sizeA: e.size, sizeB: null, delta: -e.size });
+    else if (!bMayLeaveOut) deltas.push({ name: e.name, path: e.path, type: e.type, sizeA: e.size, sizeB: null, delta: -e.size });
+    else if (e.size > bFloor) deltas.push({ name: e.name, path: e.path, type: e.type, sizeA: e.size, sizeB: null, delta: -(e.size - bFloor), atLeast: true });
+    else notCompared++;
   }
   for (const e of b.topEntries) {
     if (inA.has(e.path)) continue;
-    if (aMayLeaveOut) notCompared++;
-    else deltas.push({ name: e.name, path: e.path, type: e.type, sizeA: null, sizeB: e.size, delta: e.size });
+    if (!aMayLeaveOut) deltas.push({ name: e.name, path: e.path, type: e.type, sizeA: null, sizeB: e.size, delta: e.size });
+    else if (e.size > aFloor) deltas.push({ name: e.name, path: e.path, type: e.type, sizeA: null, sizeB: e.size, delta: e.size - aFloor, atLeast: true });
+    else notCompared++;
   }
   const entries = deltas
     .filter((e) => e.delta !== 0)

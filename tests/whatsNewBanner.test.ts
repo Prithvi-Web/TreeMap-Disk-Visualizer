@@ -197,3 +197,29 @@ test('the record keeps three scans\u2019 snapshots and live scans, so Compare ca
   const book = JSON.parse(b.store.get('tm-scan-coverage') ?? '{}') as Record<string, Array<{ snap: string }>>;
   assert.deepEqual(book['/c']?.map((r) => r.snap).sort(), ['a', 'b', 'c', 'scan:scan-a', 'scan:scan-b', 'scan:scan-c']);
 });
+
+test('the banner names a mover as the one that grew the most only where everything was compared (review F1.4)', async () => {
+  const b = browser();
+  const a = snap('a', T0, 10_000, 100);
+  await scanFinished(b, { engine: 'turbo-walker', settings: ONE_RULE, snaps: [a] });
+  const c = snap('c', T0 + 60_000, 10_000_020_000, 101);
+  const bound = await scanFinished(b, {
+    engine: 'turbo-walker', settings: ONE_RULE, snaps: [a, c],
+    diff: { totalDelta: 10_000_010_000, entries: [{ name: 'huge.iso', path: '/c/huge.iso', type: 'file', sizeA: null, sizeB: 10_000_000_000, delta: 9_999_998_099, atLeast: true }] },
+  });
+  assert.match(bound.html, /huge\.iso grew by at least 9999998099 B/, bound.html);
+  assert.doesNotMatch(bound.html, /grew the most/, 'an item not compared may have grown more');
+  const d = snap('d', T0 + 120_000, 10_000_030_000, 102);
+  const partial = await scanFinished(b, {
+    engine: 'turbo-walker', settings: ONE_RULE, snaps: [a, c, d],
+    diff: { totalDelta: 10_000, notCompared: 2, entries: [{ name: 'notes', path: '/c/notes', type: 'dir', sizeA: 5, sizeB: 10_005, delta: 10_000 }] },
+  });
+  assert.match(partial.html, /notes grew by \+10000 B/, partial.html);
+  assert.doesNotMatch(partial.html, /grew the most/, partial.html);
+  const e = snap('e', T0 + 180_000, 10_000_040_000, 103);
+  const whole = await scanFinished(b, {
+    engine: 'turbo-walker', settings: ONE_RULE, snaps: [a, c, d, e],
+    diff: { totalDelta: 10_000, entries: [{ name: 'notes', path: '/c/notes', type: 'dir', sizeA: 10_005, sizeB: 20_005, delta: 10_000 }] },
+  });
+  assert.match(whole.html, /notes grew the most \(\+10000 B\)/, whole.html);
+});

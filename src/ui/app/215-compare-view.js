@@ -336,8 +336,11 @@ function renderCompare(r) {
   // Left out, or let back in, by a changed "Don't scan" rule: neither added
   // nor removed (B24).
   let ruled = 0;
+  // Known only to have changed by at least their amount (review F1.4): neither added nor removed.
+  let bounded = 0;
   for (const en of r.entries) {
     if (coverageExplains(en, r.rules || null)) { ruled++; continue; }
+    if (en.atLeast) { bounded++; continue; }
     counts[en.sizeA === null ? 'added' : en.sizeB === null ? 'removed' : en.delta > 0 ? 'grew' : 'shrank']++;
   }
   const up = r.totalDelta > 0;
@@ -374,7 +377,8 @@ function renderCompare(r) {
       <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>${cmpWhenPair(r.whenA, r.whenB).join(' → ')}${r.deep ? '' : ' · top-level folders only'}</h2>
       <div class="muted num" style="margin-bottom:12px;">${total}
         &nbsp;·&nbsp; ${countsLead}<span class="cmp-ct" data-n="${counts.added}">${counts.added}</span> added · <span class="cmp-ct" data-n="${counts.removed}">${counts.removed}</span> removed · <span class="cmp-ct" data-n="${counts.grew}">${counts.grew}</span> grew · <span class="cmp-ct" data-n="${counts.shrank}">${counts.shrank}</span> shrank${
-        ruled ? ` · ${ruled} changed by your “Don’t scan” rules` : ''}${listedNote}</div>
+        ruled ? ` · ${ruled} changed by your “Don’t scan” rules` : ''}${
+        bounded ? ` · ${formatCount(bounded)} in only one scan’s list of the largest 100, each changed by at least what is shown` : ''}${listedNote}</div>
       ${r.rules ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} Your “Don’t scan” rules changed between these two scans, so part of this difference is what was scanned, not what is on disk.</div>` : ''}
       ${r.notCompared ? snapshotNotComparedHtml(r.notCompared) : ''}
       ${r.unlistedFolders ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} ${formatCount(r.unlistedFolders)} folder${r.unlistedFolders === 1 ? '' : 's'} one of these scans could not list in full (refused, unreadable, not entered, or holding an entry it could not look at), so what only one scan listed in ${r.unlistedFolders === 1 ? 'it' : 'them'} is not compared — not called removed or added.</div>` : ''}

@@ -290,11 +290,14 @@ function snapshotNotComparedHtml(n) {
 /** Shared red/green delta row (Trends + Compare). */
 function deltaRow(en, maxD, opts = {}) {
   const up = en.delta > 0;
-  const removed = en.sizeB === null;
+  // Known gone only when the other list held every item (review F1.4): a bounded row may still be there.
+  const removed = en.sizeB === null && !en.atLeast;
   // A folder a changed "Don't scan" rule left out was never deleted (B24): it
   // is called that, and offered no snapshot hunt.
   const ruled = opts.rules ? coverageExplains(en, opts.rules) : null;
-  const label = ruled || (en.sizeA === null ? 'new' : removed ? 'removed' : up ? 'grew' : 'shrank');
+  // In only one list, the other cut (review F1.4): the change is at least the amount shown.
+  const label = ruled || (en.atLeast ? (up ? 'new, or grew by at least' : 'removed, or shrank by at least')
+    : en.sizeA === null ? 'new' : removed ? 'removed' : up ? 'grew' : 'shrank');
   const ext = en.type === 'file' ? (en.name.split('.').pop() || '').toLowerCase() : undefined;
   // B4: only a *removed* row has anything to recover, so only it gets the
   // action. Offering "check snapshots" beside a file that is still on disk

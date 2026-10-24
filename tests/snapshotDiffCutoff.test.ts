@@ -56,14 +56,33 @@ test('a snapshot says whether its list of top-level items was cut, and keeps the
   assert.equal((await listSnapshots(ROOT)).length, 2);
 });
 
-test('an item that fell below the largest 100, and one that climbed into it, are neither removed nor new', () => {
+test('an item that fell below the largest 100 is neither removed nor new, and one that climbed far past the line changed by at least the gap', () => {
   // 101 files; a new 50 kB download arrives, and file-100 was never kept while file-099 drops out.
   const before = snapOf(files(100, (i) => 2000 - i), { topEntriesCut: true });
   const after = snapOf([['new-download.zip', 50_000], ...files(99, (i) => 2000 - i)], { topEntriesCut: true });
   const diff = diffSnapshots(before, after);
-  assert.deepEqual(diff.entries, [], 'no row for either: neither list can vouch for the other\'s item');
-  assert.equal(diff.notCompared, 2, 'both are counted as not compared');
+  // Left out of a cut list, an item was no larger than its smallest kept one (1,901 B): 50 kB is far past it (review F1.4).
+  assert.deepEqual(diff.entries.map((e) => [e.name, e.sizeA, e.sizeB, e.delta, e.atLeast]), [['new-download.zip', null, 50_000, 50_000 - 1901, true]],
+    'new, or grew by at least what it holds past the older list\'s smallest kept item');
+  assert.equal(diff.notCompared, 1, 'file-099, at the line, could have been anything up to it: not compared');
   assert.equal(diff.totalDelta, after.totalSize - before.totalSize, 'the total is still exact');
+});
+
+test('a 10 GB item made, or removed, in a folder of more than 100 items is a row, by at least what it holds past the line (review F1.4)', () => {
+  const hundred = files(100, (i) => 2000 - i); // 2,000 B down to 1,901 B
+  const plain = snapOf(hundred, { topEntriesCut: true });
+  const withHuge = snapOf([['huge.iso', 10_000_000_000], ...hundred.slice(0, 99)], { topEntriesCut: true });
+  const made = diffSnapshots(plain, withHuge);
+  assert.deepEqual(made.entries.map((e) => [e.name, e.sizeA, e.sizeB, e.delta, e.atLeast]), [['huge.iso', null, 10_000_000_000, 10_000_000_000 - 1901, true]]);
+  assert.equal(made.notCompared, 1);
+  const removed = diffSnapshots(withHuge, plain);
+  // Absent from a cut list whose smallest kept item is 1,901 B: removed, or at most that now.
+  assert.deepEqual(removed.entries.map((e) => [e.name, e.sizeA, e.sizeB, e.delta, e.atLeast]), [['huge.iso', 10_000_000_000, null, -(10_000_000_000 - 1901), true]]);
+  assert.equal(removed.notCompared, 1);
+  // An item exactly at the other list's smallest kept size may not have changed at all: not compared.
+  const tie = diffSnapshots(snapOf(hundred, { topEntriesCut: true }), snapOf([['tied.bin', 1901], ...hundred.slice(0, 99)], { topEntriesCut: true }));
+  assert.deepEqual(tie.entries, []);
+  assert.equal(tie.notCompared, 2);
 });
 
 test('a list that holds every item still calls a missing one removed, and an emptied folder shrank to 0, not removed', () => {
@@ -82,8 +101,8 @@ test('a full list an earlier build saved, with no word on whether it was cut, is
   const before = snapOf(files(100, (i) => 2000 - i));
   const after = snapOf([['new-download.zip', 50_000], ...files(99, (i) => 2000 - i)]);
   const diff = diffSnapshots(before, after);
-  assert.deepEqual(diff.entries, []);
-  assert.equal(diff.notCompared, 2);
+  assert.deepEqual(diff.entries.map((e) => [e.name, e.atLeast]), [['new-download.zip', true]]);
+  assert.equal(diff.notCompared, 1);
 });
 
 /* ---------- the page's words (read as built: public/index.html) ---------- */

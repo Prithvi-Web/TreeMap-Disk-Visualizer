@@ -714,10 +714,17 @@ export interface SnapshotDeltaEntry {
   name: string;
   path: string;
   type: 'file' | 'dir';
-  /** null = entry did not exist in that snapshot. */
+  /** null = entry did not exist in that snapshot — or, with `atLeast`, is not in its cut list. */
   sizeA: number | null;
   sizeB: number | null;
   delta: number;
+  /**
+   * Present (true) when the item is in only one list and the other list was cut (review F1.4): left out
+   * of it, the item was no larger than that list's smallest kept item, so `delta` is the least it
+   * changed — new or grown by at least that much (sizeA null), or removed or shrunk by at least that
+   * much (sizeB null).
+   */
+  atLeast?: true;
 }
 
 export interface SnapshotDiff {

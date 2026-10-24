@@ -100,6 +100,22 @@ test('with nothing listed beside items or folders it could not compare, the card
   assert.doesNotMatch(same, /in what both scans list/, same);
 });
 
+test('a row known only to have changed by at least its amount says so, is counted apart, and offers no snapshot hunt (review F1.4)', () => {
+  const entries = [
+    { path: '/r/huge.iso', name: 'huge.iso', type: 'file', sizeA: null, sizeB: 10_000_000_000, delta: 9_999_998_099, atLeast: true },
+    { path: '/r/old.iso', name: 'old.iso', type: 'file', sizeA: 4_000_000_000, sizeB: null, delta: -3_999_998_099, atLeast: true },
+    { path: '/r/gone.txt', name: 'gone.txt', type: 'file', sizeA: 500, sizeB: null, delta: -500 },
+  ];
+  html = '';
+  (ctx.renderCompare as (r: unknown) => void)({ entries, totalDelta: 6_000_000_000, truncated: false, notCompared: 1, deep: false, whenA: 1, whenB: 2, rules: null });
+  const flat = html.replace(/\s+/g, ' ');
+  assert.match(flat, /huge\.iso <span class="muted">· new, or grew by at least<\/span>/, flat);
+  assert.match(flat, /old\.iso <span class="muted">· removed, or shrank by at least<\/span>/, flat);
+  assert.match(flat, /0<\/span> added · <span class="cmp-ct" data-n="1">1<\/span> removed/, 'only the row known to be gone is counted removed');
+  assert.match(flat, /· 2 in only one scan’s list of the largest 100, each changed by at least what is shown/, flat);
+  assert.equal((html.match(/data-snap-check=/g) ?? []).length, 1, 'only the row known to be gone offers Check snapshots');
+});
+
 test('a list it draws whole says nothing of a cut', () => {
   const { rows, line } = cardFor(150, false);
   assert.equal(rows, 150);
