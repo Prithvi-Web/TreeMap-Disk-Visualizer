@@ -17,6 +17,7 @@ import { resetIdempotencyCache } from '../src/middleware/idempotency';
 import { readAudit } from '../src/services/audit';
 import { platform } from '../src/platform';
 import { waitFor } from './fixtures/waitFor';
+import { withOpenFileCheck } from './fixtures/openFileCheck';
 
 /**
  * Hunt C54: a snapshot restore with overwrite that failed after the file at the destination had
@@ -92,7 +93,8 @@ test('a restore that fails after the file it replaces went to the Trash is audit
     answer = given;
     const original = path.join(ELSEWHERE, 'a.txt');
     const destination = path.join(SCANNED, dest);
-    const out = await restore({ path: original, destination, overwrite: true });
+    // The Trash step's open-file check answers "nothing open" on every platform (the Windows runner's own may not run).
+    const out = await withOpenFileCheck('clear', () => restore({ path: original, destination, overwrite: true }));
     assert.deepEqual([out.status, out.body.code], [409, code], `${label}: ${JSON.stringify(out.body)}`);
     assert.ok(trashed.includes(destination), `${label}: control — the file at the destination went to the Trash first`);
     const [line] = await readAudit(1);
