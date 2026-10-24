@@ -55,7 +55,7 @@ Scan results themselves are memory only: a scan expires 30 minutes after it sett
 | `settings.json` | Settings, schedules, the ignore list, folder budgets, Reclaim weights |
 | `snapshots.json` (plus one small file per scanned root) | Scan history — totals and top-level entries — and the shallow trees behind the time slider |
 | `index.db` | The SQLite live index behind global search: names, sizes, dates and extensions, never file contents |
-| `timecapsule` (a folder) and `timecapsule.json` | The Undo Vault: full copies of files the Clean Up cart or Autopilot removed, so a run can be undone while they are kept. Capped at 10% of the disk by default, kept 30 days by default, oldest evicted first; both numbers are in Settings |
+| `timecapsule` (a folder) and `timecapsule.json` | The Undo Vault: full copies of files the Clean Up cart or Autopilot removed, so a run can be undone while they are kept. Capped by default at 10% of the free space on its disk, counting what it already holds (so a fuller disk gives it less room), kept 30 days by default, oldest evicted first; both numbers are in Settings |
 | `offload-manifest.json` | The catalog of what was offloaded where |
 | `journal.jsonl` | The History journal — what grew and shrank, day by day |
 | `audit.jsonl` | Every destructive request that reaches its endpoint: executed, dry-run or refused there |
