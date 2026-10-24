@@ -15,7 +15,14 @@ import path from 'node:path';
 const ROOT = path.join(__dirname, '..');
 const read = (rel: string): string => readFileSync(path.join(ROOT, rel), 'utf8');
 /** "any failure rolls back", "failures roll back completely", … — the promise with no line drawn (review F1.16). */
-const UNQUALIFIED = /\b(any )?failures? (all )?rolls? back/i;
+const UNQUALIFIED = /\b(any\s+)?failures?\s+(all\s+)?rolls?\s+back/i;
+
+test('the guard finds the promise however its words are spaced or wrapped, as in the hard-wrapped AGENTS.md (leftover HE-L12)', () => {
+  for (const said of ['Any failure rolls back completely.', 'Any failure\n     rolls back completely.', 'failures\n  all  roll back', 'any  failure rolls\nback']) {
+    assert.match(said, UNQUALIFIED, JSON.stringify(said));
+  }
+  assert.doesNotMatch('A failure before every copy verifies rolls back', UNQUALIFIED, 'the promise with its line drawn is not caught');
+});
 
 const PLACES: [string, string][] = [
   ['the confirm sheet', read('src/ui/app/125-offload.js')],
