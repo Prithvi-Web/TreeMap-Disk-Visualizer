@@ -156,6 +156,8 @@ class SuggestionWalk implements SlicedWalk {
   validUntil = Infinity;
 
   private readonly groups = new Map<string, CleanupSuggestionGroup>();
+  /** Every match per rule id: a group's `items` stop at ITEMS_PER_RULE, its totalSize does not (hunt C59). */
+  readonly matchCounts = new Map<string, number>();
   private readonly stack: Frame[] = [];
   private readonly suppressed: PreparedSuppression[];
   private readonly locations: Map<string, LocationRule>;
@@ -358,6 +360,7 @@ class SuggestionWalk implements SlicedWalk {
     const size = store.size(node);
     group.totalSize += size;
     group.count += 1;
+    this.matchCounts.set(rule.id, (this.matchCounts.get(rule.id) ?? 0) + 1);
     if (group.items.length < ITEMS_PER_RULE) {
       group.items.push({
         name,
@@ -428,6 +431,8 @@ export interface CleanupWalk {
   validUntil: number;
   /** 1, unless the store changed during a walk (U-D9). */
   attempts: number;
+  /** Every match per rule id, uncapped — what a group's own `items` cannot say past ITEMS_PER_RULE (hunt C59). */
+  matchCounts: ReadonlyMap<string, number>;
 }
 
 /**
@@ -460,5 +465,5 @@ export async function collectCleanupSuggestionsAsync(
     return new SuggestionWalk(store, ignore, catalog, observe ? (rule, p) => { heard.push([rule, p]); } : undefined, suppressedRoots, computedAt);
   }, options, CLEANUP_SLICE_NODES);
   if (observe) for (const [rule, p] of heard) observe(rule, p);
-  return { groups: walk.result(), version, computedAt, validUntil: walk.validUntil, attempts };
+  return { groups: walk.result(), version, computedAt, validUntil: walk.validUntil, attempts, matchCounts: walk.matchCounts };
 }

@@ -1203,6 +1203,13 @@ read-what-you-saw) permission to act.
 - `trash_paths` and `offload` accept `dryRun: true`, which returns the exact
   manifest — affected paths and bytes — while acting on nothing. **Dry-run
   first, show the user, then act.**
+- `cleanup_suggestions` marks an advice-only group (`advisory: true`, with
+  its `adviceCommand` and a `note`) and leaves it out of `totalBytes`
+  (`advisoryBytes` counts it); `itemCount` is every match, and
+  `itemsTruncated` says when `items` lists fewer. `trash_paths` refuses a
+  path of an advice-only group — the item, anything inside it or a folder
+  holding it, in any completed scan that reaches it — with
+  `403 ADVISORY_PATH` (audited as refused), as Autopilot leaves one alone.
 - A size field is a raw byte count. Many have a human-formatted twin beside
   them, named after the field (`sizeFormatted`, `bytesFormatted`,
   `totalFormatted`, `deltaFormatted`, …), but not every size field has one:

@@ -7,11 +7,12 @@ import {
   collectLargestFolders,
   compareTrees,
   unlistedFoldersNote,
+  allScans,
 } from '../services/diskScanner';
 import { DEFAULT_DUPLICATE_MIN_SIZE, getDuplicateJob } from '../services/duplicateFinder';
 import { computeFacts } from '../services/facts';
 import type { ReclaimScoreFactValue } from '../services/facts';
-import { cleanupSuggestionsFor } from '../services/cleanupMemo';
+import { adviceClaimsFor, cleanupSuggestionsCountedFor } from '../services/cleanupMemo';
 import { suppressedNoteRoots } from '../services/notes';
 import { ruleCatalogStatus } from '../services/rulePacks';
 import { getIgnoreMatchers } from '../services/settings';
@@ -23,7 +24,7 @@ import { checkOpenHandles, describeConflicts, type OpenHandleReport } from '../s
 import { storeOf } from '../services/scanStore';
 import { insideAnyScanRoot, outsideScanRootSentence, assertNotSpillPath, assertNotAppDataPath, assertNotSafetyRecord } from '../middleware/pathGuard';
 import { isVirtualPath } from '../services/containerScanner';
-import { sanitizePath, PathRejectedError } from '../utils/pathSanitizer';
+import { sanitizePath, PathRejectedError, isInside, livesAt } from '../utils/pathSanitizer';
 import { AppError, permissionDeniedMessage } from '../middleware/errorHandler';
 import { formatBytes, ONE_MB } from '../utils/formatBytes';
 import { getPolicy, assertScanAllowed, assertPathsAllowed, assertBytesCap, assertBytesCapOver, knownSizeOf } from '../services/policy';
@@ -224,6 +225,38 @@ function guardDestructivePaths(raw: string[]): string[] {
     }
   }
   return paths;
+}
+
+/**
+ * Refuses a path an advice-only rule claims (hunt C12) — the claimed folder or file, anything
+ * inside it, or a folder holding it — in any completed scan that reaches the path, as Autopilot
+ * leaves such a group alone: its files are data (a VM disk) or the operating system's, and the
+ * supported way to reclaim them is the rule's adviceCommand. Each path is judged as given and where
+ * it lives (its parents' links resolved). Fails closed when the rule packs cannot be read: then
+ * nothing can say which paths are advice only.
+ */
+async function refuseAdvicePaths(paths: string[]): Promise<void> {
+  const spellings = paths.map((p) => ({ p, as: [...new Set([p, livesAt(p)])] }));
+  const touches = (a: string, b: string): boolean => isInside(a, b) || isInside(b, a);
+  const scans = allScans().filter((scan) => scan.status === 'complete' && (scan.store || scan.root)
+    && spellings.some(({ as }) => as.some((q) => touches(scan.rootPath, q))));
+  if (scans.length === 0) return;
+  const catalog = ruleCatalogStatus();
+  if (!catalog.ok) {
+    throw new AppError(500, 'RULE_PACKS_UNAVAILABLE',
+      `The cleanup rule packs could not be read (${catalog.reason}), so TreeMap cannot tell which paths are advice only, and trashes nothing`);
+  }
+  for (const scan of scans) {
+    const claims = await adviceClaimsFor(storeOf(scan), catalog.catalog);
+    for (const { p, as } of spellings) {
+      const hit = claims.find((c) => as.some((q) => touches(c.path, q)));
+      if (hit === undefined) continue;
+      const relation = as.some((q) => isInside(hit.path, q)) ? 'is in' : 'holds';
+      throw new AppError(403, 'ADVISORY_PATH',
+        `"${p}" ${relation} "${hit.title}" (${hit.path}), which is advice only: TreeMap never trashes it` +
+          (hit.adviceCommand ? `. Instead: ${hit.adviceCommand}` : ''));
+    }
+  }
 }
 
 /* ------------------------- summaries ------------------------- */
@@ -652,8 +685,12 @@ export function buildMcpServer(): McpServer {
         'come back carries regenerateCmd: a command, or a sentence where nothing need be run ("automatic on next run"). ' +
         'As the rule pack writes it: a `<folder>` in it stands for each item\'s own folder name ("python3 -m venv <folder>", ' +
         'for .venv, venv or env), to be filled in, shell-quoted, before it is run. ' +
-        'Groups come back largest first with exact byte totals. Suggested paths can be passed straight to ' +
-        'trash_paths (they are always inside the scanned root).',
+        'Groups come back largest first with exact byte totals. A group with advisory: true is advice only and ' +
+        'must never be trashed — its files are data (a VM disk) or the operating system\'s; reclaim that space with ' +
+        'its adviceCommand instead, and trash_paths refuses its paths (ADVISORY_PATH). totalBytes counts only the ' +
+        'other groups, and advisoryBytes the advice-only ones. Items of the other groups lie inside the scanned root ' +
+        'and can be passed to trash_paths. itemCount is every match; items lists at most itemsPerGroup of them, and ' +
+        'itemsTruncated says when there are more.',
       inputSchema: {
         scanId: z.string().min(1).describe('A completed scan from scan_path'),
         itemsPerGroup: z.number().int().min(1).max(200).default(20).describe('Maximum items listed per group'),
@@ -681,13 +718,20 @@ export function buildMcpServer(): McpServer {
           return ok({ scanId, available: false, reason: err instanceof Error ? err.message : String(err), totalBytes: 0, groups: [] });
         }
         // The same memoised, sliced walk the HTTP suggestions route answers from (U-16).
-        const groups = await cleanupSuggestionsFor(storeOf(scan), ignore, catalog.catalog, noted);
-        const totalBytes = groups.reduce((sum, g) => sum + g.totalSize, 0);
+        const { groups, matchCounts } = await cleanupSuggestionsCountedFor(storeOf(scan), ignore, catalog.catalog, noted);
+        // Advice-only space is never trashed, so it is not "reclaimable" here (hunt C59): reported apart.
+        const totalBytes = groups.reduce((sum, g) => sum + (g.advisory ? 0 : g.totalSize), 0);
+        const advisoryBytes = groups.reduce((sum, g) => sum + (g.advisory ? g.totalSize : 0), 0);
         return ok({
           scanId,
           totalBytes,
           totalFormatted: formatBytes(totalBytes),
-          groups: groups.map((g) => ({
+          advisoryBytes,
+          advisoryFormatted: formatBytes(advisoryBytes),
+          groups: groups.map((g) => {
+            const itemCount = matchCounts.get(g.id) ?? g.items.length;
+            const listed = Math.min(itemsPerGroup, g.items.length);
+            return {
             id: g.id,
             title: g.title,
             description: g.description,
@@ -697,11 +741,18 @@ export function buildMcpServer(): McpServer {
             ...(g.regenerateCmd !== undefined ? { regenerateCmd: g.regenerateCmd } : {}),
             confidence: g.confidence,
             why: g.why,
-            ...(g.advisory ? { advisory: true, adviceCommand: g.adviceCommand } : {}),
-            itemCount: g.items.length,
-            items: g.items.slice(0, itemsPerGroup).map((i) => ({ ...i, sizeFormatted: formatBytes(i.size) })),
-            itemsTruncated: g.items.length > itemsPerGroup,
-          })),
+            ...(g.advisory
+              ? {
+                  advisory: true,
+                  adviceCommand: g.adviceCommand,
+                  note: `Advice only — never trash these; trash_paths refuses them.${g.adviceCommand ? ` Instead: ${g.adviceCommand}` : ''}`,
+                }
+              : {}),
+            itemCount,
+            items: g.items.slice(0, listed).map((i) => ({ ...i, sizeFormatted: formatBytes(i.size) })),
+            itemsTruncated: itemCount > listed,
+            };
+          }),
         });
       }),
   );
@@ -873,7 +924,9 @@ export function buildMcpServer(): McpServer {
         'run\'s openHandles says whether a program holds any of these files open: inUse: false with complete: false ' +
         'is not an all-clear — the check could not see every program, and its note says why; tell the user. A real ' +
         'run carries the same openHandles for the check it made before moving anything (none with ' +
-        'ignoreOpenHandles, which skips the check).',
+        'ignoreOpenHandles, which skips the check). A path of a cleanup_suggestions group with advisory: true — the ' +
+        'item, anything inside it or a folder holding it — is refused (ADVISORY_PATH): its files are data or the ' +
+        'operating system\'s, and its adviceCommand is the way to reclaim them.',
       inputSchema: {
         paths: z.array(z.string().min(1)).min(1).max(MAX_PATHS).describe('Files/folders to trash (inside a scanned root)'),
         dryRun: z.boolean().default(false).describe('true = report the manifest, act on nothing'),
@@ -891,6 +944,14 @@ export function buildMcpServer(): McpServer {
     async ({ paths: rawPaths, dryRun, ignoreOpenHandles }) =>
       run(async () => {
         const paths = guardDestructivePaths(rawPaths);
+        try {
+          await refuseAdvicePaths(paths);
+        } catch (err) {
+          if (err instanceof AppError && err.code === 'ADVISORY_PATH') {
+            await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: null, dryRun, outcome: 'refused', code: err.code });
+          }
+          throw err;
+        }
         const sized = paths.map((p) => {
           const bytes = knownSizeOf(p);
           return { path: p, bytes, bytesFormatted: bytes === null ? 'unknown' : formatBytes(bytes) };

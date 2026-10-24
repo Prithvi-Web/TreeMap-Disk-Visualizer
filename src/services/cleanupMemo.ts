@@ -48,7 +48,7 @@ interface Answer<T> {
   value: T;
 }
 
-type Kind = 'suggestions' | 'claims';
+type Kind = 'suggestions' | 'claims' | 'advice';
 
 interface StoreMemo {
   /** The last finished walk's answer, per kind. */
@@ -60,7 +60,7 @@ interface StoreMemo {
 let memo = new WeakMap<ScanStore, StoreMemo>();
 let walkOptions: CleanupWalkOptions = {};
 /** Walks started per kind, and answers given without one (remembered or shared). */
-const counts = { suggestions: 0, claims: 0, reused: 0 };
+const counts = { suggestions: 0, claims: 0, advice: 0, reused: 0 };
 
 /** A small id per catalog object, for the key: two loads of the same packs are two catalogs. */
 const catalogIds = new WeakMap<RuleCatalog, number>();
@@ -161,13 +161,50 @@ export async function cleanupSuggestionsFor(
   catalog: RuleCatalog,
   suppressedRoots: string[],
 ): Promise<CleanupSuggestionGroup[]> {
-  const groups = await answer(store, 'suggestions', keyOf(catalog, ignore, suppressedRoots), async () => {
+  return (await cleanupSuggestionsCountedFor(store, ignore, catalog, suppressedRoots)).groups;
+}
+
+/**
+ * The same suggestions with every group's true match count beside them (hunt C59): a group's
+ * `items` stop at ITEMS_PER_RULE while its totalSize counts every match, so the list's length is
+ * not how many there are. From the same walk, remembered once.
+ */
+export async function cleanupSuggestionsCountedFor(
+  store: ScanStore,
+  ignore: CompiledIgnore[],
+  catalog: RuleCatalog,
+  suppressedRoots: string[],
+): Promise<{ groups: CleanupSuggestionGroup[]; matchCounts: ReadonlyMap<string, number> }> {
+  const found = await answer(store, 'suggestions', keyOf(catalog, ignore, suppressedRoots), async () => {
     const walk = await collectCleanupSuggestionsAsync(store, ignore, catalog, undefined, suppressedRoots, walkOptions);
-    return { walk, value: walk.groups };
+    return { walk, value: { groups: walk.groups, matchCounts: walk.matchCounts } };
   });
   // The walk's sentence lists every name a rule knows; the served one names
   // what each group matched (QA D06), when its items list every match.
-  return withMatchedReasons(copyGroups(groups), catalog, ITEMS_PER_RULE);
+  return { groups: withMatchedReasons(copyGroups(found.groups), catalog, ITEMS_PER_RULE), matchCounts: found.matchCounts };
+}
+
+/** One path an advice-only rule claims (hunt C12): never to be trashed, with the supported way instead. */
+export interface AdviceClaim {
+  path: string;
+  title: string;
+  adviceCommand?: string;
+}
+
+/**
+ * Every path an advice-only rule claims, uncapped, with no ignore pattern and no note applied —
+ * what MCP trash_paths refuses, whatever the suggestion lists showed (hunt C12). A pattern that
+ * hides a VM disk from the suggestions does not make it safe to trash.
+ */
+export async function adviceClaimsFor(store: ScanStore, catalog: RuleCatalog): Promise<AdviceClaim[]> {
+  const claims = await answer(store, 'advice', keyOf(catalog, [], []), async () => {
+    const found: AdviceClaim[] = [];
+    const walk = await collectCleanupSuggestionsAsync(store, [], catalog, (rule, path) => {
+      if (rule.action === 'advice') found.push({ path, title: rule.title, ...(rule.adviceCommand ? { adviceCommand: rule.adviceCommand } : {}) });
+    }, [], walkOptions);
+    return { walk, value: found };
+  });
+  return claims.map((c) => ({ ...c }));
 }
 
 /**
@@ -197,7 +234,7 @@ export function setCleanupMemoOptionsForTests(options: CleanupWalkOptions | null
 
 /** Test seam: walks started since the last reset, by kind, and answers reused without one — counted, never timed. */
 export function cleanupMemoCountsForTests(): { suggestions: number; claims: number; reused: number } {
-  return { ...counts };
+  return { suggestions: counts.suggestions, claims: counts.claims, reused: counts.reused };
 }
 
 /** Test seam: forget every answer and zero the counts. */
@@ -205,5 +242,6 @@ export function resetCleanupMemoForTests(): void {
   memo = new WeakMap();
   counts.suggestions = 0;
   counts.claims = 0;
+  counts.advice = 0;
   counts.reused = 0;
 }
