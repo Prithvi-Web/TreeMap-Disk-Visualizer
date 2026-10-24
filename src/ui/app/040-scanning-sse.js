@@ -188,7 +188,12 @@ async function stopScan() {
   if (state.abortScan) state.abortScan();
   closeEventSource();
   endScanChrome();
-  clearScanQueue(); // a Stop means stop — folders waiting behind this one are not started
+  // A Stop means stop — folders waiting behind this one are not started — and
+  // each was told it would scan, so it is said that they will not (hunt C19).
+  const dropped = clearScanQueue();
+  if (dropped > 0) toast(`${dropped} queued folder${dropped === 1 ? '' : 's'} will not be scanned.`);
+  // The desktop shell hears the scan ended, as a Stop, which it keeps quiet about (tellDesktop, hunt C01).
+  if (typeof tellDesktop === 'function') tellDesktop('scanFinished', { ok: false, path: stopped || '', stopped: true });
   // Every scanId-keyed endpoint answers a cancelled scan with
   // 500 SCAN_FAILED "Scan stopped by user". Leaving the id in state and then
   // remounting the views below turns one deliberate Stop into a wall of red
@@ -742,6 +747,9 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   state.scanning = true;
   state.abortScan = null; // no stream yet — Stop before the request answers has no scanId
   state.scanGen++; // this scan's identity while its request is in flight
+  // The desktop shell's dock bar spins, and it holds the folders it is handed
+  // until this scan ends (tellDesktop, hunt C01). Guarded: a page reader may lift this without it.
+  if (typeof tellDesktop === 'function') tellDesktop('scanProgress', 2);
   // A scan paints the Full Disk Access notice only if it sets one itself
   // (startScanRequest → preScanAccessNotice, after this): a cloud scan never
   // does, and must not inherit the last disk scan's (U-11, review F1.2).

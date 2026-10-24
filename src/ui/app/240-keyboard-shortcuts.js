@@ -252,12 +252,31 @@ document.addEventListener('keydown', (e) => {
 if (window.treemapDesktop) {
   window.treemapDesktop.onScanPath((p) => {
     if (!p) return;
-    $('pathInput').value = p;
     // The same queue the window's own drop uses: the dock and the CLI can
     // hand over several folders in a burst, and a scan already running must
-    // not swallow the rest.
+    // not swallow the rest. The queue names the folder in the Scan card's
+    // box when it starts, never while it waits.
     queueScan(p);
   });
+  // The application menu's own items (electron/lib/menu.js) — Settings… (⌘,),
+  // File › Rescan, View › Command Palette… and Toggle Sidebar, Help ›
+  // Keyboard Shortcuts — reach the page as commands (hunt C18). The menu's
+  // accelerators are the page's own keys, and each command does what its key
+  // does here; never under an open sheet, which takes no command but the
+  // palette's toggle, as it takes no key but ⌘K.
+  window.treemapDesktop.onCommand?.((name) => desktopCommand(name));
+}
+function desktopCommand(name) {
+  if (topModal() && name !== 'palette') return;
+  if (name === 'settings') $('settingsBtn').click();
+  else if (name === 'palette') { if ($('cmdkModal').classList.contains('open')) cmdkClose(); else cmdkOpen(); }
+  else if (name === 'sidebar') toggleSideNav();
+  else if (name === 'shortcuts') toggleShortcuts();
+  else if (name === 'rescan') {
+    if (state.scanning) toast('A scan is already running', 'error');
+    else if (state.root) rescan();
+    else toast('Scan a folder first — then Rescan scans it again.', 'error');
+  }
 }
 /* ── Drop a folder to scan it ── */
 /* Two things the old handler did not do. It gave no sign it was willing to

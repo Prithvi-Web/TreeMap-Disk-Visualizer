@@ -666,6 +666,8 @@ function finishScanHarness(over: Record<string, unknown> = {}) {
     renderGrowthProjection: noop, loadBudgets: noop, refreshTimebar: noop, enableLive: noop, seedNodes: noop,
     setTimeout: noop, fxDonutLoadingSync: noop, renderRefusedFolders: noop, probeRefusedFolders: async () => {},
     armScanExpiry: noop, formatClock: () => '10:31 PM',
+    // A reopened scan's index badge is painted from the index as it stands, never built (hunt C16).
+    indexStatusFor: async () => null, renderIndexBadge: noop,
     ...over,
   };
   const finishScan = new Function(...Object.keys(deps), `'use strict'; ${src} return finishScan;`)(

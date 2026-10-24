@@ -467,6 +467,8 @@ function quietRescanFailed(e) {
   tourScanFailed(); // the tour's quick wins, waiting for this scan, say it will not land (review F1.4)
   liveScanEnded(); // and a Live wish waiting for it goes (review F2.14)
   if (typeof cleanScanChanged === 'function') cleanScanChanged(); // the Clean Up panes waiting on a scan say so again, or ask (K04)
+  // The desktop shell hears it ended, before a folder waiting here starts (hunt C01).
+  if (typeof tellDesktop === 'function') tellDesktop('scanFinished', { ok: false, path: state.scanningPath || '', error: why });
   drainScanQueue(); // a folder waiting behind this one still deserves its turn
 }
 
@@ -814,6 +816,8 @@ function failScan(message, err = null) {
   liveScanEnded(); // a Live wish waited for this scan to land; it will not (review F2.14)
   if (typeof cleanScanChanged === 'function') cleanScanChanged(); // the Clean Up panes waiting on a scan say so again, or ask (K04)
   focusStartScreen(); // on "Scan … again", as after a Stop, or on "Choose a folder…"
+  // The desktop shell hears it ended, before a folder waiting here starts (hunt C01).
+  if (typeof tellDesktop === 'function') tellDesktop('scanFinished', { ok: false, path: state.scanningPath || '', error: message });
   drainScanQueue(); // a folder waiting behind this one still gets its turn
 }
 
@@ -1063,6 +1067,14 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0, afterStop =
   // is the single load path — previously this called loadTreemap()/renderGrid()
   // and *then* switchView(), loading the active view twice on every scan.
   emit(TOPIC.scan, state.scanId);
+  // The desktop shell hears that a scan completed now (hunt C01) — after the
+  // views have it, where the page's own queue starts its next folder too —
+  // with what the notice says. Not a reopened scan, which completed before
+  // the page loaded, nor one shown after its Stop, which told the shell; nor
+  // when a scan has begun since, whose own end the shell will hear.
+  if (!reopenedAt && !afterStop && !state.scanning && typeof tellDesktop === 'function') {
+    tellDesktop('scanFinished', { ok: true, path: root.path, files: typeof files === 'number' ? files : undefined, bytes: root.size });
+  }
   // Re-entering the view repaints what it holds, focus on it included (review F2.6).
   withFocusKept(() => { switchView(state.view); });
   // A1: make the *next* open of this folder instant. Background, non-blocking,
@@ -1071,8 +1083,12 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0, afterStop =
   // filesystem to watch, re-indexing what we just read from the index would
   // be pointless work, and a whole disk is not indexed automatically (U-1).
   // This scan's own counts, not state.scanStats: another scan finishing
-  // while the lists loaded has replaced those (Track U review L4).
-  if (root.path && !afterStop) buildIndexInBackground(root.path, stats || null);
+  // while the lists loaded has replaced those (Track U review L4). Never for
+  // a reopened scan: the page reopens it as it loads, and an index build is a
+  // walk of the folder — opening TreeMap starts none (hunt C16). Its badge is
+  // painted from the index as it stands.
+  if (root.path && !afterStop && !reopenedAt) buildIndexInBackground(root.path, stats || null);
+  else if (root.path && reopenedAt) void indexStatusFor(root.path).then((info) => { if (state.root === root) renderIndexBadge(info); });
   renderGrowthProjection();
   loadBudgets();
   // The snapshot (and its time-slider tree) is saved asynchronously after the
@@ -1989,13 +2005,20 @@ $('accessListBtn').addEventListener('click', () => void openRefusedList());
    the first file and silently ignored the others. Draining waits a tick so
    the finishing scan's own repaint completes before the next one begins. */
 const scanQueue = [];
+/**
+ * Scan `p` now, or after the folders already waiting. The Scan card's box
+ * names the folder that starts now — never one that waits, which would leave
+ * the box naming another folder than the one being scanned (drainScanQueue
+ * names each as its turn comes). Only the first folder waiting scans next:
+ * "it scans next" said of every one was false of all but that one (hunt C19).
+ */
 function queueScan(p) {
   if (!p) return;
-  if (!state.scanning) { void startScan(p); return; }
+  if (!state.scanning) { $('pathInput').value = p; void startScan(p); return; }
   if (scanQueue.includes(p)) return;
   scanQueue.push(p);
-  const n = scanQueue.length;
-  toast(`Queued ${p} — it scans next${n > 1 ? ` (${n} waiting)` : ''}`, 'success', 5000);
+  const before = scanQueue.length - 1;
+  toast(before === 0 ? `Queued ${p} — it scans next` : `Queued ${p} — ${before} folder${before === 1 ? '' : 's'} before it`, 'success', 5000);
 }
 function drainScanQueue() {
   if (state.scanning || !scanQueue.length) return;
@@ -2003,9 +2026,28 @@ function drainScanQueue() {
   $('pathInput').value = next;
   void startScan(next);
 }
-function clearScanQueue() { scanQueue.length = 0; }
+/** Empty the queue (a Stop); answers how many folders were waiting, which the Stop says will not be scanned (hunt C19). */
+function clearScanQueue() { const n = scanQueue.length; scanQueue.length = 0; return n; }
 subscribe(TOPIC.scan, (scanId) => { if (scanId) setTimeout(drainScanQueue, 0); });
 /* ── end scan queue ── */
+
+/* ── The desktop shell's side of a scan (hunt C01) ──
+   In the desktop app the shell (electron/preload.js) runs the dock or taskbar
+   progress bar, the bounce and notice for a scan that ends while TreeMap is in
+   the background, and its own queue of the folders it is handed — the File
+   menu, the tray, a dock drop, "Scan with TreeMap" — which it gives the page
+   one at a time, the next only once the page says the last scan ended. The
+   page says so here: a real scan starting (beginScanChrome), and every way
+   one ends — finished (finishScan), failed (failScan), its quiet refresh
+   failed (quietRescanFailed) or stopped (stopScan). A paint from the saved
+   index and a reopened scan are no scan of their own and say nothing. Never
+   said, the shell's queue waited for ever: every folder it was handed after
+   the first was dropped without a word until the app was relaunched. A
+   browser tab has no bridge, and nothing is said. */
+function tellDesktop(method, arg) {
+  const bridge = typeof window === 'undefined' || !window ? null : window.treemapDesktop;
+  if (bridge && typeof bridge[method] === 'function') bridge[method](arg);
+}
 
 /* ── Results expire ──
    Scan results are kept for a limited time after they settle; the server
