@@ -15848,8 +15848,9 @@ function drawTreemap() {
 
   const px = [];
   const cloudHiddenIn = new Set(); // folders an online-only file is hidden in (pass 0)
+  let cloudHidden = 0; // how many of them, for the empty map's note (hunt C71)
   for (const n of state.treemap.nodes) {
-    if (state.treemap.hideCloud && n.cloudPlaceholder) { cloudHiddenIn.add(tmParentPath(n.path)); continue; }
+    if (state.treemap.hideCloud && n.cloudPlaceholder) { cloudHiddenIn.add(tmParentPath(n.path)); cloudHidden++; continue; }
     // On whole device pixels, edge by edge, so neighbours still meet exactly
     // and a 1 px line is one crisp line (the owner's outline decision).
     const x = tmSnap((n.x / 100) * cssW, dpr), y = tmSnap((n.y / 100) * cssH, dpr);
@@ -15871,10 +15872,17 @@ function drawTreemap() {
   // app, not as a small folder. loadTreemap already dropped the 4 KB floor
   // when it would have hidden everything, so this is a genuinely empty
   // folder, or a panel too small for the files it holds.
+  // Hide cloud hiding what would have been drawn is said as that (hunt C71):
+  // "too small for a rectangle", with the folder's bytes, was said of cloud
+  // files that are hidden, not small, and whose bytes are not on this disk.
   if (!px.length) {
-    tmSetEmpty(state.treemap.rootSize > 0
-      ? `Nothing here is big enough to draw — ${formatBytes(state.treemap.rootSize)} in files too small for a rectangle at this size. Open the Grid view to list them.`
-      : 'This folder is empty.');
+    const one = cloudHidden === 1;
+    tmSetEmpty(cloudHidden > 0
+      ? `Nothing here is drawn while Hide cloud is on — ${formatCount(cloudHidden)} cloud file${one ? '' : 's'} not downloaded ` +
+        `${one ? 'is' : 'are'} hidden, and anything else is too small for a rectangle at this size. Turn off Hide cloud to see ${one ? 'it' : 'them'}.`
+      : state.treemap.rootSize > 0
+        ? `Nothing here is big enough to draw — ${formatBytes(state.treemap.rootSize)} in files too small for a rectangle at this size. Open the Grid view to list them.`
+        : 'This folder is empty.');
     renderSearchOverlay();
     presentTreemap();
     renderTmLegend();

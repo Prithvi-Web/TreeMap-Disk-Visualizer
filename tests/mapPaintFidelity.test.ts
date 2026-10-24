@@ -255,17 +255,35 @@ function mapState(nodes: any[], colourOf: (n: any) => number[], hideCloud = fals
   return map.state.treemap;
 }
 /** The real drawTreemap over a state of its own, to paint as often as a test likes: `state.treemap.nodes` is what the next paint draws. */
-function mapPainter(nodes: any[], colourOf: (n: any) => number[], hideCloud = false, dpr = 1, size = 100, ctx: unknown = recordingCtx().ctx) {
+function mapPainter(nodes: any[], colourOf: (n: any) => number[], hideCloud = false, dpr = 1, size = 100, ctx: unknown = recordingCtx().ctx,
+  onEmpty: (text: string) => void = () => {}) {
   const state = { treemap: { nodes, hideCloud, rootSize: 1e9, history: { active: false }, pxRects: [] as any[], tags: [] as any[] } };
   const paint = load<() => void>(MAP_NAMES, {
     $: () => ({ clientWidth: size + 20 }), treemapCanvasHeight: () => size, window: { devicePixelRatio: dpr },
     tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: ctx,
-    cssVar: () => '#0b0b0f', state, tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {},
+    cssVar: () => '#0b0b0f', state, tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty: onEmpty,
     renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {}, cellRgb: colourOf, tmHatchPattern: () => null,
-    tmPreview: { on: false }, roundRect() {}, formatBytes: (n: number) => `${n} B`,
+    tmPreview: { on: false }, roundRect() {}, formatBytes: (n: number) => `${n} B`, formatCount: (n: number) => String(n),
   }, 'drawTreemap');
   return { state, paint };
 }
+
+test('hunt C71: with Hide cloud on and every item here a cloud file, the empty map says they are hidden — never that they are too small to draw', () => {
+  const cloud = (k: number) => ({ name: `c${k}.mov`, path: `/r/c${k}.mov`, size: 2e9, type: 'file', depth: 1, expanded: false, cloudPlaceholder: true, x: k * 50, y: 0, w: 50, h: 100 });
+  const said: string[] = [];
+  const map = mapPainter([cloud(0), cloud(1)], () => [10, 132, 255], true, 1, 120, recordingCtx().ctx, (t) => { said.push(t); });
+  map.paint();
+  assert.equal(map.state.treemap.pxRects.length, 0, 'control: Hide cloud leaves nothing to draw');
+  assert.equal(said.at(-1), 'Nothing here is drawn while Hide cloud is on — 2 cloud files not downloaded are hidden, and anything else is too small for a rectangle at this size. Turn off Hide cloud to see them.');
+  map.state.treemap.nodes = [cloud(0)];
+  map.paint();
+  assert.equal(said.at(-1), 'Nothing here is drawn while Hide cloud is on — 1 cloud file not downloaded is hidden, and anything else is too small for a rectangle at this size. Turn off Hide cloud to see it.');
+  // Control: with nothing hidden, a map too small for its files says that.
+  map.state.treemap.hideCloud = false;
+  map.state.treemap.nodes = [{ ...cloud(0), cloudPlaceholder: false, w: 0.1, h: 0.1 }];
+  map.paint();
+  assert.match(said.at(-1)!, /^Nothing here is big enough to draw — 1000000000 B in files too small for a rectangle/);
+});
 
 type LensOp = { kind: string; style?: unknown; lineWidth?: number; box: number[] | null; seg?: number[]; rule?: string; shapes?: number[][]; text?: string; at?: number[]; font?: string; baseline?: string };
 /**
