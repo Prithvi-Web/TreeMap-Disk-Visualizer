@@ -701,16 +701,25 @@ obvious design does not work here.
 
 - `mdutil -s /` → **"Indexing enabled"**.
 - `mdimport -A` lists `kMDItemLastUsedDate` as a known attribute.
-- `mdfind 'kMDItemLastUsedDate > "2020-01-01"'` matches **zero files on the
-  entire machine**, and `mdls` returns an empty dict for every path tried,
-  including `/Applications/Safari.app`. Apple no longer populates it.
+- `mdfind 'kMDItemLastUsedDate > "2020-01-01"'` matched **zero files on the
+  entire machine** when this was written, and `mdls` returned an empty dict for
+  every path tried, including `/Applications/Safari.app`.
+- Measured again on macOS 27 (review F1.2/F1.3): `mdls` now reports a
+  `kMDItemLastUsedDate` for a file no app has opened, and it is the file's
+  content modification date, with no use count. A file touched to 2019 is
+  "last used" in 2019; an append from a shell moves the date on, a read does
+  not. That is no record of an opening, so TreeMap also asks `mdls` for the
+  file's content and file-system modification and creation dates, and a
+  last-used date within a second of any of them, with no use count, is
+  dropped: the file falls through to its access time, with its caveat. A date
+  Spotlight counted uses for is kept whatever it equals.
 
 A capability probe based on `mdutil` alone would therefore have reported this
 feature *available* and then answered "unknown" for every file forever. So
 availability is decided by whether Spotlight actually **answers** — probed once
 per process against up to 128 real paths — not by whether it is switched on.
-What that probe concludes is worded as what it is: "Spotlight returned no last
-opened dates for a sample of N files here."
+What that probe concludes is worded as what it is: "Spotlight gave no record of
+an app opening any of a sample of N files here."
 
 Cost, measured: `mdls -plist -` batched costs **~0.36 ms/path** (2,000 paths in
 717 ms, which alone exceeds §2.5's 400 ms sidecar budget). `lstat` costs

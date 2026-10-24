@@ -18,10 +18,17 @@ import { mapConcurrent } from '../../utils/concurrency';
  *  - `mdutil -s /` reports **"Indexing enabled"**, so Spotlight is on.
  *  - `mdimport -A` lists `kMDItemLastUsedDate` as a known attribute, so it is
  *    not that the attribute was removed.
- *  - And yet `mdfind 'kMDItemLastUsedDate > "2020-01-01"'` matches **zero
- *    files on the entire machine**, and `mdls` returns an empty dict for every
- *    path tried, including `/Applications/Safari.app`. Apple no longer
- *    populates it.
+ *  - And yet `mdfind 'kMDItemLastUsedDate > "2020-01-01"'` matched **zero
+ *    files on the entire machine** when this was written, and `mdls` returned
+ *    an empty dict for every path tried, including `/Applications/Safari.app`.
+ *  - Measured again on macOS 27 (review F1.2/F1.3): `mdls` now reports a
+ *    `kMDItemLastUsedDate` for a file no app has opened — its content
+ *    modification date, with no use count. A file touched to 2019 is "last
+ *    used" in 2019, an append from a shell moves the date on and a read does
+ *    not. That is no record of an opening, so a last-used date within a second
+ *    of the file's own modification or creation date, with no use count, is
+ *    dropped and the file falls through to its access time (`parseMdlsBatch`).
+ *    An application bundle such as Safari.app still gets no date at all.
  *
  * A capability probe based on `mdutil` alone would therefore report this
  * feature as *available* and then answer "unknown" for every file forever —
@@ -58,6 +65,33 @@ import { mapConcurrent } from '../../utils/concurrency';
 export interface MdlsEntry {
   kMDItemLastUsedDate?: unknown;
   kMDItemUseCount?: unknown;
+  kMDItemContentModificationDate?: unknown;
+  kMDItemContentCreationDate?: unknown;
+  kMDItemFSContentChangeDate?: unknown;
+  kMDItemFSCreationDate?: unknown;
+}
+
+/**
+ * The file's own dates, as Spotlight gives them beside its last-used date (review F1.2/F1.3).
+ *
+ * For a file no app has opened, mdls reports `kMDItemLastUsedDate` as the content modification
+ * date, with no use count — measured on macOS 27. A last-used date within a second of any of these
+ * is therefore Spotlight's stand-in, not an opening: taken as one, the modification time became the
+ * last-opened date, which §1.1 forbids outright. Within a second, because plist dates carry whole
+ * seconds while the file system keeps fractions.
+ */
+const STAND_IN_DATE_KEYS = [
+  'kMDItemContentModificationDate', 'kMDItemContentCreationDate', 'kMDItemFSContentChangeDate', 'kMDItemFSCreationDate',
+] as const;
+const SAME_SECOND_MS = 1000;
+
+/** Is this last-used date only one of the file's own modification or creation dates? */
+function isStandInDate(entry: MdlsEntry, lastUsedMs: number): boolean {
+  return STAND_IN_DATE_KEYS.some((key) => {
+    const raw = entry[key];
+    const at = typeof raw === 'string' ? Date.parse(raw) : NaN;
+    return Number.isFinite(at) && Math.abs(at - lastUsedMs) < SAME_SECOND_MS;
+  });
 }
 
 /**
@@ -96,6 +130,11 @@ export function parseMdlsBatch(raw: unknown, paths: string[]): Map<string, { las
     const useCount = typeof rawCount === 'number' && Number.isFinite(rawCount) && rawCount >= 0
       ? Math.round(rawCount)
       : null;
+
+    // A date Spotlight counted uses for is a recorded opening, whatever it equals. One with no use
+    // count that is only the file's own modification or creation date is no opening (review
+    // F1.2/F1.3): the path is left out, and falls through to its access time with that caveat.
+    if (!(useCount !== null && useCount > 0) && isStandInDate(entry, parsed)) continue;
 
     out.set(paths[i], { lastUsedMs: parsed, useCount });
   }
@@ -164,8 +203,10 @@ export function resetSpotlightVerdictForTests(): void {
 
 async function runMdls(paths: string[]): Promise<Map<string, { lastUsedMs: number; useCount: number | null }> | null> {
   try {
+    // The file's own dates come too: a last-used date that is only one of them is no opening (review F1.2/F1.3).
     const raw = await runPlist<unknown>('mdls', [
-      '-plist', '-', '-name', 'kMDItemLastUsedDate', '-name', 'kMDItemUseCount', '--', ...paths,
+      '-plist', '-', '-name', 'kMDItemLastUsedDate', '-name', 'kMDItemUseCount',
+      ...STAND_IN_DATE_KEYS.flatMap((key) => ['-name', key]), '--', ...paths,
     ]);
     return parseMdlsBatch(raw, paths);
   } catch {
@@ -180,7 +221,9 @@ async function runMdls(paths: string[]): Promise<Map<string, { lastUsedMs: numbe
  * Does Spotlight actually answer on this machine? Probed once, on real paths.
  *
  * Deliberately not inferred from `mdutil`: on this Mac indexing is enabled and
- * the attribute is known, and Spotlight still has nothing to say.
+ * the attribute is known, and Spotlight still has nothing to say — or, on
+ * macOS 27, says only the files' own modification dates, which
+ * `parseMdlsBatch` does not count as openings (review F1.2/F1.3).
  */
 async function spotlightIsProductive(samplePaths: string[]): Promise<{ productive: boolean; note: string }> {
   if (spotlightVerdict) return spotlightVerdict;
@@ -194,7 +237,7 @@ async function spotlightIsProductive(samplePaths: string[]): Promise<{ productiv
     spotlightVerdict = {
       productive: false,
       note:
-        `Spotlight returned no “last opened” dates for a sample of ${sample.length} file${sample.length === 1 ? '' : 's'} here, ` +
+        `Spotlight gave no record of an app opening any of a sample of ${sample.length} file${sample.length === 1 ? '' : 's'} here, ` +
         'so TreeMap is using file access times instead.',
     };
   }

@@ -306,7 +306,9 @@ OpenAPI 3 spec).
      express: `{ lastUsedMs, useCount, source: 'spotlight'|'atime'|'none',
      caveat? }`. `source` is part of the value because the sources answer
      different questions — Spotlight records an app opening the item and can
-     supply a use count, while an access time also moves for backups, search
+     supply a use count (a Spotlight date that is only the file's own
+     modification or creation date, as macOS reports for a file no app has
+     opened, is not taken for one), while an access time also moves for backups, search
      indexing and antivirus, and always carries its `caveat`. **A null
      `lastUsedMs` is never a zero and never the modification time.** Where a
      system does not record openings at all — NTFS last-access tracking off,

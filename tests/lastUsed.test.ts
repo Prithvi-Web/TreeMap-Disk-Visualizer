@@ -20,7 +20,7 @@ import {
   unescapeMountPoint,
   windowsLastAccessReason,
 } from '../src/platform/atime';
-import { parseMdlsBatch, parseMdutilStatus } from '../src/platform/macos/lastUsed';
+import { parseMdlsBatch, parseMdutilStatus, readLastUsedMac, resetSpotlightVerdictForTests } from '../src/platform/macos/lastUsed';
 import { PlistConversionError, parseXmlPlist, plistToJson } from '../src/platform/macos/plist';
 import { execFileSync } from 'node:child_process';
 import { lastUsedProvider } from '../src/services/facts/lastUsedProvider';
@@ -97,6 +97,29 @@ test('mdls: a negative or absurd use count is dropped, not shown', () => {
     ['/a'],
   );
   assert.equal(out!.get('/a')!.useCount, null);
+});
+
+test('mdls: a last-used date that is only the file\'s modification or creation date is no opening, and is dropped (review F1.2/F1.3)', () => {
+  // Measured on macOS 27: for a file no app has opened, mdls reports kMDItemLastUsedDate equal to the
+  // content modification date (a file touched to 2019 is "last used" in 2019) with no use count. Taken
+  // as an opening, the modification time became the last-opened date — what this fact must never say.
+  const T = '2019-01-02T09:04:00Z';
+  const OTHER = '2020-05-05T00:00:00Z';
+  const paths = ['/mod', '/created', '/fsmod', '/fscreated', '/opened', '/counted'];
+  const out = parseMdlsBatch([
+    { kMDItemLastUsedDate: T, kMDItemContentModificationDate: T, kMDItemContentCreationDate: OTHER, kMDItemFSContentChangeDate: OTHER, kMDItemFSCreationDate: OTHER },
+    { kMDItemLastUsedDate: T, kMDItemContentModificationDate: OTHER, kMDItemContentCreationDate: T, kMDItemFSContentChangeDate: OTHER, kMDItemFSCreationDate: OTHER },
+    { kMDItemLastUsedDate: T, kMDItemContentModificationDate: OTHER, kMDItemContentCreationDate: OTHER, kMDItemFSContentChangeDate: '2019-01-02T09:04:00.600Z', kMDItemFSCreationDate: OTHER },
+    { kMDItemLastUsedDate: T, kMDItemContentModificationDate: OTHER, kMDItemContentCreationDate: OTHER, kMDItemFSContentChangeDate: OTHER, kMDItemFSCreationDate: '2019-01-02T09:03:59.400Z' },
+    // Controls: a date apart from every one of them by a second or more is an opening ...
+    { kMDItemLastUsedDate: '2019-01-02T09:04:01Z', kMDItemContentModificationDate: T, kMDItemContentCreationDate: T, kMDItemFSContentChangeDate: T, kMDItemFSCreationDate: T },
+    // ... and so is one Spotlight counted uses for, whatever it equals.
+    { kMDItemLastUsedDate: T, kMDItemUseCount: 4, kMDItemContentModificationDate: T, kMDItemContentCreationDate: T, kMDItemFSContentChangeDate: T, kMDItemFSCreationDate: T },
+  ], paths);
+  assert.ok(out);
+  assert.deepEqual([...out.keys()], ['/opened', '/counted'], 'a date that is the modification or creation date, to within a second, is no record of an opening');
+  assert.deepEqual(out.get('/opened'), { lastUsedMs: Date.parse('2019-01-02T09:04:01Z'), useCount: null });
+  assert.deepEqual(out.get('/counted'), { lastUsedMs: Date.parse(T), useCount: 4 });
 });
 
 test('mdutil: only a recognisably enabled answer counts as enabled', () => {
@@ -185,6 +208,72 @@ test('plist: a real dated plist goes through macOS\'s own plutil, XML and binary
     const batch = parseMdlsBatch(raw, ['/a.mov', '/b.mov']);
     assert.ok(batch, `${kind}: the batch is read, not discarded`);
     assert.deepEqual([...batch], [['/a.mov', { lastUsedMs: Date.parse('2026-03-04T05:06:07Z'), useCount: 7 }]], `${kind}: the dated file has its date, the other has none`);
+  }
+});
+
+/** What `mdls -plist -` writes, verbatim in shape, for a file no app has opened (its last-used date is its modification date) and for one opened four times. */
+const DEFAULT_DATED_MDLS = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+	<dict>
+		<key>kMDItemContentCreationDate</key>
+		<date>2019-01-02T09:04:00Z</date>
+		<key>kMDItemContentModificationDate</key>
+		<date>2019-01-02T09:04:00Z</date>
+		<key>kMDItemFSContentChangeDate</key>
+		<date>2019-01-02T09:04:00Z</date>
+		<key>kMDItemFSCreationDate</key>
+		<date>2019-01-02T09:04:00Z</date>
+		<key>kMDItemLastUsedDate</key>
+		<date>2019-01-02T09:04:00Z</date>
+	</dict>
+	<dict>
+		<key>kMDItemContentCreationDate</key>
+		<date>2019-01-02T09:04:00Z</date>
+		<key>kMDItemContentModificationDate</key>
+		<date>2024-06-07T08:09:10Z</date>
+		<key>kMDItemFSContentChangeDate</key>
+		<date>2024-06-07T08:09:10Z</date>
+		<key>kMDItemFSCreationDate</key>
+		<date>2019-01-02T09:04:00Z</date>
+		<key>kMDItemLastUsedDate</key>
+		<date>2026-03-04T05:06:07Z</date>
+		<key>kMDItemUseCount</key>
+		<integer>4</integer>
+	</dict>
+</array>
+</plist>
+`;
+
+test('plist: a real dated plist whose last-used date is the modification date goes through macOS\'s own plutil, and mdls\'s batch takes no opening from it (review F1.2/F1.3)', { skip: process.platform !== 'darwin' && 'plutil is macOS\'s' }, async () => {
+  const raw = await plistToJson<unknown>(Buffer.from(DEFAULT_DATED_MDLS));
+  const batch = parseMdlsBatch(raw, ['/never-opened.txt', '/opened.txt']);
+  assert.ok(batch, 'the batch is read, not discarded');
+  assert.deepEqual([...batch], [['/opened.txt', { lastUsedMs: Date.parse('2026-03-04T05:06:07Z'), useCount: 4 }]],
+    'the file no app opened has no last-opened date from Spotlight; the one opened four times has its date');
+});
+
+test('a file no app has opened is never given its modification time as its last-opened date, through the real mdls (review F1.2/F1.3)', { skip: process.platform !== 'darwin' && 'mdls is macOS\'s' }, async (t) => {
+  // Real tools, no stubs: on macOS 27 mdls reports this file's kMDItemLastUsedDate as its 2019
+  // modification date. Where Spotlight is off (a CI runner) it reports nothing; either way the
+  // answer must not be the modification time.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-lu-real-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); resetSpotlightVerdictForTests(); });
+  const file = path.join(dir, 'never-opened.txt');
+  fs.writeFileSync(file, 'x');
+  const mtime = new Date('2019-01-02T09:04:00Z');
+  fs.utimesSync(file, new Date(), mtime);
+  const st = fs.lstatSync(file);
+  resetSpotlightVerdictForTests();
+  const got = (await readLastUsedMac([file])).get(file);
+  assert.ok(got, 'the file is answered about');
+  assert.ok(got.lastUsedMs === null || Math.abs(got.lastUsedMs - st.mtimeMs) >= 1000,
+    `the modification time is not a last-opened date: ${JSON.stringify(got)} (mtime ${st.mtimeMs})`);
+  if (got.source === 'atime') {
+    // The access time stands in (a read since the utimes may have moved it on, never back), with its caveat.
+    assert.ok(got.lastUsedMs !== null && got.lastUsedMs >= Math.floor(st.atimeMs), `the access time stands in: ${JSON.stringify(got)}`);
+    assert.ok(got.caveat && got.caveat.includes(ATIME_CAVEAT), 'with its caveat');
   }
 });
 
