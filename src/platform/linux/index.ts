@@ -12,7 +12,7 @@ import { downloadOrigin, provenanceAvailable, readDownloadOriginsLinux } from '.
 import { listSnapshots as btrfsSnapshots, snapshotAvailability } from './btrfs';
 import { relativeToVolume } from '../snapshotPaths';
 import { copyFailure, copyOutOfSnapshot, destinationTakenReason, newerUnread, unreadSnapshots } from '../snapshotCopy';
-import { registerShellIntegration, unregisterShellIntegration, isInstalled as linuxShellInstalled } from './shellIntegration';
+import { registerShellIntegration, unregisterShellIntegration, isInstalled as linuxShellInstalled, installedProgram as linuxShellProgram } from './shellIntegration';
 import { desktopLauncher, NOT_IN_DESKTOP_APP } from '../desktopLauncher';
 import { readLastUsedLinux, probeLastUsedLinux } from './lastUsed';
 import { readBackupMembershipLinux, probeBackupMembershipLinux } from './backup';
@@ -418,6 +418,10 @@ export class LinuxProvider extends BaseProvider {
 
   override async shellIntegrationInstalled(): Promise<boolean> {
     return linuxShellInstalled();
+  }
+
+  override async shellIntegrationProgram(): Promise<string | null> {
+    return linuxShellProgram();
   }
 
   /* ---------------- Capability probes ---------------- */

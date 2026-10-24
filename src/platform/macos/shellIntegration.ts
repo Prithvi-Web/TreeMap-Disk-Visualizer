@@ -193,3 +193,24 @@ export async function unregisterShellIntegration(home = os.homedir()): Promise<S
 export async function isInstalled(home = os.homedir()): Promise<boolean> {
   return fsp.stat(path.join(bundlePath(home), 'Contents', 'document.wflow')).then(() => true, () => false);
 }
+
+/**
+ * The program a workflow document starts, as documentWflow wrote it, or null
+ * for any other text (review F1.3). An earlier build run with `npm start`
+ * wrote `node` here, so the entry ran `node <folder>` — that folder's own
+ * code — and the file merely being there said nothing about which program
+ * it starts.
+ */
+export function programOfWorkflow(doc: string): string | null {
+  const command = /<key>COMMAND_STRING<\/key>\s*<string>([\s\S]*?)<\/string>/.exec(doc);
+  if (!command) return null;
+  const script = command[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const line = /^ {2}"(.*)" "\$target" &$/m.exec(script);
+  return line ? line[1] : null;
+}
+
+/** The program the Quick Action in place starts, or null when there is none or it names none TreeMap can read. */
+export async function installedProgram(home = os.homedir()): Promise<string | null> {
+  const doc = await fsp.readFile(path.join(bundlePath(home), 'Contents', 'document.wflow'), 'utf8').catch(() => null);
+  return doc === null ? null : programOfWorkflow(doc);
+}

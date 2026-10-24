@@ -18,7 +18,7 @@ export const DESKTOP_EXEC_ENV = 'TREEMAP_DESKTOP_EXEC';
 
 /** Why the entry is not offered anywhere else, in words for the Settings panel. */
 export const NOT_IN_DESKTOP_APP =
-  'The right-click entry starts the TreeMap app, and this TreeMap is not running as the installed app (it runs in a browser tab or from source), so the entry would have nothing to start.';
+  'Only the installed TreeMap app can add the right-click entry, since the entry it adds starts that app; this TreeMap runs in a browser tab or from source.';
 
 /** The installed app's own program, as it named itself, or null when this server does not run inside it. */
 export function desktopLauncher(env: NodeJS.ProcessEnv = process.env): string | null {

@@ -157,6 +157,13 @@ export interface PlatformProvider {
    * removes the entry" is only checkable if we look).
    */
   shellIntegrationInstalled(): Promise<boolean>;
+  /**
+   * The program the entry in place starts, read from the entry itself — or
+   * null when there is no entry or TreeMap cannot read one from it (review
+   * F1.3). An earlier build run with `npm start` wrote `node`, and an entry
+   * merely being there says nothing about which program it starts.
+   */
+  shellIntegrationProgram(): Promise<string | null>;
 
   /**
    * Last-opened dates for a batch of paths (v4 §1.1).

@@ -275,3 +275,108 @@ test('review F1.5/F1.14: Dolphin\'s Exec and Thunar\'s command keep an AppImage 
     assert.deepEqual(shellArgv(xmlUnescape(cmd[1])), [exec, '%f'], `Thunar starts ${exec}, with the folder as its one argument`);
   }
 });
+
+/* ─────────────── An entry already in place: what it starts (review F1.3, F1.15, F1.16) ─────────────── */
+
+test('review F1.3: the program an entry starts reads back from the entry itself, on every system, as TreeMap wrote it', async () => {
+  const mac = await import('../src/platform/macos/shellIntegration');
+  const win = await import('../src/platform/windows/shellIntegration');
+  const lin = await import('../src/platform/linux/shellIntegration');
+  for (const p of ['/Applications/TreeMap.app/Contents/MacOS/TreeMap', '/opt/homebrew/bin/node', '/Users/x/My Apps & <Tools>/it\'s "Tree" (1)/TreeMap']) {
+    assert.equal(mac.programOfWorkflow(mac.documentWflow(p)), p, `Finder: ${p}`);
+    assert.equal(lin.programOfNautilusScript(lin.nautilusScript(p)), p, `Nautilus: ${p}`);
+    assert.equal(lin.programOfDolphinMenu(lin.dolphinServiceMenu(p)), p, `Dolphin: ${p}`);
+    assert.equal(lin.programOfThunarActions(lin.addThunarAction(null, p)), p, `Thunar: ${p}`);
+  }
+  // Entries an earlier build wrote bare (before review F1.5) read back too.
+  assert.equal(lin.programOfDolphinMenu('[Desktop Action treemapScan]\nName=Scan with TreeMap\nExec=/usr/bin/node %f\n'), '/usr/bin/node');
+  assert.equal(lin.programOfThunarActions('<actions>\n<action>\n\t<unique-id>treemap-scan-1</unique-id>\n\t<command>/usr/bin/node %f</command>\n</action>\n</actions>\n'), '/usr/bin/node');
+  // What `reg query <key>\command /ve` prints for the value an install writes, whatever the system calls the default value.
+  const exe = String.raw`C:\Users\x\AppData\Local\Programs\TreeMap\TreeMap.exe`;
+  const add = win.installCommands(exe).find((c) => c.args[1].endsWith('\\command'));
+  assert.ok(add, 'an install writes a command value');
+  const value = add.args[add.args.indexOf('/d') + 1];
+  for (const label of ['(Default)', '(Padrão)', '(Standard)']) {
+    assert.equal(win.programOfCommand(`\r\n${win.SHELL_KEYS[0].key}\\command\r\n    ${label}    REG_SZ    ${value}\r\n\r\n`), exe, `Explorer (${label})`);
+  }
+  // Text that is no entry of TreeMap's names no program.
+  assert.equal(mac.programOfWorkflow('<plist version="1.0"><dict/></plist>'), null);
+  assert.equal(win.programOfCommand('ERROR: The system was unable to find the specified registry key or value.'), null);
+  assert.equal(lin.programOfNautilusScript('#!/bin/sh\necho hello\n'), null);
+  assert.equal(lin.programOfThunarActions('<actions>\n<action>\n\t<unique-id>someone-else</unique-id>\n\t<command>/usr/bin/gimp %f</command>\n</action>\n</actions>\n'), null);
+});
+
+test('review F1.15/F1.16: an entry already in place is seen, and can be removed, where adding is not offered; one that starts another program is never called this app\'s', { skip: !IS_MAC && !IS_LINUX }, async () => {
+  const { DESKTOP_EXEC_ENV } = await import('../src/platform/desktopLauncher');
+  const express = (await import('express')).default;
+  const { platformRouter } = await import('../src/api/platformRoutes');
+  const { errorHandler } = await import('../src/middleware/errorHandler');
+  const saved = { exec: process.env[DESKTOP_EXEC_ENV], home: process.env.HOME };
+  // A throwaway HOME: the entries are written and removed there, never in the real one.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-shell-stale-'));
+  const node = '/opt/homebrew/bin/node'; // what an earlier build run with `npm start` wrote: the entry ran `node <folder>`
+  const app = '/Applications/TreeMap.app/Contents/MacOS/TreeMap';
+  const write = async (program: string) => {
+    if (IS_MAC) {
+      await (await import('../src/platform/macos/shellIntegration')).registerShellIntegration(program, home);
+    } else {
+      const dir = path.join(home, '.local', 'share', 'nautilus', 'scripts');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'Scan with TreeMap'), (await import('../src/platform/linux/shellIntegration')).nautilusScript(program), { mode: 0o755 });
+    }
+  };
+  const web = express();
+  web.use(express.json());
+  web.use('/api', platformRouter);
+  web.use(errorHandler);
+  const server = web.listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}/api/platform/shell-integration`;
+  const get = async () => (await fetch(base)).json() as Promise<Record<string, unknown>>;
+  const post = async (install: boolean) => {
+    const r = await fetch(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ install }) });
+    return { status: r.status, body: await r.json() as Record<string, unknown> };
+  };
+  const as = (exec: string | undefined) => {
+    if (exec === undefined) delete process.env[DESKTOP_EXEC_ENV];
+    else process.env[DESKTOP_EXEC_ENV] = exec;
+    invalidateCapabilities();
+  };
+  try {
+    process.env.HOME = home;
+    await write(node);
+    as(undefined); // a browser tab, or `npm start`
+    const tab = await get();
+    assert.deepEqual([tab.supported, tab.installed, tab.program, tab.current], [false, true, node, false],
+      'the entry in place is seen, with what it starts, where adding is not offered');
+    as(app); // the installed app
+    const desk = await get();
+    assert.deepEqual([desk.installed, desk.program, desk.current], [true, node, false], 'an entry that starts node is not this app\'s');
+    as(undefined);
+    const added = await post(true);
+    assert.deepEqual([added.status, added.body.code], [409, 'CAPABILITY_UNAVAILABLE'], 'adding is still refused where the entry would start nothing of TreeMap\'s');
+    const removed = await post(false);
+    assert.deepEqual([removed.status, removed.body.installed], [200, false], 'removing is not: the entry in place can always be taken away');
+    assert.equal((await get()).installed, false, 'and the system no longer has it');
+    // An entry TreeMap cannot read a program from, where no launcher is known: never called this app's.
+    await write(node);
+    const entry = IS_MAC
+      ? path.join(home, 'Library', 'Services', 'Scan with TreeMap.workflow', 'Contents', 'document.wflow')
+      : path.join(home, '.local', 'share', 'nautilus', 'scripts', 'Scan with TreeMap');
+    fs.writeFileSync(entry, 'not an entry TreeMap wrote');
+    const unread = await get();
+    assert.deepEqual([unread.installed, unread.program, unread.current], [true, null, false], 'an unreadable entry with no launcher known is not this app\'s');
+    await write(app);
+    as(app);
+    const own = await get();
+    assert.deepEqual([own.installed, own.program, own.current], [true, app, true], 'control: the app\'s own entry is its own');
+  } finally {
+    server.close();
+    if (saved.exec === undefined) delete process.env[DESKTOP_EXEC_ENV];
+    else process.env[DESKTOP_EXEC_ENV] = saved.exec;
+    if (saved.home === undefined) delete process.env.HOME;
+    else process.env.HOME = saved.home;
+    invalidateCapabilities();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

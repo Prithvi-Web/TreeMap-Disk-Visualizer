@@ -182,6 +182,33 @@ test('an installed entry is offered for removal on open, from the same request (
   assert.equal(dom.$('shellIntegrationBtn').disabled, false);
 });
 
+test('review F1.3/F1.16: an entry that starts another program is never called TreeMap\'s, and one already in place is offered for removal where adding is not', async () => {
+  const shown = async (answer: Record<string, unknown>) => {
+    const { api } = recordingApi({ '/api/settings': { ignore: [], schedules: [] }, '/api/platform/shell-integration': answer });
+    const { dom, open } = openSettingsRuntime(api, ['renderShellIntegration']);
+    await open();
+    await settle();
+    const btn = dom.$('shellIntegrationBtn') as unknown as { textContent: string; hidden?: boolean; disabled: boolean };
+    return { blurb: dom.$('shellIntegrationBlurb').textContent, button: [btn.textContent, !!btn.hidden, btn.disabled] };
+  };
+  const node = '/opt/homebrew/bin/node';
+  let s = await shown({ supported: true, installed: true, current: false, program: node });
+  assert.equal(s.blurb, `A “Scan with TreeMap” entry is in your file manager’s right-click menu, but it starts ${node}, not this TreeMap app. Remove it, then add it again to make it start this app.`,
+    'the entry an earlier build wrote under npm start runs node on the folder: it is not said to be TreeMap\'s');
+  assert.deepEqual(s.button, ['Remove from right-click menu', false, false]);
+  s = await shown({ supported: true, installed: true, current: false, program: null });
+  assert.equal(s.blurb, 'A “Scan with TreeMap” entry is in your file manager’s right-click menu, but TreeMap cannot read which program it starts. Remove it, then add it again to make it start this app.');
+  const reason = 'Only the installed TreeMap app can add the right-click entry, since the entry it adds starts that app; this TreeMap runs in a browser tab or from source.';
+  s = await shown({ supported: false, reason, installed: true, current: false, program: node });
+  assert.equal(s.blurb, `A “Scan with TreeMap” entry is in your file manager’s right-click menu, and it starts ${node}. Removing it takes the entry away completely. ${reason}`,
+    'a browser tab cannot tell whose entry it is — it says what it starts, and why adding is not offered');
+  assert.deepEqual(s.button, ['Remove from right-click menu', false, false], 'removable here, though adding is not offered');
+  s = await shown({ supported: false, reason, installed: false, current: false, program: null });
+  assert.deepEqual([s.blurb, s.button[1]], [reason, true], 'nothing in place and nothing to add: no button');
+  s = await shown({ supported: true, installed: true, current: true, program: '/Applications/TreeMap.app/Contents/MacOS/TreeMap' });
+  assert.equal(s.blurb, '“Scan with TreeMap” is in your file manager’s right-click menu for folders. Removing it takes the entry away completely.', 'control: the app\'s own entry');
+});
+
 /* ══════════════ The right-click button keeps focus through its request (as K02 found of Scan) ══════════════ */
 
 /**

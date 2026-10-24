@@ -131,3 +131,23 @@ export async function isInstalled(): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * The program a `reg query <key>\command /ve` answer names — the quoted path
+ * before the folder argument installCommands writes — or null (review F1.3).
+ * Read by REG_SZ, which no system translates; the default value's own label
+ * ("(Default)") is in the system's language.
+ */
+export function programOfCommand(regOutput: string): string | null {
+  const m = /REG_SZ\s+"([^"]+)"/.exec(regOutput);
+  return m ? m[1] : null;
+}
+
+/** The program the Explorer entry in place starts, or null when there is none or it names none TreeMap can read. */
+export async function installedProgram(): Promise<string | null> {
+  try {
+    return programOfCommand(await runText('reg.exe', ['query', `${SHELL_KEYS[0].key}\\command`, '/ve'], { timeoutMs: 10_000 }));
+  } catch {
+    return null;
+  }
+}

@@ -453,7 +453,12 @@ OpenAPI 3 spec).
      desktop app, which names its own program to its server, so it is offered
      only there: under `npm start` or a build run from source it answers
      `supported: false` with the reason, and adding it is refused
-     (`409 CAPABILITY_UNAVAILABLE`).
+     (`409 CAPABILITY_UNAVAILABLE`). Removing one already in place never is,
+     and the GET reads it wherever it runs: `program` is what the entry in
+     place starts, read from the entry (null when none or unreadable), and
+     `current` whether that is this app's own launcher (false where none is
+     known) — an entry an earlier build wrote under `npm start` runs
+     `node <folder>`.
    - `GET /api/platform/portable` — whether this is a no-trace portable
      session, where it writes, and what it cannot do. **When `writable` is
      false nothing is persisted anywhere at all** — not on the drive, and

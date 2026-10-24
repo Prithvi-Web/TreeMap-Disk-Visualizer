@@ -399,6 +399,10 @@ export abstract class BaseProvider implements PlatformProvider {
     return false;
   }
 
+  async shellIntegrationProgram(): Promise<string | null> {
+    return null;
+  }
+
   async unregisterShellIntegration(): Promise<ShellIntegrationResult> {
     return { installed: false, targets: [], reason: 'Nothing was installed' };
   }

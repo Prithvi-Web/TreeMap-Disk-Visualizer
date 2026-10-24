@@ -12,7 +12,7 @@ import { fileFactsBatch, toPlaceholderInfo } from './attributes';
 import { listSnapshots as vssSnapshots, snapshotAvailability } from './vss';
 import { relativeToVolume } from '../snapshotPaths';
 import { copyFailure, copyOutOfSnapshot, destinationTakenReason, newerUnread, unreadSnapshots } from '../snapshotCopy';
-import { registerShellIntegration, unregisterShellIntegration, isInstalled as winShellInstalled } from './shellIntegration';
+import { registerShellIntegration, unregisterShellIntegration, isInstalled as winShellInstalled, installedProgram as winShellProgram } from './shellIntegration';
 import { desktopLauncher, NOT_IN_DESKTOP_APP } from '../desktopLauncher';
 import { runPowerShellJson } from './powershell';
 import { meansAbsent } from '../../utils/errno';
@@ -337,6 +337,10 @@ export class WindowsProvider extends BaseProvider {
 
   override async shellIntegrationInstalled(): Promise<boolean> {
     return winShellInstalled();
+  }
+
+  override async shellIntegrationProgram(): Promise<string | null> {
+    return winShellProgram();
   }
 
   /* ---------------- Capability probes ---------------- */

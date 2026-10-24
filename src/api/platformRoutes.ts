@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getCapabilities, invalidateCapabilities, capabilityState } from '../platform/capabilities';
 import { platform } from '../platform';
+import { desktopLauncher } from '../platform/desktopLauncher';
 import { AppError } from '../middleware/errorHandler';
 import { portableStatus, listExternalVolumes } from '../services/portableMode';
 import type { Capabilities } from '../platform/types';
@@ -104,15 +105,27 @@ platformRouter.get('/platform/portable', (_req: Request, res: Response) => {
  * The installed flag is read from the filesystem/registry every time rather
  * than remembered: an entry removed by hand, or left behind by an uninstall,
  * must be reported truthfully. D2's "removing integration cleanly removes the
- * entry" is only checkable if we look.
+ * entry" is only checkable if we look. It is read where adding is not offered
+ * too: an entry an earlier build wrote under `npm start` runs `node <folder>`,
+ * and a browser tab that answered "not installed" could neither show it nor
+ * take it away (review F1.15). `program` is what the entry in place starts,
+ * read from it (null when none, or unreadable); `current` says it is this
+ * app's own launcher — false wherever no launcher is known, since there
+ * TreeMap cannot tell whose entry it is (review F1.3, F1.16).
  */
 platformRouter.get('/platform/shell-integration', async (_req: Request, res: Response) => {
   const state = await capabilityState('shellIntegration');
+  const provider = platform();
+  const installed = await provider.shellIntegrationInstalled();
+  const program = installed ? await provider.shellIntegrationProgram() : null;
+  const launcher = desktopLauncher();
   res.json({
     supported: state.available,
     mechanism: state.mechanism,
     reason: state.reason,
-    installed: state.available ? await platform().shellIntegrationInstalled() : false,
+    installed,
+    program,
+    current: installed && launcher !== null && program === launcher,
   });
 });
 
@@ -129,7 +142,9 @@ platformRouter.post('/platform/shell-integration', async (req: Request, res: Res
     throw new AppError(400, 'INSTALL_REQUIRED', 'Body must be { install: true } or { install: false }');
   }
   const state = await capabilityState('shellIntegration');
-  if (!state.available) {
+  // Adding is refused where it is not offered; removing never is — an entry
+  // in place can always be taken away (review F1.15).
+  if (install && !state.available) {
     throw new AppError(409, 'CAPABILITY_UNAVAILABLE', state.reason ?? 'Shell integration is not available on this system');
   }
   const provider = platform();

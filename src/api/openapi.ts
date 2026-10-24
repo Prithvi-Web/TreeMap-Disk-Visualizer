@@ -2825,19 +2825,26 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'platform',
     destructive: false,
     responses: {
-      '200': jsonResponse('State', obj({ supported: bool(), mechanism: str(), reason: str(), installed: bool() }, ['supported', 'installed'])),
+      '200': jsonResponse('State', obj({
+        supported: bool('Whether adding the entry is offered here: only inside the installed desktop app'),
+        mechanism: str(),
+        reason: str(),
+        installed: bool('Whether an entry is in place, read from the system whether or not adding is offered'),
+        program: nullable(str('The program the entry in place starts, read from the entry itself; null when there is none or TreeMap cannot read one from it')),
+        current: bool('Whether that program is this desktop app\'s own; false wherever no launcher is known (a browser tab, npm start), where TreeMap cannot tell whose entry it is'),
+      }, ['supported', 'installed', 'program', 'current'])),
     },
   },
   {
     method: 'post',
     path: '/api/platform/shell-integration',
-    summary: 'Add or remove the right-click entry. Per-user; needs no administrator rights.',
+    summary: 'Add or remove the right-click entry. Per-user; needs no administrator rights. Adding is refused where it is not offered; removing never is.',
     tag: 'platform',
     destructive: false,
     requestBody: jsonBody(obj({ install: bool('true to add, false to remove') }, ['install'])),
     responses: {
       '200': jsonResponse('Result', obj({ installed: bool(), targets: arr(str()), reason: str(), mechanism: str() }, ['installed', 'targets'])),
-      '409': errorResponse('No supported file manager on this system'),
+      '409': errorResponse('Adding is not offered here (CAPABILITY_UNAVAILABLE, with the reason): not the installed desktop app, or no supported file manager'),
     },
   },
   {

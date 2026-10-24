@@ -18,6 +18,7 @@ import {
   registerShellIntegration as installQuickAction,
   unregisterShellIntegration as removeQuickAction,
   isInstalled as quickActionInstalled,
+  installedProgram as quickActionProgram,
 } from './shellIntegration';
 import { desktopLauncher, NOT_IN_DESKTOP_APP } from '../desktopLauncher';
 import type {
@@ -314,6 +315,10 @@ export class MacOsProvider extends BaseProvider {
 
   override async shellIntegrationInstalled(): Promise<boolean> {
     return quickActionInstalled();
+  }
+
+  override async shellIntegrationProgram(): Promise<string | null> {
+    return quickActionProgram();
   }
 
   override async probeProvenance(): Promise<CapabilityState> {

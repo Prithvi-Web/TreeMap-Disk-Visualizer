@@ -230,3 +230,51 @@ export async function isInstalled(opts: ShellIntegrationPaths = {}): Promise<boo
   const thunar = await fsp.readFile(path.join(home, '.config', 'Thunar', 'uca.xml'), 'utf8').catch(() => null);
   return thunar !== null && thunar.includes(SCRIPT_NAME);
 }
+
+/* ------------------------------ what an entry starts ------------------------------ */
+
+/** The program the Nautilus script starts, as nautilusScript wrote it, or null (review F1.3). */
+export function programOfNautilusScript(text: string): string | null {
+  const m = /^ {2}'((?:[^']|'\\'')*)' "\$target" &$/m.exec(text);
+  return m ? m[1].replace(/'\\''/g, "'") : null;
+}
+
+/** The program an `Exec=` value starts: quoted by desktopEntryQuote, or bare as builds before review F1.5 wrote it. */
+function programOfExecValue(value: string): string | null {
+  const v = value.replace(/ %f$/, '');
+  if (!v.startsWith('"')) return v || null;
+  const unescaped = v.replace(/\\\\/g, '\\');
+  const m = /^"((?:[^"\\]|\\.)*)"$/.exec(unescaped);
+  return m ? m[1].replace(/\\(.)/g, '$1').replace(/%%/g, '%') : null;
+}
+
+/** The program Dolphin's service menu starts, or null. */
+export function programOfDolphinMenu(text: string): string | null {
+  const m = /^Exec=(.*)$/m.exec(text);
+  return m ? programOfExecValue(m[1]) : null;
+}
+
+/** The program TreeMap's Thunar action starts — shell-quoted, or bare as builds before review F1.5 wrote it — or null. */
+export function programOfThunarActions(xml: string): string | null {
+  const action = /<action>(?:(?!<\/action>)[\s\S])*?treemap-scan-1[\s\S]*?<\/action>/.exec(xml);
+  const command = action ? /<command>([\s\S]*?)<\/command>/.exec(action[0]) : null;
+  if (!command) return null;
+  const text = command[1]
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&')
+    .replace(/ %f$/, '');
+  if (!text.startsWith("'")) return text || null;
+  const m = /^'((?:[^']|'\\'')*)'$/.exec(text);
+  return m ? m[1].replace(/'\\''/g, "'") : null;
+}
+
+/** The program the entry in place starts — the Nautilus script's, else Dolphin's, else Thunar's — or null. */
+export async function installedProgram(opts: ShellIntegrationPaths = {}): Promise<string | null> {
+  const home = homeOf(opts);
+  const read = (p: string): Promise<string | null> => fsp.readFile(p, 'utf8').catch(() => null);
+  const nautilus = await read(path.join(home, '.local', 'share', 'nautilus', 'scripts', SCRIPT_NAME));
+  if (nautilus !== null) return programOfNautilusScript(nautilus);
+  const dolphin = await read(path.join(home, '.local', 'share', 'kio', 'servicemenus', DESKTOP_NAME));
+  if (dolphin !== null) return programOfDolphinMenu(dolphin);
+  const thunar = await read(path.join(home, '.config', 'Thunar', 'uca.xml'));
+  return thunar === null ? null : programOfThunarActions(thunar);
+}

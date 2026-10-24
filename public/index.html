@@ -43233,17 +43233,27 @@ async function renderShellIntegration(carryStatus = '') {
   try { data = await api('/api/platform/shell-integration'); }
   catch (e) { blurb.textContent = 'Could not check: ' + e.message; return; }
 
-  if (!data.supported) {
-    blurb.textContent = data.reason || 'This system has no file manager TreeMap can add an entry to.';
+  const unsupported = data.reason || 'This system has no file manager TreeMap can add an entry to.';
+  if (!data.supported && !data.installed) {
+    blurb.textContent = unsupported;
     btn.hidden = true;
     return;
   }
   btn.hidden = false;
+  // What an entry in place starts, read from it (review F1.3): an earlier
+  // build run with `npm start` wrote one that runs `node <folder>`. It is
+  // never called this app's unless it starts this app (`current`), and where
+  // adding is not offered it can still be seen and removed (review F1.16).
+  const starts = data.program ? `it starts ${data.program}` : 'TreeMap cannot read which program it starts';
   // The capability's own reason is already a complete sentence about what this
   // does; prefixing it with our own restated it twice.
-  blurb.textContent = data.installed
-    ? '“Scan with TreeMap” is in your file manager’s right-click menu for folders. Removing it takes the entry away completely.'
-    : (data.reason || 'Add “Scan with TreeMap” to your file manager’s right-click menu for folders.');
+  blurb.textContent = !data.installed
+    ? (data.reason || 'Add “Scan with TreeMap” to your file manager’s right-click menu for folders.')
+    : data.current !== false
+      ? '“Scan with TreeMap” is in your file manager’s right-click menu for folders. Removing it takes the entry away completely.'
+      : data.supported
+        ? `A “Scan with TreeMap” entry is in your file manager’s right-click menu, but ${data.program ? `${starts}, not this TreeMap app` : starts}. Remove it, then add it again to make it start this app.`
+        : `A “Scan with TreeMap” entry is in your file manager’s right-click menu, and ${starts}. Removing it takes the entry away completely. ${unsupported}`;
   btn.textContent = data.installed ? 'Remove from right-click menu' : 'Add to right-click menu';
   btn.classList.toggle('btn-danger', !!data.installed);
   btn.disabled = false;
