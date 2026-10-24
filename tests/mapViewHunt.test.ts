@@ -546,6 +546,48 @@ test('C23: Up disabled while focus is elsewhere takes nothing; the Grid and Disk
   assert.ok(sets.length >= 1 && wired.length === sets.length, `every place loadCity disables Disk City's Up hands focus on (${wired.length} of ${sets.length})`);
 });
 
+/** Every `renderCrumbs(…)` call in `src`, with its arguments split at the top level. */
+function crumbCalls(src: string): string[][] {
+  const calls: string[][] = [];
+  for (let at = src.indexOf('renderCrumbs('); at !== -1; at = src.indexOf('renderCrumbs(', at + 1)) {
+    const args: string[] = [];
+    let depth = 0;
+    let start = at + 'renderCrumbs('.length;
+    for (let i = start; i < src.length; i++) {
+      const c = src[i];
+      if ('([{'.includes(c)) depth++;
+      else if (')]}'.includes(c)) {
+        if (depth === 0) { args.push(src.slice(start, i).trim()); break; }
+        depth--;
+      } else if (c === ',' && depth === 0) { args.push(src.slice(start, i).trim()); start = i + 1; }
+    }
+    calls.push(args);
+  }
+  return calls;
+}
+
+test('C23 (review F1.4): the Treemap, the Grid and Disk City each hand a pressed crumb\'s focus to their own map — at every place they draw the trail', () => {
+  const canvas = { id: 'tmCanvas' }, city = { id: 'cityCanvas' }, search = { id: 'gridSearch' }, tile = { id: 'a tile' };
+  const els: Record<string, unknown> = { cityCanvas: city, gridSearch: search };
+  // The map a call names, asked as renderCrumbs asks it when the crumb that held focus is redrawn away.
+  const mapOf = (expr: string, onScreen: unknown = null) => {
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const ask = new Function('$', 'tmCanvas', 'gridTileOnScreen', `return (${expr});`)((id: string) => els[id] ?? null, canvas, () => onScreen);
+    return typeof ask === 'function' ? ask() : undefined;
+  };
+  for (const [fn, trail, sites, map] of [['loadTreemap', "$('tmCrumbs')", 2, canvas], ['loadCity', "$('cityCrumbs')", 3, city], ['renderGrid', "$('gridCrumbs')", 1, search]] as const) {
+    const calls = crumbCalls(declSource(fn));
+    assert.ok(calls.length >= sites, `control: ${fn} draws the trail at ${sites} places (found ${calls.length})`);
+    for (const args of calls) {
+      assert.equal(args[0], trail, `control: ${fn} draws its own trail`);
+      // Without it renderCrumbs focuses nothing, and the load replaces the pressed crumb: focus falls to <body>.
+      assert.equal(mapOf(args[3] ?? 'undefined'), map, `${fn}: renderCrumbs(${args.join(', ')}) hands focus to ${map.id}`);
+    }
+  }
+  const grid = crumbCalls(declSource('renderGrid'))[0][3];
+  assert.equal(mapOf(grid, tile), tile, 'the Grid\'s map is the tile on screen first — its search box only where no tile is');
+});
+
 /* ══════════════ C24 — Live, the slider and Play leave the cart preview's picture alone ══════════════ */
 
 /** The real liveRelayout (and maybeInjectTrash) over a stubbed server, with the preview `on` or not. */
