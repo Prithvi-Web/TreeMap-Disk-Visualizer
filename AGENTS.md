@@ -1086,9 +1086,14 @@ read-what-you-saw) permission to act.
   person looked at — refused `409 APPROVAL_STALE` unless it is the policy's
   newest run, awaiting approval, made for its folder and match as they are
   now (each run records its `scope`), and `409 APPROVAL_NOT_ASKED` for a run
-  that asked nothing. Editing a policy's folder or match revokes its approval
+  that asked nothing — or was approved already: an approved run is
+  `completed` and carries `approvedAt`. Editing a policy's folder or match revokes its approval
   and makes its preview due at the next check, as does a first preview an
-  earlier build recorded (it carries no `scope`). Approving a run lets the
+  earlier build recorded (it carries no `scope`); any other edit (its name,
+  limits, cooldown, `dryRunFirst` or `enabled`) keeps the approval, so the
+  next run of an approved policy that may delete deletes without a fresh
+  preview. A policy with `dryRunFirst` ("Only ever preview") previews every
+  run, approved or not, and deletes nothing. Approving a run lets the
   next run delete up to what it matched past `requireConfirmationAbove`,
   once (`approvedBytes`, spent by that run even if it only previews); a
   bigger match asks again.

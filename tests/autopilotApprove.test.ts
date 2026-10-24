@@ -216,7 +216,8 @@ test('only the policy\'s newest run can be approved, and an older run\'s button 
     const ranAt = (await policyNow('newest')).lastRunAt;
     assert.ok(ranAt, 'the live run started its cooldown');
     const again = await refusal(approvePolicy('newest', second.id));
-    assert.equal(again.code, 'APPROVAL_STALE', again.message);
+    // Refused as already approved (the hunt, C37): the run it approved asks for nothing more.
+    assert.equal(again.code, 'APPROVAL_NOT_ASKED', again.message);
     assert.equal((await policyNow('newest')).lastRunAt, ranAt, 'the cooldown is left as the live run set it');
   } finally {
     await savePolicies([]);
@@ -764,4 +765,115 @@ test('the approval names the run, and its confirm says the folder, the match and
   assert.match(texts.confirmText, /2000 B/, texts.confirmText);
   await page.confirm()?.();
   assert.deepEqual(posted, [{ url: '/api/autopilot/policies/A/approve', body: { runId: 'a-new' } }]);
+});
+
+/* ─────────────── the hunt (C04, C36, C37) ─────────────── */
+
+test('an approved run is marked approved and is no longer awaiting approval; approving it again is refused (hunt C37)', async () => {
+  const dir = folder('twice', { 'a.log': 1000 });
+  await savePolicies([{ id: 'twice', name: 'Logs', path: dir, match: { kind: 'custom', exts: ['log'] }, dryRunFirst: false, enabled: true }]);
+  try {
+    const seen = await runOnce('twice');
+    assert.equal(seen.status, 'awaiting-approval');
+    await approvePolicy('twice', seen.id);
+    const after = (await listRuns()).find((r) => r.id === seen.id);
+    assert.ok(after);
+    assert.notEqual(after.status, 'awaiting-approval', 'GET /api/autopilot/runs no longer says an approved run needs approval');
+    assert.equal(typeof after.approvedAt, 'number', 'the run records when it was approved');
+    const again = await refusal(approvePolicy('twice', seen.id));
+    assert.equal(again.code, 'APPROVAL_NOT_ASKED', again.message);
+    assert.equal(again.status, 409);
+    assert.match(again.message, /already approved/, again.message);
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+test('the page labels an approved run "Approved" and offers no Approve on it; a repeat confirm never says "more than 0 B asks again" (hunt C37)', () => {
+  const policy = { id: 'P', name: 'Logs', path: '/home/me/logs', match: { kind: 'custom', exts: ['log'] }, requireConfirmationAbove: null, approvedAt: 9, cooldownDays: 7, enabled: true };
+  const approved = { id: 'r1', policyId: 'P', policyName: 'Logs', at: 1, mode: 'dry-run', status: 'completed', approvedAt: 9, items: [], bytesMatched: 2000, bytesDeleted: 0, skipped: [], scope: { path: policy.path, match: policy.match } };
+  const html = renderedRuns([approved], [policy]);
+  assert.match(html, /Approved/, html);
+  assert.doesNotMatch(html, /data-ap-approve/, 'no second Approve');
+  assert.doesNotMatch(html, /Ran\b/, 'labelled as approved, not as a run that ran');
+
+  const texts: Record<string, string> = {};
+  const el = (id: string): Record<string, unknown> => ({
+    set innerHTML(v: string) { texts[id] = v; }, get innerHTML() { return texts[id] ?? ''; }, classList: { add: () => undefined },
+  });
+  const held = { ...approved, id: 'r2', status: 'awaiting-approval', approvedAt: undefined };
+  const page = new Function(
+    '$', 'state', 'api', 'toast', 'icon', 'escapeHtml', 'formatBytes', 'loadAutopilot', 'describeMatch', 'setConfirmButton',
+    `let onConfirmTrash = null; ${pageSource('approveAutopilotRun')}; return approveAutopilotRun;`,
+  )(el, { autopilot: { policies: [policy], runs: [held] } }, async () => ({}), () => undefined, () => '', (s: string) => s, (n: number) => `${n} B`, () => undefined, () => 'files', () => undefined) as (id: string) => void;
+  page('r2');
+  assert.doesNotMatch(texts.confirmText, /asks again/, `no limit is set, so nothing asks again: ${texts.confirmText}`);
+});
+
+/** The page's approveAutopilotRun for `policy` and its run `run`: the confirm's title and text, and the toast after OK. */
+async function approvalWords(policy: Record<string, unknown>, run: Record<string, unknown>): Promise<{ title: string; text: string; toast: string }> {
+  const texts: Record<string, string> = {};
+  let said = '';
+  let confirm: (() => Promise<void>) | null = null;
+  const el = (id: string): Record<string, unknown> => ({
+    set innerHTML(v: string) { texts[id] = v; }, get innerHTML() { return texts[id] ?? ''; }, classList: { add: () => undefined },
+  });
+  const page = new Function(
+    '$', 'state', 'api', 'toast', 'icon', 'escapeHtml', 'formatBytes', 'loadAutopilot', 'describeMatch', 'setConfirmButton',
+    `let onConfirmTrash = null; ${pageSource('approveAutopilotRun')}; return { approve: approveAutopilotRun, confirm: () => onConfirmTrash };`,
+  )(el, { autopilot: { policies: [policy], runs: [run] } }, async () => ({}), (s: string) => { said = s; }, () => '', (s: string) => s, (n: number) => `${n} B`, () => undefined, () => 'files', () => undefined) as { approve: (id: string) => void; confirm: () => (() => Promise<void>) | null };
+  page.approve(String(run.id));
+  confirm = page.confirm();
+  await confirm?.();
+  return { title: texts.confirmTitle ?? '', text: texts.confirmText ?? '', toast: said };
+}
+
+test('approving a policy set to "Only ever preview", or switched off, never promises a deletion (hunt C36)', async () => {
+  const base = { id: 'P', name: 'Logs', path: '/home/me/logs', match: { kind: 'custom', exts: ['log'] }, requireConfirmationAbove: null, cooldownDays: 7 };
+  const run = { id: 'r', policyId: 'P', policyName: 'Logs', at: 1, mode: 'dry-run', status: 'awaiting-approval', items: [], bytesMatched: 2000, bytesDeleted: 0, skipped: [], scope: { path: base.path, match: base.match } };
+  const previewOnly = await approvalWords({ ...base, enabled: true, dryRunFirst: true }, run);
+  for (const words of [previewOnly.title, previewOnly.text, previewOnly.toast]) assert.doesNotMatch(words, /delete on its own|start removing|run on its own from now on/, words);
+  assert.match(previewOnly.text, /Only ever preview/, previewOnly.text);
+  assert.match(previewOnly.toast, /Only ever preview/, previewOnly.toast);
+
+  const off = await approvalWords({ ...base, enabled: false, dryRunFirst: false }, run);
+  for (const words of [off.text, off.toast]) assert.match(words, /switch(ed)? (it )?on/, words);
+  assert.doesNotMatch(off.toast, /from now on/, off.toast);
+
+  const live = await approvalWords({ ...base, enabled: true, dryRunFirst: false }, run);
+  assert.match(live.text, /start removing/, 'a live policy still says what approval lets it do');
+  assert.match(live.toast, /run on its own from now on/);
+});
+
+test('a never-approved policy set to "Only ever preview" is not told that approving it lets it delete (hunt C36)', async () => {
+  const dir = folder('preview-only', { 'a.log': 1000 });
+  await savePolicies([{ id: 'po', name: 'Logs', path: dir, match: { kind: 'custom', exts: ['log'] }, dryRunFirst: true, enabled: true }]);
+  try {
+    const seen = await runOnce('po');
+    assert.equal(seen.status, 'awaiting-approval');
+    assert.doesNotMatch(String(seen.blockedReason), /run for real/, String(seen.blockedReason));
+    assert.match(String(seen.blockedReason), /Only ever preview/, String(seen.blockedReason));
+    const sim = await simulatePolicy(await policyNow('po'));
+    assert.doesNotMatch(String(sim.wouldBlockReason), /start deleting/, String(sim.wouldBlockReason));
+    assert.match(String(sim.wouldBlockReason), /Only ever preview/, String(sim.wouldBlockReason));
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+test('after Save, the toast says what the saved policy will do next — an approved live policy keeps its approval and deletes without a preview (hunt C04)', () => {
+  const said = new Function(`${pageSource('apSavedToast')}; return apSavedToast;`)() as (p: Record<string, unknown>) => string;
+  const approvedLive = said({ enabled: true, dryRunFirst: false, approvedAt: 5 });
+  assert.match(approvedLive, /keeps your approval/, approvedLive);
+  assert.match(approvedLive, /without a preview/, approvedLive);
+  assert.doesNotMatch(approvedLive, /show you what it matched before deleting/, approvedLive);
+  assert.match(said({ enabled: true, dryRunFirst: true, approvedAt: 5 }), /previews every run and deletes nothing/);
+  assert.match(said({ enabled: true, dryRunFirst: true }), /previews every run and deletes nothing/);
+  assert.match(said({ enabled: true, dryRunFirst: false }), /first run will show you what it matched before deleting anything/);
+  assert.equal(said({ enabled: false, dryRunFirst: false, approvedAt: 5 }), 'Policy saved');
+  // The sentence comes from the policy the server saved, never from the draft.
+  const handler = INDEX.slice(INDEX.indexOf("$('apSaveBtn').addEventListener"), INDEX.indexOf("registerView({\n  id: 'autopilot'"));
+  assert.match(handler, /const saved = await api\('\/api\/autopilot\/policies'/, 'the PUT\'s answer is read');
+  assert.match(handler, /toast\(stored \? apSavedToast\(stored\)/, 'and the toast is chosen from it');
+  assert.doesNotMatch(handler, /toast\(edited\.enabled/, 'not from the edited draft');
 });

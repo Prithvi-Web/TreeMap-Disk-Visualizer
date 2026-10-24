@@ -373,7 +373,8 @@ test('a preview of a policy an earlier build saved with a kind no rule here has 
   await writeJsonFile('autopilot.json', { version: 1, policies: [only, mixed], runs: [] });
   const ONLY = 'This policy names only a kind of file TreeMap does not have (cache-general), so it matches nothing: edit the policy and pick again.';
   const ALSO = 'This policy also names a kind of file TreeMap does not have (cache-general), which matches nothing: edit the policy and pick again.';
-  const NEVER = 'This policy has never run for real. Approving it is what lets it start deleting.';
+  // The policies are switched off, so approval lets them delete only once switched on (the hunt, C36).
+  const NEVER = 'This policy has never run for real. Approving it is what lets it start deleting, once it is switched on.';
   type Preview = { status: number; body: { items: Array<{ path: string }>; wouldBlockReason?: string; error?: string } };
   try {
     for (const body of [{ policyId: 'old-only' }, { policy: only }]) {

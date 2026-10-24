@@ -246,7 +246,7 @@ function renderAutopilotRuns(runs) {
     <div class="bp-acc ap-run" data-run="${escapeHtml(r.id)}">
       <div class="bp-head" role="button" tabindex="0" aria-expanded="false">
         <span class="chip" style="--tint:${tint}">${icon(needsApproval ? 'alert' : 'clock', 15)}</span>
-        <span class="bp-title">${escapeHtml(r.policyName)}<span class="prof">${formatDate(r.at)} · ${escapeHtml(AP_STATUS_LABEL[r.status] || r.status)}${r.undoneAt ? ' · undone' : ''}</span></span>
+        <span class="bp-title">${escapeHtml(r.policyName)}<span class="prof">${formatDate(r.at)} · ${escapeHtml(r.approvedAt ? 'Approved' : AP_STATUS_LABEL[r.status] || r.status)}${r.undoneAt ? ' · undone' : ''}</span></span>
         <span class="spacer"></span>
         <span class="size-badge num">${headline}</span>
         <span class="chev">${icon('chevronRight', 14)}</span>
@@ -291,29 +291,42 @@ function approveAutopilotRun(runId) {
   const policy = run && (state.autopilot.policies || []).find(p => p.id === run.policyId);
   if (!run || !policy) return;
   const first = !policy.approvedAt;
+  // What approval lets this policy do as it is set now (the hunt, C36): one set to "Only ever preview"
+  // (the editor's default) deletes nothing after approval either, and one switched off runs only once
+  // it is switched on — neither is told it will start removing things.
+  const previewOnly = !!policy.dryRunFirst;
+  const whenOn = policy.enabled ? '' : ' once you switch it on';
   onConfirmTrash = async () => {
     try {
       await api(`/api/autopilot/policies/${encodeURIComponent(policy.id)}/approve`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: run.id }),
       });
-      toast(first ? 'Approved — it will run on its own from now on' : 'Approved — its next run removes what this one matched');
+      toast(previewOnly ? `Approved — it previews on its own${whenOn}; untick “Only ever preview” to let it delete`
+        : !policy.enabled ? 'Approved — it runs once you switch it on'
+          : first ? 'Approved — it will run on its own from now on' : 'Approved — its next run removes what this one matched');
     } catch (e) {
       toast(e.message, 'error');
     }
     loadAutopilot();
   };
   const scope = `in <b>${escapeHtml(policy.path)}</b> (${escapeHtml(describeMatch(policy.match))})`;
-  $('confirmTitle').innerHTML = icon('check', 18) + (first ? 'Let this policy delete on its own?' : 'Let its next run remove this much?');
-  $('confirmText').innerHTML = (first
-    ? `<b>${escapeHtml(policy.name)}</b> will start removing what it matches ${scope} on its own — ` +
-      `<b>${formatBytes(run.bytesMatched)}</b> this time.` +
-      (policy.requireConfirmationAbove
-        ? ` A run that matches more than ${formatBytes(policy.requireConfirmationAbove)} still asks first` +
-          (run.bytesMatched > policy.requireConfirmationAbove ? ' — except its next one, up to what this run matched.' : '.')
-        : '')
-    : `<b>${escapeHtml(policy.name)}</b>'s next run will remove what it matches ${scope}, up to <b>${formatBytes(run.bytesMatched)}</b>, once. ` +
-      `A later run that matches more than ${formatBytes(policy.requireConfirmationAbove || 0)} asks again.`) +
-    `<br><span style="color:var(--text-3)">Everything it removes is copied to the Undo Vault first, and a run can be undone from here until the Undo Vault removes its copies.</span>`;
+  // "Asks again" only where a limit asks: with no "Ask me first above" set, nothing will (the hunt, C37).
+  const asksAgain = policy.requireConfirmationAbove
+    ? ` A later run that matches more than ${formatBytes(policy.requireConfirmationAbove)} asks again.` : '';
+  $('confirmTitle').innerHTML = icon('check', 18) + (previewOnly ? 'Let this policy run on its own?'
+    : first ? 'Let this policy delete on its own?' : 'Let its next run remove this much?');
+  $('confirmText').innerHTML = (previewOnly
+    ? `<b>${escapeHtml(policy.name)}</b> will look ${scope} on its own${whenOn} — it matched <b>${formatBytes(run.bytesMatched)}</b> this time — ` +
+      `but it is set to “Only ever preview”, so it deletes nothing until you untick that.`
+    : first
+      ? `<b>${escapeHtml(policy.name)}</b> will start removing what it matches ${scope} on its own${whenOn} — ` +
+        `<b>${formatBytes(run.bytesMatched)}</b> this time.` +
+        (policy.requireConfirmationAbove
+          ? ` A run that matches more than ${formatBytes(policy.requireConfirmationAbove)} still asks first` +
+            (run.bytesMatched > policy.requireConfirmationAbove ? ' — except its next one, up to what this run matched.' : '.')
+          : '')
+      : `<b>${escapeHtml(policy.name)}</b>'s next run${whenOn} will remove what it matches ${scope}, up to <b>${formatBytes(run.bytesMatched)}</b>, once.${asksAgain}`) +
+    (previewOnly ? '' : `<br><span style="color:var(--text-3)">Everything it removes is copied to the Undo Vault first, and a run can be undone from here until the Undo Vault removes its copies.</span>`);
   setConfirmButton('Approve', 'check');
   $('confirmModal').classList.add('open');
 }
@@ -636,6 +649,18 @@ $('apPreviewBtn').addEventListener('click', async () => {
   }
 });
 
+/**
+ * What Save says a saved policy does next, from the policy the server stored (the hunt, C04). An edit
+ * that leaves the folder and match alone keeps the approval, and "its first run will show you what it
+ * matched before deleting anything" was said over an approved policy whose next run deleted unasked.
+ */
+function apSavedToast(p) {
+  if (!p.enabled) return 'Policy saved';
+  if (p.dryRunFirst) return 'Policy saved — it previews every run and deletes nothing';
+  if (p.approvedAt) return 'Policy saved — it keeps your approval, so its next run deletes what it matches, within its limits, without a preview';
+  return 'Policy saved — its first run will show you what it matched before deleting anything';
+}
+
 /** Each press of Save takes the next number, and the editor closing retires
     every press still looking up its folder (apEditorClosed). */
 let apSaveSeq = 0;
@@ -698,12 +723,16 @@ $('apSaveBtn').addEventListener('click', async () => {
   }
   const others = (state.autopilot.policies || []).filter(p => p.id !== edited.id);
   try {
-    await api('/api/autopilot/policies', {
+    const saved = await api('/api/autopilot/policies', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ policies: [...others, edited] }),
     });
+    // The policy as the server saved it — an edit that leaves its folder and match alone keeps its
+    // approval — never the draft (the hunt, C04).
+    const list = (saved && Array.isArray(saved.policies)) ? saved.policies : [];
+    const stored = list.find(p => (edited.id ? p.id === edited.id : !others.some(o => o.id === p.id)));
     closeModal('apModal');
-    toast(edited.enabled ? 'Policy saved — its first run will show you what it matched before deleting anything' : 'Policy saved');
+    toast(stored ? apSavedToast(stored) : 'Policy saved');
     loadAutopilot();
   } catch (e) {
     toast(e.message, 'error', 8000);

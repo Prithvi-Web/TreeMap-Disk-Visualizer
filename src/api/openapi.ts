@@ -747,6 +747,7 @@ const schemas: Json = {
       unverified: arr(str(), 'Items of skipped whose trash step was not confirmed either way: their copies are kept, and an undo puts each back once its place is empty'),
       undoneAt: int('Set once the run has been undone: an undo\'s restore completed and everything an undo could put back was put back. Never by an undo that failed or was cancelled'),
       scope: obj({ path: str(), match: opaque('The policy\'s match when the run was made') }, ['path', 'match'], 'The folder and match the policy had when this run was made; an approval of the run holds only while the policy still has them. Absent on runs recorded by builds before 5.2.0'),
+      approvedAt: int('When this run was approved (Unix epoch ms). An approved run is completed: it asks for nothing more, and approving it again is refused (409 APPROVAL_NOT_ASKED). Absent on every run not approved'),
     },
     ['id', 'policyId', 'policyName', 'at', 'mode', 'status', 'items', 'bytesMatched', 'bytesDeleted', 'skipped'],
   ),

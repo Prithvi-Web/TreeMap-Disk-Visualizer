@@ -1246,6 +1246,11 @@ export interface AutopilotRun {
    * Absent on runs an earlier build recorded, which therefore cannot be approved.
    */
   scope?: { path: string; match: AutopilotMatch };
+  /**
+   * When the person approved this run (the hunt, C37). An approved run is `completed` — it asks for
+   * nothing more, and a second approval of it is refused. Absent on every run not approved.
+   */
+  approvedAt?: number;
 }
 
 /* ---------- Live disk activity (Watcher) ---------- */

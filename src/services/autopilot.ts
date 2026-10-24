@@ -934,7 +934,7 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
 
   let wouldBlockReason: string | undefined;
   if (!policy.approvedAt) {
-    wouldBlockReason = 'This policy has never run for real. Approving it is what lets it start deleting.';
+    wouldBlockReason = `This policy has never run for real. ${afterApprovalSentence(policy)}`;
   } else if (heldForSize(policy, bytesMatched)) {
     wouldBlockReason =
       `A real run would stop and ask: this matches ${formatBytes(bytesMatched)}, more than the ` +
@@ -966,6 +966,18 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
  * Whether a run that matched `bytesMatched` stops and asks ("Ask me first above"): more than the
  * policy's limit, and more than the person approved for its next run (`approvedBytes`, F1.10).
  */
+/**
+ * What approving a policy not yet approved lets it do, as it is set now (the hunt, C36). "Approve it to
+ * let it run for real" was said to a policy set to "Only ever preview" — the editor's default — whose
+ * every later run only previewed, and to one switched off, which never runs until it is switched on.
+ */
+function afterApprovalSentence(policy: AutopilotPolicy): string {
+  const whenOn = policy.enabled ? '' : ', once it is switched on';
+  return policy.dryRunFirst
+    ? `Approving it lets it run on its own${whenOn}, but it is set to “Only ever preview”, so it deletes nothing until that is unticked.`
+    : `Approving it is what lets it start deleting${whenOn}.`;
+}
+
 function heldForSize(policy: AutopilotPolicy, bytesMatched: number): boolean {
   if (policy.requireConfirmationAbove === null || bytesMatched <= policy.requireConfirmationAbove) return false;
   return !(typeof policy.approvedBytes === 'number' && bytesMatched <= policy.approvedBytes);
@@ -1109,7 +1121,7 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
     run.status = 'awaiting-approval';
     run.blockedReason =
       `This policy has never run. Here is exactly what it would delete — ${formatBytes(run.bytesMatched)} across ` +
-      `${candidates.length} item${candidates.length === 1 ? '' : 's'}. Approve it to let it run for real.`;
+      `${candidates.length} item${candidates.length === 1 ? '' : 's'}. ${afterApprovalSentence(policy)}`;
     return record();
   }
 
@@ -1287,6 +1299,9 @@ export async function approvePolicy(policyId: string, runId: string): Promise<Au
     }
     const run = store.runs.find((r) => r.id === runId && r.policyId === policy.id);
     if (!run) throw new AppError(404, 'RUN_NOT_FOUND', 'That run of this policy is not in its history');
+    if (run.approvedAt !== undefined) {
+      throw new AppError(409, 'APPROVAL_NOT_ASKED', 'That run was already approved, so there is nothing more to approve');
+    }
     if (run.status !== 'awaiting-approval') {
       throw new AppError(409, 'APPROVAL_NOT_ASKED', 'That run is not waiting for approval, so there is nothing to approve');
     }
@@ -1301,9 +1316,14 @@ export async function approvePolicy(policyId: string, runId: string): Promise<Au
         `“${policy.name}” has changed, or run again, since that run, so it is not what that run showed. ` +
         afterStaleApproval(policy, newest));
     }
-    if (!policy.approvedAt) policy.approvedAt = Date.now();
+    const now = Date.now();
+    if (!policy.approvedAt) policy.approvedAt = now;
     policy.approvedBytes = run.bytesMatched;
     delete policy.lastRunAt;
+    // The run asks for nothing more (the hunt, C37): left awaiting approval, the page offered Approve on
+    // it again and GET /api/autopilot/runs told agents it still needed one.
+    run.status = 'completed';
+    run.approvedAt = now;
     await saveStore(store);
     return policy;
   });
