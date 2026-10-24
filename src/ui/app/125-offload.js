@@ -437,18 +437,20 @@ function watchJob(opts) {
       // them was reported as an unqualified success.
       if (ev.warning) toast(ev.warning, 'error', 12000);
       opts.onComplete(ev);
+    // A stopped job's event goes to the page that asked: an undo stopped part-way
+    // says what it had put back (hunt C75).
     } else if (ev.type === 'error') {
       done();
       toast(ev.message, 'error', 8000);
-      opts.onSettled();
+      opts.onSettled(ev);
     } else if (ev.type === 'cancelled') {
       done();
       toast(opts.cancelledMessage);
-      opts.onSettled();
+      opts.onSettled(ev);
     } else if (ev.type === 'shutdown') {
       done();
       toast('Server shutting down — the job rolled back safely', 'error');
-      opts.onSettled();
+      opts.onSettled(ev);
     }
   };
   es.onerror = () => {

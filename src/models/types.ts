@@ -1043,6 +1043,8 @@ export interface TimeCapsuleJob {
   cancelled: boolean;
   startedAt: number;
   finishedAt?: number;
+  /** Entries already put back (hunt C75): they stay put back when a later one fails or a cancel stops the rest. */
+  entriesDone?: number;
 }
 
 /** Events streamed over the Undo Vault SSE progress endpoint. */
@@ -1056,8 +1058,9 @@ export type TimeCapsuleStreamEvent =
    * `GET /api/offload/:jobId`, and the UI toasted an unqualified success.
    */
   | { type: 'complete'; filesDone: number; bytesDone: number; warning?: string }
-  | { type: 'error'; message: string }
-  | { type: 'cancelled' }
+  /** A stop says how many of the job's entries were put back first (hunt C75). */
+  | { type: 'error'; message: string; entriesDone?: number; entryCount?: number }
+  | { type: 'cancelled'; entriesDone?: number; entryCount?: number }
   | { type: 'shutdown' };
 
 /* ---------- Snapshot recovery (B4) ---------- */

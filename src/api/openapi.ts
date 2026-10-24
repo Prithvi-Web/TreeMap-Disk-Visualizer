@@ -2969,7 +2969,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     destructive: false,
     parameters: [pathParam('jobId', 'Id from POST /api/timecapsule/{id}/restore')],
     responses: {
-      '200': sseResponse('progress | complete | cancelled | error | shutdown frames'),
+      '200': sseResponse('progress | complete | cancelled | error | shutdown frames; cancelled and error carry entriesDone and entryCount: how many of the job\'s entries were put back before it stopped, which stay put back'),
       '404': errorResponse('JOB_NOT_FOUND — unknown or expired job id'),
     },
   },
@@ -3271,7 +3271,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             carryOver: arr(opaque('Opaque'), 'Dry run only: hand it back unchanged with the next batch\'s dry run of the same cart'),
             trashed: arr(str(), 'Real run only. An item staged inside another staged item (by where each is on the disk) is listed too, once the disk no longer shows it: it went to the Trash inside it, and its bytes are counted once, there'),
             bytesFreed: int('Real run only'),
-            skipped: arr(opaque('{ path, code?, reason? } — left UNDELETED because they could not be protected (CAPSULE_FULL also when they do not fit beside the copies this run already holds, which are never evicted), their copy was gone by their own trash step (CAPSULE_COPY_GONE), they changed between their copy and their trash step (CAPSULE_CHANGED; the copy is discarded), the Trash refused them (or TreeMap did not hand them to it), the item holding them was not deleted, or the Trash reported taking the item holding them while the disk still shows them in place (code NOT_DELETED)')),
+            skipped: arr(opaque('{ path, code?, reason? } — left UNDELETED because they could not be protected (CAPSULE_FULL also when they do not fit beside the copies this run already holds, which are never evicted), their copy was gone by their own trash step (CAPSULE_COPY_GONE), they changed between their copy and their trash step (CAPSULE_CHANGED; the copy is discarded), the Trash refused them (or TreeMap did not hand them to it), the item holding them was not deleted, or the Trash reported taking the item holding them while the disk still shows them in place (code NOT_DELETED), or they were already gone from their place, with nothing to protect or delete (code ITEM_GONE)')),
             failedToTrash: arr(opaque("{ path, reason } — protected, then refused by the Trash, and still in place, untouched; the copies were dropped")),
             unverified: arr(opaque('{ path, reason } — present when the Trash reported failing and the disk could not confirm either way (a look that failed, nothing known at the path before the trash step, or a trash command stopped before it answered): the copies were KEPT, and undo puts each back only if its place is empty by then. Also an item inside another one, when that one is unverified, or went to the Trash while the item\'s own place could not be looked at: the copy of the item holding it holds it')),
             capsuleUnavailable: str('Set when the Undo Vault cannot run at all. Nothing was deleted'),

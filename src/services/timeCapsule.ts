@@ -911,16 +911,16 @@ async function capture(
   try {
     walked = await walkItem(original, { withDirTimes: true });
   } catch (err) {
-    const detail = err instanceof AppError ? err.message : `It could not be read (${err instanceof Error ? err.message : String(err)}).`;
-    const code = err instanceof AppError ? err.code : 'CAPSULE_UNREADABLE';
     // An item that has already vanished needs no warning — there is nothing
     // left to protect and nothing was deleted. An item that is *there* but
     // unreadable (permissions, an I/O error) is a real refusal, and the user
     // should see it rather than wonder why that file never got cleaned up.
+    // Gone has its own code and the dry run's words, never the system's ENOENT (hunt C74).
     const alreadyGone = (err as NodeJS.ErrnoException)?.code === 'ENOENT';
-    if (!alreadyGone) {
-      recordEvent(store, { at: Date.now(), kind: 'unprotected', name, originalPath: original, sizeBytes: 0, detail });
-    }
+    if (alreadyGone) return { path: original, protected: false, bytes: 0, code: ITEM_GONE, detail: GONE_SENTENCE };
+    const detail = err instanceof AppError ? err.message : `It could not be read (${err instanceof Error ? err.message : String(err)}).`;
+    const code = err instanceof AppError ? err.code : 'CAPSULE_UNREADABLE';
+    recordEvent(store, { at: Date.now(), kind: 'unprotected', name, originalPath: original, sizeBytes: 0, detail });
     return { path: original, protected: false, bytes: 0, code, detail };
   }
 
@@ -1311,6 +1311,10 @@ export interface ProtectionPlan {
   usedBytes: number;
 }
 
+/** An item gone from its place before anything was done to it (hunt C74): nothing to protect or delete. */
+export const ITEM_GONE = 'ITEM_GONE';
+const GONE_SENTENCE = 'It is no longer there — nothing to delete.';
+
 /**
  * What `protectAndTrash` would do, having done none of it (v4 §4.4).
  *
@@ -1387,9 +1391,10 @@ export async function planProtection(
         path,
         bytes: 0,
         willProtect: false,
-        code: err instanceof AppError ? err.code : 'CAPSULE_UNREADABLE',
+        // Gone is not unreadable (hunt C74): the page says it apart, never "still on your disk".
+        code: alreadyGone ? ITEM_GONE : err instanceof AppError ? err.code : 'CAPSULE_UNREADABLE',
         detail: alreadyGone
-          ? 'It is no longer there — nothing to delete.'
+          ? GONE_SENTENCE
           : err instanceof AppError
             ? err.message
             : `It could not be read (${err instanceof Error ? err.message : String(err)}).`,
@@ -2735,6 +2740,7 @@ export async function startCapsuleRestore(entryIds: string[], options: RestoreOp
       currentPath: '',
       cancelled: false,
       startedAt: Date.now(),
+      entriesDone: 0,
     };
     jobs.set(job.jobId, job);
 
@@ -2794,6 +2800,8 @@ async function restoreEach(
     }
     await runRestore(job, entry, manifest, misses);
     if (job.status === 'error' || job.status === 'cancelled') return;
+    // Put back, and staying put back whatever comes next: counted, so a stop says how many (hunt C75).
+    job.entriesDone = (job.entriesDone ?? 0) + 1;
   }
   if (beforeComplete) {
     await beforeComplete().catch((err: unknown) => {

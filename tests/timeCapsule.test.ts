@@ -266,8 +266,9 @@ test('an item too big for the cap is left alone, and the refusal is recorded', a
 test('a path that does not exist is reported, not silently skipped', async () => {
   const { outcomes } = await protectItems([{ path: path.join(os.tmpdir(), 'tm-b3-does-not-exist-' + crypto.randomUUID()) }]);
   assert.equal(outcomes[0].protected, false);
-  assert.equal(outcomes[0].code, 'CAPSULE_UNREADABLE');
-  assert.ok((outcomes[0].detail ?? '').length > 0, 'and it says why');
+  // Gone is its own code, not unreadable (hunt C74): the cart says it apart, never "still on your disk".
+  assert.equal(outcomes[0].code, 'ITEM_GONE');
+  assert.match(outcomes[0].detail ?? '', /no longer there/, 'and it says why');
 });
 
 test('protectAndTrash refuses to delete what it could not protect', async () => {

@@ -29738,18 +29738,20 @@ function watchJob(opts) {
       // them was reported as an unqualified success.
       if (ev.warning) toast(ev.warning, 'error', 12000);
       opts.onComplete(ev);
+    // A stopped job's event goes to the page that asked: an undo stopped part-way
+    // says what it had put back (hunt C75).
     } else if (ev.type === 'error') {
       done();
       toast(ev.message, 'error', 8000);
-      opts.onSettled();
+      opts.onSettled(ev);
     } else if (ev.type === 'cancelled') {
       done();
       toast(opts.cancelledMessage);
-      opts.onSettled();
+      opts.onSettled(ev);
     } else if (ev.type === 'shutdown') {
       done();
       toast('Server shutting down — the job rolled back safely', 'error');
-      opts.onSettled();
+      opts.onSettled(ev);
     }
   };
   es.onerror = () => {
@@ -36291,10 +36293,15 @@ async function cartDryRun(paths, onProgress) {
 function cartManifestHtml(plan, missingFromScan) {
   const items = plan.items || [];
   const going = items.filter((i) => i.willDelete);
-  const staying = items.filter((i) => !i.willDelete);
+  // An item already gone is not left in place (hunt C74): said apart, below.
+  const gone = items.filter((i) => !i.willDelete && i.code === 'ITEM_GONE');
+  const staying = items.filter((i) => !i.willDelete && i.code !== 'ITEM_GONE');
+  // With the Undo Vault off every row's reason is the note's sentence: said
+  // once, in the note, and the rows only named (hunt C78).
+  const offWhy = plan.capsule && plan.capsule.available === false ? plan.capsule.reason : null;
   const rows = staying.slice(0, 6).map((i) =>
     `<div class="cart-mf-row"><span class="nm" title="${escapeHtml(i.path)}">${escapeHtml(baseName(i.path))}</span>` +
-    `<span class="why">${escapeHtml(i.reason || 'Could not be protected.')}</span></div>`).join('');
+    (offWhy && i.reason === offWhy ? '' : `<span class="why">${escapeHtml(i.reason || 'Could not be protected.')}</span>`) + `</div>`).join('');
 
   let html = going.length
     ? `Move <b>${formatCount(going.length)} item${going.length === 1 ? '' : 's'}</b> (${escapeHtml(formatBytes(plan.bytesWouldFree))}) to the Trash?`
@@ -36325,6 +36332,11 @@ function cartManifestHtml(plan, missingFromScan) {
       (staying.length > 6 ? `<div class="cart-mf-row muted">…and ${formatCount(staying.length - 6)} more</div>` : '') +
       `</div>`;
   }
+  if (gone.length) {
+    html += `<div class="cart-mf-left"><b>${formatCount(gone.length)} already gone</b> — nothing to delete:</div><div class="cart-mf-list">` +
+      gone.slice(0, 6).map((i) => `<div class="cart-mf-row"><span class="nm" title="${escapeHtml(i.path)}">${escapeHtml(baseName(i.path))}</span></div>`).join('') +
+      (gone.length > 6 ? `<div class="cart-mf-row muted">…and ${formatCount(gone.length - 6)} more</div>` : '') + `</div>`;
+  }
   if (plan.evicts && plan.evicts.length) {
     html += `<div class="cart-mf-note">${formatCount(plan.evicts.length)} older Undo Vault ${plan.evicts.length === 1 ? 'copy' : 'copies'} will be dropped to make room, and can no longer be restored from there.</div>`;
   }
@@ -36338,9 +36350,15 @@ function cartManifestHtml(plan, missingFromScan) {
   const oh = plan.openHandles;
   const conflicts = (oh && oh.conflicts) || [];
   if (conflicts.length) {
-    html += `<div class="cart-mf-note">${icon('alert', 13)} ${going.length === 1 && conflicts.length === 1
-      ? 'It is open in another program right now, which will stop the move.'
-      : `${formatCount(conflicts.length)} of these ${conflicts.length === 1 ? 'is' : 'are'} open in another program right now, which will stop the whole batch.`}</div>`;
+    // One conflict per program, staged item and open file (hunt C32): the
+    // items held are the distinct staged paths, and the programs the
+    // distinct processes holding them.
+    const held = new Set(conflicts.map((c) => c.path)).size;
+    const programs = new Set(conflicts.map((c) => (c.pid !== undefined ? c.pid : c.processName))).size;
+    const where = programs > 1 ? 'other programs' : 'another program';
+    html += `<div class="cart-mf-note">${icon('alert', 13)} ${going.length === 1 && held === 1
+      ? `It is open in ${where} right now, which will stop the move.`
+      : `${formatCount(held)} of these ${held === 1 ? 'is' : 'are'} open in ${where} right now, which will stop the whole batch.`}</div>`;
   }
   // openHandleGuard's rule: a guard that cannot check must never answer
   // "nothing is open". The server reports three states and the conflicts list
@@ -36419,7 +36437,7 @@ async function cartExecuteCommit(paths, foreseen = []) {
     // when something was — or may have been: an item whose trash step was not
     // confirmed either way (FG3c) — is the one message that must not be sent here.
     if (result.trashed.length || result.unverified.length) {
-      cartDropTrashed(result.trashed || []);
+      cartDropTrashed([...(result.trashed || []), ...result.skipped.filter((i) => i.code === 'ITEM_GONE').map((i) => i.path)]);
       saveCart(); renderCart(); refreshCartButtons();
       cartLastRun = result.runId;
       toast(result.trashed.length
@@ -36435,7 +36453,9 @@ async function cartExecuteCommit(paths, foreseen = []) {
     btn.disabled = false;
     btn.innerHTML = label;
   }
-  cartDropTrashed(result.trashed || []);
+  // What is already gone leaves the cart too, as the summary says (hunt C74).
+  const goneNow = [...(result.skipped || []), ...foreseen].filter((i) => i.code === 'ITEM_GONE').map((i) => i.path);
+  cartDropTrashed([...(result.trashed || []), ...goneNow]);
   cartShown = CART_PAGE;
   saveCart();
   renderCart();
@@ -36469,8 +36489,14 @@ function cartDropTrashed(trashed) {
  */
 function cartCommitSummary(result) {
   const trashed = result.trashed || [];
-  const skipped = result.skipped || [];
   const failed = result.failedToTrash || [];
+  // The server lists an item the Trash refused in `skipped` too (NOT_DELETED):
+  // it is said once, below, as not moved (hunt C31). An item already gone is
+  // not on the disk at all, so it is said apart (hunt C74).
+  const refused = new Set(failed.map((f) => f.path));
+  const notMoved = (result.skipped || []).filter((s) => !refused.has(s.path));
+  const gone = notMoved.filter((s) => s.code === 'ITEM_GONE');
+  const skipped = notMoved.filter((s) => s.code !== 'ITEM_GONE');
   // The Trash reported failing, and the disk could not show either way: their copies were kept.
   const unverified = result.unverified || [];
 
@@ -36493,6 +36519,12 @@ function cartCommitSummary(result) {
         `<span class="why">${escapeHtml(sk.reason || 'Could not be protected.')}</span></div>`).join('') +
       (skipped.length > 6 ? `<div class="cart-mf-row muted">…and ${formatCount(skipped.length - 6)} more</div>` : '') +
       `</div>`;
+  }
+  if (gone.length) {
+    html += `<div class="cart-mf-left"><b>${formatCount(gone.length)} already gone</b> — nothing to delete, and taken out of your cart:</div>` +
+      `<div class="cart-mf-list">` + gone.slice(0, 6).map((g) =>
+        `<div class="cart-mf-row"><span class="nm" title="${escapeHtml(g.path)}">${escapeHtml(baseName(g.path))}</span></div>`).join('') +
+      (gone.length > 6 ? `<div class="cart-mf-row muted">…and ${formatCount(gone.length - 6)} more</div>` : '') + `</div>`;
   }
   if (failed.length) {
     html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(failed.length)} could not be moved to the Trash (${escapeHtml(failed[0].reason)}). ${failed.length === 1 ? 'It is untouched, and its copy was discarded.' : 'Those are untouched, and their copies were discarded.'}</div>`;
@@ -36573,7 +36605,16 @@ async function cartUndoRun(runId) {
       }
       rescan({ unattended: true }); // the job ends when it ends, not at a click (review F2.1)
     },
-    onSettled: () => { renderCart(); refreshCartButtons(); },
+    // A stop part-way (an error, a cancel) leaves the items already put back
+    // put back (hunt C75): said, with how many, and the map catches up, as
+    // after a whole undo. The job's own message says why it stopped.
+    onSettled: (ev) => {
+      renderCart(); refreshCartButtons();
+      const back = ev && ev.entriesDone > 0 ? ev.entriesDone : 0;
+      if (!back) return;
+      toast(`${formatCount(back)} of the ${formatCount(ev.entryCount || job.entryCount)} items were put back before the undo stopped; the rest stay in the Undo Vault.`, 'error', 12000);
+      rescan({ unattended: true });
+    },
   });
 }
 

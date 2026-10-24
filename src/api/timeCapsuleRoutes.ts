@@ -155,8 +155,9 @@ timeCapsuleRouter.get('/timecapsule/jobs/:jobId/progress', (req: Request, res: R
   const finish = (j: TimeCapsuleJob): void => {
     // A completed restore that could not set some dates or permissions back says so (FG3f #10).
     if (j.status === 'complete') send(res, { type: 'complete', filesDone: j.filesDone, bytesDone: j.bytesDone, ...(j.error ? { warning: j.error } : {}) });
-    else if (j.status === 'cancelled') send(res, { type: 'cancelled' });
-    else send(res, { type: 'error', message: j.error ?? 'The restore failed' });
+    // A stop says how many entries were already put back, and stay put back (hunt C75).
+    else if (j.status === 'cancelled') send(res, { type: 'cancelled', entriesDone: j.entriesDone ?? 0, entryCount: j.entryIds.length });
+    else send(res, { type: 'error', message: j.error ?? 'The restore failed', entriesDone: j.entriesDone ?? 0, entryCount: j.entryIds.length });
     closeClient(client);
   };
 

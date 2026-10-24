@@ -35,6 +35,18 @@ function blockAt(anchor: string): string {
   throw new Error(`unbalanced block at ${anchor}`);
 }
 
+/** A function declaration of the page by its name, braces matched from its first `{`. */
+function fnDecl(name: string): string {
+  const at = INDEX.indexOf(`function ${name}(`);
+  assert.notEqual(at, -1, `function ${name} is in the built page`);
+  let depth = 0;
+  for (let i = INDEX.indexOf('{', at); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(at, i + 1);
+  }
+  throw new Error(`unbalanced function ${name}`);
+}
+
 type El = { hidden: boolean; innerHTML: string; textContent: string; style: Record<string, string>; classes: Set<string>; classList: { add(c: string): void; remove(c: string): void } };
 function makeEls(): { $: (id: string) => El; els: Record<string, El> } {
   const els: Record<string, El> = {};
@@ -267,4 +279,145 @@ test('Clean Up\'s failure toast gives the reason, not only a count (C73)', async
   const failure = toasts.find(([, k]) => k === 'error')?.[0] ?? '';
   assert.match(failure, /^2 could not be trashed/, `control: ${failure}`);
   assert.match(failure, /The scan behind this has expired\. Scan again first\./, 'the reason the server gave');
+});
+
+/* ═════════ The cart's sheet and its summary (C31, C32, C74, C78) ═════════ */
+
+const base = (p: string): string => p.split(/[\\/]/).pop() ?? p;
+
+function cartSummary(result: Record<string, unknown>): string {
+  const { $, els } = makeEls();
+  const run = declared<(r: unknown) => void>('function cartCommitSummary(result) {', {
+    $, formatCount: String, formatBytes: (n: number) => `${n} B`, escapeHtml: (s: unknown) => String(s), icon: () => '', baseName: base, state: { cart: new Set() },
+  }, `let confirmPaths = []; let onConfirmTrash = null;\n${fnDecl('cartSpaceSaid')}`);
+  run({ trashed: [], bytesFreed: 0, runId: 'r1', ...result });
+  return text(els.confirmText.innerHTML);
+}
+
+function cartSheet(plan: Record<string, unknown>): string {
+  const keys = { formatCount: String, formatBytes: (n: number) => `${n} B`, escapeHtml: (s: unknown) => String(s), icon: () => '', baseName: base, state: { cart: new Set() } };
+  const pre = ['cartSpaceSaid', 'installedProgramWarningHtml', 'installedProgramWords', 'installedProgramRemoval']
+    .filter((n) => INDEX.includes(`function ${n}(`)).map(fnDecl).join('\n');
+  const sheet = declared<(p: unknown, missing: number) => string>('function cartManifestHtml(plan, missingFromScan) {', keys, pre);
+  return text(sheet({ bytesWouldFree: 0, bytesSkipped: 0, evicts: [], batches: 1, capsule: { available: true }, openHandles: { checked: true, complete: true, conflicts: [] }, ...plan }, 0));
+}
+
+test('an item the Trash refused is reported once, as not moved, never also as "left in place" (C31)', () => {
+  const said = cartSummary({
+    trashed: ['/c/a.bin'], bytesFreed: 5,
+    skipped: [{ path: '/c/held.txt', code: 'NOT_DELETED', reason: 'TreeMap did not hand it to the Trash: Chrome has it open.' }],
+    failedToTrash: [{ path: '/c/held.txt', reason: 'Chrome has it open' }],
+  });
+  assert.match(said, /1 could not be moved to the Trash \(Chrome has it open\)/, `control: ${said}`);
+  assert.doesNotMatch(said, /left in place/, 'the same item is not reported a second time');
+  const both = cartSummary({
+    skipped: [{ path: '/c/big.iso', code: 'CAPSULE_FULL', reason: 'Too big for the Undo Vault.' }, { path: '/c/held.txt', code: 'NOT_DELETED', reason: 'x' }],
+    failedToTrash: [{ path: '/c/held.txt', reason: 'Chrome has it open' }],
+  });
+  assert.match(both, /1 left in place/, 'an item only left in place is still reported');
+  assert.match(both, /big\.iso/);
+});
+
+test('the cart\'s sheet counts the staged items open in another program, not the open files, and says "programs" when there are several (C32)', () => {
+  const going = (paths: string[]) => paths.map((p) => ({ path: p, bytes: 1, willDelete: true }));
+  const one = cartSheet({ items: going(['/c/project']), openHandles: { checked: true, complete: true, conflicts: [
+    { path: '/c/project', pid: 7, processName: 'Code', openPath: '/c/project/a.ts' },
+    { path: '/c/project', pid: 7, processName: 'Code', openPath: '/c/project/b.ts' },
+    { path: '/c/project', pid: 7, processName: 'Code', openPath: '/c/project/c.ts' },
+  ] } });
+  assert.match(one, /It is open in another program right now, which will stop the move\./, `one item, three open files in one program: ${one}`);
+  assert.doesNotMatch(one, /3 of these/);
+  const two = cartSheet({ items: going(['/c/project', '/c/notes.txt', '/c/z.bin']), openHandles: { checked: true, complete: true, conflicts: [
+    { path: '/c/project', pid: 7, processName: 'Code', openPath: '/c/project/a.ts' },
+    { path: '/c/project', pid: 7, processName: 'Code', openPath: '/c/project/b.ts' },
+    { path: '/c/notes.txt', pid: 9, processName: 'TextEdit', openPath: '/c/notes.txt' },
+  ] } });
+  assert.match(two, /2 of these are open in other programs right now, which will stop the whole batch\./, two);
+  const shared = cartSheet({ items: going(['/c/notes.txt']), openHandles: { checked: true, complete: true, conflicts: [
+    { path: '/c/notes.txt', pid: 9, processName: 'TextEdit', openPath: '/c/notes.txt' },
+    { path: '/c/notes.txt', pid: 11, processName: 'Preview', openPath: '/c/notes.txt' },
+  ] } });
+  assert.match(shared, /It is open in other programs right now, which will stop the move\./, shared);
+});
+
+test('an item already gone is said to be gone, never "still on your disk", in the sheet and in the summary (C74)', () => {
+  const GONE = 'It is no longer there — nothing to delete.';
+  const said = cartSummary({
+    trashed: ['/c/a.bin'], bytesFreed: 5,
+    skipped: [{ path: '/c/gone.bin', code: 'ITEM_GONE', reason: GONE }, { path: '/c/big.iso', code: 'CAPSULE_FULL', reason: 'Too big.' }],
+  });
+  assert.match(said, /1 left in place — still on your disk, not deleted, and still in your cart: big\.iso/, `control: ${said}`);
+  assert.match(said, /1 already gone — nothing to delete, and taken out of your cart: gone\.bin/, 'the gone item, apart');
+  const only = cartSummary({ skipped: [{ path: '/c/gone.bin', code: 'ITEM_GONE', reason: GONE }] });
+  assert.doesNotMatch(only, /still on your disk/, `a gone item is not on the disk: ${only}`);
+
+  const sheet = cartSheet({ items: [{ path: '/c/a.bin', bytes: 5, willDelete: true }, { path: '/c/gone.bin', bytes: null, willDelete: false, code: 'ITEM_GONE', reason: GONE }] });
+  assert.match(sheet, /1 already gone — nothing to delete: gone\.bin/, `the sheet says it before the commit: ${sheet}`);
+  assert.doesNotMatch(sheet, /left in place/, 'and does not call it left in place');
+});
+
+test('with the Undo Vault off, the cart\'s sheet says why once, not again on every row (C78)', () => {
+  const WHY = 'This portable session saves nothing, so there is nowhere to keep a recoverable copy. Deletions still go to the system Trash.';
+  const items = Array.from({ length: 9 }, (_, i) => ({ path: `/c/f${i}.bin`, bytes: 1, willDelete: false, code: 'CAPSULE_UNAVAILABLE', reason: WHY }));
+  const sheet = cartSheet({ items, capsule: { available: false, reason: WHY } });
+  assert.match(sheet, /9 will be left in place/, `control: ${sheet}`);
+  assert.match(sheet, /f0\.bin/, 'the rows are still named');
+  assert.equal(sheet.split('This portable session saves nothing').length - 1, 1, `the reason is said once: ${sheet}`);
+  const mixed = cartSheet({ items: [...items.slice(0, 1), { path: '/c/odd.bin', bytes: 1, willDelete: false, code: 'CAPSULE_UNREADABLE', reason: 'It could not be read.' }], capsule: { available: false, reason: WHY } });
+  assert.match(mixed, /odd\.bin It could not be read\./, 'a row with a reason of its own keeps it');
+});
+
+test('a commit takes an item already gone out of the cart, as it does what went to the Trash (C74)', async () => {
+  const cart = new Set(['/c/a.bin', '/c/gone.bin', '/c/gone2.bin', '/c/big.iso']);
+  const { $ } = makeEls();
+  const run = declared<(paths: string[], foreseen: unknown[]) => Promise<void>>('async function cartExecuteCommit(paths, foreseen = []) {', {
+    $, state: { cart }, icon: () => '', REDUCED: true, formatCount: String, CART_COMMIT_CHUNK: 100, cartCommitKey: 'k', CART_PAGE: 50,
+    api: async () => ({ runId: 'r1', trashed: ['/c/a.bin'], bytesFreed: 5, skipped: [{ path: '/c/gone.bin', code: 'ITEM_GONE', reason: 'It is no longer there — nothing to delete.' }], failedToTrash: [], unverified: [] }),
+    toast: () => {}, saveCart: () => {}, renderCart: () => {}, refreshCartButtons: () => {}, cartCommitSummary: () => {}, rescan: () => {},
+    tmIsInside: (p: string, dir: string) => p.startsWith(dir + '/'),
+  }, `let cartLastRun = null; let cartShown = 0;\n${blockAt('function cartDropTrashed(trashed) {')}`);
+  await run(['/c/a.bin', '/c/gone.bin'], [{ path: '/c/gone2.bin', code: 'ITEM_GONE', reason: 'It is no longer there — nothing to delete.' }, { path: '/c/big.iso', code: 'CAPSULE_FULL', reason: 'Too big.' }]);
+  assert.deepEqual([...cart], ['/c/big.iso'], 'what went and what was already gone leave the cart; what was left in place stays');
+});
+
+/* ═════════ C75 — an undo that stops part-way says what it put back, and the map catches up ═════════ */
+
+test('an undo that stops part-way says how many it put back and rescans; one that put back none does neither (C75)', async () => {
+  type Watched = { onSettled: (ev?: Record<string, unknown>) => void };
+  const seen: { opts?: Watched } = {};
+  const toasts: string[] = [];
+  let rescans = 0;
+  const undo = declared<(runId: string) => Promise<void>>('async function cartUndoRun(runId) {', {
+    api: async () => ({ jobId: 'j1', entryCount: 5 }), closeModal: () => {}, toast: (m: string) => { toasts.push(m); },
+    watchJob: (o: Watched) => { seen.opts = o; }, renderCart: () => {}, refreshCartButtons: () => {}, formatCount: String,
+    rescan: () => { rescans++; }, passedOverToast: () => '',
+  }, 'let cartLastRun = null;');
+  await undo('r1');
+  const opts = seen.opts;
+  assert.ok(opts, 'control: the job is watched');
+  opts.onSettled({ type: 'error', message: 'The disk stopped answering.', entriesDone: 3, entryCount: 5 });
+  assert.ok(toasts.some((m) => /3 of the 5 items were put back before the undo stopped/.test(m)), `what came back is said: ${toasts.join(' | ')}`);
+  assert.equal(rescans, 1, 'and the map is scanned again, as after a whole undo');
+  toasts.length = 0;
+  opts.onSettled({ type: 'cancelled', entriesDone: 0, entryCount: 5 });
+  opts.onSettled({ type: 'cancelled' });
+  assert.deepEqual(toasts, [], 'nothing put back, nothing said');
+  assert.equal(rescans, 1, 'and nothing rescanned');
+});
+
+test('the progress dialog hands a stopped job\'s event to the page that asked (C75)', () => {
+  const { $ } = makeEls();
+  let es: { onmessage?: (m: { data: string }) => void } | null = null;
+  class FakeES { onmessage?: (m: { data: string }) => void; onerror?: () => void; readyState = 1; constructor() { es = this; } close() {} }
+  const settled: unknown[] = [];
+  const watch = declared<(o: unknown) => void>('function watchJob(opts) {', {
+    $, icon: () => '', EventSource: Object.assign(FakeES, { CLOSED: 2 }), OFFLOAD_PHASE_LABEL: { checking: 'Checking' }, closeModal: () => {},
+    FxBeam: { attach: () => {} }, toast: () => {}, formatCount: String, formatBytes: String,
+  }, 'let activeJob = null;');
+  const opts = { title: 't', footNote: '', progressUrl: '/p', cancelUrl: '/c', cancelledMessage: 'Cancelled', lostMessage: 'Lost', onComplete: () => {}, onSettled: (ev: unknown) => { settled.push(ev); } };
+  for (const ev of [{ type: 'error', message: 'x', entriesDone: 2, entryCount: 4 }, { type: 'cancelled', entriesDone: 1, entryCount: 4 }]) {
+    watch(opts);
+    es!.onmessage!({ data: JSON.stringify(ev) });
+  }
+  assert.deepEqual(settled, [{ type: 'error', message: 'x', entriesDone: 2, entryCount: 4 }, { type: 'cancelled', entriesDone: 1, entryCount: 4 }]);
 });
