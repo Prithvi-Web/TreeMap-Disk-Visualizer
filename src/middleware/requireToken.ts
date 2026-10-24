@@ -21,9 +21,18 @@ import crypto from 'crypto';
  * blocks cross-site browser access. Anyone who can load the UI page itself
  * gets a session — if the port is exposed beyond localhost, front it with a
  * reverse proxy that authenticates page loads too.
+ *
+ * The desktop shell closes that last gap (hunt C10): it sets
+ * TREEMAP_SESSION_COOKIE, a secret apart from the token, and puts a
+ * `treemap_session` cookie of that value into its own browser session before
+ * its window loads the page. With it set, serving the page hands out no
+ * cookie, and the only cookie that is a session is that one — so a local
+ * program that loads the page, under this account or another, learns nothing,
+ * and the cookie's value is never the bearer token.
  */
 
 const COOKIE_NAME = 'treemap_token';
+const SESSION_COOKIE_NAME = 'treemap_session';
 
 /** Constant-time comparison; hashing first equalizes lengths. */
 function tokensMatch(candidate: string, expected: string): boolean {
@@ -32,12 +41,12 @@ function tokensMatch(candidate: string, expected: string): boolean {
   return crypto.timingSafeEqual(a, b);
 }
 
-function cookieToken(header: string | undefined): string | null {
+function cookieToken(header: string | undefined, name: string): string | null {
   if (!header) return null;
   for (const part of header.split(';')) {
     const eq = part.indexOf('=');
     if (eq === -1) continue;
-    if (part.slice(0, eq).trim() === COOKIE_NAME) {
+    if (part.slice(0, eq).trim() === name) {
       try {
         return decodeURIComponent(part.slice(eq + 1).trim());
       } catch {
@@ -64,8 +73,10 @@ export function requireToken(req: Request, res: Response, next: NextFunction): v
     next();
     return;
   }
-  const fromCookie = cookieToken(req.headers.cookie);
-  if (fromCookie !== null && tokensMatch(fromCookie, token)) {
+  // The desktop's window session, when the shell configured one; else the page's token cookie.
+  const session = process.env.TREEMAP_SESSION_COOKIE;
+  const fromCookie = session ? cookieToken(req.headers.cookie, SESSION_COOKIE_NAME) : cookieToken(req.headers.cookie, COOKIE_NAME);
+  if (fromCookie !== null && tokensMatch(fromCookie, session || token)) {
     next();
     return;
   }
@@ -83,6 +94,11 @@ export function requireToken(req: Request, res: Response, next: NextFunction): v
  */
 export function uiAuthCookie(req: Request, res: Response, next: NextFunction): void {
   const token = process.env.TREEMAP_TOKEN;
+  // A desktop window brings its own session cookie: a page load is handed nothing (hunt C10).
+  if (process.env.TREEMAP_SESSION_COOKIE) {
+    next();
+    return;
+  }
   if (token && req.method === 'GET' && (req.path === '/' || req.path === '/index.html')) {
     res.setHeader('Set-Cookie', `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; SameSite=Strict; HttpOnly`);
   }

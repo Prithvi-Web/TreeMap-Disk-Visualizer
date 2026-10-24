@@ -19,10 +19,10 @@ const ISSUES_URL = `${REPO_URL}/issues/new`;
  * The token the in-process server requires on every /api request.
  *
  * The desktop app used to run its API open: any local process or web page
- * that found the port could scan, trash and offload. The server already
- * enforces TREEMAP_TOKEN when it is set and hands the page its own session
- * cookie when it serves the UI, so a fresh random token per launch closes the
- * hole with no change to the page. An owner-provided token wins.
+ * that found the port could scan, trash and offload. The server enforces
+ * TREEMAP_TOKEN when it is set, so a fresh random token per launch gates the
+ * API; the window's own session is `sessionSecret`'s cookie, never this token.
+ * An owner-provided token wins.
  */
 function desktopToken(env) {
   const preset = env && typeof env.TREEMAP_TOKEN === 'string' ? env.TREEMAP_TOKEN : '';
@@ -59,6 +59,21 @@ function scanArgPath(arg, cwd, platform, paths) {
   if (typeof arg !== 'string' || !arg || arg.startsWith('-')) return null;
   const repaired = platform === 'win32' && /^[A-Za-z]:"$/.test(arg) ? `${arg.slice(0, 2)}\\` : arg;
   return paths.resolve(cwd, repaired);
+}
+
+/**
+ * The window's session secret (hunt C10), fresh per launch and apart from the token. Set as
+ * TREEMAP_SESSION_COOKIE, it tells the server to hand no cookie to a page load and to accept only a
+ * `treemap_session` cookie of this value: the server used to answer every `GET /` with the token
+ * itself in a cookie, so any local program — another account's too — could take it.
+ */
+function sessionSecret() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+/** The cookie main.js puts into the window's own session before it loads the page (Electron's cookies.set details). */
+function sessionCookie(origin, secret) {
+  return { url: origin, name: 'treemap_session', value: secret, httpOnly: true, sameSite: 'strict' };
 }
 
 /* ─────────────────────────── Names and numbers ─────────────────────────── */
@@ -316,6 +331,8 @@ module.exports = {
   desktopToken,
   desktopExec,
   scanArgPath,
+  sessionSecret,
+  sessionCookie,
   folderName,
   growthNotification,
   scanFinishedNotice,

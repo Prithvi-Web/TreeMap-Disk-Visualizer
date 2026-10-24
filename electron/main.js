@@ -278,9 +278,11 @@ function announceScanFinished(result) {
 async function boot() {
   const publicDir = path.join(__dirname, '..', 'public');
   // The API is never open to whatever local process finds the port: the
-  // server enforces this token on /api and hands the page its own session
-  // cookie when it serves the UI, so the page needs no change. An owner who
-  // set TREEMAP_TOKEN themselves keeps theirs.
+  // server enforces this token on /api. The window's session is a cookie of
+  // its own, apart from the token, put into this app's browser session below
+  // before the page loads; with TREEMAP_SESSION_COOKIE set the server hands no
+  // cookie to anyone who loads the page (hunt C10). An owner who set
+  // TREEMAP_TOKEN themselves keeps theirs.
   process.env.TREEMAP_TOKEN = desktop.desktopToken(process.env);
   // "Scan with TreeMap" starts this program and no other (hunt C11): the
   // server registers only what is named here, and offers the entry only when
@@ -288,12 +290,14 @@ async function boot() {
   // nothing; an AppImage names its own file, not the mount that is gone once
   // TreeMap quits.
   if (app.isPackaged) process.env.TREEMAP_DESKTOP_EXEC = desktop.desktopExec(process.env, process.execPath);
+  process.env.TREEMAP_SESSION_COOKIE = desktop.sessionSecret();
   // Before the server exists, so no scan can start ahead of the launcher.
   registerMftLauncher();
   // Port 0 → OS assigns a free port, so two machines never collide.
   running = await startServer({ host: '127.0.0.1', port: 0, publicDir });
   console.log(`[treemap] desktop server ready on 127.0.0.1:${running.port}`);
   hardenSession();
+  await session.defaultSession.cookies.set(desktop.sessionCookie(`http://127.0.0.1:${running.port}`, process.env.TREEMAP_SESSION_COOKIE));
   createWindow(running.port);
   createTray();
   wireGrowthNotifications();

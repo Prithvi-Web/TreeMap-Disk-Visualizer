@@ -233,6 +233,14 @@ export function makeStub(opts: StubOptions) {
       setPermissionCheckHandler(h: (wc: unknown, permission: string) => boolean): void {
         session.defaultSession.permissionCheckHandler = h;
       },
+      /** Each cookie main.js puts into the window's session, and how many windows had loaded a page by then. */
+      cookiesSet: [] as Array<{ details: Record<string, unknown>; windowsLoaded: number }>,
+      cookies: {
+        set(details: Record<string, unknown>): Promise<void> {
+          session.defaultSession.cookiesSet.push({ details, windowsLoaded: FakeWindow.all.filter((w) => w.url !== '').length });
+          return Promise.resolve();
+        },
+      },
     },
   };
 
@@ -274,7 +282,7 @@ export function makeStub(opts: StubOptions) {
   };
 
   const backend = {
-    startServerCalls: [] as Array<{ opts: Record<string, unknown>; tokenAtStart: string | undefined; execAtStart: string | undefined }>,
+    startServerCalls: [] as Array<{ opts: Record<string, unknown>; tokenAtStart: string | undefined; execAtStart: string | undefined; sessionAtStart: string | undefined }>,
     shutdowns: 0,
     growthHandlers: [] as Array<(alert: unknown) => void>,
     port: 43210,
@@ -289,7 +297,7 @@ export function makeStub(opts: StubOptions) {
   const dist: Record<string, unknown> = {
     'dist/server.js': {
       startServer: async (o: Record<string, unknown>) => {
-        backend.startServerCalls.push({ opts: o, tokenAtStart: process.env.TREEMAP_TOKEN, execAtStart: process.env.TREEMAP_DESKTOP_EXEC });
+        backend.startServerCalls.push({ opts: o, tokenAtStart: process.env.TREEMAP_TOKEN, execAtStart: process.env.TREEMAP_DESKTOP_EXEC, sessionAtStart: process.env.TREEMAP_SESSION_COOKIE });
         return { server: {}, port: backend.port, shutdown(): void { backend.shutdowns++; } };
       },
     },
@@ -364,6 +372,8 @@ export async function loadMain(opts: StubOptions): Promise<Harness> {
   delete process.env.TREEMAP_DESKTOP_EXEC;
   if (opts.token === undefined) delete process.env.TREEMAP_TOKEN;
   else process.env.TREEMAP_TOKEN = opts.token;
+  const savedSession = process.env.TREEMAP_SESSION_COOKIE;
+  delete process.env.TREEMAP_SESSION_COOKIE;
   const listenersBefore = {
     uncaught: process.listeners('uncaughtException'),
     rejection: process.listeners('unhandledRejection'),
@@ -395,6 +405,8 @@ export async function loadMain(opts: StubOptions): Promise<Harness> {
     else process.env.TREEMAP_TOKEN = savedToken;
     if (savedExec === undefined) delete process.env.TREEMAP_DESKTOP_EXEC;
     else process.env.TREEMAP_DESKTOP_EXEC = savedExec;
+    if (savedSession === undefined) delete process.env.TREEMAP_SESSION_COOKIE;
+    else process.env.TREEMAP_SESSION_COOKIE = savedSession;
     for (const l of process.listeners('uncaughtException')) {
       if (!listenersBefore.uncaught.includes(l)) process.removeListener('uncaughtException', l);
     }

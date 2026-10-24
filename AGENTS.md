@@ -1243,6 +1243,7 @@ window's.
 | `HOST` | `127.0.0.1` | Bind address for `npm start` (e.g. `0.0.0.0` for remote access) |
 | `PORT` | `4280` | Listen port |
 | `TREEMAP_TOKEN` | unset (no auth) | Every `/api` request must send `Authorization: Bearer <token>`; otherwise `401 { code: "UNAUTHORIZED" }` |
+| `TREEMAP_SESSION_COOKIE` | unset (serving the page sets the token cookie) | With `TREEMAP_TOKEN`: serving the page sets no cookie, and the only cookie accepted as a session is `treemap_session` with this value, which is not the token. The desktop shell sets it, fresh each launch, and puts that cookie into its own window's browser session before loading the page |
 | `TREEMAP_ALLOWED_ORIGINS` | unset (no CORS) | Comma-separated origins allowed to call the API from browsers |
 | `TREEMAP_DATA_DIR` | per-OS app-data dir | Where snapshots/settings/manifests persist |
 | `TREEMAP_INSECURE_BIND` | unset | `1` lets a non-loopback `HOST` start without `TREEMAP_TOKEN`, with a warning; without it such a bind refuses to start |
@@ -1258,13 +1259,19 @@ was given): any other `Host` header is `403 { code: "BAD_HOST" }`.
 How the human UI keeps working with a token set: serving the UI page also
 sets an `HttpOnly`, `SameSite=Strict` session cookie, which same-origin
 `fetch()` **and `EventSource`** (which cannot send headers) attach
-automatically. The page needs no auth code of its own.
+automatically. The page needs no auth code of its own. In the desktop app
+(`TREEMAP_SESSION_COOKIE`) the page is served with no cookie at all: the
+shell has already put its window's `treemap_session` cookie into its own
+browser session, and fetch and EventSource attach that one the same way.
 
 Threat model, stated plainly: the token gates API access for non-browser
 clients, and `SameSite=Strict` + CORS-off blocks cross-site browser attacks —
-but anyone who can load the UI page itself gets a session. If you bind beyond
-localhost, front the server with a reverse proxy that authenticates page
-loads (and adds TLS).
+but under `npm start` anyone who can load the UI page itself gets a session.
+If you bind beyond localhost, front the server with a reverse proxy that
+authenticates page loads (and adds TLS). The desktop app does not hand out a
+session that way: a local program that loads its page — under this account
+or another, the loopback interface being shared — gets no cookie, and the
+window's cookie is not the token.
 
 A typical remote profile:
 
