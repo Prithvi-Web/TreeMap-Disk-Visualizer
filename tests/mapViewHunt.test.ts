@@ -348,6 +348,37 @@ test('C21: back in the Treemap, a grammar query whose answer the unmount cleared
   assert.deepEqual(applied, ['size>1gb'], 'the total, its explanation and the Stage offer come back with the highlights');
 });
 
+test('C21 (review F1.6): left and entered again while a rescan of the folder runs, the Treemap asks the query again of the tree\'s own scan — never leaving the drawn count as the whole answer', () => {
+  const noop = () => {};
+  const applied: { q: string; scanId: string | null }[] = [];
+  const el = () => ({ hidden: false, classList: { add: noop, remove: noop, toggle: noop } });
+  const els: Record<string, ReturnType<typeof el>> = {};
+  // A rescan of /r runs (its request answered: scan-2); the tree on screen, and the query's answer, are scan-1's.
+  const state = {
+    root: { path: '/r' }, scanning: true, scanId: 'scan-2', settledScanId: 'scan-1', live: { on: false }, lens: { held: false, at: null },
+    treemap: { rootPath: '/r', query: 'size>1gb', queryMode: 'grammar', queryScanId: 'scan-1', matchTotal: 9 as number | null, altZoomRaf: 0, altZoom: null, cells: [], altNote: '' },
+  };
+  // tmRunGrammarQuery asks the page's treeScanId (treeScanKey pins it): the scan recorded is the one it would ask.
+  type Page = { view: { mount: () => void; unmount: () => void }; treeScanId: () => string | null };
+  let page: Page | null = null;
+  const deps: Record<string, unknown> = {
+    state, $: (id: string) => (els[id] ||= el()),
+    tmApplyQuery: (q: string) => { applied.push({ q, scanId: page!.treeScanId() }); }, tmSyncStageButton: noop,
+    fxTmPillBeamsSync: noop, loadSavedViews: noop, refreshDock: noop, loadTreemap: noop, tmRejudgeQueryWait: noop,
+    tmCancelQueries: noop, tmCloseHints: noop, nlClose: noop, exitCartPreview: noop, tmSetQueryMessage: noop, disableLive: noop,
+    cancelAnimationFrame: noop, altRefineCancel: noop, lapseStop: noop, clearTimeout: noop, tmResizeDeb: 0, lassoCancel: noop,
+  };
+  page = load<Page>(['treeScanId', 'tmClearHits', 'tmRejudgeQuery'], deps, `{ view: (${viewSource('treemap')}), treeScanId }`,
+    'let tmLoadSeq = 0; let tmAnimFrame = 0; let tmLastHits = { q: "size>1gb", paths: ["/r/a"], total: 9, truncated: false, stage: null };');
+  const view = page.view;
+  view.mount(); // the view re-entered as the scan chrome began
+  assert.deepEqual(applied, [], 'control: an answer of the tree\'s own scan, still whole, is not asked again');
+  view.unmount(); // to the Dashboard: the answer's total, words and Stage offer go
+  assert.equal(state.treemap.matchTotal, null, 'control: the unmount cleared the answer');
+  view.mount(); // and back, the rescan still walking
+  assert.deepEqual(applied, [{ q: 'size>1gb', scanId: 'scan-1' }], 'asked again — of the scan the tree on screen came from, never the running one');
+});
+
 /* ══════════════ C22 — Disk City's Trash building ══════════════ */
 
 /** What maybeInjectTrash adds beside a home folder's map, as Disk City is handed it. */

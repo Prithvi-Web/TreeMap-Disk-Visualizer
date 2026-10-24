@@ -84,12 +84,15 @@ const VIEWS = [
       refreshDock(); // §8.3 — connected drives, fetched lazily on entry like the chips
       loadTreemap(state.treemap.rootPath);
       // C11 — a query a previous scan of this folder answered is asked of
-      // this one. Not while a scan runs: the tree on screen is still the one
-      // its query answered, and the running scan answers a query 409
-      // SCAN_RUNNING — its highlights cleared and an error said over a tree
-      // they were right for (review F2.5). finishScan re-enters this view
-      // once the scan lands, and it is asked then.
-      if (!state.scanning) tmRejudgeQuery();
+      // this one. While a scan runs the tree on screen is still the one
+      // before it, and an answer of that tree's scan stands: finishScan
+      // re-enters this view once the scan lands, and it is asked then. One
+      // the unmount cleared (tmClearHits) is asked again now — of the tree's
+      // own scan (treeScanId), never the running one, which answers 409
+      // SCAN_RUNNING (review F2.5). Left until the scan landed, the drawn
+      // count stood alone as the whole answer, with no total, no words and
+      // no Stage offer (review F1.6).
+      if (!state.scanning || state.treemap.matchTotal === null) tmRejudgeQuery();
     },
     unmount() {
       // Phase 2: stop the debounce, invalidate anything already in flight, and
