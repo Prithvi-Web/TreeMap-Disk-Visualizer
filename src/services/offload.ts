@@ -1035,12 +1035,89 @@ function isUnder(src: string, tops: ReadonlySet<string>): boolean {
 interface SourceLook {
   size: bigint;
   mtimeNs: bigint;
+  atimeNs: bigint;
   ctimeNs: bigint;
   ino: bigint;
+  mode: number;
 }
 
 function sourceLookOf(st: fs.BigIntStats): SourceLook {
-  return { size: st.size, mtimeNs: st.mtimeNs, ctimeNs: st.ctimeNs, ino: st.ino };
+  return { size: st.size, mtimeNs: st.mtimeNs, atimeNs: st.atimeNs, ctimeNs: st.ctimeNs, ino: st.ino, mode: Number(st.mode) };
+}
+
+/** Milliseconds from a time in nanoseconds, as Node computes a plain stat's `…Ms`. */
+function msOfNs(ns: bigint): number {
+  return Number(ns / 1_000_000_000n) * 1000 + Number(ns % 1_000_000_000n) / 1e6;
+}
+
+/**
+ * A file's dates and permissions, as an offload records them (hunt C45): the permission bits only where
+ * the system has them — Windows has none, a mode there being only the read-only attribute.
+ */
+interface FileMeta {
+  mode?: number;
+  mtimeMs: number;
+  atimeMs: number;
+}
+
+function fileMetaOf(look: SourceLook): FileMeta {
+  return {
+    ...(process.platform === 'win32' ? {} : { mode: look.mode & 0o777 }),
+    mtimeMs: msOfNs(look.mtimeNs),
+    atimeMs: msOfNs(look.atimeNs),
+  };
+}
+
+/**
+ * Test-only: a failure of giving a file its recorded dates or permissions (hunt C45), as a drive that
+ * cannot hold them (exFAT, some network shares) answers. Error to fail it, null for the real call. The
+ * suite's ForTests idiom: returns the function that removes it.
+ */
+let fileMetaFaultForTests: ((p: string, what: 'times' | 'mode') => Error | null) | null = null;
+export function setOffloadFileMetaFaultForTests(fault: (p: string, what: 'times' | 'mode') => Error | null): () => void {
+  fileMetaFaultForTests = fault;
+  return () => { fileMetaFaultForTests = null; };
+}
+
+/**
+ * Gives the file at `p` the dates and permissions in `meta` (hunt C45): an offload's copy its original's,
+ * and a restored file the ones its record keeps. Never a reason to undo a copy whose bytes verified, and
+ * never silent: answers what could not be set (a drive that cannot hold them), or null.
+ */
+async function applyFileMeta(p: string, meta: { mode?: unknown; mtimeMs?: unknown; atimeMs?: unknown }): Promise<string | null> {
+  const missed: string[] = [];
+  if (typeof meta.mode === 'number' && Number.isInteger(meta.mode) && process.platform !== 'win32') {
+    try {
+      const fault = fileMetaFaultForTests?.(p, 'mode') ?? null;
+      if (fault) throw fault;
+      await fsp.chmod(p, meta.mode & 0o777);
+    } catch (err) {
+      missed.push(`its permissions (${describeFsError(err)})`);
+    }
+  }
+  if (typeof meta.mtimeMs === 'number' && Number.isFinite(meta.mtimeMs)) {
+    const mtime = new Date(meta.mtimeMs);
+    const atime = typeof meta.atimeMs === 'number' && Number.isFinite(meta.atimeMs) ? new Date(meta.atimeMs) : mtime;
+    try {
+      const fault = fileMetaFaultForTests?.(p, 'times') ?? null;
+      if (fault) throw fault;
+      await fsp.utimes(p, atime, mtime);
+    } catch (err) {
+      missed.push(`its dates (${describeFsError(err)})`);
+    }
+  }
+  return missed.length === 0 ? null : `${p}: ${missed.join(' and ')}`;
+}
+
+/** A job's word on files whose dates or permissions could not be set, or null when there are none. */
+function metaMissSentence(misses: readonly string[], where: 'copies' | 'restored'): string | null {
+  if (misses.length === 0) return null;
+  const n = misses.length;
+  return where === 'copies'
+    ? `The dates or permissions of ${formatCount(n)} cop${n === 1 ? 'y' : 'ies'} could not be set at the destination (${misses[0]}${n > 1 ? `, and ${formatCount(n - 1)} more` : ''}); ` +
+      'each copy\'s contents verified, and TreeMap\'s record keeps the originals\' dates and permissions for Restore.'
+    : `The dates or permissions of ${formatCount(n)} restored file${n === 1 ? '' : 's'} could not be set back (${misses[0]}${n > 1 ? `, and ${formatCount(n - 1)} more` : ''}); ` +
+      'each file\'s contents verified.';
 }
 
 /** The codes of a selected item left in place by its look right before its trash step (hunt C06). */
@@ -1111,16 +1188,19 @@ async function changedSinceCopy(top: string, files: readonly string[], looks: Re
 async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string[], destDir: string, listed: ListedSelection): Promise<void> {
   const createdFiles: string[] = [];
   let createdDirs: string[] = [];
-  const results: { src: string; dest: string; size: number; hash: string }[] = [];
+  const results: { src: string; dest: string; size: number; hash: string; meta: FileMeta }[] = [];
   /** Each original as it was right before its copy was made (hunt C06). */
   const looks = new Map<string, SourceLook>();
+  /** Copies whose dates or permissions could not be set (hunt C45). */
+  const metaMisses: string[] = [];
   try {
     createdDirs = await ensureDirs(plan);
     for (const item of plan) {
       if (job.cancelled) throw new CopyCancelled();
       job.phase = 'copying';
       job.currentPath = item.src;
-      looks.set(item.src, sourceLookOf(await fsp.lstat(item.src, { bigint: true })));
+      const look = sourceLookOf(await fsp.lstat(item.src, { bigint: true }));
+      looks.set(item.src, look);
       const hash = await copyWithHash(item.src, item.dest, jobProgress(job, true));
       createdFiles.push(item.dest);
 
@@ -1131,8 +1211,14 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       if (verify !== hash) {
         throw new Error(`Verification failed for ${path.basename(item.dest)} — the destination copy doesn't match. Nothing was deleted.`);
       }
+      // The copy keeps its original's dates and permissions (hunt C45); one a drive cannot hold is said.
+      // Readable by this user whatever they are — an original another account owns can be readable
+      // here with no owner bits — so Restore can always read it back; the record keeps them exact.
+      const meta = fileMetaOf(look);
+      const missed = await applyFileMeta(item.dest, meta.mode === undefined ? meta : { ...meta, mode: meta.mode | 0o400 });
+      if (missed !== null) metaMisses.push(missed);
       const st = await fsp.stat(item.dest);
-      results.push({ src: item.src, dest: item.dest, size: st.size, hash });
+      results.push({ src: item.src, dest: item.dest, size: st.size, hash, meta });
       job.filesDone++;
     }
 
@@ -1188,6 +1274,8 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       const kept = `${path.basename(first.path)} was left in place${more}: ${first.reason}, so it was not moved to the Trash. Its verified copies stand at ${destDir}.`;
       job.error = job.error ? `${job.error} Also: ${kept}` : kept;
     }
+    const metaWord = metaMissSentence(metaMisses, 'copies');
+    if (metaWord !== null) job.error = job.error ? `${job.error} Also: ${metaWord}` : metaWord;
     // Every selected item the Trash did not take — a folder left in place, an original found open, one
     // the Trash refused or did not answer about — is still here: its copies are recorded as such, so
     // the Offloaded tab never counts them as space freed (final review F3.2).
@@ -1231,6 +1319,7 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
             hash: r.hash,
             offloadedAt: now,
             ...(isUnder(r.src, keptTops) ? { originalKept: true as const } : {}),
+            ...r.meta,
           });
         }
         store.destinations[destDir] = { lastSeenAt: now };
@@ -1346,6 +1435,8 @@ async function restoreEntries(job: OffloadJob, entries: OffloadEntry[]): Promise
    * the end (FG3g M3), never on the document as it stood when the restore began.
    */
   const putBack = new Map<string, number>();
+  /** Restored files whose recorded dates or permissions could not be set back (hunt C45). */
+  const metaMisses: string[] = [];
   for (const entry of entries) {
     if (job.cancelled) break;
     try {
@@ -1370,6 +1461,10 @@ async function restoreEntries(job: OffloadJob, entries: OffloadEntry[]): Promise
         // Don't leave a damaged copy — and one that could not be removed is named, never forgotten.
         throw await withoutPartial(partial, new Error('verification failed — the offloaded copy no longer matches its recorded fingerprint'));
       }
+      // The original's dates and permissions, from the record (hunt C45): set on the verified file before
+      // it is put in place, so it arrives with them. Never a reason to fail a restore whose bytes verified.
+      const missed = await applyFileMeta(partial, entry);
+      if (missed !== null) metaMisses.push(missed.replace(partial, entry.originalPath));
       const placed = await placeWithoutClobber(partial, entry.originalPath, restorePlacementHooks(entry.originalPath)).catch(async (err: NodeJS.ErrnoException) => {
         throw await withoutPartial(partial, err.code === 'EEXIST' ? new Error(`something appeared at ${entry.originalPath} while it was being restored`) : err);
       });
@@ -1405,6 +1500,8 @@ async function restoreEntries(job: OffloadJob, entries: OffloadEntry[]): Promise
     job.error = `${failures.length} of ${entries.length} couldn't be restored — ${failures[0]}`;
   } else {
     job.status = 'complete';
+    const metaWord = metaMissSentence(metaMisses, 'restored');
+    if (metaWord !== null) job.error = metaWord;
   }
 }
 

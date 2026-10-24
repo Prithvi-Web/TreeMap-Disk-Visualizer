@@ -605,7 +605,13 @@ OpenAPI 3 spec).
      id moved, or that is gone from a selected folder, changed after its copy
      was made — the copy holds it as it was then — and one whose change time
      alone moved may have changed (a new permission or attribute moves it
-     too); either way the item stays, and the job's warning names the file. The record
+     too); either way the item stays, and the job's warning names the file.
+     Each copy keeps its original's modified and last-opened dates and, off
+     Windows (which has no POSIX permission bits), its permission bits — left
+     readable by this user, so Restore can always read it — and the record
+     keeps them exact, so Restore puts them back on each file it writes. A
+     drive that cannot hold them is said in the job's warning, never a reason
+     to undo; folders are made anew. The record
      Restore reads (`offload-manifest.json`, app-data) is saved first; the
      drive's own copy of it is written after, one write of each drive's
      record at a time, and a drive that does not answer for 60 seconds is

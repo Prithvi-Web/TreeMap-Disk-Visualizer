@@ -889,6 +889,14 @@ export interface OffloadEntry {
    * freed by it. Absent on every other entry, and on every entry an earlier build recorded.
    */
   originalKept?: true;
+  /**
+   * The original's permission bits (`mode & 0o777`), given to its copy and put back by Restore (hunt
+   * C45). Not on Windows, which has no POSIX permission bits, nor on an entry an earlier build recorded.
+   */
+  mode?: number;
+  /** The original's modified and last-opened times (ms), given to its copy and put back by Restore (hunt C45). Absent on an entry an earlier build recorded. */
+  mtimeMs?: number;
+  atimeMs?: number;
 }
 
 export type OffloadJobStatus = 'running' | 'complete' | 'error' | 'cancelled';
