@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireScan, clampInt } from './scanRoutes';
+import { notePausedTest } from '../services/notes';
 import {
   allScans,
   collectLargestFoldersAsync,
@@ -253,7 +254,8 @@ insightRouter.get('/large-folders', async (req: Request, res: Response) => {
 insightRouter.get('/empty-folders', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const ignoreJunk = String(req.query.ignoreJunk ?? 'true') !== 'false';
-  res.json(await emptyFoldersForScan(scan, ignoreJunk));
+  // Never one a pausing note covers or holds (the hunt, C39).
+  res.json(await emptyFoldersForScan(scan, ignoreJunk, await notePausedTest(scan.rootPath)));
 });
 
 /**
@@ -312,7 +314,9 @@ insightRouter.get('/packages/orphans', storageModeGate, async (req: Request, res
     return;
   }
   const ignore = await getIgnoreMatchers('suggest');
-  res.json({ scanId: scan.scanId, available: true, ...scanPackageEcosystems(storeOf(scan), ignore, catalog.catalog) });
+  // What a pausing note covers is not listed (the hunt, C39, C61); an unreadable notes.json refuses (NOTES_UNREADABLE).
+  const paused = await notePausedTest(scan.rootPath);
+  res.json({ scanId: scan.scanId, available: true, ...scanPackageEcosystems(storeOf(scan), ignore, catalog.catalog, paused) });
 });
 
 /**
@@ -528,7 +532,8 @@ insightRouter.get('/compression/candidates', storageModeGate, async (req: Reques
     return;
   }
   const ignore = await getIgnoreMatchers('suggest');
-  const shortlist = shortlistFromScan(storeOf(scan), ignore, clampInt(req.query.limit, 60, 1, 200));
+  // Nothing inside a folder a note pauses is offered for a re-encode, which trashes the original (the hunt, C39).
+  const shortlist = shortlistFromScan(storeOf(scan), ignore, clampInt(req.query.limit, 60, 1, 200), await notePausedTest(scan.rootPath));
   const candidates: CompressionCandidate[] = [];
   // A file ffprobe could not read as video was never judged. Counted, so an
   // empty list is not read as "everything here is already efficient" (D56).

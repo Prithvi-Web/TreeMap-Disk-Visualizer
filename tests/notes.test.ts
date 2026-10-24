@@ -773,3 +773,74 @@ test('the suggestions surface names what a pausing note is hiding — never a si
   assert.match(region, /excluded by a note that pauses suggestions/, 'and says so, with the way back');
   assert.match(region, /n\.suppress/, 'label-only notes do not trigger the hint');
 });
+
+/* ══════════════════════ The hunt (C39, C61) ══════════════════════ */
+
+import { createScanRecord } from '../src/services/diskScanner';
+import { buildStoreFromTree } from '../src/services/scanStore';
+import { shortlistFromScan } from '../src/services/compressionAdvisor';
+import { emptyFoldersForScan } from '../src/services/emptyFolders';
+import { notePausedTest } from '../src/services/notes';
+
+test('a pausing note keeps its folder out of Package leftovers, as the note sheet promises (hunt C39, C61)', async () => {
+  await clearNotes();
+  const home = path.join(os.homedir(), 'tm-c39-fixture');
+  const archive = path.join(home, 'archive');
+  const stale = (at: string) => dir('node_modules', [file('.package-lock.json', 1, path.join(at, 'node_modules')), file('big.js', 3_000_000, path.join(at, 'node_modules'))], at);
+  const root = tree([dir('archive', [dir('old', [stale(path.join(archive, 'old'))], archive)], home), dir('other', [stale(path.join(home, 'other'))], home)], home);
+  const scan = createScanRecord(home);
+  scan.store = buildStoreFromTree(root);
+  scan.status = 'complete';
+  const { port, close } = await listen();
+  try {
+    const before = await req(port, 'GET', `/api/packages/orphans?scanId=${scan.scanId}`);
+    const listed = (b: any): string[] => (b.ecosystems ?? []).flatMap((g: any) => g.entries.map((e: any) => e.path));
+    assert.ok(listed(before.body).some((p) => p.startsWith(archive)), `control: listed before the note: ${JSON.stringify(listed(before.body))}`);
+    await setNote(archive, 'client archive, keep');
+    const after = await req(port, 'GET', `/api/packages/orphans?scanId=${scan.scanId}`);
+    assert.equal(after.status, 200);
+    assert.deepEqual(listed(after.body).filter((p) => p.startsWith(archive)), [], 'nothing inside the paused folder is offered');
+    assert.ok(listed(after.body).some((p) => p.startsWith(path.join(home, 'other'))), 'control: the other folder\'s leftover is still listed');
+    const counted = (after.body.ecosystems ?? []).reduce((n: number, g: any) => n + g.orphanCount, 0);
+    assert.equal(after.body.orphanCount, counted, 'the totals count what is listed');
+  } finally {
+    await close();
+    await clearNotes();
+  }
+});
+
+test('a pausing note keeps its folder out of Shrink video\'s shortlist and out of Empty folders (hunt C39)', async () => {
+  await clearNotes();
+  const fx = await mkTmp();
+  try {
+    const kept = path.join(fx, 'kept');
+    const vids = [path.join(kept, 'a.mov'), path.join(fx, 'loose', 'b.mov')];
+    const big = 200_000_000;
+    const root = tree([dir('kept', [file('a.mov', big, kept)], fx), dir('loose', [file('b.mov', big, path.join(fx, 'loose'))], fx)], fx);
+    await setNote(kept, 'keep these');
+    const paused = await notePausedTest(fx);
+    const shortlisted = shortlistFromScan(buildStoreFromTree(root), [], 10, paused).map((s) => s.path);
+    assert.deepEqual(shortlisted, [vids[1]], 'only the video outside the paused folder is shortlisted');
+
+    // Empty folders: one inside the paused folder, and an empty folder holding a paused empty one.
+    for (const d of ['kept/empty', 'holder/paused-empty', 'free']) fs.mkdirSync(path.join(fx, d), { recursive: true });
+    await setNote(path.join(fx, 'holder', 'paused-empty'), 'keep this empty folder');
+    const real = fs.realpathSync(fx);
+    const scan = createScanRecord(real);
+    const empty = (name: string, at: string): FileNode => ({ name, path: path.join(at, name), type: 'dir', size: 0, modifiedAt: 0, isHidden: false, children: [] });
+    const rRoot: FileNode = {
+      name: path.basename(real), path: real, type: 'dir', size: 0, modifiedAt: 0, isHidden: false, children: [
+        { ...empty('kept', real), children: [empty('empty', path.join(real, 'kept'))] },
+        { ...empty('holder', real), children: [empty('paused-empty', path.join(real, 'holder'))] },
+        empty('free', real),
+      ],
+    };
+    scan.store = buildStoreFromTree(rRoot);
+    scan.status = 'complete';
+    const answer = await emptyFoldersForScan(scan, true, await notePausedTest(real));
+    assert.deepEqual(answer.folders.map((f) => path.basename(f.path)), ['free'], `only the folder no note pauses: ${JSON.stringify(answer.folders)}`);
+  } finally {
+    await clearNotes();
+    await fsp.rm(fx, { recursive: true, force: true });
+  }
+});

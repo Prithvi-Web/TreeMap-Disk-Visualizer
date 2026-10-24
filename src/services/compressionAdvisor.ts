@@ -140,8 +140,16 @@ export function estimateFor(size: number, codec: string | null): { estimatedByte
   return { estimatedBytes, estimatedSaving: Math.max(0, size - estimatedBytes) };
 }
 
-/** Files in the scan worth probing, largest first, before any tool is run. */
-export function shortlistFromScan(source: TreeSource, ignore: CompiledIgnore[], limit = 200): Array<{ path: string; name: string; size: number; modifiedAt: number }> {
+/**
+ * Files in the scan worth probing, largest first, before any tool is run. Nothing inside a folder a note
+ * pauses (`paused`, notes.ts notePausedTest) is offered: a re-encode trashes its original (the hunt, C39).
+ */
+export function shortlistFromScan(
+  source: TreeSource,
+  ignore: CompiledIgnore[],
+  limit = 200,
+  paused: { covers(p: string): boolean } = { covers: () => false },
+): Array<{ path: string; name: string; size: number; modifiedAt: number }> {
   const store: ScanStore = asStore(source);
   const out: Array<{ path: string; name: string; size: number; modifiedAt: number }> = [];
   const visit = (node: number, nodePath: string): void => {
@@ -149,6 +157,7 @@ export function shortlistFromScan(source: TreeSource, ignore: CompiledIgnore[], 
       const name = store.name(child);
       const childPath = store.childPath(child, nodePath);
       if (matchesAny(ignore, childPath, name)) continue;
+      if (paused.covers(childPath)) continue;
       if (store.isDir(child)) { visit(child, childPath); continue; }
       if (store.size(child) < MIN_CANDIDATE_BYTES) continue;
       const ext = store.extension(child);

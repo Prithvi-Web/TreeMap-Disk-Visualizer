@@ -194,10 +194,14 @@ export function scanPackageEcosystems(
   source: TreeSource,
   ignore: CompiledIgnore[],
   catalog: RuleCatalog = loadRuleCatalog(),
+  paused: { covers(p: string): boolean; holds(p: string): boolean } = { covers: () => false, holds: () => false },
 ): PackageOrphanReport {
   const store = asStore(source);
   const byEcosystem = new Map<string, PackageEntry[]>();
   const push = (entry: PackageEntry): void => {
+    // Nothing inside a folder a note pauses, nor a folder holding one, is listed (the hunt, C39, C61): the
+    // note sheet promises nothing there is suggested for cleanup, and each entry offers its folder whole.
+    if (paused.covers(entry.path) || paused.holds(entry.path)) return;
     let list = byEcosystem.get(entry.ecosystem);
     if (!list) {
       list = [];

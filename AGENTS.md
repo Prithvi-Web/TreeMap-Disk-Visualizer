@@ -1114,7 +1114,10 @@ read-what-you-saw) permission to act.
   Text is stored and returned **verbatim** (the UI renders it as plain text
   only). The consequential half: a note with `suppress: true` (the default)
   excludes its whole subtree from `GET /api/cleanup/suggestions`, from the
-  agent summary, from MCP `cleanup_suggestions`, and from **every Autopilot
+  agent summary, from MCP `cleanup_suggestions`, from the package leftovers,
+  re-encode candidates and empty folders (`GET /api/packages/orphans`,
+  `/api/compression/candidates`, `/api/empty-folders`, which also leave out
+  a folder holding a noted one), and from **every Autopilot
   match kind** — and Autopilot lists what it left alone in `skipped`, with
   the note as the stated reason, in previews and run records alike. Both
   mutating routes are in the pinned destructive list because writing or

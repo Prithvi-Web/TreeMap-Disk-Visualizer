@@ -41,7 +41,11 @@ export const GDU_EMPTY_FOLDERS_REASON =
   // Not "Automatic": where the native module is missing, Automatic runs gdu again.
   'Scan again with Settings › Scan engine set to Built-in walker to see them.';
 
-export async function emptyFoldersForScan(scan: ScanResult, ignoreJunk: boolean): Promise<EmptyFoldersAnswer> {
+export async function emptyFoldersForScan(
+  scan: ScanResult,
+  ignoreJunk: boolean,
+  paused: { covers(p: string): boolean; holds(p: string): boolean } = { covers: () => false, holds: () => false },
+): Promise<EmptyFoldersAnswer> {
   if (scan.engine === 'gdu-turbo') {
     return { folders: [], totalCount: 0, truncated: false, withheld: 0, withheldBy: {}, reason: GDU_EMPTY_FOLDERS_REASON };
   }
@@ -49,7 +53,11 @@ export async function emptyFoldersForScan(scan: ScanResult, ignoreJunk: boolean)
   // lists as an empty folder, is never among them nor counted: `findEmptyFolders` owns it like a
   // tool's folder, before its list is cut (the SEC-2 review, F4; the SEC-3 brief, item 7).
   const found = findEmptyFolders(storeOf(scan), ignoreJunk);
-  const candidates = found.folders;
+  // Never one inside a folder a note pauses, nor one holding a paused folder, which its Trash step would
+  // take too (the hunt, C39): neither offered nor counted, as the note sheet promises.
+  const candidates = found.folders.filter((f) => !paused.covers(f.path) && !paused.holds(f.path));
+  const kept = new Set(candidates);
+  const pausedCount = found.folders.reduce((n, f) => (kept.has(f) ? n : n + f.counted), 0);
   // A cloud provider's listing lives at the provider: there is no folder on this disk to look at again.
   const verdicts: EmptyVerdict[] = scan.engine === 'cloud'
     ? candidates.map(() => ({ empty: true }))
@@ -58,7 +66,7 @@ export async function emptyFoldersForScan(scan: ScanResult, ignoreJunk: boolean)
   let withheld = 0;
   // Why each was left out, counted (the U-4b review, L-5): the page says it rather than guessing.
   const withheldBy: EmptyFoldersAnswer['withheldBy'] = {};
-  let totalCount = found.totalCount;
+  let totalCount = found.totalCount - pausedCount;
   candidates.forEach((f, i) => {
     const verdict = verdicts[i];
     if (verdict.empty) {

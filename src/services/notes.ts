@@ -276,6 +276,28 @@ export function noteRootInside(p: string, prepared: PreparedSuppression[]): stri
   return null;
 }
 
+/** What the pausing notes cover, for a list walked from one folder (the hunt, C39). */
+export interface NotePause {
+  /** `p` is a noted folder or inside one. */
+  covers(p: string): boolean;
+  /** A noted folder lies strictly inside `p`: offering `p` whole would take it too. */
+  holds(p: string): boolean;
+}
+
+/**
+ * The pausing notes, prepared for one walk (the hunt, C39, C61). The note sheet promises that nothing
+ * inside a paused folder is suggested for cleanup, but Package leftovers, Shrink video and Empty folders
+ * read no notes and still offered what was inside one. Throws NOTES_UNREADABLE, as suppressedNoteRoots
+ * does, so a list never offers what an unreadable file may pause.
+ */
+export async function notePausedTest(walkRoot: string): Promise<NotePause> {
+  const prepared = prepareSuppressed(await suppressedNoteRoots(), walkRoot);
+  return {
+    covers: (p) => suppressedRootCovering(p, prepared) !== null,
+    holds: (p) => noteRootInside(p, prepared) !== null,
+  };
+}
+
 /**
  * Is `p` at or under any of `roots`? Boundary-safe: `/a/bc` is not under
  * `/a/b`. Case rules follow the platform, like `samePath` in osPaths.
