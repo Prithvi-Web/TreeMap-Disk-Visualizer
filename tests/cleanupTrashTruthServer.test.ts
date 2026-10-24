@@ -16,6 +16,7 @@ import { planCartCommit, commitCart, undoCartRun } from '../src/services/cartCom
 import { getCapsuleJob } from '../src/services/timeCapsule';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { describeConflicts } from '../src/services/openHandleGuard';
+import { linuxTrashLocations, windowsTrashNote, recycleInfoOriginalName, listAccountBin } from '../src/services/trash';
 import { setCopyFaultForTests } from '../src/utils/copyVerify';
 import { createApp } from '../src/server';
 import { isRestoreCopyFor } from './fixtures/restoreCopy';
@@ -148,4 +149,78 @@ test('the open-file sentence is plural when it names several files or programs (
     'TextEdit and Preview have a file you’re deleting open right now. Deleting it may not free the space until those programs close it.');
   assert.equal(describeConflicts([c('Code', '/p/a')]),
     'Code has a file you’re deleting open right now. Deleting it may not free the space until that program closes it.', 'control: one of each, as before');
+});
+
+/* ═════════ C67 — the Trash listing covers what the emptier clears, or says it does not ═════════ */
+
+/** A Windows `$I` record, version 2 (Windows 10 and later): header, size, time, name length, name. */
+function infoV2(original: string): Buffer {
+  const name = Buffer.from(original + '\0', 'utf16le');
+  const head = Buffer.alloc(28);
+  head.writeBigInt64LE(2n, 0); head.writeBigInt64LE(1234n, 8); head.writeBigInt64LE(0n, 16); head.writeInt32LE(original.length + 1, 24);
+  return Buffer.concat([head, name]);
+}
+/** Version 1 (Vista to 8.1): the name in a fixed 520-byte field. */
+function infoV1(original: string): Buffer {
+  const b = Buffer.alloc(24 + 520);
+  b.writeBigInt64LE(1n, 0); b.writeBigInt64LE(1234n, 8);
+  Buffer.from(original, 'utf16le').copy(b, 24);
+  return b;
+}
+
+test('a Windows Recycle Bin record names the file that was deleted, in both record versions, and a broken one names nothing (C67)', () => {
+  assert.equal(recycleInfoOriginalName(infoV2('C:\\Users\\u\\Documents\\report.docx')), 'report.docx');
+  assert.equal(recycleInfoOriginalName(infoV1('D:\\photos\\cat.jpg')), 'cat.jpg');
+  assert.equal(recycleInfoOriginalName(Buffer.alloc(10)), null, 'too short to be a record');
+  assert.equal(recycleInfoOriginalName(infoV2('x').subarray(0, 30)), null, 'a name cut short');
+});
+
+test('a Windows account\'s Recycle Bin folder is listed by the files in it, each by its own name; another account\'s is not this user\'s Trash (C67)', async () => {
+  const sid = path.win32.join('C:\\', '$Recycle.Bin', 'S-1-5-21-1-2-3-1001');
+  const files: Record<string, Buffer> = { [path.win32.join(sid, '$IAB12CD.docx')]: infoV2('C:\\Users\\u\\report.docx') };
+  const deps = {
+    join: path.win32.join,
+    readdir: async (dir: string) => {
+      if (dir !== sid) throw Object.assign(new Error('denied'), { code: 'EPERM' });
+      return [
+        { name: '$RAB12CD.docx', isDirectory: () => false, isSymbolicLink: () => false },
+        { name: '$IAB12CD.docx', isDirectory: () => false, isSymbolicLink: () => false },
+        { name: '$RZZ9.folder', isDirectory: () => true, isSymbolicLink: () => false },
+        { name: 'desktop.ini', isDirectory: () => false, isSymbolicLink: () => false },
+      ];
+    },
+    lstat: async (p: string) => ({ size: p.endsWith('$IAB12CD.docx') ? 100 : p.endsWith('desktop.ini') ? 50 : 4000 }),
+    readFile: async (p: string) => { if (p in files) return files[p]; throw Object.assign(new Error('gone'), { code: 'ENOENT' }); },
+    dirSize: async () => 9000,
+  };
+  const mine = await listAccountBin(sid, deps);
+  assert.deepEqual(mine.items.map((i) => [i.name, i.size]), [['report.docx', 4000], ['$RZZ9.folder', 9000]],
+    'each deleted file is an item, by its own name where its record gives one; the account folder is not an item');
+  assert.equal(mine.bytes, 4000 + 9000 + 100 + 50, 'every byte the folder holds is counted');
+  const theirs = await listAccountBin(path.win32.join('C:\\', '$Recycle.Bin', 'S-1-5-21-1-2-3-1002'), deps);
+  assert.deepEqual(theirs, { items: [], bytes: 0, unreadable: false }, 'another account\'s folder: not this user\'s Trash, and not a failure');
+});
+
+test('on Windows the listing says which drives it reads, so the Empty Trash sheet never quotes a floor as exact (C67)', () => {
+  const note = windowsTrashNote(['C:', 'D:', 'E:']);
+  assert.match(note, /C:, D: and E:/);
+  assert.match(note, /every drive/, 'and that emptying it empties every drive\'s');
+});
+
+test('on Linux the Trash includes each drive\'s own Trash folders, never a kernel table or a network share, and an unreadable mount table is said (C67)', () => {
+  const mounts = [
+    { mountPoint: '/', filesystem: 'ext4', options: [] }, { mountPoint: '/media/u/USB', filesystem: 'vfat', options: [] },
+    { mountPoint: '/proc', filesystem: 'proc', options: [] }, { mountPoint: '/mnt/nas', filesystem: 'nfs4', options: [] },
+  ];
+  const got = linuxTrashLocations('/home/u/.local/share', 1000, mounts);
+  assert.deepEqual(got.dirs, [
+    '/home/u/.local/share/Trash/files',
+    '/.Trash/1000/files', '/.Trash-1000/files',
+    '/media/u/USB/.Trash/1000/files', '/media/u/USB/.Trash-1000/files',
+  ]);
+  assert.equal(got.note, null, 'a table read is a whole list');
+  const unread = linuxTrashLocations('/home/u/.local/share', 1000, null);
+  assert.deepEqual(unread.dirs, ['/home/u/.local/share/Trash/files'], 'the home Trash still counts');
+  assert.match(unread.note ?? '', /another drive/, 'and what is not counted is said');
+  assert.deepEqual(linuxTrashLocations('/d', null, mounts).dirs, ['/d/Trash/files'], 'no uid, no per-drive folder to name');
 });
