@@ -1254,7 +1254,7 @@ window's.
 | `PORT` | `4280` | Listen port |
 | `TREEMAP_TOKEN` | unset (no auth) | Every `/api` request must send `Authorization: Bearer <token>`; otherwise `401 { code: "UNAUTHORIZED" }` |
 | `TREEMAP_SESSION_COOKIE` | unset (serving the page sets the token cookie) | With `TREEMAP_TOKEN`: serving the page sets no cookie, and the only cookie accepted as a session is `treemap_session` with this value, which is not the token. The desktop shell sets it, fresh each launch, and puts that cookie into its own window's browser session before loading the page |
-| `TREEMAP_ALLOWED_ORIGINS` | unset (no CORS) | Comma-separated origins allowed to call the API from browsers |
+| `TREEMAP_ALLOWED_ORIGINS` | unset (no CORS) | Comma-separated origins allowed to call the API from browsers; a preflight allows `Content-Type`, `Authorization` and `Idempotency-Key`, and `Idempotency-Replayed` and `Retry-After` are exposed to the page |
 | `TREEMAP_DATA_DIR` | per-OS app-data dir | Where snapshots/settings/manifests persist |
 | `TREEMAP_INSECURE_BIND` | unset | `1` lets a non-loopback `HOST` start without `TREEMAP_TOKEN`, with a warning; without it such a bind refuses to start |
 | `TREEMAP_TRUST_PROXY` | unset | `1` trusts exactly one reverse proxy in front, so the rate limiter buckets by client |

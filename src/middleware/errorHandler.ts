@@ -95,8 +95,27 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     res.status(400).json({ error: 'Malformed JSON body', code: 'BAD_JSON' });
     return;
   }
+  // The body parser's own client errors carry a 4xx `status` and a `type` (hunt C86): a body over
+  // the 1 MB limit, a charset or encoding it cannot read. Answered as what they are, never 500.
+  const parserStatus = bodyParserStatus(err);
+  if (parserStatus !== null) {
+    const code = parserStatus === 413 ? 'BODY_TOO_LARGE' : parserStatus === 415 ? 'UNSUPPORTED_MEDIA_TYPE' : 'BAD_REQUEST';
+    const error = parserStatus === 413
+      ? 'The request body is larger than the 1 MB this server reads'
+      : (err as Error).message || 'The request body could not be read';
+    res.status(parserStatus).json({ error, code });
+    return;
+  }
 
   // Unknown failure: log it, hide internals from the client.
   console.error('[treemap] unhandled error:', err);
   res.status(500).json({ error: 'Internal server error', code: 'INTERNAL' });
+}
+
+/** The 4xx status of an error the JSON body parser raised (its errors carry `type` and `status`), or null. */
+function bodyParserStatus(err: unknown): number | null {
+  if (!(err instanceof Error)) return null;
+  const { status, type } = err as Error & { status?: unknown; type?: unknown };
+  if (typeof type !== 'string' || typeof status !== 'number') return null;
+  return status >= 400 && status < 500 ? status : null;
 }

@@ -25,7 +25,10 @@ export function corsMiddleware(req: Request, res: Response, next: NextFunction):
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    // Idempotency-Key is what AGENTS.md tells every destructive call to carry, and a page reads a
+    // replay and a 429's wait from the response headers (hunt C85).
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Idempotency-Key');
+    res.setHeader('Access-Control-Expose-Headers', 'Idempotency-Replayed, Retry-After');
     res.setHeader('Access-Control-Max-Age', '600');
   }
   if (req.method === 'OPTIONS') {
