@@ -2718,7 +2718,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             label: str(),
             instanceId: str(),
             running: bool(),
-            addresses: arr(str(), 'Private LAN addresses bound; never a public one'),
+            addresses: arr(str(), 'The private LAN address the running listener is bound to (one; never a public one); empty while it is not running'),
             peers: arr(opaque('paired machines; the shared secret is never included')),
             discovered: arr(opaque('machines advertising nearby, not yet paired')),
             shares: arr(str(), 'Exactly what leaves this machine'),

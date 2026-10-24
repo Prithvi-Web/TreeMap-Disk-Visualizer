@@ -2,7 +2,7 @@ import { Request, Response, Router } from 'express';
 import http from 'http';
 import { AppError } from '../middleware/errorHandler';
 import {
-  FleetPeer, PEER_STALE_MS, beginPairing, cancelPairing, lanAddresses,
+  FleetPeer, PEER_STALE_MS, beginPairing, cancelPairing,
   loadFleetConfig, pairingOffer, saveFleetConfig,
 } from '../services/fleet/fleetSync';
 import { fleetRuntime } from '../services/fleet/fleetRuntime';
@@ -43,7 +43,8 @@ fleetRouter.get('/fleet', async (_req: Request, res: Response) => {
     instanceId: cfg.instanceId,
     port: cfg.port,
     running: runtime.running,
-    addresses: cfg.enabled ? lanAddresses() : [],
+    // What the listener is bound to, not every private address this machine has (hunt C64).
+    addresses: runtime.boundAddresses(),
     pairing: pairingOffer(),
     /* A withdrawn offer is not silent: the panel polls this every five seconds
        and says what happened and which machine did it. */

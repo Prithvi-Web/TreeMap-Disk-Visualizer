@@ -37,6 +37,11 @@ class FleetRuntime {
   /** The last machine on this network refused for guessing pairing codes. */
   private abuse: { address: string; at: number } | null = null;
 
+  /** The addresses the running listener is bound to; none while it is not running (hunt C64). */
+  boundAddresses(): string[] {
+    return this.server ? [...this.server.addresses] : [];
+  }
+
   get running(): boolean {
     return this.server !== null;
   }

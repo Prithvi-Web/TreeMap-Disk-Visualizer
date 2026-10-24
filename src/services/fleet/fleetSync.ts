@@ -556,7 +556,8 @@ export async function startPeerServer(
 
   return {
     port: (server.address() as { port: number }).port,
-    addresses: bindAddresses,
+    // The one address bound (hunt C64): the others it was offered are not listened on, so not said.
+    addresses: [bindAddresses[0]],
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }
