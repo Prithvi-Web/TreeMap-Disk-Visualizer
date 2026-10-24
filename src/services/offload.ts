@@ -1337,6 +1337,10 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       // The files whose item went on to its trash step, by file rather than name (review F1.6).
       const sentOn = new Set<string>();
       const checkEach = async (top: string): Promise<{ reason: string; code: string } | null> => {
+        // Its planned files first, so a folder gone by now is said as its files removed, not as unreadable.
+        const files = filesOf.get(top) ?? [];
+        const verdict = await changedSinceCopy(top, files, looks, sentOn);
+        if (verdict !== null) return verdict;
         if (folderSet.has(top)) {
           const unlisted = await firstUnlisted(top, listed.files);
           if (unlisted !== null) {
@@ -1344,10 +1348,8 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
             return { code: FOLDER_GAINED, reason: `it now holds ${path.relative(top, unlisted.at) || path.basename(top)}, which was not copied` };
           }
         }
-        const files = filesOf.get(top) ?? [];
-        const verdict = await changedSinceCopy(top, files, looks, sentOn);
-        if (verdict === null) for (const f of files) { const look = looks.get(f); if (look) sentOn.add(fileKeyOf(look)); }
-        return verdict;
+        for (const f of files) { const look = looks.get(f); if (look) sentOn.add(fileKeyOf(look)); }
+        return null;
       };
       if (toTrash.length > 0) trashed = await moveToTrash(toTrash, { checkEach });
     } catch (err) {

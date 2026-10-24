@@ -249,6 +249,28 @@ test('a file made in a later selected folder while an earlier one goes to the Tr
   assert.equal(entry?.originalKept, true, 'and is recorded as a copy whose original stayed, never as space freed');
 });
 
+test('a later selected folder moved away while an earlier one goes to the Trash is said as its files removed, never as holding itself (leftover HE-L1, review)', async () => {
+  const { root, folders: [projA, projB], scan } = projects('moved-away', ['projA', 'projB']);
+  const dest = fileTempDir('treemap-offloadUnlisted-moved-away-dest-');
+  const elsewhere = path.join(root, 'moved-projB');
+  duringTrashStep = (p) => {
+    if (p === projA && fs.existsSync(projB)) fs.renameSync(projB, elsewhere);
+  };
+  let job: OffloadJob;
+  try {
+    job = await withOpenFileCheck('clear', async () => {
+      const prepared = await prepareOffload(scan, [projA, projB], dest);
+      return settled((await startOffload(scan, [projA, projB], dest, prepared)).jobId);
+    });
+  } finally {
+    duringTrashStep = null;
+  }
+  assert.equal(job.status, 'complete', job.error);
+  assert.match(job.error ?? '', /^projB was left in place: a\.txt was removed after its copy was made, so it was not moved to the Trash\./, job.error);
+  assert.doesNotMatch(job.error ?? '', /now holds/, 'a folder that is gone holds nothing');
+  assert.ok(fs.existsSync(path.join(elsewhere, 'a.txt')), 'what was moved away is untouched');
+});
+
 test('an OS junk file the scan did not list (.DS_Store) does not hold a folder back', async () => {
   const { root, proj, a } = project('junk', ['.DS_Store']);
   const dest = fileTempDir('treemap-offloadUnlisted-junk-dest-');
