@@ -1204,3 +1204,54 @@ test('HB2 (L5): an archive opened in the Treemap is gone into only while the Tre
   await moved.run((s) => { s.treemap.rootPath = '/r/b'; }); // another folder clicked meanwhile
   assert.deepEqual(moved.loaded, [], 'nor over the folder the user went to since');
 });
+
+/** The real animateTreemapTo / animateSunburstTo and loadTreemap, over animation frames run by hand. */
+function morphLandHarness(mode: string) {
+  const rect = (path: string, x: number, w: number) => ({ name: path.slice(path.lastIndexOf('/') + 1), path, size: w, type: 'dir', depth: 1, expanded: false, x, y: 0, w, h: 100 });
+  const frames = new Map<number, (t: number) => void>();
+  let lastFrame = 0;
+  let clock = 1000;
+  const runFrames = (ms: number) => { clock += ms; const due = [...frames.values()]; frames.clear(); for (const f of due) f(clock); };
+  const sunDrawn: string[] = [];
+  const nodeB = { path: '/r/B', name: 'B', size: 50, type: 'dir', children: [] };
+  const state = {
+    scanId: 's1', scanning: false, view: 'treemap', root: { path: '/r', name: 'r', size: 100 }, pathIndex: new Map<string, unknown>([['/r/B', nodeB]]),
+    treemap: { mode, rootPath: '/r', rootName: 'r', rootSize: 100, maxDepth: 4, nodes: [rect('/r/a', 0, 50), rect('/r/b', 50, 50)] as unknown[], nodesFor: null as unknown,
+      hover: null, kbSel: null, history: { scrubbing: false, active: false }, arcs: [{ n: { path: '/r/a' }, a0: 0, a1: 1, rInner: 1, rOuter: 2 }] },
+  };
+  const deps = {
+    state, REDUCED: false, document: { hidden: false }, performance: { now: () => clock },
+    requestAnimationFrame: (f: (t: number) => void) => { frames.set(++lastFrame, f); return lastFrame; },
+    cancelAnimationFrame: (id: number) => { frames.delete(id); },
+    $: () => ({ classList: { add() {}, remove() {} }, disabled: false }), isSun: () => mode === 'sunburst', isCells: () => false, exitCartPreview() {},
+    api: async () => ({ root: { path: '/r/B', name: 'B', size: 50 }, nodes: [rect('/r/B/x', 0, 100)] }),
+    ensureSubtree: async (p: string) => state.pathIndex.get(p), renderCrumbs() {}, maybeInjectTrash() {}, exitHistoryState() {}, refreshTimebar() {},
+    tmSetEmpty() {}, drawView() { if (mode === 'sunburst') sunDrawn.push(state.treemap.rootPath); }, reportError(e: Error) { throw e; }, tmCanvas: {},
+    drawTreemap() {}, sunburstGeometry: () => ({}), layoutSunburstArcs: () => [{ n: { path: '/r/a' }, a0: 0, a1: 2, rInner: 1, rOuter: 2 }],
+    renderSunburstFrame: (root: { path: string }) => { sunDrawn.push(root.path); },
+  };
+  const names = ['tmAnimFrame', 'tmMorph', 'animateTreemapTo', 'animateSunburstTo', 'treeScanId', 'TM_MIN_SIZE', 'loadTreemap',
+    ...['tmStopMorph'].filter((n) => INDEX.includes(`function ${n}(`))];
+  const page = load<{ animateTreemapTo: (n: unknown[]) => void; animateSunburstTo: (r: unknown) => void; loadTreemap: (p: string) => Promise<void> }>(
+    names, deps, '{ animateTreemapTo, animateSunburstTo, loadTreemap }', 'let tmLoadSeq = 0;');
+  return { state, page, frames, runFrames, sunDrawn, rect };
+}
+
+test('HB2 (L4, L13): a map that lands during a morph stays — the morph\'s last frames never put the older layout back under the new folder', async () => {
+  const h = morphLandHarness('treemap');
+  h.page.animateTreemapTo([h.rect('/r/a', 0, 70), h.rect('/r/b', 70, 30)]); // a live re-layout of /r begins its 260 ms morph
+  h.runFrames(100);
+  await h.page.loadTreemap('/r/B'); // folder B clicked inside the morph: its map lands
+  const landed = h.state.treemap.nodes;
+  assert.deepEqual((landed as { path: string }[]).map((n) => n.path), ['/r/B/x'], 'control: B\'s map landed');
+  for (let i = 0; i < 10 && h.frames.size; i++) h.runFrames(50);
+  assert.equal(h.state.treemap.nodes, landed, 'B\'s rectangles stay under B\'s crumbs — never /r\'s, for a click to jump sideways from');
+  // The sunburst's sweep likewise: its frames draw the folder it began on.
+  const s = morphLandHarness('sunburst');
+  s.page.animateSunburstTo({ path: '/r', name: 'r', size: 100 });
+  s.runFrames(100);
+  await s.page.loadTreemap('/r/B');
+  s.sunDrawn.length = 0;
+  for (let i = 0; i < 10 && s.frames.size; i++) s.runFrames(50);
+  assert.deepEqual(s.sunDrawn, [], 'no frame of /r is drawn over B\'s sunburst');
+});

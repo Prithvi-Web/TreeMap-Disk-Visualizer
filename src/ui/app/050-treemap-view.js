@@ -120,6 +120,10 @@ async function loadTreemap(rootPath, animate = false) {
       // under the hand — it would exit history and park the thumb at Live.
       if (state.treemap.history.scrubbing) return;
       if (!node) return;
+      // A morph still running is the map before this one: stopped, or its
+      // frames draw over what lands here (tmStopMorph, review L4, L13).
+      // Guarded: a page reader may lift this function without it.
+      if (typeof tmStopMorph === 'function') tmStopMorph();
       state.treemap.rootPath = node.path;
       state.treemap.rootName = node.name;
       state.treemap.rootSize = node.size;
@@ -146,6 +150,7 @@ async function loadTreemap(rootPath, animate = false) {
       // asked with (TM_MIN_SIZE, or 1 for a folder of small files) and the scan
       // it came from (null: laid out here from a tree with no scan behind it).
       const land = (data, floor, scanId) => {
+        if (typeof tmStopMorph === 'function') tmStopMorph(); // as in the branch above
         state.treemap.rootPath = data.root.path;
         state.treemap.rootName = data.root.name;
         state.treemap.rootSize = data.root.size;

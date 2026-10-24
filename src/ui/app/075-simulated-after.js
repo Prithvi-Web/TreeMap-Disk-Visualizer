@@ -1102,6 +1102,20 @@ function tmSettleMorph() {
   drawTreemap();
 }
 
+/**
+ * A morph still running, abandoned (review L4, L13): a map load landing
+ * replaces the nodes, and the morph's remaining frames put the older layout
+ * back under the new folder's crumbs, for a click to jump sideways from; the
+ * sunburst's sweep likewise drew the folder it began on over the new one.
+ * Called where loadTreemap lands. Unlike tmSettleMorph, nothing of the morph
+ * is drawn: the map landing is what stands.
+ */
+function tmStopMorph() {
+  cancelAnimationFrame(tmAnimFrame);
+  tmAnimFrame = 0;
+  tmMorph = null;
+}
+
 /* ── v4 §7.1 — time-lapse interpolation, as pure functions ──
    Lifted whole by tests/timelapse.test.ts (liftFrontend.ts explains why they
    live here and not in src/). lapseLerpNodes morphs one snapshot's rectangle

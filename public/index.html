@@ -13686,6 +13686,10 @@ async function loadTreemap(rootPath, animate = false) {
       // under the hand — it would exit history and park the thumb at Live.
       if (state.treemap.history.scrubbing) return;
       if (!node) return;
+      // A morph still running is the map before this one: stopped, or its
+      // frames draw over what lands here (tmStopMorph, review L4, L13).
+      // Guarded: a page reader may lift this function without it.
+      if (typeof tmStopMorph === 'function') tmStopMorph();
       state.treemap.rootPath = node.path;
       state.treemap.rootName = node.name;
       state.treemap.rootSize = node.size;
@@ -13712,6 +13716,7 @@ async function loadTreemap(rootPath, animate = false) {
       // asked with (TM_MIN_SIZE, or 1 for a folder of small files) and the scan
       // it came from (null: laid out here from a tree with no scan behind it).
       const land = (data, floor, scanId) => {
+        if (typeof tmStopMorph === 'function') tmStopMorph(); // as in the branch above
         state.treemap.rootPath = data.root.path;
         state.treemap.rootName = data.root.name;
         state.treemap.rootSize = data.root.size;
@@ -23527,6 +23532,20 @@ function tmSettleMorph() {
   if (state.treemap.nodes !== m.frame) return;
   state.treemap.nodes = m.to;
   drawTreemap();
+}
+
+/**
+ * A morph still running, abandoned (review L4, L13): a map load landing
+ * replaces the nodes, and the morph's remaining frames put the older layout
+ * back under the new folder's crumbs, for a click to jump sideways from; the
+ * sunburst's sweep likewise drew the folder it began on over the new one.
+ * Called where loadTreemap lands. Unlike tmSettleMorph, nothing of the morph
+ * is drawn: the map landing is what stands.
+ */
+function tmStopMorph() {
+  cancelAnimationFrame(tmAnimFrame);
+  tmAnimFrame = 0;
+  tmMorph = null;
 }
 
 /* ── v4 §7.1 — time-lapse interpolation, as pure functions ──
