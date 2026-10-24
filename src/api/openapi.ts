@@ -2023,13 +2023,14 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     parameters: [scanIdQuery],
     responses: {
       '200': jsonResponse(
-        'Groups, largest first. available:false with a reason means a rule pack is malformed — the rest of the app is unaffected.',
+        'Groups, largest first. available:false with a reason means a rule pack is malformed, or, with code NOTES_UNREADABLE, that notes.json could not be read, so the folders its notes pause could not be left out — the rest of the app is unaffected.',
         obj(
           {
             scanId: str(),
             groups: arr(ref('CleanupSuggestionGroup')),
-            available: bool('false when the rule-pack catalog could not be loaded'),
-            reason: str('Why the catalog could not be loaded (present only when available is false)'),
+            available: bool('false when the rule-pack catalog or notes.json could not be read'),
+            code: str('NOTES_UNREADABLE when notes.json is why available is false; absent for a rule-pack failure'),
+            reason: str('Why the catalog or notes.json could not be read (present only when available is false)'),
             catalog: opaque('schemaVersion and the loaded packs: name, updated, ruleCount'),
           },
           ['scanId', 'groups'],

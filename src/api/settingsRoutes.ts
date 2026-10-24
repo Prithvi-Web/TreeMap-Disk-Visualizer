@@ -150,7 +150,8 @@ settingsRouter.get('/cleanup/suggestions', storageModeGate, async (req: Request,
   try {
     noted = await suppressedNoteRoots();
   } catch (err) {
-    res.json({ scanId: scan.scanId, groups: [], available: false, reason: err instanceof Error ? err.message : String(err) });
+    // `code` says the cause is notes.json, so the page never blames a rule pack (review HD-L2/L6).
+    res.json({ scanId: scan.scanId, groups: [], available: false, code: 'NOTES_UNREADABLE', reason: err instanceof Error ? err.message : String(err) });
     return;
   }
   // Walked in slices and once per scan version (U-16): the cost card, the tour

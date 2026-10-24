@@ -277,6 +277,22 @@ test('cleanup_suggestions flags node_modules as regenerable', async () => {
   assert.equal(nm.totalSizeFormatted, formatBytes(nm.totalSize));
 });
 
+test('cleanup_suggestions names an unreadable notes.json as its cause, never a rule pack (review HD-L2/L6)', async () => {
+  const dir = process.env.TREEMAP_DATA_DIR!;
+  const notesFile = path.join(dir, 'notes.json');
+  fs.writeFileSync(notesFile, '{ not json');
+  try {
+    const r = await call('cleanup_suggestions', { scanId });
+    assert.ok(!r.isError);
+    const s = r.structuredContent!;
+    assert.equal(s.available, false, 'degraded, not served unpaused');
+    assert.equal(s.code, 'NOTES_UNREADABLE', 'the answer names its cause');
+    assert.match(String(s.reason), /notes\.json/);
+  } finally {
+    for (const f of fs.readdirSync(dir)) if (f.startsWith('notes.json')) fs.rmSync(path.join(dir, f), { force: true });
+  }
+});
+
 test('cleanup_suggestions respects a suppressing folder note — teeth the review demanded', async () => {
   // v4 §9.5 through the agent door: same matcher, same suppression list.
   // The first review round proved by mutation that this wire had no test

@@ -683,6 +683,8 @@ test('a corrupt notes.json fails CLOSED — automation refuses rather than runni
       assert.equal(sug.status, 200);
       assert.equal(sug.body.available, false, 'degraded, not silently unsuppressed');
       assert.match(String(sug.body.reason), /note/i);
+      // …and says which cause it is, so the page never blames a rule pack (review HD-L2/L6).
+      assert.equal(sug.body.code, 'NOTES_UNREADABLE', 'the answer names its cause');
     } finally {
       await close();
     }

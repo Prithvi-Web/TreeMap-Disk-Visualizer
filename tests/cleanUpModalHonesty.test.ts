@@ -1729,6 +1729,24 @@ test('Smart suggestions never says nothing in the scan matches the common-junk r
   assert.match(none.smart, /^Nothing in this scan matches the common-junk rules\.$/, 'a scan with nothing to suggest says so');
 });
 
+/*
+ * GET /api/cleanup/suggestions answers available:false for a malformed rule pack and for an unreadable
+ * notes.json alike, and the pane headlined both as "a cleanup rule pack could not be loaded" — untrue
+ * for notes, while the pane's other lists, which refuse the same notes, went blank unexplained
+ * (review HD-L2/L6).
+ */
+test('Smart suggestions blames a rule pack only for a rule pack, and says an unreadable notes.json turns the pane\'s lists off (review HD-L2/L6)', async () => {
+  const reason = 'notes.json could not be read (it holds no list of notes). The pauses your notes carry cannot be honoured.';
+  const notes = await loadSuggestions(pkgReport([]), { available: false, code: 'NOTES_UNREADABLE', reason });
+  assert.doesNotMatch(notes.smart, /rule pack/i, `no rule pack is blamed: ${notes.smart}`);
+  assert.match(notes.smart, /^Smart suggestions, package leftovers, Git repositories and browser caches are off until your folder notes can be read, so nothing a note pauses is offered\./,
+    `the pane says what is off and why: ${notes.smart}`);
+  assert.ok(notes.smart.endsWith(reason), 'the reason is still shown under it');
+  // Control: a rule pack's failure is still said as one.
+  const pack = await loadSuggestions(pkgReport([]), { available: false, reason: 'common.json: rule 3 has no id' });
+  assert.match(pack.smart, /^Smart suggestions are unavailable because a cleanup rule pack could not be loaded\./, pack.smart);
+});
+
 test('the fold of folders whose project is still here sits after Smart suggestions; the leftovers a person can act on, before them (G05)', () => {
   const pane = INDEX.slice(INDEX.indexOf('<div id="cleanPaneSmart"'), INDEX.indexOf('<div id="cleanPaneVideo"'));
   assert.ok(pane.length > 0, 'the Smart suggestions pane is in the page');

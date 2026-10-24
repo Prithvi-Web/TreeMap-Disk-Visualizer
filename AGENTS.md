@@ -155,7 +155,9 @@ OpenAPI 3 spec).
      `blockedReason` says so, as a preview's (`POST /api/autopilot/simulate`)
      `wouldBlockReason` does. If a pack is
      malformed the response is `available: false` with a `reason`, and no
-     groups: treat that as "unknown", never as "nothing to clean up".
+     groups: treat that as "unknown", never as "nothing to clean up". So is
+     an unreadable `notes.json`, with `code: "NOTES_UNREADABLE"` beside the
+     reason (folder notes, below).
    - `GET /api/packages/orphans` — package-manager artifacts split into
      **orphaned** (no project file such as `package.json` or `Cargo.toml` is
      beside it, though a folder of scripts may still use it; a virtualenv's
@@ -1212,8 +1214,12 @@ read-what-you-saw) permission to act.
   object holding a `notes` list, each row naming a folder and carrying
   text), is never written over: all three routes answer
   `500 NOTES_UNREADABLE` with the reason, never an empty list, and every
-  consumer of the pauses refuses the same way until it is repaired or
-  removed (the unreadable original is kept beside it).
+  consumer of the pauses refuses until it is repaired or removed (the
+  unreadable original is kept beside it): the lists and the agent summary
+  with the same `500`, while `GET /api/cleanup/suggestions` and MCP
+  `cleanup_suggestions` answer `available: false` with
+  `code: "NOTES_UNREADABLE"` and the reason (a malformed rule pack's answer
+  carries no `code`).
 - **Budget gauges (v4 §9.4).** `GET /api/scan/{scanId}/budget-gauges` pairs
   each in-scan folder budget with a projected breach date — a NEW endpoint
   because `/budgets` is under byte-identity lock. The projection reuses

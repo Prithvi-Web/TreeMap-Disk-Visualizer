@@ -773,7 +773,7 @@ export function buildMcpServer(): McpServer {
         try {
           noted = await suppressedNoteRoots();
         } catch (err) {
-          return ok({ scanId, available: false, reason: err instanceof Error ? err.message : String(err), totalBytes: 0, groups: [] });
+          return ok({ scanId, available: false, code: 'NOTES_UNREADABLE', reason: err instanceof Error ? err.message : String(err), totalBytes: 0, groups: [] });
         }
         // The same memoised, sliced walk the HTTP suggestions route answers from (U-16).
         const { groups, matchCounts } = await cleanupSuggestionsCountedFor(storeOf(scan), ignore, catalog.catalog, noted);

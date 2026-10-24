@@ -1053,8 +1053,13 @@ async function loadSmartSuggestions() {
     // never a blank "nothing to clean up", which would read as good news.
     if (data.available === false) {
       smartGroups = [];
+      // An unreadable notes.json is no rule pack's fault, and the pane's other lists refuse it too, so they
+      // went blank unexplained (review HD-L2/L6): the headline says which cause it is.
+      const headline = data.code === 'NOTES_UNREADABLE'
+        ? 'Smart suggestions, package leftovers, Git repositories and browser caches are off until your folder notes can be read, so nothing a note pauses is offered.'
+        : 'Smart suggestions are unavailable because a cleanup rule pack could not be loaded.';
       host.innerHTML = `<div class="muted" style="display:flex;align-items:flex-start;gap:8px;padding:12px 2px;">${icon('alert', 15)}
-        <span>Smart suggestions are unavailable because a cleanup rule pack could not be loaded.<br>
+        <span>${headline}<br>
         <span class="smart-why-line">${escapeHtml(data.reason || 'No reason was given.')}</span></span></div>`;
       updateCleanSummary();
       return;
