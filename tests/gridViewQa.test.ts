@@ -267,6 +267,7 @@ function gridHarness(opts: { escape?: boolean; raf?: boolean; preview?: boolean 
     VIEW_BY_ID: new Map(['grid', 'dashboard', 'treemap', 'apps', 'city', 'autopilot'].map((id) => [id, { id, label: id, needsScan: true, mount() {} }])),
     tabs: screen.tabs, viewBlockedReason: () => null, hideCtxMenu: () => {}, fxEmptyCtaSync: () => {}, fxScanHeroSync: () => {},
     renderCapabilityNotice: () => {}, fxViewEnter: () => {}, toast: () => {},
+    treeScanId: () => (state as unknown as { scanId: string | null }).scanId,
   };
   if (opts.preview) {
     delete deps.openPreview;
@@ -1658,6 +1659,28 @@ test('no tile overhangs the Grid when its scrollbar appears — on a first visit
     assert.equal(nav.state.grid.path, '/r/B', 'control: the folder opened');
     noOverhang(nav, 'a folder taller than the window opened from one that fit');
   });
+});
+
+/* ══════════════ hunt C70 — a folder not fetched says why, never "check your connection" ══════════════ */
+
+test('a folder whose contents could not be fetched names no connection to check — and when its scan\'s results expired, says so (hunt C70)', async () => {
+  const g = gridHarness();
+  const fonts = g.state.pathIndex.get('/r/Fonts')!;
+  fonts.children = [];
+  (fonts as Node & { pruned?: boolean }).pruned = true;
+  g.state.grid.path = '/r/Fonts';
+  // The newest empty state: the harness's scroller does not take the last one away.
+  const said = () => g.els.gridScroll.children.filter((c) => c.className === 'grid-empty').map((c) => c.innerHTML.replace(/<svg[^>]*><\/svg>/g, '')).pop();
+  await g.renderGrid();
+  assert.equal(said(), '<span>Couldn’t load this folder — try again</span>', 'a local app has no connection to check');
+  // The scan's results expired: the subtree's 404 raised the Scan again offer (scanResultsExpired), for this scan.
+  (g.state as unknown as { expiredOffer: unknown }).expiredOffer = { scanId: 's1', isOpen: () => false };
+  await g.renderGrid();
+  assert.equal(said(), '<span>Couldn’t load this folder — the scan’s results have expired; scan again to see what is in it</span>');
+  // Another scan's offer is not this one's.
+  (g.state as unknown as { expiredOffer: unknown }).expiredOffer = { scanId: 's0', isOpen: () => false };
+  await g.renderGrid();
+  assert.equal(said(), '<span>Couldn’t load this folder — try again</span>');
 });
 
 /* ══════════════ BQJ-1b — a folder the saved index could not answer for is not "empty" ══════════════ */

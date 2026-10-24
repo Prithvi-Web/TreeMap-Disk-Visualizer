@@ -194,8 +194,15 @@ async function renderGrid() {
     const q = state.grid.query.trim();
     const div = document.createElement('div');
     div.className = 'grid-empty';
+    // Why the fetch failed, as far as the page knows it (hunt C70): this is a
+    // local app, with no connection to check. The usual cause is the scan's
+    // results expiring, which raises the Scan again offer (scanResultsExpired)
+    // for the scan the tree came from.
+    const expired = !!state.expiredOffer && state.expiredOffer.scanId === treeScanId();
     div.innerHTML = unloaded && !q
-      ? icon('alert', 30) + '<span>Couldn’t load this folder — check your connection and try again</span>'
+      ? icon('alert', 30) + (expired
+        ? '<span>Couldn’t load this folder — the scan’s results have expired; scan again to see what is in it</span>'
+        : '<span>Couldn’t load this folder — try again</span>')
       : icon(q ? 'search' : 'folder', 30) +
         `<span>${q ? `No files match “${escapeHtml(q)}”` : 'This folder is empty'}</span>`;
     gridScroll.appendChild(div);
