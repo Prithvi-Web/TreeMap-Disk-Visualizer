@@ -573,6 +573,57 @@ test('an item already gone leaves the cart when the sheet says so: a cart of not
   assert.deepEqual(allGone.seen.toasts, ['Your cart is empty.'], 'it says the cart is empty');
 });
 
+test('closing the "nothing can be moved" sheet over a cart it emptied gives focus to a control on screen, never <body> (HC-L6)', async () => {
+  // The page's own focus net (noteFocus, focusBefore, modalClosed) around the page's cartTrashAll.
+  type Ctl = { name: string; isConnected: boolean; shown: boolean; getClientRects(): unknown[]; focus(): void; contains?(x: unknown): boolean };
+  const doc: { activeElement: unknown; body: unknown } = { activeElement: null, body: { name: 'body' } };
+  const focusTrail: unknown[] = [];
+  const prevFocus = new Map<string, unknown>();
+  const net = new Function('document', 'modalPrevFocus', 'syncModalLayers', 'toastsRetire', '$', 'focusLanding', 'focusTrail', 'FOCUS_TRAIL_MAX',
+    `${fnDecl('noteFocus')}\n${fnDecl('focusBefore')}\n${fnDecl('modalClosed')}\nreturn { noteFocus, focusBefore, modalClosed };`,
+  )(doc, prevFocus, () => {}, () => {}, () => ({ contains: () => false }), () => null, focusTrail, 8) as {
+    noteFocus(el: unknown): void; focusBefore(sheet: unknown): Ctl | null; modalClosed(sheet: unknown): void;
+  };
+  const ctl = (name: string, shown: boolean): Ctl => ({
+    name, isConnected: true, shown, getClientRects() { return this.shown ? [1] : []; },
+    // As the browser does: a control with no box takes no focus; one that takes it fires focusin, which the net notes.
+    focus() { if (this.shown) { doc.activeElement = this; net.noteFocus(this); } },
+  });
+  const viewControl = ctl('viewControl', true);
+  const cartTrash = ctl('cartTrash', true);
+  const sheetOk = ctl('confirmOk', true);
+  const sheet = { id: 'confirmModal', contains: (x: unknown) => x === sheetOk };
+
+  const GONE = 'It is no longer there — nothing to delete.';
+  const cart = new Set(['/c/a.bin']);
+  const { $ } = makeEls();
+  const trashAll = declared<() => Promise<void>>('async function cartTrashAll() {', {
+    $: (id: string) => (id === 'cartTrash' ? Object.assign(cartTrash, { innerHTML: '', disabled: false }) : $(id)),
+    state: { cart }, ensureNodes: async () => {}, cartKnownPaths: () => [...cart], outermostPaths: (p: string[]) => p,
+    icon: () => '', REDUCED: true, formatCount: String, toast: () => {}, resetOpenHandleWarning: () => {},
+    cartDryRun: async (roots: string[]) => {
+      doc.activeElement = doc.body; // the button is disabled while the dry run is out, and the browser drops focus to <body>
+      return { items: roots.map((p) => ({ path: p, willDelete: false, code: 'ITEM_GONE', reason: GONE })) };
+    },
+    cartManifestHtml: () => 'manifest', cartExecuteCommit: async () => {}, saveCart: () => {},
+    // The emptied cart hides the dock, and the Move to Trash button in it with it.
+    renderCart: () => { if (cart.size) $('cartDock').classList.add('show'); else { $('cartDock').classList.remove('show'); cartTrash.shown = false; } },
+    refreshCartButtons: () => {}, cartFocusReturn: () => viewControl.focus(),
+    tmIsInside: (p: string, dir: string) => p.startsWith(dir + '/'),
+  }, `let confirmPaths = []; let onConfirmTrash = null; let cartCommitKey = '';\n${blockAt('function cartDropTrashed(trashed) {')}`);
+  $('cartDock').classList.add('show');
+
+  cartTrash.focus(); // the press on Move to Trash
+  await trashAll();
+  const prev = net.focusBefore(sheet);
+  prevFocus.set(sheet.id, prev); // the sheet opens, as modalOpened records it
+  sheetOk.focus();
+  sheetOk.shown = false; // Close: the sheet stops painting
+  net.modalClosed(sheet);
+  assert.equal(prev?.name, 'viewControl', 'the sheet remembers a control on screen as where focus came from');
+  assert.equal((doc.activeElement as Ctl).name, 'viewControl', 'and gives focus back to it as it closes');
+});
+
 /* ═════════ C75 — an undo that stops part-way says what it put back, and the map catches up ═════════ */
 
 test('an undo that stops part-way says how many it put back and rescans; one that put back none does neither (C75)', async () => {
