@@ -317,13 +317,37 @@ function tmNoScanQueryWords() {
  * cannot help: the count, that it shows none of them, and the renderers that
  * do. A degraded answer's reasons come first, as everywhere (D31), and a
  * definite nothing is said, since the sunburst's line names no query.
+ *
+ * Switching renderer is advised only for the matches in the folder on screen
+ * (review F1.3): /api/query searches the whole scan, and a match elsewhere in
+ * it, or the folder on screen itself, is highlighted by no renderer here —
+ * "switch to see them" was followed by "0 shown here". Where they are comes
+ * from tmUndrawnBreakdown (`paths`, the folder `viewRoot`), as the rectangle
+ * map's sentence does; a `truncated` list cannot say where the rest are.
  */
-function tmSunburstQueryWords(found, degraded) {
+function tmSunburstQueryWords(found, degraded, paths, viewRoot, truncated) {
   const said = degraded.map((d) => d.reason);
   if (found > 0) {
     const one = found === 1;
-    said.push(`${formatCount(found)} match${one ? '' : 'es'} — the sunburst does not highlight ${one ? 'it' : 'them'}. ` +
-      `Switch to Treemap, Circles or Voronoi to see ${one ? 'it' : 'them'}.`);
+    const head = `${formatCount(found)} match${one ? '' : 'es'} — the sunburst does not highlight ${one ? 'it' : 'them'}.`;
+    const b = tmUndrawnBreakdown(paths, viewRoot, 0);
+    const here = b.deeper; // in the folder on screen, at any depth: what another renderer may draw
+    if (truncated) {
+      said.push(`${head} Treemap, Circles and Voronoi highlight the ones they draw.`);
+    } else if (!b.self && !b.outside) {
+      said.push(`${head} Switch to Treemap, Circles or Voronoi to see ${one ? 'it' : 'them'}.`);
+    } else {
+      const why = [];
+      if (b.self) why.push('one is this folder itself');
+      if (b.outside) why.push(`${formatCount(b.outside)} ${b.outside === 1 ? 'is' : 'are'} elsewhere in the scan, outside this folder`);
+      if (here) why.push(`${formatCount(here)} ${here === 1 ? 'is' : 'are'} in this folder`);
+      const ones = here === 1 ? 'the one' : 'the ones';
+      const advice = here && b.outside ? ` Switch to Treemap, Circles or Voronoi to see ${ones} in this folder, and go up there for the rest.`
+        : here ? ` Switch to Treemap, Circles or Voronoi to see ${ones} in this folder.`
+        : b.outside ? ` Go up in Treemap, Circles or Voronoi to see ${b.outside === 1 ? 'it' : 'them'}.`
+        : '';
+      said.push(`${head} ${why.join('; ').replace(/^./, (c) => c.toUpperCase())}.${advice}`);
+    }
   } else if (!degraded.length) {
     said.push('Nothing matched.');
   }
@@ -409,7 +433,7 @@ async function tmRunGrammarQuery(q) {
     const drawn = state.treemap.matches;
     const found = out.total;
     if (state.treemap.mode === 'sunburst') {
-      tmSetQueryMessage(tmSunburstQueryWords(found, degraded), false);
+      tmSetQueryMessage(tmSunburstQueryWords(found, degraded, tmLastHits.paths, state.treemap.rootPath, tmLastHits.truncated), false);
     } else if (degraded.length) {
       tmSetQueryMessage(degraded.map((d) => d.reason).join(' '), false);
     } else if (out.truncated) {

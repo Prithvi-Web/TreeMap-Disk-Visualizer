@@ -211,18 +211,22 @@ test('C20: over the sunburst a grammar query counts no drawn match from the last
   assert.match(t.status.textContent, /^2 of 9 matches for “size>1gb”/);
 });
 
-/** The real tmRunGrammarQuery, answered with `total` matches, in `mode`. */
-async function grammarIn(mode: string, total: number, degraded: { reason: string }[] = []) {
+/**
+ * The real tmRunGrammarQuery, answered with `total` matches, in `mode`, over the folder `rootPath` (the scan's root,
+ * /r, unless given): the hits are `paths` (`/r/f0`… unless given), and `truncated` says the server sent only the biggest.
+ */
+async function grammarIn(mode: string, total: number, degraded: { reason: string }[] = [], o: { rootPath?: string; paths?: string[]; truncated?: boolean } = {}) {
   const said: string[] = [];
   const state = {
     scanId: 's1', scanning: false, root: { path: '/r' },
-    treemap: { mode, matchedPaths: null as Set<string> | null, queryMode: 'bare', queryScanId: null as string | null, matchTotal: null as number | null, matches: 0, rootPath: '/r' },
+    treemap: { mode, matchedPaths: null as Set<string> | null, queryMode: 'bare', queryScanId: null as string | null, matchTotal: null as number | null, matches: 0, rootPath: o.rootPath ?? '/r' },
   };
-  const hits = Array.from({ length: Math.min(total, 3) }, (_, i) => ({ path: `/r/f${i}`, name: `f${i}`, size: 2e9, isDir: false, mtimeMs: 0 }));
+  const paths = o.paths ?? Array.from({ length: Math.min(total, 3) }, (_, i) => `/r/f${i}`);
+  const hits = paths.map((p) => ({ path: p, name: p.slice(p.lastIndexOf('/') + 1), size: 2e9, isDir: false, mtimeMs: 0 }));
   const deps: Record<string, unknown> = {
     $: () => ({ hidden: true, textContent: '', classList: { toggle() {}, contains: () => false }, setAttribute() {} }),
     state,
-    api: async () => ({ hits, total, truncated: false, degraded }),
+    api: async () => ({ hits, total, truncated: !!o.truncated, degraded }),
     seedNodes() {}, renderSearchOverlay() {}, presentView() {}, tmSyncStageButton() {}, tmStageable: () => null,
     tmSetQueryMessage: (t: string) => { said.push(t); },
     tmUndrawnMessage: () => 'UNDRAWN', // the rectangle map's sentence — never the sunburst's
@@ -232,7 +236,7 @@ async function grammarIn(mode: string, total: number, degraded: { reason: string
   const keys = Object.keys(deps);
   const optional = ['tmSunburstQueryWords'].filter((n) => INDEX.includes(`function ${n}(`)).map(declSource).join('\n');
   const src = `'use strict'; let tmLastHits = { q: '', paths: [], total: 0, truncated: false, stage: null }; let tmQuerySeq = 0; let tmQueryAbort = null;
-    ${optional}\n${['treeScanId', 'tmRunGrammarQuery'].map(declSource).join('\n')}\nreturn tmRunGrammarQuery;`;
+    ${optional}\n${['treeScanId', 'tmIsInside', 'tmUndrawnBreakdown', 'tmRunGrammarQuery'].map(declSource).join('\n')}\nreturn tmRunGrammarQuery;`;
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const run = new Function(...keys, src)(...keys.map((k) => deps[k])) as (q: string) => Promise<void>;
   await run('size>1gb');
@@ -248,6 +252,27 @@ test('C20: over the sunburst the box says the matches are not highlighted there,
   assert.equal(await grammarIn('sunburst', 4, [{ reason: 'Last-opened dates are not recorded here.' }]),
     'Last-opened dates are not recorded here. 4 matches — the sunburst does not highlight them. Switch to Treemap, Circles or Voronoi to see them.');
   assert.equal(await grammarIn('treemap', 9), 'UNDRAWN', 'the rectangle map keeps its own account of what it drew');
+});
+
+test('C20 (review F1.3): over the sunburst the box advises switching renderer only for matches in the folder on screen — never for one elsewhere in the scan, nor for the folder itself', async () => {
+  const lib = Array.from({ length: 9 }, (_, i) => `/home/u/Library/big${i}.bin`);
+  // Every match under ~/Library, the sunburst on ~/Movies: switching renderer there shows "0 shown here".
+  assert.equal(await grammarIn('sunburst', 9, [], { rootPath: '/home/u/Movies', paths: lib }),
+    '9 matches — the sunburst does not highlight them. 9 are elsewhere in the scan, outside this folder. Go up in Treemap, Circles or Voronoi to see them.');
+  assert.equal(await grammarIn('sunburst', 1, [], { rootPath: '/home/u/Movies', paths: lib.slice(0, 1) }),
+    '1 match — the sunburst does not highlight it. 1 is elsewhere in the scan, outside this folder. Go up in Treemap, Circles or Voronoi to see it.');
+  // The only match is the folder on screen: no renderer highlights the folder it is showing.
+  assert.equal(await grammarIn('sunburst', 1, [], { rootPath: '/home/u/Movies', paths: ['/home/u/Movies'] }),
+    '1 match — the sunburst does not highlight it. One is this folder itself.');
+  // All three kinds at once.
+  assert.equal(await grammarIn('sunburst', 6, [], { rootPath: '/home/u/Movies', paths: ['/home/u/Movies', ...lib.slice(0, 2), '/home/u/Movies/a.mov', '/home/u/Movies/b/c.mov', '/home/u/Movies/d.mov'] }),
+    '6 matches — the sunburst does not highlight them. One is this folder itself; 2 are elsewhere in the scan, outside this folder; 3 are in this folder. ' +
+    'Switch to Treemap, Circles or Voronoi to see the ones in this folder, and go up there for the rest.');
+  assert.equal(await grammarIn('sunburst', 2, [], { rootPath: '/home/u/Movies', paths: ['/home/u/Movies', '/home/u/Movies/a.mov'] }),
+    '2 matches — the sunburst does not highlight them. One is this folder itself; 1 is in this folder. Switch to Treemap, Circles or Voronoi to see the one in this folder.');
+  // Only the biggest were sent: where the rest are is not known, so no renderer is promised to show them.
+  assert.equal(await grammarIn('sunburst', 5000, [], { rootPath: '/home/u/Movies', paths: lib, truncated: true }),
+    '5,000 matches — the sunburst does not highlight them. Treemap, Circles and Voronoi highlight the ones they draw.');
 });
 
 /** The real setTreemapView, switching renderer under a grammar query whose answer is on screen. */
