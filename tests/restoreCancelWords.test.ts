@@ -125,6 +125,24 @@ test('a Cancel that cuts the last file\'s copy short is a cancelled restore that
   assert.ok(!fs.existsSync(files[0]), 'nothing was put back');
 });
 
+test('a Cancel that lands between two files, with no copy under way, stops the restore there: cancelled, the later files never tried (review F1.17)', async () => {
+  const { files, ids } = await offloaded('between', ['first.bin', 'second.bin', 'third.bin']);
+  const undo = setHardLinkForTests(async (a, b) => {
+    if (b === files[0]) cancelAllOffloadJobs(); // while the first file is put in place: no copy is running to stop
+    await fsp.link(a, b);
+  });
+  let job: OffloadJob;
+  try {
+    job = await settled((await startRestore(ids)).jobId);
+  } finally {
+    undo();
+  }
+  assert.equal(job.status, 'cancelled', `the Cancel stopped two files from being tried: ${job.error}`);
+  assert.equal(job.filesDone, 1);
+  assert.ok(fs.existsSync(files[0]), 'the file put back before the Cancel stays');
+  assert.deepEqual([files[1], files[2]].map((f) => fs.existsSync(f)), [false, false], 'the later files were never tried');
+});
+
 /** The frames of an offload job's progress stream, read until the server ends it. */
 async function framesOf(jobId: string): Promise<Record<string, unknown>[]> {
   resetRateLimiter();
