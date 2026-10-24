@@ -1329,6 +1329,8 @@ test('the first run\'s record — what Approve is pressed on — and a run held 
     assert.equal(first.status, 'awaiting-approval', String(first.blockedReason));
     assert.match(String(first.blockedReason), /would delete nothing: .*per-operation cap in agent-policy\.json/, `the run Approve is offered on names the cap: ${first.blockedReason}`);
     assert.doesNotMatch(String(first.blockedReason), /lets it start deleting/, `and promises no deletion the cap refuses: ${first.blockedReason}`);
+    // …and carries the cap's refusal apart, for the Approve dialog to say (review HD-L7).
+    assert.match(String(first.capRefusal), /^This operation covers .* per-operation cap in agent-policy\.json$/, `the record carries the cap: ${first.capRefusal}`);
     const sim = await simulatePolicy(policy);
     assert.match(String(sim.wouldBlockReason), /would delete nothing: .*per-operation cap/, String(sim.wouldBlockReason));
     assert.doesNotMatch(String(sim.wouldBlockReason), /lets it start deleting/, `the preview does not contradict itself: ${sim.wouldBlockReason}`);
@@ -1340,7 +1342,15 @@ test('the first run\'s record — what Approve is pressed on — and a run held 
     const held = await runPolicy((await listPolicies())[0]);
     assert.equal(held.status, 'awaiting-approval', String(held.blockedReason));
     assert.match(String(held.blockedReason), /would delete nothing: .*per-operation cap in agent-policy\.json/, `a run held for its size names the cap: ${held.blockedReason}`);
+    assert.match(String(held.capRefusal), /per-operation cap in agent-policy\.json$/, `and carries it apart: ${held.capRefusal}`);
     assert.deepEqual(trashed, [], 'nothing reached the Trash step');
+
+    // A policy set to "Only ever preview" is refused by no cap — it deletes nothing anyway — so its
+    // record carries none.
+    const [preview] = await savePolicies([{ id: 'cap-preview', name: 'p', path: dir, match: { kind: 'custom', exts: ['log'] }, dryRunFirst: true, enabled: true }]);
+    const previewRun = await runPolicy(preview);
+    assert.equal(previewRun.status, 'awaiting-approval', String(previewRun.blockedReason));
+    assert.equal(previewRun.capRefusal, undefined, 'no cap is carried for a preview-only policy');
   } finally {
     setTrashStepForTests(null);
     await writeJsonFile('agent-policy.json', {});

@@ -754,6 +754,7 @@ const schemas: Json = {
       undoneAt: int('Set once the run has been undone: an undo\'s restore completed and everything an undo could put back was put back. Never by an undo that failed or was cancelled'),
       scope: obj({ path: str(), match: opaque('The policy\'s match when the run was made') }, ['path', 'match'], 'The folder and match the policy had when this run was made; an approval of the run holds only while the policy still has them. Absent on runs recorded by builds before 5.2.0'),
       approvedAt: int('When this run was approved (Unix epoch ms). An approved run is completed: it asks for nothing more, and approving it again is refused (409 APPROVAL_NOT_ASKED). Absent on every run not approved'),
+      capRefusal: str('Why agent-policy.json\'s byte cap would refuse what this run would select: set on a run awaiting approval whose approval would let it delete nothing, as blockedReason says. Absent otherwise'),
     },
     ['id', 'policyId', 'policyName', 'at', 'mode', 'status', 'items', 'bytesMatched', 'bytesDeleted', 'skipped'],
   ),

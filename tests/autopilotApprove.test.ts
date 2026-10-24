@@ -809,6 +809,33 @@ test('an approved run says it was approved and what that lets the policy do — 
   }
 });
 
+/*
+ * approvePolicy replaced the whole blockedReason, so a sentence record() appended to the awaiting run —
+ * that the policy names a kind no rule here has, which every run record states (BQL-b1 F3.1) — was
+ * dropped on approval (review HD-L8).
+ */
+test('an approved run still says its policy names a kind TreeMap does not have, as every run record of it does (review HD-L8)', async () => {
+  const dir = folder('unknown-kind', { 'a.log': 1000 });
+  // As an earlier build saved it (cache-general: a box no pack ever shipped): Save refuses one now, so it is planted.
+  const old: AutopilotPolicy = {
+    id: 'old-kind', name: 'Old boxes', path: dir, match: { kind: 'suggestion', groupIds: ['cache-general'] },
+    maxBytesPerRun: null, maxBytesPerWeek: null, cooldownDays: 7, dryRunFirst: false, requireConfirmationAbove: null, enabled: true,
+  };
+  await writeJsonFile('autopilot.json', { version: 1, policies: [old], runs: [] });
+  const ONLY = 'This policy names only a kind of file TreeMap does not have (cache-general), so it matches nothing: edit the policy and pick again.';
+  try {
+    const seen = await runOnce('old-kind');
+    assert.ok(String(seen.blockedReason).endsWith(ONLY), `control: the run says so: ${seen.blockedReason}`);
+    await approvePolicy('old-kind', seen.id);
+    const after = (await listRuns()).find((r) => r.id === seen.id);
+    assert.ok(after);
+    assert.match(String(after.blockedReason), /^Approved\b/, String(after.blockedReason));
+    assert.ok(String(after.blockedReason).endsWith(ONLY), `approved, it still says what the policy names: ${after.blockedReason}`);
+  } finally {
+    await savePolicies([]);
+  }
+});
+
 test('the page labels an approved run "Approved" and offers no Approve on it; a repeat confirm never says "more than 0 B asks again" (hunt C37)', () => {
   const policy = { id: 'P', name: 'Logs', path: '/home/me/logs', match: { kind: 'custom', exts: ['log'] }, requireConfirmationAbove: null, approvedAt: 9, cooldownDays: 7, enabled: true };
   const approved = { id: 'r1', policyId: 'P', policyName: 'Logs', at: 1, mode: 'dry-run', status: 'completed', approvedAt: 9, items: [], bytesMatched: 2000, bytesDeleted: 0, skipped: [], scope: { path: policy.path, match: policy.match } };
@@ -863,6 +890,29 @@ test('approving a policy set to "Only ever preview", or switched off, never prom
   const live = await approvalWords({ ...base, enabled: true, dryRunFirst: false }, run);
   assert.match(live.text, /start removing/, 'a live policy still says what approval lets it do');
   assert.match(live.toast, /run on its own from now on/);
+});
+
+test('approving a run whose deletion agent-policy.json\'s byte cap refuses never promises one: the dialog and the toast name the cap, as the record does (review HD-L7)', async () => {
+  const base = { id: 'P', name: 'Movies', path: '/home/me/Movies', match: { kind: 'custom', exts: ['mov'] }, requireConfirmationAbove: null, cooldownDays: 7, enabled: true, dryRunFirst: false };
+  const capRefusal = 'This operation covers 2000 B, over the 500 B per-operation cap in agent-policy.json';
+  const run = { id: 'r', policyId: 'P', policyName: 'Movies', at: 1, mode: 'dry-run', status: 'awaiting-approval', items: [], bytesMatched: 2000, bytesDeleted: 0, skipped: [], scope: { path: base.path, match: base.match }, capRefusal };
+  const promise = /delete on its own|start removing|removes? what|will remove|remove this much|run on its own from now on|Undo Vault/;
+
+  const first = await approvalWords(base, run);
+  for (const words of [first.title, first.text, first.toast]) assert.doesNotMatch(words, promise, words);
+  assert.match(first.text, /would delete nothing: This operation covers 2000 B, over the 500 B per-operation cap in agent-policy\.json\./, first.text);
+  assert.match(first.toast, /deletes nothing while agent-policy\.json’s byte cap refuses it/, first.toast);
+
+  // A run of an approved policy held by "Ask me first above".
+  const held = await approvalWords({ ...base, approvedAt: 5, requireConfirmationAbove: 1000 }, run);
+  for (const words of [held.title, held.text, held.toast]) assert.doesNotMatch(words, promise, words);
+  assert.match(held.text, /would still delete nothing: This operation covers/, held.text);
+  assert.match(held.toast, /deletes nothing while agent-policy\.json’s byte cap refuses it/, held.toast);
+
+  // Control: with no cap carried, approval still says what it lets the policy do.
+  const { capRefusal: _none, ...uncapped } = run;
+  const live = await approvalWords(base, uncapped);
+  assert.match(live.text, /start removing/, live.text);
 });
 
 test('a never-approved policy set to "Only ever preview" is not told that approving it lets it delete (hunt C36)', async () => {
@@ -1036,6 +1086,160 @@ test('a failed reload after Remove, Approve or Save moves focus to Try again —
   }
 });
 
+/*
+ * F1.16's keeper covered a reload that failed once policies had loaded. Before that, loadAutopilot
+ * painted "Loading policies…" over the Try again the person had pressed, so focus fell to <body>, and
+ * neither a second failure nor a success could find it again (review HD-L3/L13). And its guard — Try
+ * again takes focus only when focus was in a list — was untested (review HD-L10).
+ */
+test('Try again after the first Autopilot load failed keeps focus off <body> whether the retry fails or works, and a failed load leaves focus outside both lists where it is (review HD-L3/L13, HD-L10)', async () => {
+  const doc = { body: { isConnected: true } as Record<string, unknown>, activeElement: null as unknown };
+  doc.activeElement = doc.body;
+  type El = {
+    attrs: Record<string, string>; isConnected: boolean; textContent: string; click?: () => Promise<void>;
+    hasAttribute(a: string): boolean; getAttribute(a: string): string | null; setAttribute(a: string, v: string): void;
+    closest(): null; addEventListener(t: string, f: () => Promise<void>): void; focus(): void;
+  };
+  const mk = (attrs: Record<string, string>): El => {
+    const el: El = {
+      attrs, isConnected: true, textContent: '',
+      hasAttribute: (a) => a in attrs, getAttribute: (a) => (a in attrs ? attrs[a] : null), setAttribute: (a, v) => { attrs[a] = v; },
+      closest: () => null, addEventListener: (t, f) => { if (t === 'click') el.click = f; }, focus: () => { doc.activeElement = el; },
+    };
+    return el;
+  };
+  let retry: El | null = null;
+  const list = () => {
+    const el = {
+      rows: [] as El[],
+      contains: (e: unknown) => el.rows.includes(e as El),
+      querySelectorAll: (sel: string) => el.rows.filter((r) => sel.replace(/^\[|\]$/g, '') in r.attrs),
+      /** innerHTML = …: every old row is detached, focus on one falls to <body>, as a browser does. */
+      set innerHTML(v: string) {
+        for (const r of el.rows) r.isConnected = false;
+        if (el.rows.includes(doc.activeElement as El)) doc.activeElement = doc.body;
+        el.rows = [];
+        if (v.includes('id="apRetry"')) { retry = mk({ id: 'apRetry' }); el.rows = [retry]; }
+        if (v.includes('data-ap-edit')) el.rows = [mk({ 'data-ap-edit': 'P' })];
+      },
+    };
+    return el;
+  };
+  const policies = list();
+  const runs = list();
+  const tab = mk({ id: 'tabAutopilot' });
+  const addBtn = mk({ id: 'apAddBtn' });
+  const $ = (id: string) => ({ apPolicies: policies, apRuns: runs, apRetry: retry, apAddBtn: addBtn }[id] ?? null);
+  const state = { autopilot: { policies: null as unknown, runs: null as unknown } };
+  let answers = 'fail';
+  const api = async (url: string) => {
+    if (answers === 'fail') throw new Error('the server stopped answering');
+    return url.includes('/runs') ? { runs: [] } : { policies: [{ id: 'P' }], knownGroupIds: [] };
+  };
+  let rendered = 0;
+  // renderAutopilot as its own keeper does it (the test below pins that it does): mark, repaint, restore.
+  const load = new Function('document', '$', 'api', 'state', 'escapeHtml', 'fxApBreatheSync', 'focusLanding', 'counted',
+    `${pageSource('apFocusMark')} ${pageSource('apFocusRestore')} ${pageSource('loadAutopilot')};
+     function renderAutopilot() { counted(); const host = $('apPolicies'); const mark = apFocusMark(host); host.innerHTML = '<div data-ap-edit="P"></div>'; apFocusRestore(host, mark); }
+     return loadAutopilot;`,
+  )(doc, $, api, state, (x: string) => x, () => undefined, () => null, () => { rendered++; }) as () => Promise<void>;
+
+  // The tab opens and its first load fails, focus on the tab button: it stays there (HD-L10).
+  tab.focus();
+  await load();
+  assert.ok(retry, 'control: the failure painted Try again');
+  assert.equal(doc.activeElement, tab, 'focus outside both lists is left where it is');
+
+  // The person presses Try again, and it fails again: focus is on the new Try again.
+  const first = retry as El | null;
+  first!.focus();
+  await first!.click!();
+  assert.notEqual(retry, first, 'control: a new Try again was painted');
+  assert.equal(doc.activeElement, retry, 'focus goes to the new Try again, not <body>');
+
+  // Pressed again, it works: focus lands on a control on the page, not <body>.
+  answers = 'ok';
+  await (retry as El | null)!.click!(); // set by the page's repaint, which TypeScript cannot see
+  assert.equal(rendered, 1, 'control: the policies were rendered');
+  assert.notEqual(doc.activeElement, doc.body, 'focus is not on <body>');
+  assert.equal(doc.activeElement, addBtn, 'it lands on Add policy, where the keeper sends it');
+});
+
+/*
+ * A Preview still out painted its answer after a refusal had cleared the box, or after the editor was
+ * closed and opened again for another policy (review HD-L14).
+ */
+test('a Preview still out paints nothing once a later press, a refusal or the editor closing has retired it (review HD-L14)', async () => {
+  const at = INDEX.indexOf("$('apPreviewBtn').addEventListener('click', async () => {");
+  assert.notEqual(at, -1, 'the Preview handler is in the page');
+  const open = INDEX.indexOf('{', INDEX.indexOf('=>', at));
+  let depth = 0;
+  let end = open;
+  for (let i = open; i < INDEX.length; i++) { if (INDEX[i] === '{') depth++; else if (INDEX[i] === '}' && --depth === 0) { end = i; break; } }
+  const els: Record<string, { innerHTML: string; disabled?: boolean; querySelector(): null; removeAttribute(): void }> = {};
+  const $ = (id: string) => (els[id] ||= { innerHTML: '', querySelector: () => null, removeAttribute: () => undefined });
+  let refusal: string | null = null;
+  const pending: Array<(r: unknown) => void> = [];
+  const failing: Array<(e: Error) => void> = [];
+  let hides = 0;
+  const answer = (name: string) => ({ items: [{ path: `/x/${name}`, name, reason: 'old', bytes: 5 }], bytesWouldDelete: 5, capBytes: null, skipped: [] });
+  const page = new Function('$', 'apEditorRefusal', 'toast', 'escapeHtml', 'policyFromEditor', 'api', 'fxOrbShow', 'fxOrbHide',
+    'formatBytes', 'formatCount', 'icon', 'meantFolder', 'noFolderNamed', 'offerMeant', 'leftAloneHtml',
+    `let apSaveSeq = 0; let apPreviewSeq = 0; ${pageSource('apEditorClosed')}
+     return { click: async () => ${INDEX.slice(open, end + 1)}, closed: apEditorClosed };`,
+  )($, () => refusal, () => undefined, (x: string) => x, () => ({ path: '/x' }),
+    () => new Promise((resolve, reject) => { pending.push(resolve); failing.push(reject); }), () => undefined, () => { hides++; },
+    (n: number) => `${n} B`, String, () => '', async () => null, () => '', () => undefined, () => '') as { click(): Promise<void>; closed(): void };
+
+  // Pressed, then refused: the older answer paints nothing into the cleared box.
+  const a = page.click();
+  refusal = 'Enter an amount above 0 in “Ask me first above”, or leave it empty for never asking.';
+  await page.click();
+  assert.equal($('apPreview').innerHTML, '', 'control: the refusal cleared the box');
+  assert.equal(hides, 1, 'the refusal takes down the working orb of the press it retired');
+  failing.shift();
+  pending.shift()!(answer('a-old'));
+  await a;
+  assert.equal($('apPreview').innerHTML, '', 'the box keeps nothing of the draft the refusal replaced');
+
+  // Pressed, then refused, and the older press fails: its failure paints nothing either.
+  refusal = null;
+  const e = page.click();
+  refusal = 'Enter a number of days from 1 to 365 in “Run at most once every”.';
+  await page.click();
+  pending.shift();
+  failing.shift()!(new Error('Path does not exist: /x'));
+  await e;
+  assert.equal($('apPreview').innerHTML, '', 'nor does an older press\'s failure');
+  assert.equal(hides, 2, 'the second refusal took its orb down, and the failure took down nothing more');
+
+  // Pressed, then the editor closed and opened again (openPolicyEditor clears the box).
+  refusal = null;
+  const b = page.click();
+  failing.shift();
+  page.closed();
+  $('apPreview').innerHTML = '';
+  assert.equal(hides, 3, 'closing the editor takes the orb down');
+  pending.shift()!(answer('b-old'));
+  await b;
+  assert.equal($('apPreview').innerHTML, '', 'another policy\'s editor shows nothing of this one\'s preview');
+
+  // Two presses, the first answering first: it paints nothing and leaves the second's orb working.
+  const c = page.click();
+  const d = page.click();
+  const [first, second] = [pending.shift()!, pending.shift()!];
+  failing.splice(0, 2);
+  first(answer('c-old'));
+  await c;
+  assert.match($('apPreview').innerHTML, /Checking what this would delete/, 'the second press is still working');
+  assert.equal(hides, 3, 'and its orb is not taken down by the first press');
+  second(answer('d-new'));
+  await d;
+  assert.match($('apPreview').innerHTML, /d-new/, 'the latest press\'s answer is shown');
+  assert.doesNotMatch($('apPreview').innerHTML, /c-old/, 'and an older answer never paints over it');
+  assert.equal(hides, 4, 'its own end takes its orb down');
+});
+
 test('Preview\'s refusal is toasted — said aloud as every refusal of the editor is — and the preview box keeps nothing of an earlier draft (review F1.17)', async () => {
   const at = INDEX.indexOf("$('apPreviewBtn').addEventListener('click', async () => {");
   assert.notEqual(at, -1, 'the Preview handler is in the page');
@@ -1045,10 +1249,10 @@ test('Preview\'s refusal is toasted — said aloud as every refusal of the edito
   for (let i = open; i < INDEX.length; i++) { if (INDEX[i] === '{') depth++; else if (INDEX[i] === '}' && --depth === 0) { end = i; break; } }
   const host = { innerHTML: '<div>the preview of an earlier draft</div>' };
   const toasts: Array<[string, string]> = [];
-  const click = new Function('$', 'apEditorRefusal', 'toast', 'escapeHtml', `return async () => ${INDEX.slice(open, end + 1)};`)(
+  const click = new Function('$', 'apEditorRefusal', 'toast', 'escapeHtml', 'fxOrbHide', `let apPreviewSeq = 0; return async () => ${INDEX.slice(open, end + 1)};`)(
     (id: string) => (id === 'apPreview' ? host : assert.fail(`nothing else is touched: ${id}`)),
     () => 'Enter an amount above 0 in “Ask me first above”, or leave it empty.',
-    (m: string, k: string) => toasts.push([m, k]), (x: string) => x,
+    (m: string, k: string) => toasts.push([m, k]), (x: string) => x, () => undefined,
   ) as () => Promise<void>;
   await click();
   assert.deepEqual(toasts, [['Enter an amount above 0 in “Ask me first above”, or leave it empty.', 'error']]);

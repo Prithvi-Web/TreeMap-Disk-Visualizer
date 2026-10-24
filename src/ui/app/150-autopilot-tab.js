@@ -22,7 +22,14 @@ let apDraft = null;
 
 async function loadAutopilot() {
   const host = $('apPolicies');
-  if (!state.autopilot.policies) host.innerHTML = `<div class="muted">Loading policies…</div>`;
+  // Try again pressed after a failed load stays where it is, busy, until the answer repaints it (review
+  // HD-L3/L13): "Loading policies…" painted over it handed focus to <body>, where neither a second failure
+  // nor a success could find it again.
+  const retry = $('apRetry');
+  if (retry && retry === document.activeElement) {
+    retry.setAttribute('aria-busy', 'true');
+    retry.textContent = 'Trying again…';
+  } else if (!state.autopilot.policies) host.innerHTML = `<div class="muted">Loading policies…</div>`;
   try {
     const [policies, runs] = await Promise.all([
       api('/api/autopilot/policies'),
@@ -347,12 +354,16 @@ function approveAutopilotRun(runId) {
   // it is switched on — neither is told it will start removing things.
   const previewOnly = !!policy.dryRunFirst;
   const whenOn = policy.enabled ? '' : ' once you switch it on';
+  // agent-policy.json's byte cap refuses what this run would select (review HD-L7): approving lets the
+  // policy run, and a run deletes nothing, as the record says — never a promise of a deletion.
+  const capped = !previewOnly && run.capRefusal ? run.capRefusal : '';
   onConfirmTrash = async () => {
     try {
       await api(`/api/autopilot/policies/${encodeURIComponent(policy.id)}/approve`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: run.id }),
       });
       toast(previewOnly ? `Approved — it previews on its own${whenOn}; untick “Only ever preview” to let it delete`
+        : capped ? `Approved — ${first ? `it runs on its own${whenOn}` : `its next run goes ahead${whenOn}`}, but it deletes nothing while agent-policy.json’s byte cap refuses it`
         : !policy.enabled ? 'Approved — it runs once you switch it on'
           : first ? 'Approved — it will run on its own from now on' : 'Approved — its next run removes what this one matched');
     } catch (e) {
@@ -364,11 +375,17 @@ function approveAutopilotRun(runId) {
   // "Asks again" only where a limit asks: with no "Ask me first above" set, nothing will (the hunt, C37).
   const asksAgain = policy.requireConfirmationAbove
     ? ` A later run that matches more than ${formatBytes(policy.requireConfirmationAbove)} asks again.` : '';
-  $('confirmTitle').innerHTML = icon('check', 18) + (previewOnly ? 'Let this policy run on its own?'
-    : first ? 'Let this policy delete on its own?' : 'Let its next run remove this much?');
+  $('confirmTitle').innerHTML = icon('check', 18) + (previewOnly || (capped && first) ? 'Let this policy run on its own?'
+    : capped ? 'Approve this run?' : first ? 'Let this policy delete on its own?' : 'Let its next run remove this much?');
   $('confirmText').innerHTML = (previewOnly
     ? `<b>${escapeHtml(policy.name)}</b> will look ${scope} on its own${whenOn} — it matched <b>${formatBytes(run.bytesMatched)}</b> this time — ` +
       `but it is set to “Only ever preview”, so it deletes nothing until you untick that.`
+    : capped && first
+      ? `<b>${escapeHtml(policy.name)}</b> will look ${scope} on its own${whenOn} — it matched <b>${formatBytes(run.bytesMatched)}</b> this time — ` +
+        `but a run would delete nothing: ${escapeHtml(capped)}.`
+    : capped
+      ? `Approving lets <b>${escapeHtml(policy.name)}</b>'s next run${whenOn} go past “Ask me first above” ${scope}, up to <b>${formatBytes(run.bytesMatched)}</b>, ` +
+        `but it would still delete nothing: ${escapeHtml(capped)}.`
     : first
       ? `<b>${escapeHtml(policy.name)}</b> will start removing what it matches ${scope} on its own${whenOn} — ` +
         `<b>${formatBytes(run.bytesMatched)}</b> this time.` +
@@ -377,7 +394,7 @@ function approveAutopilotRun(runId) {
             (run.bytesMatched > policy.requireConfirmationAbove ? ' — except its next one, up to what this run matched.' : '.')
           : '')
       : `<b>${escapeHtml(policy.name)}</b>'s next run${whenOn} will remove what it matches ${scope}, up to <b>${formatBytes(run.bytesMatched)}</b>, once.${asksAgain}`) +
-    (previewOnly ? '' : `<br><span style="color:var(--text-3)">Everything it removes is copied to the Undo Vault first, and a run can be undone from here until the Undo Vault removes its copies.</span>`);
+    (previewOnly || capped ? '' : `<br><span style="color:var(--text-3)">Everything it removes is copied to the Undo Vault first, and a run can be undone from here until the Undo Vault removes its copies.</span>`);
   setConfirmButton('Approve', 'check');
   $('confirmModal').classList.add('open');
 }
@@ -657,9 +674,12 @@ $('apBrowseBtn').addEventListener('click', () =>
 
 $('apPreviewBtn').addEventListener('click', async () => {
   const host = $('apPreview');
+  // This press's number: a later press, a refusal or the editor closing retires it, and its answer then
+  // paints nothing (review HD-L14).
+  const press = ++apPreviewSeq;
   const refused = apEditorRefusal();
   // Toasted, as Save's refusal is, so it is said aloud (review F1.17); the box keeps nothing of an earlier draft.
-  if (refused) { host.innerHTML = ''; toast(refused, 'error'); return; }
+  if (refused) { host.innerHTML = ''; fxOrbHide('ap'); toast(refused, 'error'); return; }
   // The draft as the editor holds it now — previewed, never saved.
   const draft = { policy: policyFromEditor() };
   // The editor this preview was asked in: closing it (apEditorClosed) or a
@@ -674,6 +694,7 @@ $('apPreviewBtn').addEventListener('click', async () => {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(draft),
     });
+    if (press !== apPreviewSeq) return;
     const rows = result.items.slice(0, 12).map(i => `
       <div class="ap-run-item"><span class="nm" title="${escapeHtml(i.path)}">${escapeHtml(i.name)}</span>
       <span class="why">${escapeHtml(i.reason)}</span><b class="num">${formatBytes(i.bytes)}</b></div>`).join('');
@@ -692,6 +713,7 @@ $('apPreviewBtn').addEventListener('click', async () => {
     // not a bare "Path does not exist" with the space invisible in it (final
     // review F1.6). Only offered into the editor it was asked in.
     const meant = await meantFolder(draft.policy.path, e);
+    if (press !== apPreviewSeq) return;
     if (meant && seq === apSaveSeq) {
       host.innerHTML = `<div class="ap-reason">${escapeHtml(noFolderNamed(draft.policy.path))}</div>`;
       offerMeant(draft.policy.path, meant, () => { if (seq === apSaveSeq) $('apPath').value = meant; }, 'Use that folder', 'apModal');
@@ -699,9 +721,13 @@ $('apPreviewBtn').addEventListener('click', async () => {
       host.innerHTML = `<div class="ap-reason">${escapeHtml(e.message)}</div>`;
     }
   } finally {
-    fxOrbHide('ap');
+    if (press === apPreviewSeq) fxOrbHide('ap'); // a retired press's orb is gone already, or a later press's
   }
 });
+
+/** Each press of Preview takes the next number; a refusal and the editor closing retire every press still
+    out (review HD-L14). */
+let apPreviewSeq = 0;
 
 /**
  * What Save says a saved policy does next, from the policy the server stored (the hunt, C04). An edit
@@ -739,6 +765,8 @@ let apSaveSeq = 0;
     editor opens. */
 function apEditorClosed() {
   apSaveSeq++;
+  apPreviewSeq++; // and a Preview still out paints nothing into the next editor (review HD-L14)
+  fxOrbHide('ap');
   $('apSaveBtn').disabled = false;
   $('apSaveBtn').removeAttribute('aria-busy');
 }

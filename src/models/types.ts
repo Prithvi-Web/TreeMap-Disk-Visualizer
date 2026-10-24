@@ -1309,6 +1309,12 @@ export interface AutopilotRun {
    * nothing more, and a second approval of it is refused. Absent on every run not approved.
    */
   approvedAt?: number;
+  /**
+   * Why agent-policy.json's byte cap would refuse what this run would select (review HD-L7): set on a
+   * run awaiting approval whose approval would let it delete nothing, so the Approve dialog says so as
+   * `blockedReason` does. Absent otherwise.
+   */
+  capRefusal?: string;
 }
 
 /* ---------- Live disk activity (Watcher) ---------- */

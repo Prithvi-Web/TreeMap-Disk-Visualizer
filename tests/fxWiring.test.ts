@@ -270,7 +270,12 @@ test('duplicates: the solving orb is dropped on settle, on error, on re-entry, a
 test('autopilot preview: the working orb lives exactly as long as the simulate round-trip', () => {
   const handler = slice("$('apPreviewBtn').addEventListener", "$('apSaveBtn').addEventListener");
   assert.match(handler, /fxOrbShow\('ap', host\.querySelector\('\.fx-orb-well'\), 'working'\)/);
-  assert.match(handler, /finally \{\s*fxOrbHide\('ap'\);\s*\}/, 'a finally guarantees the destroy on every exit');
+  // Every exit still drops it (review HD-L14): the latest press's own end, in a finally, and each thing that
+  // retires a press still out — a refusal and the editor closing; a later press's fxOrbShow drops the old orb
+  // itself. tests/autopilotApprove.test.ts counts the drops.
+  assert.match(handler, /finally \{\s*if \(press === apPreviewSeq\) fxOrbHide\('ap'\);/, 'a finally drops the latest press\'s orb on every exit');
+  assert.match(handler, /if \(refused\) \{[^}]*fxOrbHide\('ap'\)/, 'a refusal drops it');
+  assert.match(slice('function apEditorClosed(', "$('apSaveBtn').addEventListener"), /apPreviewSeq\+\+;[^\n]*\n\s*fxOrbHide\('ap'\)/, 'closing the editor retires the press and drops it');
 });
 
 test('cloud connect: every way the handshake poll can end drops the connecting orb', () => {

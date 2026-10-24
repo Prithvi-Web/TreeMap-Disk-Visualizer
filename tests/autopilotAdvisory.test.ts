@@ -335,10 +335,11 @@ test('a policy naming a kind TreeMap does not have says so on its card and in it
   const $ = (id: string) => ({ set innerHTML(v: string) { html[id] = v; }, get innerHTML() { return html[id] ?? ''; } });
   const served = { policies: [], knownGroupIds: ['regen-node-modules', 'regen-python-venv', 'old-downloads', 'tool-caches'] };
   const state: { autopilot: { policies?: unknown; runs?: unknown; knownGroupIds?: unknown } } = { autopilot: {} };
-  const page = new Function('state', '$', 'api', 'fxApBreatheSync', 'renderAutopilot',
+  // loadAutopilot asks whether Try again has focus (review HD-L3/L13): here nothing has.
+  const page = new Function('state', '$', 'api', 'fxApBreatheSync', 'renderAutopilot', 'document',
     ['escapeHtml', 'AP_GROUPS', 'apUnknownKinds', 'apKindsKnown', 'apCannotTell', 'apKinds', 'describeMatch', 'renderApGroupList', 'loadAutopilot'].map(pageDecl).join('\n') +
     '\nreturn { describeMatch, renderApGroupList, loadAutopilot };',
-  )(state, $, async (url: string) => (url.startsWith('/api/autopilot/runs') ? { runs: [] } : served), () => undefined, () => undefined) as {
+  )(state, $, async (url: string) => (url.startsWith('/api/autopilot/runs') ? { runs: [] } : served), () => undefined, () => undefined, { activeElement: null }) as {
     describeMatch: (m: unknown) => string; renderApGroupList: (ids: string[]) => void; loadAutopilot: () => Promise<void>;
   };
   await page.loadAutopilot();

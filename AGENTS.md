@@ -1092,7 +1092,8 @@ read-what-you-saw) permission to act.
   is over the cap deletes nothing and is recorded `blocked` with the
   refusal, and its preview says so in `wouldBlockReason`, as does the
   `blockedReason` of a run awaiting approval — the first run's, and one
-  held for its size — so no run is approved blind to it. Violations are
+  held for its size, each of which carries the refusal alone in
+  `capRefusal` too — so no run is approved blind to it. Violations are
   `403 { code: "POLICY_ROOT_NOT_ALLOWED" | "POLICY_PROTECTED_PATH" |
   "POLICY_BYTES_EXCEEDED" | "POLICY_BYTES_UNKNOWN" }`. An entry may begin with `~` for your home
   folder, and every gate reads an entry alike — where it lives and where it
@@ -1175,7 +1176,8 @@ read-what-you-saw) permission to act.
   once (`approvedBytes`, spent by that run even if it only previews); a
   bigger match asks again. An approved run's `blockedReason` says it was
   approved and what its policy may do next, in place of the sentence that
-  asked.
+  asked — and still says, as every run record of it does, that its policy
+  names a kind no rule on this computer has, where it does.
 - **Journal.** Significant disk changes noticed by scheduled scans are
   recorded to `journal.jsonl` (capped and rotated) as sentences with the
   structured fields beside them — path, date, signed byte delta, and an

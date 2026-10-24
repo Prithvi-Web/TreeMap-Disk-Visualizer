@@ -1184,10 +1184,14 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
   const neverApproved = !policy.approvedAt;
   if (neverApproved) {
     run.status = 'awaiting-approval';
+    // A preview-only policy deletes nothing whatever the cap says, so no cap is named for it.
+    const capRefusal = policy.dryRunFirst ? null : capRefusalFor(policy, candidates, store.runs, agentPolicy, now);
     run.blockedReason =
       `This policy has never run. Here is exactly what it would delete — ${formatBytes(run.bytesMatched)} across ` +
       `${candidates.length} item${candidates.length === 1 ? '' : 's'}. ` +
-      afterApprovalSentence(policy, capRefusalFor(policy, candidates, store.runs, agentPolicy, now));
+      afterApprovalSentence(policy, capRefusal);
+    // Carried apart too, for the Approve dialog to say rather than promise a deletion (review HD-L7).
+    if (capRefusal !== null) run.capRefusal = capRefusal;
     return record();
   }
 
@@ -1211,7 +1215,10 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
     // Approving it would not let it delete either when agent-policy.json's byte cap refuses what it would
     // select (review F1.5): said here, or approving loops — held, approved, refused, held again.
     const capRefusal = capRefusalFor(policy, candidates, store.runs, agentPolicy, now);
-    if (capRefusal !== null) run.blockedReason = withSentence(run.blockedReason, `Even approved, a run would delete nothing: ${capRefusal}.`);
+    if (capRefusal !== null) {
+      run.blockedReason = withSentence(run.blockedReason, `Even approved, a run would delete nothing: ${capRefusal}.`);
+      run.capRefusal = capRefusal; // for the Approve dialog (review HD-L7)
+    }
     return record();
   }
 
@@ -1403,8 +1410,14 @@ export async function approvePolicy(policyId: string, runId: string): Promise<Au
     // it again and GET /api/autopilot/runs told agents it still needed one.
     run.status = 'completed';
     run.approvedAt = now;
-    // Nor does it keep the sentence that asked for the approval (review F1.13).
+    // Nor does it keep the sentence that asked for the approval (review F1.13) — but what every run record
+    // of a policy naming kinds no rule here has states, it keeps (review HD-L8).
     run.blockedReason = approvedRunSentence(policy);
+    const unknown = unknownGroupIds(policy.match);
+    if (unknown.length > 0) {
+      const only = policy.match.kind === 'suggestion' && unknown.length === policy.match.groupIds.length;
+      run.blockedReason = withSentence(run.blockedReason, unknownKindsSentence(unknown, only));
+    }
     await saveStore(store);
     return policy;
   });
