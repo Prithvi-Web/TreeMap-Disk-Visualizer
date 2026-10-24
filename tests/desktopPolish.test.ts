@@ -215,23 +215,51 @@ test('every explicit accelerator is unique and collides with no role default', (
   }
 });
 
-test('the menu carries Settings (⌘,), Scan Folder…, Scan Home Folder, a Help menu, and About on every platform', () => {
+test('the menu carries Settings (⌘,), Scan folder…, Scan home folder, a Help menu, and About on every platform', () => {
   for (const isMac of [true, false]) {
     const t = menu.buildMenuTemplate({ isMac, isPackaged: true, actions: noopActions() });
     const items = flatten(t);
     const settings = items.find((i) => /^Settings/.test(i.label || ''));
     assert.ok(settings, `Settings item (isMac=${isMac})`);
     assert.equal(settings.accelerator, 'CmdOrCtrl+,');
-    assert.ok(items.some((i) => i.label === 'Scan Folder…'));
-    assert.ok(items.some((i) => i.label === 'Scan Home Folder'));
-    assert.ok(items.some((i) => /^Check for Updates/.test(i.label || '')));
-    assert.ok(items.some((i) => /^Report a Problem/.test(i.label || '')));
-    assert.ok(items.some((i) => i.label === 'Show Data Folder'));
+    assert.ok(items.some((i) => i.label === 'Scan folder…'));
+    assert.ok(items.some((i) => i.label === 'Scan home folder'));
+    assert.ok(items.some((i) => /^Check for updates/.test(i.label || '')));
+    assert.ok(items.some((i) => /^Report a problem/.test(i.label || '')));
+    assert.ok(items.some((i) => i.label === 'Show data folder'));
     const help = t.find((m: any) => m.role === 'help' || m.label === 'Help');
     assert.ok(help && Array.isArray(help.submenu), 'a Help menu exists (macOS gets its Help search field from it)');
     const about = items.filter((i) => i.role === 'about' || /^About TreeMap/.test(i.label || ''));
     assert.equal(about.length, 1, `exactly one About entry (isMac=${isMac})`);
     if (!isMac) assert.ok(about[0].label, 'Windows/Linux have no app menu, so About is a labelled item');
+  }
+});
+
+/** A label in sentence case: after its first word, no capital but in TreeMap's name (the owner's rule; hunt S4). */
+function sentenceCase(label: string): boolean {
+  return label.split(/\s+/).slice(1).every((w) => w === 'TreeMap' || !/[A-Z]/.test(w));
+}
+
+test('S4: every label the shell writes is in sentence case — the menus on every platform, the tray, the update dialogs — as every word the page says is', async () => {
+  for (const isMac of [true, false]) {
+    const labels = flatten(menu.buildMenuTemplate({ isMac, isPackaged: true, actions: noopActions() }))
+      .filter((i) => typeof i.label === 'string' && !i.role).map((i) => i.label as string);
+    assert.ok(labels.length >= 10, `${isMac ? 'macOS' : 'Windows/Linux'}: the menu's own labels (${labels.length})`);
+    for (const l of labels) assert.ok(sentenceCase(l), `"${l}" is in sentence case`);
+  }
+  for (const b of desktop.updateDialogCopy({ version: '4.2.0', current: '4.1.3', arch: 'arm64' }).buttons) assert.ok(sentenceCase(b), `"${b}"`);
+  const dir = mkTmp();
+  const h = await loadMain({ dataDir: dir });
+  try {
+    await h.settle();
+    const tray = FakeTray.created[0].menu as { template: Array<{ label?: string }> };
+    const trayLabels = tray.template.map((i) => i.label).filter((l): l is string => typeof l === 'string' && !/free of/.test(l));
+    assert.ok(trayLabels.includes('Scan home folder'), trayLabels.join(' | '));
+    for (const l of trayLabels) assert.ok(sentenceCase(l), `tray: "${l}"`);
+  } finally { h.dispose(); }
+  const main = fs.readFileSync(path.join(REPO, 'electron', 'main.js'), 'utf8');
+  for (const [, list] of main.matchAll(/buttons: \[([^\]]*)\]/g)) {
+    for (const [, b] of list.matchAll(/'([^']+)'/g)) assert.ok(sentenceCase(b), `main.js dialog button "${b}"`);
   }
 });
 
@@ -245,8 +273,8 @@ test('menu clicks reach the right actions', () => {
   };
   const items = flatten(menu.buildMenuTemplate({ isMac: false, isPackaged: true, actions }));
   const click = (re: RegExp) => { const i = items.find((x) => re.test(x.label || '')); assert.ok(i && i.click, String(re)); i.click(); };
-  click(/^Settings/); click(/^Rescan/); click(/^Command Palette/); click(/^Toggle Sidebar/); click(/^Keyboard Shortcuts/);
-  click(/^Scan Folder/); click(/^Scan Home/); click(/^Check for Updates/); click(/^Show Data Folder/); click(/^Report a Problem/); click(/^About TreeMap/);
+  click(/^Settings/); click(/^Rescan/); click(/^Command palette/); click(/^Toggle sidebar/); click(/^Keyboard shortcuts/);
+  click(/^Scan folder/); click(/^Scan home/); click(/^Check for updates/); click(/^Show data folder/); click(/^Report a problem/); click(/^About TreeMap/);
   assert.deepEqual(calls.slice(0, 5), ['command:settings', 'command:rescan', 'command:palette', 'command:sidebar', 'command:shortcuts']);
   assert.deepEqual(calls.slice(5, 9), ['scanFolder', 'scanHome', 'checkForUpdates', 'showDataFolder']);
   assert.match(calls[9], /^open:https:\/\/github\.com\/.*issues/);
@@ -414,7 +442,7 @@ test('the macOS update dialog explains Open Anyway, names the right download, an
   assert.match(d.detail, /Open Anyway/);
   assert.match(d.detail, /about an hour/);
   assert.doesNotMatch(d.detail, /right-click|control-click/i, 'Apple removed that path in Sequoia');
-  assert.deepEqual(d.buttons, ['Download', 'Skip This Version', 'Later']);
+  assert.deepEqual(d.buttons, ['Download', 'Skip this version', 'Later']);
   assert.equal(d.cancelId, 2);
   assert.equal(d.skipIndex, 1);
   assert.equal(d.downloadIndex, 0);
@@ -790,7 +818,7 @@ test('main (C01): the queue cycle — a folder handed over while a scan runs wai
     const page = contractPage(h);
     // The person started a scan in the window themselves: the shell hears it start.
     page.start();
-    await h.stub.ipcMain.invoke('treemap:request-scans', [a, b]); // File › Scan Folder…, two folders
+    await h.stub.ipcMain.invoke('treemap:request-scans', [a, b]); // File › Scan folder…, two folders
     assert.deepEqual(page.pushed(), [], 'nothing is pushed over a running scan — the page would refuse it');
     page.finish({ ok: true, path: '/Users/x/Desktop', files: 3, bytes: 10 });
     await new Promise((r) => setTimeout(r, 400));
@@ -886,7 +914,7 @@ test('main: the application menu is the packaged template, and its items reach t
     settings.click();
     assert.deepEqual(h.win().webContents.on_channel('treemap:command'), ['rescan', 'settings']);
     assert.ok(h.win().visible, 'a menu command brings the window forward');
-    items.find((i) => i.label === 'Show Data Folder').click();
+    items.find((i) => i.label === 'Show data folder').click();
     assert.deepEqual(h.stub.shell.openedPaths, [dir]);
     assert.equal(h.stub.app.aboutOptions?.applicationVersion, '4.1.3');
     assert.match(String(h.stub.app.aboutOptions?.copyright), /Prithvi Vinay/);
@@ -965,12 +993,12 @@ test('main (macOS, packaged): updates are checked quietly after the page is up, 
     assert.equal(u.checks, 0, 'still quiet right after load');
     t.mock.timers.tick(20_000);
     assert.equal(u.checks, 1, 'one quiet check, a little after launch');
-    h.stub.dialog.responses.push(1); // Skip This Version
+    h.stub.dialog.responses.push(1); // Skip this version
     u.emit('update-available', { version: '4.2.0' });
     await h.settle();
     assert.equal(h.stub.dialog.boxes.length, 1);
     assert.equal(h.stub.dialog.boxes[0].parent, h.win(), 'a sheet on the window, not a floating box');
-    assert.deepEqual(h.stub.dialog.boxes[0].opts.buttons, ['Download', 'Skip This Version', 'Later']);
+    assert.deepEqual(h.stub.dialog.boxes[0].opts.buttons, ['Download', 'Skip this version', 'Later']);
     assert.equal(windowState.readPrefs(dir).skippedUpdate, '4.2.0');
     u.emit('update-available', { version: '4.2.0' });
     await h.settle();
@@ -990,7 +1018,7 @@ test('main (macOS, packaged): updates are checked quietly after the page is up, 
   } finally { h.dispose(); }
 });
 
-test('main: Help › Check for Updates… reports "up to date" only when the user asked', async () => {
+test('main: Help › Check for updates… reports "up to date" only when the user asked', async () => {
   const dir = mkTmp();
   const h = await loadMain({ dataDir: dir, isPackaged: true, platform: 'darwin' });
   try {
@@ -1000,7 +1028,7 @@ test('main: Help › Check for Updates… reports "up to date" only when the use
     u.emit('update-not-available', { version: '4.1.3' });
     await h.settle();
     assert.equal(h.stub.dialog.boxes.length, 0, 'a background check that finds nothing says nothing');
-    items.find((i) => /^Check for Updates/.test(i.label || '')).click();
+    items.find((i) => /^Check for updates/.test(i.label || '')).click();
     assert.equal(u.checks, 1);
     u.emit('update-not-available', { version: '4.1.3' });
     await h.settle();

@@ -16,7 +16,7 @@
  *  - the window reopening where it was closed (bounds, display, maximised,
  *    full screen), clamped to a display that is still attached
  *  - native notifications when a scheduled scan crosses its growth threshold
- *  - a real application menu (Settings ⌘, · Scan Folder ⌘O · Rescan ⌘R ·
+ *  - a real application menu (Settings ⌘, · Scan folder ⌘O · Rescan ⌘R ·
  *    Help) with Developer Tools and Reload in development builds only
  *  - update checks from GitHub Releases (electron-updater): Windows installs
  *    them; the unsigned macOS build offers the download once, quietly, and
@@ -461,7 +461,7 @@ async function refreshTray() {
     { type: 'separator' },
     { label: 'Open TreeMap', click: showMainWindow },
     {
-      label: 'Scan Home Folder',
+      label: 'Scan home folder',
       click: () => {
         showMainWindow();
         requestScan(os.homedir());
@@ -554,7 +554,7 @@ function setupAutoUpdates() {
     autoUpdater.on('update-downloaded', (info) => {
       messageBox({
         type: 'info',
-        buttons: ['Restart Now', 'Later'],
+        buttons: ['Restart now', 'Later'],
         defaultId: 0,
         cancelId: 1,
         message: `TreeMap ${info.version} has been downloaded.`,
@@ -630,7 +630,7 @@ function offerMacUpdate(info, userAsked) {
     .catch(() => {});
 }
 
-/** Help › Check for Updates…: the one check that reports "nothing new". */
+/** Help › Check for updates…: the one check that reports "nothing new". */
 function checkForUpdatesInteractive() {
   showMainWindow();
   if (!autoUpdater) {

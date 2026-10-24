@@ -218,7 +218,7 @@ function updateDialogCopy({ version, current, arch }) {
       `get "${dmg}", open it, and drag TreeMap into Applications.\n\n` +
       'macOS blocks the first launch of a downloaded copy. Open it once, then go to System Settings › Privacy & Security ' +
       'and click Open Anyway — that button stays for about an hour.',
-    buttons: ['Download', 'Skip This Version', 'Later'],
+    buttons: ['Download', 'Skip this version', 'Later'],
     defaultId: 0,
     cancelId: 2,
     downloadIndex: 0,

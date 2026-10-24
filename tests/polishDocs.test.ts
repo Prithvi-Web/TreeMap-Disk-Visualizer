@@ -338,7 +338,7 @@ test('README describes the macOS updater the app actually has', () => {
   const bullet = README.split('\n').find((l) => /Auto-updates?\*\*/.test(l));
   assert.ok(bullet, 'the README has an Auto-updates bullet');
   assert.ok(bullet!.includes(button![1]), `the bullet names the "${button![1]}" dialog`);
-  // Not a bare /skip/: the dialog now HAS a "Skip This Version" button, and
+  // Not a bare /skip/: the dialog now HAS a "Skip this version" button, and
   // naming it is accurate. What the bullet must never say is that macOS skips
   // the check itself — it checks, and offers the download.
   assert.doesNotMatch(bullet!, /skips? (the )?(update )?check/i, 'macOS checks; it is the install it cannot do');

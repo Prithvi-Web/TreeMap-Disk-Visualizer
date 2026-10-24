@@ -12,6 +12,9 @@
  *  - Every explicit accelerator is unique and collides with no role default.
  *  - Windows/Linux have no app menu, so Settings lives under File and About
  *    under Help; macOS keeps Apple's placement.
+ *  - Every label TreeMap writes is in sentence case, as every word the page
+ *    says is (the owner's rule; hunt S4): the roles' own labels are the
+ *    system's.
  */
 const REPO_URL = 'https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer';
 const README_URL = `${REPO_URL}#readme`;
@@ -51,8 +54,8 @@ function buildMenuTemplate({ isMac, isPackaged, actions }) {
   template.push({
     label: 'File',
     submenu: [
-      { label: 'Scan Folder…', accelerator: 'CmdOrCtrl+O', click: () => actions.scanFolder() },
-      { label: 'Scan Home Folder', click: () => actions.scanHome() },
+      { label: 'Scan folder…', accelerator: 'CmdOrCtrl+O', click: () => actions.scanFolder() },
+      { label: 'Scan home folder', click: () => actions.scanHome() },
       { label: 'Rescan', accelerator: 'CmdOrCtrl+R', click: send('rescan') },
       sep(),
       ...(isMac ? [] : [settingsItem(), sep()]),
@@ -63,8 +66,8 @@ function buildMenuTemplate({ isMac, isPackaged, actions }) {
   template.push({
     label: 'View',
     submenu: [
-      { label: 'Command Palette…', accelerator: 'CmdOrCtrl+K', click: send('palette') },
-      { label: 'Toggle Sidebar', accelerator: 'CmdOrCtrl+B', click: send('sidebar') },
+      { label: 'Command palette…', accelerator: 'CmdOrCtrl+K', click: send('palette') },
+      { label: 'Toggle sidebar', accelerator: 'CmdOrCtrl+B', click: send('sidebar') },
       sep(),
       { role: 'resetZoom' },
       { role: 'zoomIn' },
@@ -78,12 +81,12 @@ function buildMenuTemplate({ isMac, isPackaged, actions }) {
   template.push({
     role: 'help',
     submenu: [
-      { label: 'Keyboard Shortcuts', click: send('shortcuts') },
-      { label: 'TreeMap Help', click: () => actions.openExternal(README_URL) },
-      { label: 'Report a Problem…', click: () => actions.openExternal(ISSUES_URL) },
+      { label: 'Keyboard shortcuts', click: send('shortcuts') },
+      { label: 'TreeMap help', click: () => actions.openExternal(README_URL) },
+      { label: 'Report a problem…', click: () => actions.openExternal(ISSUES_URL) },
       sep(),
-      { label: 'Check for Updates…', click: () => actions.checkForUpdates() },
-      { label: 'Show Data Folder', click: () => actions.showDataFolder() },
+      { label: 'Check for updates…', click: () => actions.checkForUpdates() },
+      { label: 'Show data folder', click: () => actions.showDataFolder() },
       ...(isMac ? [] : [sep(), { label: 'About TreeMap', click: () => actions.about() }]),
     ],
   });
