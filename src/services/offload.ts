@@ -408,7 +408,8 @@ export function destNameFor(name: string, taken: Set<string>): string {
 /**
  * Expand selected nodes (files and folders) into a flat copy plan. Folder
  * selections keep their internal structure under a folder of the same name
- * at the destination. Pure over the scan tree — no filesystem access.
+ * at the destination. Pure over the scan tree — no filesystem access: a hard
+ * link's second name is planned at the scan's 0, and sized by `prepareOffload`.
  *
  * `existingNames` are the entries already at `destDir`. Copies open with 'wx'
  * and never clobber, so a name that is already taken there would fail the whole
@@ -430,9 +431,10 @@ export function planOffload(nodes: FileNode[], destDir: string, existingNames: s
       for (const child of dir.children ?? []) {
         if (child.virtual) continue; // archive contents aren't real files
         if (child.type === 'file') {
-          if (!child.hardlinkDuplicate || child.size > 0) {
-            plan.push({ src: child.path, dest: path.join(destBase, child.name), size: child.size });
-          }
+          // Every name, a hard link's second name too (hunt C07): the folder goes to the Trash whole, so a
+          // name with no copy went with it — the copy, the record and Restore all lacked it. Such a name
+          // is planned at the scan's 0 here and at the file's real size by `prepareOffload`.
+          plan.push({ src: child.path, dest: path.join(destBase, child.name), size: child.size });
         } else {
           walk(child, path.join(destBase, child.name));
         }
@@ -727,7 +729,7 @@ function outermostNodes(nodes: FileNode[]): FileNode[] {
   });
 }
 
-/** The selected folders, and every file the scan listed under them (copied, or a hard link's second name it deliberately skips). */
+/** The selected folders, and every file the scan listed under them (each one copied, a hard link's second name too). */
 interface ListedSelection {
   folders: string[];
   files: Set<string>;
@@ -750,6 +752,45 @@ function listedSelection(nodes: FileNode[]): ListedSelection {
     walk(node);
   }
   return { folders, files };
+}
+
+/**
+ * Each hard link's second name in the selection (hunt C07, C44): a file the scan counted under the first
+ * of its names it met, giving this one size 0 and `hardlinkDuplicate`. Archive contents are listings.
+ */
+function hardLinkSecondNames(nodes: FileNode[]): Set<string> {
+  const names = new Set<string>();
+  const walk = (node: FileNode): void => {
+    if (node.virtual) return;
+    if (node.type === 'file') {
+      if (node.hardlinkDuplicate === true) names.add(node.path);
+      return;
+    }
+    for (const child of node.children ?? []) walk(child);
+  };
+  nodes.forEach(walk);
+  return names;
+}
+
+/**
+ * The plan with each hard link's second name at the size its file really is (hunt C44): a copy of it is
+ * a whole file, and planned at the scan's 0 it read "0 B will be copied" while the free-space check and
+ * the agent policy's byte cap let any size through. Looked at with lstat, never through a link (a
+ * selection holding one is refused before this); a name that cannot be looked at keeps the scan's size,
+ * and its copy then fails before anything is trashed.
+ */
+async function withRealSizes(plan: PlannedCopy[], secondNames: ReadonlySet<string>): Promise<PlannedCopy[]> {
+  if (secondNames.size === 0) return plan;
+  const sized: PlannedCopy[] = [];
+  for (const copy of plan) {
+    if (!secondNames.has(copy.src)) {
+      sized.push(copy);
+      continue;
+    }
+    const st = await fsp.lstat(copy.src).catch(() => null);
+    sized.push(st !== null && st.isFile() ? { ...copy, size: st.size } : copy);
+  }
+  return sized;
 }
 
 /**
@@ -847,7 +888,7 @@ export async function prepareOffload(
   // What's already on the drive, so a repeat offload renames around it instead
   // of failing every copy with EEXIST.
   const existingNames = await fsp.readdir(destDir).catch(() => [] as string[]);
-  const plan = planOffload(nodes, destDir, existingNames);
+  const plan = await withRealSizes(planOffload(nodes, destDir, existingNames), hardLinkSecondNames(nodes));
   if (plan.length === 0) throw new AppError(400, 'NOTHING_TO_OFFLOAD', 'The selection contains no files');
   if (plan.length > MAX_FILES_PER_JOB) {
     throw new AppError(400, 'TOO_MANY_FILES', `That's ${formatCount(plan.length)} files — offload at most ${formatCount(MAX_FILES_PER_JOB)} at a time`);

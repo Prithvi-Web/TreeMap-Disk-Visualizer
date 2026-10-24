@@ -592,8 +592,14 @@ OpenAPI 3 spec).
      (a "Don't scan" match, a folder it could not read, a drive it did not
      enter, a file made since) is refused before anything is copied, dry run
      included (`409 OFFLOAD_NOT_FULLY_LISTED`, naming it); OS junk such as
-     `.DS_Store` does not count. One that gains a file while the copies run
-     is left in place, its verified copies standing and recorded. The record
+     `.DS_Store` does not count. Every name it lists is copied, a hard
+     link's second name too: the scan counts the file once, under the first
+     name it met, and each later name is copied as a file of its own,
+     planned at the file's real size — as a second name selected on its own
+     is, so the confirm, the free-space check and the byte cap see it — and
+     Restore brings each back as a file of its own. One that gains a file
+     while the copies run is left in place, its verified copies standing and
+     recorded. The record
      Restore reads (`offload-manifest.json`, app-data) is saved first; the
      drive's own copy of it is written after, one write of each drive's
      record at a time, and a drive that does not answer for 60 seconds is
