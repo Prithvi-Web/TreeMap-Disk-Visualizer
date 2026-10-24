@@ -1088,29 +1088,70 @@ function resizeObservers() {
   const made: FakeResizeObserver[] = [];
   return { ResizeObserver: class extends FakeResizeObserver { constructor(cb: (entries: Array<{ target: El }>) => void) { super(cb); made.push(this); } }, layout: () => { for (const r of made) r.layout(); } };
 }
+/** What a page asks a MutationObserver to watch, as far as it reaches here. */
+type WatchOpts = { attributes?: boolean; attributeFilter?: string[]; attributeOldValue?: boolean; subtree?: boolean; childList?: boolean; characterData?: boolean };
+/**
+ * Whether a watch hears `name` change on `el`, as a browser decides (DOM, MutationObserver.observe and "queue a
+ * mutation record"): attributes watched — asked for, or implied by an attributeFilter or attributeOldValue — the name
+ * in the filter where there is one, and `el` the watched element itself, or one it holds where the watch asks for its
+ * subtree (review F1.4).
+ */
+function hearsAttribute(w: { target: El; opts: WatchOpts }, el: El, name: string): boolean {
+  const attributes = w.opts.attributes ?? (w.opts.attributeFilter !== undefined || w.opts.attributeOldValue !== undefined);
+  if (!attributes || (w.opts.attributeFilter && !w.opts.attributeFilter.includes(name))) return false;
+  return w.target === el || (!!w.opts.subtree && w.target.contains(el));
+}
 /**
  * The MutationObserver a page gets, as far as it reaches here: what each watches, and `inert` — an element made inert
- * or no longer, told to each observer of the inert attribute, as a browser tells it, a microtask later (the test calls
- * it where the microtask would run).
+ * or no longer, told to each observer whose watch hears it, as a browser tells it (hearsAttribute), with the old value
+ * only where that watch asks for it, a microtask later (the test calls it where the microtask would run). Taking away
+ * an attribute that is not there changes nothing, and tells no one.
  */
 function mutationObservers() {
-  const made: Array<{ cb: (records: unknown[]) => void; watches: Array<{ target: El; opts: { attributeFilter?: string[] } }> }> = [];
+  const made: Array<{ cb: (records: unknown[]) => void; watches: Array<{ target: El; opts: WatchOpts }> }> = [];
   class FakeMutationObserver {
-    readonly watches: Array<{ target: El; opts: { attributeFilter?: string[] } }> = [];
+    readonly watches: Array<{ target: El; opts: WatchOpts }> = [];
     constructor(readonly cb: (records: unknown[]) => void) { made.push(this); }
-    observe(target: El, opts: { attributeFilter?: string[] }): void { this.watches.push({ target, opts }); }
+    observe(target: El, opts: WatchOpts): void { this.watches.push({ target, opts }); }
     takeRecords(): unknown[] { return []; }
     disconnect(): void { this.watches.length = 0; }
   }
   const inert = (el: El, on: boolean) => {
     const oldValue = el.inert ? '' : null;
     el.inert = on;
+    if (!on && oldValue === null) return;
     for (const o of made) {
-      if (o.watches.some((w) => (w.opts.attributeFilter || []).includes('inert') && w.target.contains(el))) o.cb([{ target: el, attributeName: 'inert', oldValue }]);
+      const w = o.watches.find((x) => hearsAttribute(x, el, 'inert'));
+      if (w) o.cb([{ type: 'attributes', target: el, attributeName: 'inert', oldValue: w.opts.attributeOldValue ? oldValue : null }]);
     }
   };
   return { MutationObserver: FakeMutationObserver, inert, made };
 }
+
+test('the fake MutationObserver tells of the inert attribute as a browser does: only a watch of attributes — asked for or implied — whose filter names it, on the element itself or one it holds under a subtree watch, with the old value only where asked for (review F1.4)', () => {
+  const mo = mutationObservers();
+  const body = new El();
+  const main = new El();
+  main.parent = body;
+  const heard: Array<{ watch: string; oldValue: unknown }> = [];
+  const watch = (name: string, target: El, opts: WatchOpts) => new mo.MutationObserver((records) => {
+    for (const r of records as Array<{ oldValue: unknown }>) heard.push({ watch: name, oldValue: r.oldValue });
+  }).observe(target, opts);
+  watch('the page\'s', body, { attributes: true, attributeFilter: ['inert'], attributeOldValue: true, subtree: true });
+  watch('no old value', body, { attributes: true, attributeFilter: ['inert'], subtree: true });
+  watch('body alone', body, { attributes: true, attributeFilter: ['inert'], attributeOldValue: true });
+  watch('another attribute', body, { attributes: true, attributeFilter: ['hidden'], subtree: true });
+  watch('implied by the filter', body, { attributeFilter: ['inert'], subtree: true });
+  watch('children only', body, { childList: true, subtree: true });
+  watch('main itself', main, { attributes: true, attributeOldValue: true });
+  mo.inert(main, true);
+  mo.inert(main, false);
+  mo.inert(main, false);
+  assert.deepEqual(heard, [
+    { watch: 'the page\'s', oldValue: null }, { watch: 'no old value', oldValue: null }, { watch: 'implied by the filter', oldValue: null }, { watch: 'main itself', oldValue: null },
+    { watch: 'the page\'s', oldValue: '' }, { watch: 'no old value', oldValue: null }, { watch: 'implied by the filter', oldValue: null }, { watch: 'main itself', oldValue: '' },
+  ], 'made inert, then no longer — and taking away an inert that is not there tells no one');
+});
 const WAIT = ['const aloudWaiting', 'const aloudShown', 'let aloudWatch', 'let aloudInertWatch', 'function aloudReachable(', 'function aloudKnow(', 'function aloudWait('];
 
 /** A page over Els with aloudWait, and a frame run as a browser runs one: the frame callbacks, then layout, which tells the ResizeObservers. */
