@@ -3104,7 +3104,8 @@ test('changing the weights invalidates the cached scores', () => {
   // The window covers the whole save handler; Phase 9 grew it (the
   // human-scale toggle rides the same PUT), so the slice is sized for the
   // handler it guards, not the one it was written against.
-  const save = code.slice(code.indexOf("$('settingsSaveBtn')"), code.indexOf("$('settingsSaveBtn')") + 3000);
+  // From the body Save sends to the end of its handler: the range check and Save's on/off helper (the hunt, C79, C81) sit between them.
+  const save = code.slice(code.indexOf('function settingsBody('), code.indexOf("$('settingsSaveBtn').addEventListener('click'") + 3000);
   assert.match(save, /reclaimWeights/, 'the weights are saved');
   assert.match(save, /reclaimReset\(\)/, 'and the cache is dropped, or old numbers sit beside new sliders');
 });

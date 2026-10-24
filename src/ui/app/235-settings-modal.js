@@ -11,12 +11,18 @@ $('settingsBtn').addEventListener('click', async () => {
   // D2 — the right-click entry, re-read from the OS each time the sheet opens.
   // Its only caller was lost once (QA D70) and the row sat on "Checking…".
   void renderShellIntegration();
+  // Save waits for the stored settings (the hunt, C79): pressed over the
+  // placeholder lists a failed or unanswered load leaves, it wrote empty
+  // schedules, ignore list and cloud client IDs over the stored ones.
+  settingsSaveOn(false);
   try {
     settingsData = await api('/api/settings');
   } catch (e) {
     toast('Could not load settings: ' + e.message, 'error');
-    settingsData = { ignore: [], schedules: [] };
+    $('settingsStatus').textContent = 'Your settings could not be read, so Save is off — nothing here can overwrite them. Close this sheet and open Settings again to try again.';
+    return;
   }
+  settingsSaveOn(true);
   rememberStoredSchedules();
   renderSchedules();
   renderIgnores();
@@ -614,6 +620,10 @@ function settingsSheetClosed() {
   $('settingsSaveBtn').disabled = false;
   $('settingsSaveBtn').removeAttribute('aria-busy');
 }
+/** Save on or off: off until the stored settings have loaded, and while they cannot be read (the hunt, C79). */
+function settingsSaveOn(on) {
+  $('settingsSaveBtn').disabled = !on;
+}
 /** Every field of the sheet, read into the body Save sends. */
 function settingsBody() {
   collectSettingsForms();
@@ -674,7 +684,27 @@ async function settingsFoldersChecked(body) {
   return true;
 }
 
+/**
+ * Why a number on the sheet cannot be saved as typed, or null (the hunt, C81): Save clamped it in
+ * silence — 0 in "Keep copies for" saved 30 days, 95 % saved 90 — and closed with "Settings saved".
+ * A figure outside its field's range, or not a whole number, is refused with the field and its range.
+ */
+function settingsRangeRefusal() {
+  for (const [id, label, max, unit] of [
+    ['forecastDays', 'Warn within', 365, 'days'], ['watchIdleMin', 'Auto-pause after', 120, 'minutes'],
+    ['capsuleRetentionDays', 'Keep copies for', 365, 'days'], ['capsuleMaxPercent', 'Never use more than', 90, 'per cent'],
+  ]) {
+    const raw = String($(id).value ?? '').trim();
+    if (raw === '') continue; // an empty box saves its default, as before
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1 || n > max) return `Enter a whole number from 1 to ${max} (${unit}) in “${label}”.`;
+  }
+  return null;
+}
+
 $('settingsSaveBtn').addEventListener('click', async () => {
+  const refused = settingsRangeRefusal();
+  if (refused) { toast(refused, 'error', 8000); return; }
   // Every field is read now, as the person pressed Save (QA4a R4-3).
   const body = settingsBody();
   if (!(await settingsFoldersChecked(body))) return;

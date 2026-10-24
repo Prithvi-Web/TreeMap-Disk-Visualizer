@@ -144,6 +144,7 @@ function openSettingsRuntime(api: (url: string, options?: ApiCall['options']) =>
      let settingsData = { ignore: [], schedules: [] };
      ${stubs.map((name) => `function ${name}() {}`).join('\n')}
      ${liftedSrc}
+     ${INDEX.includes('function settingsSaveOn(') ? braced('function settingsSaveOn(') : ''}
      ${opener});`,
   )(dom.$, api, (msg: string) => { toasts.push(msg); }, dom.document, topModal, modalFocusInto);
   const open = dom.$('settingsBtn').listeners.click;
@@ -608,6 +609,7 @@ function saveRuntime(api: (url: string, options?: ApiCall['options']) => Promise
      let settingsSaveSeq = 0;
      ${braced('function settingsBody(')}
      ${braced('async function settingsFoldersChecked(')}
+     ${INDEX.includes('function settingsRangeRefusal(') ? braced('function settingsRangeRefusal(') : ''}
      ${handler});`,
   )(dom.$, api, (msg: string, kind?: string) => { toasts.push({ msg, kind }); }, (id: string) => {
     closed.push(id);
@@ -653,4 +655,44 @@ test('a failed Save keeps the sheet open, with the edits still in it, and says w
   assert.deepEqual(closed, [], 'nothing was saved, so nothing closes');
   assert.equal(dom.$('settingsModal').classList.contains('open'), true, 'the sheet stays open');
   assert.ok(toasts.some((t) => t.msg === 'Save failed: disk full' && t.kind === 'error'), `and says why: ${JSON.stringify(toasts)}`);
+});
+
+/* ══════════════ The hunt (C79, C81) ══════════════ */
+
+test('Save waits for the settings to load, and stays off when they could not be read — never saving placeholder lists over the stored ones (hunt C79)', () => {
+  const opener = braced("$('settingsBtn').addEventListener('click', async () =>");
+  const get = opener.indexOf("settingsData = await api('/api/settings');");
+  assert.ok(get > 0);
+  assert.ok(opener.lastIndexOf('settingsSaveOn(false);', get) !== -1, 'Save is off before the GET goes out');
+  const failure = opener.slice(get, opener.indexOf('rememberStoredSchedules();'));
+  assert.doesNotMatch(failure, /settingsData = \{ ignore: \[\], schedules: \[\] \}/, 'a failed load never stands placeholder lists in for the stored ones');
+  assert.match(failure, /return;/, 'a failed load renders nothing and saves nothing');
+  assert.match(failure, /settingsStatus/, 'and the sheet says why Save is off');
+  assert.match(failure, /settingsSaveOn\(true\);/, 'Save comes back once the settings have loaded');
+  const ok = failure.indexOf('settingsSaveOn(true);');
+  assert.ok(ok > failure.indexOf('return;'), 'only after the failure path has returned');
+});
+
+test('a figure outside its field\'s range is refused with a sentence naming the field and the range, never replaced on Save (hunt C81)', () => {
+  const boxes: Record<string, { value: string }> = {};
+  const refusal = new Function('$', `${braced('function settingsRangeRefusal(')}; return settingsRangeRefusal;`)((id: string) => boxes[id]) as () => string | null;
+  const set = (v: Record<string, string>): void => {
+    Object.assign(boxes, { forecastDays: { value: '30' }, watchIdleMin: { value: '10' }, capsuleRetentionDays: { value: '30' }, capsuleMaxPercent: { value: '10' } });
+    for (const [k, x] of Object.entries(v)) boxes[k] = { value: x };
+  };
+  set({});
+  assert.equal(refusal(), null, 'figures in range save as typed');
+  set({ capsuleRetentionDays: '0' });
+  assert.match(String(refusal()), /Keep copies for/, String(refusal()));
+  assert.match(String(refusal()), /1 to 365/, String(refusal()));
+  set({ capsuleMaxPercent: '95' });
+  assert.match(String(refusal()), /1 to 90 .*Never use more than/, String(refusal()));
+  set({ watchIdleMin: '0' });
+  assert.match(String(refusal()), /1 to 120 .*Auto-pause after/, String(refusal()));
+  set({ forecastDays: '400' });
+  assert.match(String(refusal()), /1 to 365 .*Warn within/, String(refusal()));
+  set({ forecastDays: '1.5' });
+  assert.match(String(refusal()), /whole number/, 'a part of a day is not rounded silently');
+  const save = INDEX.slice(INDEX.indexOf("$('settingsSaveBtn').addEventListener('click'"), INDEX.indexOf("$('settingsSaveBtn').addEventListener('click'") + 400);
+  assert.match(save, /settingsRangeRefusal\(\)/, 'Save refuses before it reads the sheet');
 });
