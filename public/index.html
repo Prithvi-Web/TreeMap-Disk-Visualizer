@@ -32616,17 +32616,23 @@ function renderCityTable() {
   if (!host) return;
   const c = state.city;
   const rows = c.blocks.slice(0, 500);
+  // What each row's button names is its place in this list, never the path:
+  // the Trash cell's path is "\0trash", and the HTML parser stores a NUL in an
+  // attribute as U+FFFD, so the Trash row's button named no building and did
+  // nothing — the only way in for a keyboard or a screen reader (hunt C22).
+  c.tableRows = rows;
   host.innerHTML =
     `<table><thead><tr><th>Name</th><th class="num">Size</th><th>Height means</th><th class="num">Value</th></tr></thead><tbody>` +
-    rows.map((b) => {
+    rows.map((b, i) => {
       const days = cityAgeDays(b.n);
       const count = c.counts.get(b.n.path);
+      // Nothing ever counts the Trash cell (cityFetchFacts), as its card says.
       const value = c.height === 'files'
-        ? (count ? formatCount(count.files) + ' files' : 'not counted yet')
+        ? (count ? formatCount(count.files) + ' files' : b.n.isTrash ? 'not counted' : 'not counted yet')
         : c.height === 'depth'
           ? 'level ' + String(b.n.depth ?? '?')
           : (days === null ? 'no date' : Math.round(days) + ' days');
-      return `<tr><td><button data-city-row="${escapeHtml(b.n.path)}">${escapeHtml(b.n.name)}</button></td>` +
+      return `<tr><td><button data-city-row="${i}">${escapeHtml(b.n.name)}</button></td>` +
         `<td class="num">${escapeHtml(formatBytes(b.n.size))}</td>` +
         `<td>${escapeHtml({ staleness: 'staleness', files: 'file count', depth: 'depth' }[c.height])}</td>` +
         `<td class="num">${escapeHtml(value)}</td></tr>`;
@@ -33194,14 +33200,22 @@ $('cityReset').addEventListener('click', () => {
   cityAnimateZoom(1);
 });
 $('cityTableWrap').addEventListener('toggle', () => { if ($('cityTableWrap').open) renderCityTable(); });
-$('cityTable').addEventListener('click', (e) => {
+/**
+ * A row of the list of buildings activated: the building it names drills.
+ * The same drill the canvas performs — a text equivalent that navigated by
+ * its own route would be the second navigation mechanism §2.2 forbids. The
+ * row is found by its place in the list rendered (renderCityTable), and its
+ * building in the city now on screen by path: one a rebuild has dropped is
+ * not drilled.
+ */
+function cityTableClick(e) {
   const btn = e.target.closest('[data-city-row]');
   if (!btn) return;
-  const node = state.city.blocks.find((b) => b.n.path === btn.dataset.cityRow);
-  // The same drill the canvas performs — a text equivalent that navigated by
-  // its own route would be the second navigation mechanism §2.2 forbids.
+  const row = (state.city.tableRows || [])[Number(btn.dataset.cityRow)];
+  const node = row && state.city.blocks.find((b) => b.n.path === row.n.path);
   if (node) cityDrillInto(node.n);
-});
+}
+$('cityTable').addEventListener('click', cityTableClick);
 
 registerView({
   id: 'city',

@@ -355,6 +355,55 @@ test('C22: the Trash building is not one the city\'s line says has "no date yet"
   assert.equal(state.city.unknownHeight, 1, 'only Music, whose date may yet be known');
 });
 
+/** An attribute value as the HTML parser stores it: entities decoded, and U+0000 stored as U+FFFD (WHATWG tokenizer). */
+const parsedAttr = (v: string) => v.replace(/\0/g, '�').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+
+/**
+ * The real list of buildings and its click handler over `blocks`: each row's button as the browser builds it from the
+ * markup (its data-* attributes read back through the parser), what activating it drills into, and the row's cells.
+ */
+function cityTable(blocks: { n: Record<string, unknown> }[], height = 'files') {
+  const host = { innerHTML: '' };
+  const drilled: unknown[] = [];
+  const state = { city: { blocks, counts: new Map(), height } };
+  const page = load<{ render: () => void; click: (e: unknown) => void }>(['escapeHtml', 'cityAgeDays', 'renderCityTable', 'cityTableClick'], {
+    state, $: (id: string) => (id === 'cityTable' ? host : null),
+    formatCount: (k: number) => String(k), formatBytes: (b: number) => `${b} B`,
+    cityDrillInto: (n: unknown) => { drilled.push(n); },
+  }, '{ render: renderCityTable, click: cityTableClick }');
+  page.render();
+  const camel = (s: string) => s.replace(/-(\w)/g, (_m, c: string) => c.toUpperCase());
+  const rows = [...host.innerHTML.matchAll(/<tr><td><button((?:\s+data-[\w-]+="[^"]*")+)>([^<]*)<\/button><\/td>(.*?)<\/tr>/g)].map(([, attrs, label, cells]) => {
+    const dataset: Record<string, string> = {};
+    for (const [, name, value] of attrs.matchAll(/data-([\w-]+)="([^"]*)"/g)) dataset[camel(name)] = parsedAttr(value);
+    const btn = { dataset };
+    // closest() as the DOM answers it: the button, when it carries the attribute the selector names.
+    const closest = (sel: string) => { const m = /^(?:button)?\[data-([\w-]+)\]$/.exec(sel); return m && camel(m[1]) in dataset ? btn : null; };
+    return {
+      label, cells: [...cells.matchAll(/<td[^>]*>([^<]*)<\/td>/g)].map((m) => m[1]),
+      activate: () => { drilled.length = 0; page.click({ target: { closest } }); return drilled[0]; },
+    };
+  });
+  return { state, rows, render: page.render };
+}
+
+test('C22: the list of buildings opens the Trash from its Trash row, as a click on the building does — the row is not a dead button', () => {
+  const movies = { name: 'Movies', path: '/home/u/Movies', size: 6e9, type: 'dir', depth: 1, modifiedAt: Date.now() - 86400000 };
+  const trash = TRASH_CELL();
+  const t = cityTable([{ n: movies }, { n: trash }]);
+  assert.deepEqual(t.rows.map((r) => r.label), ['Movies', 'Trash'], 'control: both buildings are listed');
+  assert.equal(t.rows[1].activate(), trash, 'the Trash row drills the Trash cell, which opens the Trash sheet (cityDrillInto)');
+  assert.equal(t.rows[0].activate(), movies, 'control: a folder row still drills its folder');
+  assert.equal(t.rows[1].cells[2], 'not counted', 'its Files value is the card\'s "not counted": nothing will ever count the Trash');
+  assert.equal(t.rows[0].cells[2], 'not counted yet', 'control: a folder not counted yet still says so');
+  // A table left from before a rebuild drills what its row names in the city now on screen, and nothing that is gone.
+  const again = { ...trash };
+  t.state.city.blocks = [{ n: again }];
+  assert.equal(t.rows[1].activate(), again, 'the row it names, as the city now holds it');
+  assert.equal(t.rows[0].activate(), undefined, 'a building no longer in the city is not drilled');
+});
+
 /* ══════════════ C23 — Up, disabled at the scan root, does not drop focus ══════════════ */
 
 test('C23: the Treemap\'s Up, disabled at the scan root while it holds focus, hands focus to the map', async () => {
