@@ -54,7 +54,9 @@ function scanOf(root: string, tree: Record<string, number>, unlisted: string[] =
 
 const ROOT = path.join(path.sep, 'cmp-root');
 const MAIL = { 'Mail/': 0, 'Mail/msg-0.emlx': 4000, 'Mail/msg-1.emlx': 4000, 'Mail/msg-2.emlx': 4000 };
-const rows = (r: { entries: { path: string; change: string }[] }): string[] => r.entries.map((e) => `${path.relative(ROOT, e.path)} ${e.change}`).sort();
+/** Each entry as "<path under the root, with / between names> <change>", whatever this system's separator. */
+const rows = (r: { entries: { path: string; change: string }[] }): string[] =>
+  r.entries.map((e) => `${path.relative(ROOT, e.path).split(path.sep).join('/')} ${e.change}`).sort();
 
 test('files in a folder the newer scan could not list are not called removed, and the folder is counted', () => {
   const a = scanOf(ROOT, { ...MAIL, 'other.txt': 1 });
