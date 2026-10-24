@@ -8462,6 +8462,14 @@ const VIEWS = [
       // close; the only reason it went unnoticed is that they are small.
       state.treemap.cells = [];
       state.treemap.altNote = '';
+      // What was said of the notes over and under the map goes with it too:
+      // left said in the hidden view, the same words drawn on the way back in
+      // were no news to sayAloud, and the region came back on screen already
+      // filled, which is seldom announced — the note was silent on every
+      // return (review F2.5, BQU item 24). Taken back, the next visit's draw
+      // says it again, as the Missing Gigabytes view's take-down does.
+      // Guarded: a page reader may lift this without sayAloud.
+      if (typeof sayAloud === 'function') { sayAloud('tmEmptySaid', ''); sayAloud('tmAltNoteSaid', ''); }
       lassoCancel();
       state.lens.held = false;
       state.lens.at = null;

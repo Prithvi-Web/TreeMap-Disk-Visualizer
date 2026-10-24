@@ -854,6 +854,50 @@ test('the note over a map with nothing to draw says itself in its own region a f
   assert.deepEqual([p.$('tmEmpty').hidden, p.$('tmEmptySaid').textContent], [true, ''], 'a map drawn: the note goes and the region is emptied at once');
 });
 
+/** The Treemap view's unmount as the registry declares it, its body brace-matched. */
+function treemapUnmountBody(): string {
+  const at = INDEX.indexOf("id: 'treemap'");
+  assert.notEqual(at, -1, 'control: the Treemap view is registered');
+  const head = INDEX.indexOf('unmount() {', at);
+  assert.ok(head > at && head < INDEX.indexOf("id: 'grid'", at), 'control: its unmount is found inside its registration');
+  const open = INDEX.indexOf('{', head);
+  let depth = 0;
+  for (let i = open; i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(open + 1, i);
+  }
+  return assert.fail('its unmount never closes');
+}
+
+test('the notes over and under the map are taken back as the Treemap view goes, so a visit back says them again: left said in the hidden view, the same words drawn on the way back in were no news, and the region came back on screen already filled (review F2.5, BQU item 24)', () => {
+  const st = { live: { on: false }, lens: { held: false, at: null }, treemap: { altNote: '', altZoomRaf: 0, altZoom: null, cells: [] as unknown[] } };
+  const none = () => {};
+  const p = page(['function tmSetEmpty(', 'function renderAltNote(', 'function altRefiningNote('], {
+    state: st, tmUnmount: null, tmAnimFrame: 0, tmResizeDeb: 0,
+    tmCancelQueries: none, tmCloseHints: none, tmClearHits: none, nlClose: none, exitCartPreview: none, tmSetQueryMessage: none,
+    disableLive: none, cancelAnimationFrame: none, altRefineCancel: none, lapseStop: none, clearTimeout: none, lassoCancel: none, fxTmPillBeamsSync: none,
+  }, [], [`tmUnmount = function () {${treemapUnmountBody()}};`]);
+  const unmount = p.scope.tmUnmount as () => void;
+  const empty = 'This folder is empty.';
+  const cap = 'The map holds at most 250,000 items, and this folder reached that: 1.2 GB has no rectangle here — drill in, or open the Grid view, to see the rest.';
+  // What drawTreemap gives the two notes: an empty folder's map, or one that reached the server's cap.
+  const cases = [
+    { what: 'the note over an empty map', region: 'tmEmptySaid', words: empty, draw: () => { st.treemap.altNote = ''; p.fns.renderAltNote(); p.fns.tmSetEmpty(empty); } },
+    { what: 'the footnote under a map that reached the cap', region: 'tmAltNoteSaid', words: cap, draw: () => { st.treemap.altNote = cap; p.fns.renderAltNote(); p.fns.tmSetEmpty(''); } },
+  ];
+  for (const { what, region, words, draw } of cases) {
+    draw();
+    p.frame();
+    assert.equal(p.$(region).textContent, words, `${what}: control, said a frame after the map is drawn`);
+    unmount(); // another view is opened
+    assert.equal(p.$(region).textContent, '', `${what}: taken back as the view goes, so nothing of it is left said in the hidden view`);
+    p.$(region).said.length = 0;
+    draw(); // back to the map: its mount draws it again, with the same words
+    p.frame();
+    assert.deepEqual(p.$(region).said.filter(Boolean), [words], `${what}: said again, once, a frame after the map is drawn on the way back in`);
+  }
+});
+
 /* ── the Missing Gigabytes statement ── */
 
 /**
