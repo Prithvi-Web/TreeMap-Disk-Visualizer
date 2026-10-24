@@ -136,30 +136,120 @@ export function windowsTrashNote(drives: readonly string[]): string {
   return `TreeMap counts the Recycle Bin on drives ${named} only; emptying it empties the Recycle Bin on every drive.`;
 }
 
-/** Linux filesystems that hold no Trash folder of a drive's own: kernel tables, memory, and network shares a dead server could stall. */
-const NO_DRIVE_TRASH = new Set([
-  'proc', 'sysfs', 'devtmpfs', 'devpts', 'tmpfs', 'ramfs', 'cgroup', 'cgroup2', 'securityfs', 'debugfs', 'tracefs', 'pstore', 'bpf',
-  'mqueue', 'hugetlbfs', 'configfs', 'fusectl', 'autofs', 'binfmt_misc', 'efivarfs', 'nsfs', 'rpc_pipefs', 'overlay', 'squashfs',
-  'nfs', 'nfs4', 'cifs', 'smb3', 'smbfs', 'fuse.sshfs', '9p', 'afs', 'ceph', 'glusterfs',
+/**
+ * The Linux filesystems a drive's own Trash folder is looked for on (hunt C67,
+ * review F1.2): local disks. A network share or a FUSE filesystem of unknown
+ * kind is never looked in — a dead server stalls the look — and a kernel table
+ * or memory filesystem holds no Trash. An allow-list, so a filesystem nobody
+ * named is left out rather than looked in.
+ */
+const LOCAL_DISK_FILESYSTEMS = new Set([
+  'ext2', 'ext3', 'ext4', 'btrfs', 'xfs', 'vfat', 'msdos', 'exfat', 'ntfs', 'ntfs3', 'fuseblk', 'f2fs', 'jfs', 'reiserfs',
+  'hfs', 'hfsplus', 'zfs', 'bcachefs', 'nilfs2',
 ]);
 
 /**
- * The freedesktop Trash folders on Linux (hunt C67): the home Trash, and on
- * each drive the mount table lists, `.Trash/<uid>/files` and
- * `.Trash-<uid>/files` — which `gio trash --empty` empties too. With no
- * mount table, `note` says what is not counted.
+ * The freedesktop Trash folders on Linux (hunt C67): the home Trash, and the
+ * local drives the mount table lists, each of which may hold `.Trash/<uid>`
+ * and `.Trash-<uid>` — which `gio trash --empty` empties too. Which of those
+ * are really this user's is decided by looking at them (`driveTrashFolders`).
+ * With no mount table, `note` says what is not counted.
  */
-export function linuxTrashLocations(dataHome: string, uid: number | null, mounts: readonly MountEntry[] | null): { dirs: string[]; note: string | null } {
-  const dirs = [path.posix.join(dataHome, 'Trash', 'files')];
-  if (uid === null) return { dirs, note: null };
+export function linuxTrashLocations(dataHome: string, uid: number | null, mounts: readonly MountEntry[] | null): { home: string; drives: string[]; note: string | null } {
+  const home = path.posix.join(dataHome, 'Trash', 'files');
+  if (uid === null) return { home, drives: [], note: null };
   if (mounts === null) {
-    return { dirs, note: 'TreeMap could not read the list of mounted drives, so a Trash folder on another drive is not counted here, though emptying the Trash empties it too.' };
+    return { home, drives: [], note: 'TreeMap could not read the list of mounted drives, so a Trash folder on another drive is not counted here, though emptying the Trash empties it too.' };
   }
-  for (const m of mounts) {
-    if (NO_DRIVE_TRASH.has(m.filesystem)) continue;
-    dirs.push(path.posix.join(m.mountPoint, '.Trash', String(uid), 'files'), path.posix.join(m.mountPoint, `.Trash-${uid}`, 'files'));
+  return { home, drives: mounts.filter((m) => LOCAL_DISK_FILESYSTEMS.has(m.filesystem)).map((m) => m.mountPoint), note: null };
+}
+
+/** What a drive's Trash folders are looked at with: lstat, never following a link (injected, so a test runs it anywhere). */
+export interface DriveTrashFs {
+  lstat(p: string): Promise<{ isDirectory(): boolean; isSymbolicLink(): boolean; mode: number; uid: number }>;
+}
+
+export const liveDriveTrashFs: DriveTrashFs = { lstat: (p) => fsp.lstat(p) };
+
+/** A real folder: there, a directory, and not a link to one. */
+function isRealFolder(st: { isDirectory(): boolean; isSymbolicLink(): boolean } | null): st is { isDirectory(): boolean; isSymbolicLink(): boolean; mode: number; uid: number } {
+  return st !== null && st.isDirectory() && !st.isSymbolicLink();
+}
+
+/**
+ * The `files` folders on one drive that are this user's Trash (review
+ * F1.2/F1.9/F1.12), by the checks the freedesktop Trash spec and gio make: a
+ * shared `.Trash` must be a real folder with the sticky bit, and
+ * `.Trash/<uid>`, `.Trash-<uid>` and their `files` real folders, the first two
+ * this user's own. A drive is someone else's to prepare, and `readdir` follows
+ * a link, so a link anywhere there would have let the emptier remove files
+ * that are in no Trash. A folder this user may not enter (a root-only
+ * `/boot/efi`) holds no Trash of theirs and is not a failure (review F1.10);
+ * any other failure to answer is returned in `problems`, since that drive may
+ * hold one.
+ */
+async function driveTrashFolders(mountPoint: string, uid: number, fs: DriveTrashFs): Promise<{ dirs: string[]; problems: string[] }> {
+  const dirs: string[] = [];
+  const problems: string[] = [];
+  const look = async (p: string, entering: boolean) => {
+    try {
+      return await fs.lstat(p);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (meansAbsent(err)) return null;
+      if (entering && (code === 'EACCES' || code === 'EPERM')) return null;
+      problems.push(code ?? 'unknown');
+      return null;
+    }
+  };
+  const own = async (top: string) => {
+    const st = await look(top, true);
+    if (!isRealFolder(st) || st.uid !== uid) return;
+    const files = path.posix.join(top, 'files');
+    if (isRealFolder(await look(files, false))) dirs.push(files);
+  };
+  const shared = path.posix.join(mountPoint, '.Trash');
+  const sharedSt = await look(shared, true);
+  if (isRealFolder(sharedSt) && (sharedSt.mode & 0o1000) !== 0) await own(path.posix.join(shared, String(uid)));
+  await own(path.posix.join(mountPoint, `.Trash-${uid}`));
+  return { dirs, problems };
+}
+
+/** Every Trash location, what the listing does not read where it is a floor, and what failed to answer (hunt C67). */
+export interface TrashLocations {
+  dirs: string[];
+  note: string | null;
+  /** Errno codes of drive Trash folders that may exist but did not answer (review F1.10). */
+  problems: string[];
+}
+
+/** What the Windows and Linux locations are worked out from (injected, so a test runs every platform's anywhere). */
+export interface TrashLocationInputs {
+  platform: NodeJS.Platform;
+  /** Linux: `$XDG_DATA_HOME`, or `~/.local/share`. */
+  dataHome: string;
+  uid: number | null;
+  /** Linux: the mount table's entries, or null when it could not be read. */
+  mounts: readonly MountEntry[] | null;
+  fs: DriveTrashFs;
+}
+
+/** The Trash locations on Windows and Linux, from what `inputs` says of the machine (review F1.14). */
+export async function resolveTrashLocations(inputs: TrashLocationInputs): Promise<TrashLocations> {
+  if (inputs.platform === 'win32') {
+    return { dirs: WINDOWS_TRASH_DRIVES.map((d) => path.win32.join(d + '\\', '$Recycle.Bin')), note: windowsTrashNote(WINDOWS_TRASH_DRIVES), problems: [] };
   }
-  return { dirs, note: null };
+  const { home, drives, note } = linuxTrashLocations(inputs.dataHome, inputs.uid, inputs.mounts);
+  const dirs = [home];
+  const problems: string[] = [];
+  if (inputs.uid !== null) {
+    for (const drive of drives) {
+      const found = await driveTrashFolders(drive, inputs.uid, inputs.fs);
+      dirs.push(...found.dirs);
+      problems.push(...found.problems);
+    }
+  }
+  return { dirs, note, problems };
 }
 
 /**
@@ -234,22 +324,20 @@ export async function listAccountBin(dir: string, deps: AccountBinDeps): Promise
   return { items, bytes, unreadable: false };
 }
 
-/** Every trash location, and what the listing does not read where it is a floor (hunt C67). */
-async function trashLocations(): Promise<{ dirs: string[]; note: string | null }> {
+/** Every trash location on this machine (hunt C67). */
+async function trashLocations(): Promise<TrashLocations> {
   const override = trashDirOverride();
-  if (override) return { dirs: [override], note: null };
-  if (process.platform === 'win32') {
-    refuseUnderTestRunner("a test reached the machine's real Trash: listing it — point TREEMAP_TRASH_DIR at a folder the test owns");
-    return { dirs: WINDOWS_TRASH_DRIVES.map((d) => path.join(d + '\\', '$Recycle.Bin')), note: windowsTrashNote(WINDOWS_TRASH_DRIVES) };
-  }
-  if (process.platform !== 'darwin') {
-    refuseUnderTestRunner("a test reached the machine's real Trash: listing it — point TREEMAP_TRASH_DIR at a folder the test owns");
-    const dataHome = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
-    const uid = typeof process.getuid === 'function' ? process.getuid() : null;
-    const table = await readMountTable('linux');
-    return linuxTrashLocations(dataHome, uid, table.entries);
-  }
-  return { dirs: await trashDirs(), note: null };
+  if (override) return { dirs: [override], note: null, problems: [] };
+  if (process.platform === 'darwin') return { dirs: await trashDirs(), note: null, problems: [] };
+  refuseUnderTestRunner("a test reached the machine's real Trash: listing it — point TREEMAP_TRASH_DIR at a folder the test owns");
+  const linux = process.platform !== 'win32';
+  return resolveTrashLocations({
+    platform: process.platform,
+    dataHome: process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'),
+    uid: typeof process.getuid === 'function' ? process.getuid() : null,
+    mounts: linux ? (await readMountTable('linux')).entries : null,
+    fs: liveDriveTrashFs,
+  });
 }
 
 async function trashDirs(): Promise<string[]> {
@@ -279,12 +367,18 @@ async function trashDirs(): Promise<string[]> {
   return dirs;
 }
 
-/** Best-effort size + top-level contents of every trash location. */
-export async function getTrashInfo(): Promise<TrashInfo> {
-  const { dirs, note } = await trashLocations();
+/**
+ * Best-effort size + top-level contents of every trash location. `given`
+ * stands in for the machine's locations and platform (review F1.14), so a
+ * test reads folders of its own; nothing else passes it.
+ */
+export async function getTrashInfo(given?: { locations: TrashLocations; platform: NodeJS.Platform }): Promise<TrashInfo> {
+  const { dirs, note, problems: unanswered } = given ? given.locations : await trashLocations();
+  const platform = given ? given.platform : process.platform;
   const budget = { n: MAX_ENTRIES };
   const items: TrashItem[] = [];
   const problems: SweepProblems = { code: null, any: false };
+  for (const code of unanswered) noteProblem(problems, { code });
   let totalBytes = 0;
 
   for (const dir of dirs) {
@@ -303,7 +397,7 @@ export async function getTrashInfo(): Promise<TrashInfo> {
     for (const ent of entries) {
       const full = path.join(dir, ent.name);
       // Windows keeps one folder per account in $Recycle.Bin: its items are what is inside (hunt C67).
-      if (process.platform === 'win32' && /^S-1-/i.test(ent.name) && ent.isDirectory()) {
+      if (platform === 'win32' && /^S-1-/i.test(ent.name) && ent.isDirectory()) {
         const bin = await listAccountBin(full, {
           join: path.join, readdir: (d) => fsp.readdir(d, { withFileTypes: true }), lstat: (p) => fsp.lstat(p),
           readFile: (p) => fsp.readFile(p), dirSize: (d) => dirSize(d, budget, problems),
@@ -448,11 +542,23 @@ async function clearDirectoryContents(dir: string, failed: EmptyTrashResult['fai
   }
 }
 
-/** Freedesktop fallback: remove the contents of Trash/files and Trash/info. */
-async function clearFreedesktopTrash(failed: EmptyTrashResult['failed']): Promise<void> {
-  // Every freedesktop Trash, as gio empties them: the home one and each drive's (hunt C67).
-  for (const filesDir of (await trashLocations()).dirs) {
-    for (const dir of [filesDir, path.join(path.dirname(filesDir), 'info')]) {
+/**
+ * Freedesktop fallback: remove the contents of each Trash's files and info
+ * folders — the home one and each drive's that is really this user's, as gio
+ * empties them (hunt C67). The locations are looked at again here, just
+ * before anything is removed, and an `info` folder that is a link is never
+ * followed (review F1.2/F1.9/F1.12). `locate` stands in for the machine's
+ * locations in a test.
+ */
+export async function clearFreedesktopTrash(failed: EmptyTrashResult['failed'], locate: () => Promise<TrashLocations> = trashLocations, fs: DriveTrashFs = liveDriveTrashFs): Promise<void> {
+  for (const filesDir of (await locate()).dirs) {
+    const infoDir = path.join(path.dirname(filesDir), 'info');
+    for (const dir of [filesDir, infoDir]) {
+      if (dir === infoDir) {
+        let st = null;
+        try { st = await fs.lstat(infoDir); } catch { /* not there, or not readable: nothing of this Trash to clear */ }
+        if (!isRealFolder(st)) continue;
+      }
       let entries: string[];
       try {
         entries = await fsp.readdir(dir);
