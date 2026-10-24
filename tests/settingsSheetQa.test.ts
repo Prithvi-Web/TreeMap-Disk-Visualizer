@@ -696,3 +696,9 @@ test('a figure outside its field\'s range is refused with a sentence naming the 
   const save = INDEX.slice(INDEX.indexOf("$('settingsSaveBtn').addEventListener('click'"), INDEX.indexOf("$('settingsSaveBtn').addEventListener('click'") + 400);
   assert.match(save, /settingsRangeRefusal\(\)/, 'Save refuses before it reads the sheet');
 });
+
+test('Settings promises up to three quick wins, as the tour offers — fewer, or none, when fewer exist (hunt C89)', () => {
+  const sheet = readFileSync(path.join(__dirname, '..', 'src', 'ui', 'markup', '110-modal-settings.html'), 'utf8');
+  assert.doesNotMatch(sheet, />Three quick wins/, 'the tour slices to at most three; it is not always three');
+  assert.match(sheet, />Up to three quick wins, staged only when you click, nothing deleted\.</);
+});

@@ -232,14 +232,15 @@ async function saveBudgetList(nextBudgets) {
   return data.budgets || [];
 }
 
-/** Read the full saved budget list (all paths, not just this scan's). */
+/**
+ * Read the full saved budget list (all paths, not just this scan's). A failed read throws (the hunt,
+ * C80): it fell back to this scan's budgets, and the save that followed wrote that list as the whole
+ * one, deleting every budget on a folder outside the scan while the toast said "Budget set". The
+ * callers say "Could not save budget" and write nothing.
+ */
 async function currentSavedBudgets() {
-  try {
-    const s = await api('/api/settings');
-    return (s.budgets || []).map(b => ({ path: b.path, maxBytes: b.maxBytes }));
-  } catch {
-    return state.budgets.list.map(b => ({ path: b.path, maxBytes: b.maxBytes }));
-  }
+  const s = await api('/api/settings');
+  return (s.budgets || []).map(b => ({ path: b.path, maxBytes: b.maxBytes }));
 }
 
 async function commitBudget() {

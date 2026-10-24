@@ -396,3 +396,14 @@ test('the gauge row says "flat" only for a folder that is not growing (hunt C40)
   assert.equal(short({ status: 'stable', bytesPerDay: 0 }), 'flat — no breach in sight');
   assert.doesNotMatch(short({ status: 'stable', bytesPerDay: 1000 }), /flat/, 'a folder growing slowly is not flat');
 });
+
+test('a failed read of the saved budgets saves nothing — never this scan\'s budgets alone over every other folder\'s (hunt C80)', async () => {
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const at = page.indexOf('async function currentSavedBudgets(');
+  const src = page.slice(at, page.indexOf('\n}\n', at) + 2);
+  const read = new Function('api', 'state', `${src}; return currentSavedBudgets;`)(
+    async () => { throw new Error('the server stopped answering'); },
+    { budgets: { list: [{ path: '/this-scan/a', maxBytes: 5 }] } },
+  ) as () => Promise<unknown>;
+  await assert.rejects(read(), /stopped answering/, 'the failure reaches commitBudget and removeBudget, which say "Could not save budget" and write nothing');
+});
