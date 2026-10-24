@@ -452,7 +452,8 @@ test('the footer says which choices are already saved and what Save keeps, namin
   const foot = settingsFooter();
   const note = /<span class="muted settings-save-note" id="settingsSaveNote">([^<]+)<\/span>/.exec(foot);
   assert.ok(note, `the footer carries the note: ${foot}`);
-  assert.equal(note![1], 'Theme, scanning budget, scan engine and drives are saved the moment you pick one. Save keeps your other edits on this sheet.');
+  // Reclaim Score's Reset to defaults saves when pressed, so Close without saving does not bring the weights back: said here (the hunt, S3).
+  assert.equal(note![1], 'Theme, scanning budget, scan engine and drives are saved the moment you pick one, and Reclaim Score’s Reset to defaults the moment you press it. Save keeps your other edits on this sheet.');
   for (const words of Object.values(named)) assert.match(note![1].toLowerCase(), new RegExp(`\\b${words}\\b`), `the note names ${words}`);
   assert.ok(foot.indexOf('id="settingsSaveNote"') < foot.indexOf('data-close="settingsModal"'), 'beside the two buttons it explains, before them');
   assert.match(foot, /id="settingsStatus"/, 'the status line for a change made here stays');
