@@ -560,8 +560,10 @@ function restoreRunning(entry: TimeCapsuleEntry, what: string): AppError {
 
 /** The bytes the copies that are never dropped to make room hold, by why each is kept (FG3h D). */
 interface PinnedBytes {
-  /** Of items whose deletion is under way (a run in flight, or in a dry run the items it has accepted). */
+  /** Of items whose deletion is under way (a run in flight). */
   running: number;
+  /** In a dry run, the copies the items it has accepted would take (hunt S1): nothing is copied or under way yet. */
+  planned?: number;
   /** Of items whose trash step could not be confirmed (FG3g L6). */
   unconfirmed: number;
   /** Of items being restored (FG3g H1). */
@@ -570,11 +572,12 @@ interface PinnedBytes {
 
 /** What `pinnedBytesOf` counts, by cause: each copy under its first cause, restoring before running before unconfirmed. */
 function pinnedBytesBy(entries: TimeCapsuleEntry[], unconfirmed: ReadonlySet<string>): PinnedBytes {
-  const by: PinnedBytes = { running: 0, unconfirmed: 0, restoring: 0 };
+  const by: PinnedBytes = { running: 0, unconfirmed: 0, restoring: 0, planned: 0 };
   for (const e of entries) {
     if (!e.hasPayload || e.heldBytes <= 0) continue;
     if (restoresInFlight.has(e.id)) by.restoring += e.heldBytes;
-    else if (ofRunInFlight(e) || e.runId === PLAN_RUN_ID) by.running += e.heldBytes;
+    else if (e.runId === PLAN_RUN_ID) by.planned = (by.planned ?? 0) + e.heldBytes;
+    else if (ofRunInFlight(e)) by.running += e.heldBytes;
     else if (unconfirmed.has(e.id)) by.unconfirmed += e.heldBytes;
   }
   return by;
@@ -595,7 +598,10 @@ function doesNotFitSentence(bytes: number, capBytes: number, pinned: PinnedBytes
   const beside = total > 0 && bytes <= capBytes
     ? `, and ${formatBytes(total)} of that is copies never dropped to make room — ${parts.join(', and ')}`
     : '';
-  return `Protecting it needs ${formatBytes(bytes)}, but the Undo Vault can only hold ${formatBytes(capBytes)}${beside}. ` +
+  // A dry run's own earlier items are copies it would make, not copies there now (hunt S1).
+  const planned = pinned.planned ?? 0;
+  const ahead = planned > 0 && bytes <= capBytes ? `, and ${formatBytes(planned)} would go to the copies of the items planned before it` : '';
+  return `Protecting it needs ${formatBytes(bytes)}, but the Undo Vault can only hold ${formatBytes(capBytes)}${beside}${ahead}. ` +
     `It ${verb} left alone rather than deleted without a backup.`;
 }
 

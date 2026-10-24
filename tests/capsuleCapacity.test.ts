@@ -174,8 +174,10 @@ test('the dry run gives the same verdict: never more than the cap, and the copie
   const plan = await planCartCommit([a, b, c]);
   assert.deepEqual(plan.items.map((i) => [path.basename(i.path), i.willDelete]), [['a.bin', true], ['b.bin', true], ['c.bin', false]]);
   assert.equal(plan.items[2].code, 'CAPSULE_FULL');
-  // In the words the real run uses, naming what holds the room and only that (FG3g review F2.14).
-  assert.match(plan.items[2].reason ?? '', /200\.0 KB of copies of items whose deletion is still under way/, plan.items[2].reason);
+  // Naming what holds the room and only that (FG3g review F2.14) — in a dry run, the copies the items
+  // planned before it would take: nothing is copied yet, and no deletion is under way (hunt S1).
+  assert.match(plan.items[2].reason ?? '', /200\.0 KB would go to the copies of the items planned before it/, plan.items[2].reason);
+  assert.doesNotMatch(plan.items[2].reason ?? '', /under way/, plan.items[2].reason);
   assert.doesNotMatch(plan.items[2].reason ?? '', /being restored|could not be confirmed/, plan.items[2].reason);
   assert.ok(plan.bytesWouldFree <= plan.capsule.capBytes, `${plan.bytesWouldFree} planned against a ${plan.capsule.capBytes} cap`);
   assert.deepEqual(plan.evicts.map((e) => e.id), [oldId], 'only the older copy is named as dropped');
