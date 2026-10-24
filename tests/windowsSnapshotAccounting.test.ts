@@ -328,7 +328,7 @@ test('Dashboard: the snapshot row speaks of restore points on Windows and of Tim
   const [noun, hint] = wordTables('035-system-info.js');
   assert.equal(noun.win32, 'restore point');
   assert.equal(noun.darwin, 'local snapshot');
-  assert.match(hint.darwin, /Time Machine recreates these/);
+  assert.match(hint.darwin, /Time Machine local snapshots\. Purging deletes them for good/);
   assert.match(hint.win32, /Space held by Windows restore points \(Windows calls them shadow copies\)/);
   assert.match(hint.win32, /TreeMap does not delete them/, 'the purge button is macOS-only, and so is the sentence that justifies it');
   assert.match(UI('035-system-info.js'), /\+ \(s\.sizeReason \? ` \$\{s\.sizeReason\}` : ''\)/, 'when Windows withheld the size, the hint says why and what to do');

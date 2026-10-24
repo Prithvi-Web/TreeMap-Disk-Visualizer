@@ -1357,7 +1357,17 @@ async function renderCloudSafe() {
   for (const g of data.groups) seedNodes(g.files); // these get staged into the cart from here
 
   const label = { icloud: 'iCloud Drive', onedrive: 'OneDrive', dropbox: 'Dropbox', cloud: 'Cloud' };
-  host.innerHTML = `<div class="muted" style="margin-bottom:10px;">${formatCount(data.totalCount)} online-only file${data.totalCount === 1 ? '' : 's'} (${formatBytes(data.totalSize)} logical). The cloud keeps the original, so removing the local copy is safe.</div>` +
+  // An online-only file has no local copy to remove (hunt C03/C13): its
+  // content is in the cloud, and moving the placeholder to the Trash makes
+  // the sync client delete it there too — as the map's tooltip says. The
+  // cart's Undo Vault copy reads it whole, which downloads it first.
+  const named = data.groups.map((g) => g.provider);
+  const one = named.length === 1 && label[named[0]] && named[0] !== 'cloud';
+  const from = one ? label[named[0]] : 'the cloud service it syncs with';
+  const many = data.totalCount !== 1;
+  host.innerHTML = `<div class="muted" style="margin-bottom:10px;">${formatCount(data.totalCount)} online-only file${many ? 's' : ''} (${formatBytes(data.totalSize)} in the cloud). ` +
+    `${many ? 'They take' : 'It takes'} almost no space on this disk, so removing ${many ? 'them' : 'it'} frees almost nothing here. ` +
+    `Moving one to the Trash removes it from ${escapeHtml(from)} too, and keeping its Undo Vault copy downloads it first.</div>` +
     data.groups.map((g) =>
       `<div style="margin-bottom:14px;">
         <div class="rule-row" style="padding:6px 0;"><b>${label[g.provider] || 'Cloud'}</b><span class="size-badge num" style="margin-left:auto;">${formatCount(g.count)} · ${formatBytes(g.totalSize)}</span></div>

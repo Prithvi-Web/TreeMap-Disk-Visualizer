@@ -196,9 +196,12 @@ async function loadSnapshots() {
       const noun = platformWord({ darwin: 'local snapshot', win32: 'restore point', other: 'snapshot' });
       $('snapCount').textContent = `${formatCount(n)} ${noun}${n === 1 ? '' : 's'}` + (s.totalBytes ? ` · ~${formatBytes(s.totalBytes)}` : '');
       // Windows manages restore points itself; the purge button is macOS-only
-      // (canPurge) and so is the sentence that justifies it.
+      // (canPurge) and so is the sentence that justifies it. A purge is for
+      // good (hunt C15): Time Machine makes new snapshots of the disk as it is
+      // now, never the ones deleted, and an older or deleted file only they
+      // still held goes with them.
       $('snapHint').textContent = platformWord({
-        darwin: 'Hidden space from filesystem snapshots — Time Machine recreates these on the next backup, so purging is safe.',
+        darwin: 'Space held by Time Machine local snapshots. Purging deletes them for good, and with them any older or deleted files only they still hold; Time Machine makes new ones from now on.',
         win32: 'Space held by Windows restore points (Windows calls them shadow copies). Windows manages these itself; TreeMap does not delete them.',
         other: 'Hidden space held by filesystem snapshots. TreeMap does not delete them.',
       }) + (s.sizeReason ? ` ${s.sizeReason}` : '');
@@ -212,7 +215,7 @@ async function loadSnapshots() {
 $('snapPurgeBtn').addEventListener('click', () => {
   const n = state.snapshots && state.snapshots.snapshots ? state.snapshots.snapshots.length : 0;
   $('confirmTitle').innerHTML = icon('clock', 18) + 'Purge local snapshots?';
-  $('confirmText').innerHTML = `Delete <b>${formatCount(n)} local snapshot${n === 1 ? '' : 's'}</b>?<br><span style="color:var(--text-3)">This frees the space they hold. Time Machine will create fresh ones on the next backup.</span>`;
+  $('confirmText').innerHTML = `Delete <b>${formatCount(n)} local snapshot${n === 1 ? '' : 's'}</b>?<br><span style="color:var(--text-3)">This frees the space they hold, and deletes any older or deleted files only they still hold. Time Machine makes new ones from now on, not these. This cannot be undone.</span>`;
   setConfirmButton('Purge snapshots', 'clock');
   onConfirmTrash = purgeSnapshotsAction;
   $('confirmModal').classList.add('open');

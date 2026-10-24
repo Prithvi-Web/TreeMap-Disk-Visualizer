@@ -2036,7 +2036,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/cleanup/cloud-safe',
-    summary: 'Online-only cloud placeholder files, grouped by provider (safe to remove locally)',
+    summary: 'Online-only cloud placeholder files, grouped by provider (their content is in the cloud, not on this disk; deleting one deletes it from the cloud too)',
     tag: 'cleanup',
     destructive: false,
     parameters: [scanIdQuery, queryParam('perProvider', 'File list cap per provider, 1–2000 (default 300)', int())],
