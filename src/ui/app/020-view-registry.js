@@ -1,7 +1,8 @@
 /* ───────────────────────────── View registry (§3.4) ─────────────────────────────
    Every view — the original ten and everything added later — is registered
    here as { id, label, icon, needsScan, mount, unmount, onScanChange,
-   capabilityKey }. Tab switching calls unmount() on the outgoing view and
+   capabilityKey, paintedWhileAway }. Tab switching calls unmount() on the
+   outgoing view, takes back what its live regions said (viewUnsay), and
    mount() on the incoming one. There is exactly ONE navigation mechanism: no
    view is reachable through a second path, and no per-view branch survives
    inside switchView.
@@ -22,6 +23,12 @@ const tabs = document.querySelectorAll('.tabbar button');
 const VIEWS = [
   {
     id: 'dashboard', label: 'Dashboard', icon: 'dashboard', needsScan: true,
+    // Its boxes said aloud — the refused-folder row, the note on drives
+    // mounted inside, the index badge and the line under it — are painted by
+    // the scan, the index and the access recheck whatever view is up, and its
+    // mount paints none of them again: what they said as it went is what they
+    // still show, and is said again as it comes back (viewSayAgain, BQX).
+    paintedWhileAway: true,
     mount() {
       // Painted by finishScan; on re-entry only the chart handles need
       // rebuilding — unmount destroyed them and their data is still in state.
@@ -129,14 +136,8 @@ const VIEWS = [
       // close; the only reason it went unnoticed is that they are small.
       state.treemap.cells = [];
       state.treemap.altNote = '';
-      // What was said of the notes over and under the map goes with it too:
-      // left said in the hidden view, the same words drawn on the way back in
-      // were no news to sayAloud, and the region came back on screen already
-      // filled, which is seldom announced — the note was silent on every
-      // return (review F2.5, BQU item 24). Taken back, the next visit's draw
-      // says it again, as the Missing Gigabytes view's take-down does.
-      // Guarded: a page reader may lift this without sayAloud.
-      if (typeof sayAloud === 'function') { sayAloud('tmEmptySaid', ''); sayAloud('tmAltNoteSaid', ''); }
+      // What its notes over and under the map said goes with the view, as
+      // every view's regions do (viewUnsay; review F2.5, BQX).
       lassoCancel();
       state.lens.held = false;
       state.lens.at = null;
@@ -353,6 +354,57 @@ function renderEmptyState(view) {
   $('emptyViewLead').textContent = EMPTY_VIEW_LEADS[view.id] || EMPTY_VIEW_LEAD_DEFAULT;
 }
 
+/** What the regions of a view painted while away said as it went: view id → Map of region id → words (viewUnsay). */
+const viewSaidAsItWent = new Map();
+
+/**
+ * A view's own regions, taken back as it goes (review F2.5, BQX). sayAloud
+ * says nothing when a region already says the same words, so a region left
+ * said as its view went stayed said in the hidden view: it came back on
+ * screen already filled, which is seldom announced, and the same words
+ * painted on the way back in were no news — the view's notes were silent on
+ * every return. So every live region inside the view that sayAloud holds
+ * words for is emptied, words about to go in with it, and its words are
+ * forgotten rather than kept as said: whatever next speaks for it, the same
+ * words or none, is news. A region sayAloud says nothing in (a part's
+ * working sentence, sayWorking's) is left as it is, and so is everything
+ * outside the view: the scan's voice, the toasts and the sheets' regions.
+ * A view whose mount paints its boxes again says them as it paints. One
+ * whose boxes are painted whatever view is up, and whose mount paints none
+ * of them (`paintedWhileAway`), keeps what they said, for viewSayAgain.
+ * Guarded: a page reader may lift this without sayAloud's map.
+ */
+function viewUnsay(view) {
+  const host = $('view-' + view.id);
+  if (!host || typeof aloudSaid === 'undefined') return;
+  const kept = viewSaidAsItWent.get(view.id) || new Map();
+  for (const live of host.querySelectorAll('[aria-live]')) {
+    if (!aloudSaid.has(live.id)) continue;
+    const words = aloudSaid.get(live.id);
+    aloudSaid.delete(live.id);
+    live.textContent = '';
+    // Spoken for since an earlier going: what was kept then is not what it shows now.
+    kept.delete(live.id);
+    if (words && view.paintedWhileAway) kept.set(live.id, words);
+  }
+  if (kept.size) viewSaidAsItWent.set(view.id, kept);
+  else viewSaidAsItWent.delete(view.id);
+}
+
+/**
+ * What a view painted while away said as it went, said again as it comes
+ * back, after its mount (viewUnsay): each region's words, a frame after it is
+ * on screen again (sayAloud) — unless something has spoken for the region
+ * since, its box hidden or given other words while the view was away, which
+ * stand as they were said.
+ */
+function viewSayAgain(view) {
+  const kept = viewSaidAsItWent.get(view.id);
+  if (!kept) return;
+  viewSaidAsItWent.delete(view.id);
+  for (const [id, words] of kept) if (!aloudSaid.has(id)) sayAloud(id, words);
+}
+
 function switchView(name) {
   const view = VIEW_BY_ID.get(name);
   if (!view) return;
@@ -366,10 +418,15 @@ function switchView(name) {
   const wasHidden = !viewEl || viewEl.hidden;
 
   // Tear down the outgoing view before the incoming one starts, so the two
-  // never hold the same timers or canvas at once.
-  if (mountedView && mountedView.id !== name && typeof mountedView.unmount === 'function') {
-    try { mountedView.unmount(); }
-    catch (err) { console.error('[treemap] unmount of "' + mountedView.id + '" failed:', err); }
+  // never hold the same timers or canvas at once — and take back what its
+  // regions said, every view's, with or without an unmount of its own
+  // (viewUnsay). Guarded: a page reader may lift this without it.
+  if (mountedView && mountedView.id !== name) {
+    if (typeof mountedView.unmount === 'function') {
+      try { mountedView.unmount(); }
+      catch (err) { console.error('[treemap] unmount of "' + mountedView.id + '" failed:', err); }
+    }
+    if (typeof viewUnsay === 'function') viewUnsay(mountedView);
   }
 
   state.view = name;
@@ -414,6 +471,9 @@ function switchView(name) {
     console.error('[treemap] mount of "' + name + '" failed:', err);
     toast('The ' + view.label + ' view could not be opened.', 'error');
   }
+  // After the mount, whose own paints stand: what a view painted while away
+  // said as it went, said again (viewSayAgain). Guarded as viewUnsay is.
+  if (typeof viewSayAgain === 'function') viewSayAgain(view);
   // FX: the entrance runs only on the entry this very call revealed — after
   // mount, so cards a synchronous mount painted are part of the choreography.
   if (wasHidden && viewEl && !viewEl.hidden) fxViewEnter(viewEl);

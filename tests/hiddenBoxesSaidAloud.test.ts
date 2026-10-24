@@ -420,6 +420,8 @@ class El {
   setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
   getAttribute(k: string): string | null { return this.attrs.get(k) ?? null; }
   querySelector(): El { return new El(); }
+  /** The elements it holds that match a selector: none, unless a test says (a view's live regions, BQX). */
+  querySelectorAll: (sel: string) => El[] = () => [];
   /** An element, or a text node ({ nodeType: 3, data }), appended: a text node's words join its text. */
   appendChild<T>(child: T): T {
     if (child instanceof El) this.children.push(child);
@@ -429,6 +431,7 @@ class El {
     return child;
   }
   addEventListener(): void {}
+  removeEventListener(): void {}
   remove(): void { this.removed = true; }
   removed = false;
   focus(): void {}
@@ -854,49 +857,8 @@ test('the note over a map with nothing to draw says itself in its own region a f
   assert.deepEqual([p.$('tmEmpty').hidden, p.$('tmEmptySaid').textContent], [true, ''], 'a map drawn: the note goes and the region is emptied at once');
 });
 
-/** The Treemap view's unmount as the registry declares it, its body brace-matched. */
-function treemapUnmountBody(): string {
-  const at = INDEX.indexOf("id: 'treemap'");
-  assert.notEqual(at, -1, 'control: the Treemap view is registered');
-  const head = INDEX.indexOf('unmount() {', at);
-  assert.ok(head > at && head < INDEX.indexOf("id: 'grid'", at), 'control: its unmount is found inside its registration');
-  const open = INDEX.indexOf('{', head);
-  let depth = 0;
-  for (let i = open; i < INDEX.length; i++) {
-    if (INDEX[i] === '{') depth++;
-    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(open + 1, i);
-  }
-  return assert.fail('its unmount never closes');
-}
-
-test('the notes over and under the map are taken back as the Treemap view goes, so a visit back says them again: left said in the hidden view, the same words drawn on the way back in were no news, and the region came back on screen already filled (review F2.5, BQU item 24)', () => {
-  const st = { live: { on: false }, lens: { held: false, at: null }, treemap: { altNote: '', altZoomRaf: 0, altZoom: null, cells: [] as unknown[] } };
-  const none = () => {};
-  const p = page(['function tmSetEmpty(', 'function renderAltNote(', 'function altRefiningNote('], {
-    state: st, tmUnmount: null, tmAnimFrame: 0, tmResizeDeb: 0,
-    tmCancelQueries: none, tmCloseHints: none, tmClearHits: none, nlClose: none, exitCartPreview: none, tmSetQueryMessage: none,
-    disableLive: none, cancelAnimationFrame: none, altRefineCancel: none, lapseStop: none, clearTimeout: none, lassoCancel: none, fxTmPillBeamsSync: none,
-  }, [], [`tmUnmount = function () {${treemapUnmountBody()}};`]);
-  const unmount = p.scope.tmUnmount as () => void;
-  const empty = 'This folder is empty.';
-  const cap = 'The map holds at most 250,000 items, and this folder reached that: 1.2 GB has no rectangle here — drill in, or open the Grid view, to see the rest.';
-  // What drawTreemap gives the two notes: an empty folder's map, or one that reached the server's cap.
-  const cases = [
-    { what: 'the note over an empty map', region: 'tmEmptySaid', words: empty, draw: () => { st.treemap.altNote = ''; p.fns.renderAltNote(); p.fns.tmSetEmpty(empty); } },
-    { what: 'the footnote under a map that reached the cap', region: 'tmAltNoteSaid', words: cap, draw: () => { st.treemap.altNote = cap; p.fns.renderAltNote(); p.fns.tmSetEmpty(''); } },
-  ];
-  for (const { what, region, words, draw } of cases) {
-    draw();
-    p.frame();
-    assert.equal(p.$(region).textContent, words, `${what}: control, said a frame after the map is drawn`);
-    unmount(); // another view is opened
-    assert.equal(p.$(region).textContent, '', `${what}: taken back as the view goes, so nothing of it is left said in the hidden view`);
-    p.$(region).said.length = 0;
-    draw(); // back to the map: its mount draws it again, with the same words
-    p.frame();
-    assert.deepEqual(p.$(region).said.filter(Boolean), [words], `${what}: said again, once, a frame after the map is drawn on the way back in`);
-  }
-});
+/* The notes over and under the map are taken back as the Treemap view goes by the registry, as every view's regions
+   are: tested with them under "every view's own regions", below (review F2.5, BQX). */
 
 /* ── the Missing Gigabytes statement ── */
 
@@ -2066,4 +2028,372 @@ test('the notice rendered again for the view already up — a scan that lands, f
   p.fns.renderCapabilityNotice({ id: 'apps', label: 'Apps' }, other);
   p.frame();
   assert.equal(live.textContent, `Apps isn’t available on this computer. ${other}`, 'another view\'s notice says its own name, though its reason is the same');
+});
+
+/* ── every view's own regions, taken back as it goes (review F2.5, BQX) ──
+   sayAloud says nothing when a region already says the same words. A view's notes left said as it went stayed said
+   in the hidden view: the region came back on screen already filled, which is seldom announced, and the same words
+   painted on the way back in were no news. The Treemap took back its two notes as it went (F2.5); every other view's
+   notes were silent on every return. The registry now takes back, as any view goes, every live region inside it that
+   sayAloud holds words for (viewUnsay) — and a view painted while it is away, whose mount paints none of its boxes
+   (the Dashboard's, which the scan, the index and the access recheck paint whatever view is up), says them again as
+   it comes back (viewSayAgain). */
+
+/** Each view's live regions, read from the markup: view id → the ids of the live regions inside its section. */
+const VIEW_REGIONS: ReadonlyMap<string, string[]> = (() => {
+  const by = new Map<string, string[]>();
+  for (const id of LIVE_IDS) {
+    const section = ancestorsOf(id).find((t) => /^<section\b/.test(t) && /\sclass="view"/.test(t));
+    if (!section) continue;
+    const view = idIn(section).replace(/^view-/, '');
+    by.set(view, [...(by.get(view) ?? []), id]);
+  }
+  return by;
+})();
+/** Whether the page's script says words in the region with this id through sayAloud. */
+const saidBySayAloud = (id: string) => INDEX.includes(`sayAloud('${id}', `);
+
+const SWITCH = ['const VIEW_BY_ID', 'let mountedView', 'function viewBlockedReason(', 'function switchView(', 'const viewSaidAsItWent', 'function viewUnsay(', 'function viewSayAgain('];
+
+/** A view's registration in the page, as its source: the object that opens with `id: '<id>'`, brace-matched. */
+function viewSrc(id: string): string {
+  const opens = [...INDEX.matchAll(new RegExp(String.raw`\{\s*\n\s*id: '${id}',`, 'g'))];
+  assert.equal(opens.length, 1, `control: the ${id} view is registered once, its object opening with its id`);
+  let depth = 0;
+  for (let i = opens[0].index; i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(opens[0].index, i + 1);
+  }
+  return assert.fail(`the ${id} view's registration never closes`);
+}
+
+const noop = () => {};
+
+/**
+ * The registry's own switchView, with sayAloud and aloudWait, over views registered as the page registers them —
+ * `real`, each one's own object lifted, its mount and unmount with it — and `standIns`, which mount nothing and have
+ * no unmount. Each view's section holds its live regions as the markup has them; every other live region stands in
+ * the page's main part, on screen. Every view starts hidden. `decls`, `given` and `missing` as page() takes them; a
+ * frame as waitingPage runs one.
+ */
+function viewsPage(real: string[], standIns: string[], decls: string[] = [], given: Record<string, unknown> = {}, missing: string[] = []) {
+  const ro = resizeObservers();
+  const mo = mutationObservers();
+  const body = new El();
+  const main = new El();
+  main.parent = body;
+  const sections: El[] = [];
+  const run = [
+    ...real.map((id) => `VIEW_BY_ID.set('${id}', ${viewSrc(id)});`),
+    ...standIns.map((id) => `VIEW_BY_ID.set('${id}', { id: '${id}', label: '${id}', icon: 'x', needsScan: false, mount() {} });`),
+  ];
+  const p = page([...WAIT, ...SWITCH, ...decls], {
+    ResizeObserver: ro.ResizeObserver, MutationObserver: mo.MutationObserver,
+    document: { body, activeElement: null, querySelectorAll: (sel: string) => (sel === '.view' ? sections : []) },
+    tabs: [], hideTooltip: noop, hideCtxMenu: noop, selectionBarFollowView: noop, renderEmptyState: noop,
+    fxEmptyCtaSync: noop, fxScanHeroSync: noop, renderCapabilityNotice: noop, fxViewEnter: noop, toast: noop, ...given,
+  }, missing, run);
+  for (const id of [...real, ...standIns]) {
+    const section = p.$(`view-${id}`);
+    section.id = `view-${id}`;
+    section.parent = main;
+    section.hidden = true;
+    sections.push(section);
+    const regions = (VIEW_REGIONS.get(id) ?? []).map((r) => Object.assign(p.$(r), { id: r, parent: section }));
+    section.querySelectorAll = (sel) => (sel === '[aria-live]' ? regions : []);
+  }
+  // As the page loads, every live region is shown to the watch (aloudKnow); its first layout says where it is.
+  for (const r of LIVE_IDS) {
+    const live = p.$(r);
+    if (!live.parent) Object.assign(live, { id: r, parent: main });
+    p.fns.aloudKnow(live);
+  }
+  const frame = () => { mo.microtasks(); p.frame(mo.microtasks); ro.layout(); mo.microtasks(); };
+  frame();
+  return { ...p, frame };
+}
+
+test('every live region inside a view that sayAloud speaks in is taken back as that view goes — emptied, words about to go in with it, and forgotten, so the same words painted again are news, said a frame after the view is back; a region sayAloud never speaks in, and every region outside the views, is left as it is (BQX)', () => {
+  // Control: the audit finds the regions each view's boxes are said in.
+  for (const [view, id] of [['dashboard', 'accessSaid'], ['dashboard', 'mountsNoteSaid'], ['dashboard', 'indexBadgeSaid'], ['history', 'calDegradedSaid'],
+    ['history', 'journalPortableSaid'], ['city', 'cityLodSaid'], ['treemap', 'tmEmptySaid'], ['treemap', 'tmAltNoteSaid'], ['missing', 'missingSaid']]) {
+    assert.ok(VIEW_REGIONS.get(view)?.includes(id), `control: the audit finds #${id} inside the ${view} view`);
+  }
+  const views = [...VIEW_REGIONS.keys()];
+  assert.ok(views.includes('apps') && VIEW_REGIONS.get('apps')!.every((id) => !saidBySayAloud(id)), 'control: a view whose only region is a part\'s working sentence is audited too');
+  const inViews = new Set(views.flatMap((v) => VIEW_REGIONS.get(v)!));
+  const outside = LIVE_IDS.filter((id) => !inViews.has(id));
+  for (const id of ['scanAnnounce', 'stopAnnounce', 'toasts', 'capabilityNoticeSaid', 'startLastSaid', 'nlSaid', 'apQuerySaid', 'dupeViewerSummarySaid', 'cleanModalOutsideSaid']) {
+    assert.ok(outside.includes(id), `control: #${id} stands outside every view`);
+  }
+  const p = viewsPage([], [...views, 'elsewhere'], [], { state: { view: null, root: null, scanning: false, capabilities: null } });
+  for (const view of views) {
+    const said = VIEW_REGIONS.get(view)!.filter(saidBySayAloud);
+    const others = VIEW_REGIONS.get(view)!.filter((id) => !saidBySayAloud(id));
+    p.fns.switchView(view);
+    p.frame();
+    for (const id of outside) {
+      if (saidBySayAloud(id)) p.fns.sayAloud(id, `Outside, ${id}.`);
+      else p.$(id).textContent = `Outside, ${id}.`; // the scan's voice, the toasts and the sheets' regions are written their own ways
+    }
+    for (const id of said) p.fns.sayAloud(id, `Said in ${id}.`);
+    for (const id of others) p.$(id).textContent = `Working in ${id}…`; // a part's working sentence, which sayWorking writes
+    p.frame();
+    for (const id of said) assert.equal(p.$(id).textContent, `Said in ${id}.`, `control: #${id} says its words`);
+    p.fns.switchView('elsewhere');
+    for (const id of said) assert.equal(p.$(id).textContent, '', `#${id} is emptied as the ${view} view goes: nothing of it is left said in the hidden view`);
+    for (const id of others) assert.equal(p.$(id).textContent, `Working in ${id}…`, `#${id}, which sayAloud never speaks in, is left as it is`);
+    for (const id of outside) assert.equal(p.$(id).textContent, `Outside, ${id}.`, `#${id}, outside every view, is left saying what it says`);
+    for (const id of said) { p.$(id).said.length = 0; p.fns.sayAloud(id, `Said in ${id}.`); } // the same words, painted again while it is away
+    p.frame();
+    p.frame();
+    for (const id of said) assert.deepEqual(p.$(id).said.filter(Boolean), [], `#${id} says nothing while its view is away`);
+    p.fns.switchView(view);
+    p.frame();
+    p.frame();
+    for (const id of said) assert.deepEqual(p.$(id).said.filter(Boolean), [`Said in ${id}.`], `#${id}: the same words are news after the view went — said once, a frame after it is back`);
+    for (const id of outside.filter(saidBySayAloud)) {
+      p.$(id).said.length = 0;
+      p.fns.sayAloud(id, `Outside, ${id}.`);
+      p.frame();
+      assert.deepEqual(p.$(id).said, [], `#${id}: still held as said, so its same words again are no news`);
+    }
+    for (const id of others) p.$(id).textContent = '';
+    p.fns.switchView('elsewhere');
+    p.frame();
+    // Words given as the view goes, due in the next frame, go with it: a visit back that paints nothing says nothing.
+    p.fns.switchView(view);
+    p.frame();
+    for (const id of said) p.fns.sayAloud(id, `About to go in ${id}.`);
+    p.fns.switchView('elsewhere');
+    for (const id of said) p.$(id).said.length = 0;
+    p.frame();
+    p.frame();
+    p.fns.switchView(view);
+    for (let i = 0; i < 3; i++) p.frame();
+    for (const id of said) assert.deepEqual(p.$(id).said.filter(Boolean), [], `#${id}: words about to go in as the ${view} view went are never said`);
+    p.fns.switchView('elsewhere');
+    p.frame();
+  }
+});
+
+/** The Dashboard as the page registers it, with its refused-folder row's painters, on a Mac without Full Disk Access. */
+function dashboardPage() {
+  const st = {
+    view: null as string | null, root: { path: '/Users/x' }, scanning: false, types: [], driveHealth: null,
+    system: { platform: 'darwin' }, scanId: 's1', accessNotice: null as string | null, scanAccessState: 'not-granted', scanRefused: null,
+    capabilities: { fullDiskAccess: { state: 'not-granted', advice: 'Give TreeMap Full Disk Access in Privacy settings, then scan again.' } },
+    scanStats: { refused: { dirs: 69, examples: ['/Users/x/Library/Mail', '/Users/x/Library/Safari'] } } as unknown,
+  };
+  const p = viewsPage(['dashboard'], ['elsewhere'], ['function keepAccessFocus(', 'function paintAccessNotice(', 'function renderRefusedFolders(',
+    'function paintRefusedRow(', 'function fullDiskAccessInfo(', 'function accessHintFor(', 'function lastPathSegment('], {
+    state: st, donutHandle: null, renderBudgetWidget: noop, fxBudgetGaugesDrop: noop, fxDriveGaugeDrop: noop,
+  });
+  return { ...p, st, live: p.$('accessSaid') };
+}
+const ACCESS_SAID = '69 folders could not be read — Mail, Safari and 67 more. Give TreeMap Full Disk Access in Privacy settings, then scan again.';
+
+test('the Dashboard\'s refused-folder row is said again on every visit back: taken back as the view goes, and said a frame after its region is on screen again — the Dashboard\'s mount paints none of its boxes, which the scan paints whatever view is up (BQX)', () => {
+  const d = dashboardPage();
+  d.fns.switchView('dashboard');
+  d.frame();
+  d.fns.renderRefusedFolders(); // the scan's end paints the row
+  d.frame();
+  assert.equal(d.live.textContent, ACCESS_SAID, 'control: said a frame after the row is painted');
+  d.fns.switchView('elsewhere');
+  assert.equal(d.live.textContent, '', 'taken back as the Dashboard goes');
+  d.live.said.length = 0;
+  d.frame(); // the person on another view
+  d.frame();
+  d.fns.switchView('dashboard');
+  d.frame();
+  assert.equal(d.live.textContent, '', 'nothing in the frame the region comes on screen in: a region that appears filled is seldom announced');
+  d.frame();
+  assert.equal(d.live.textContent, ACCESS_SAID, 'said again a frame after: a change, which is heard');
+  d.frame();
+  d.frame();
+  assert.deepEqual(d.live.said.filter(Boolean), [ACCESS_SAID], 'once');
+});
+
+test('with no visit back, the Dashboard\'s row is not said again: nothing however long the person is away; painted again while away with the same words, it is said once, as the Dashboard comes back; hidden while away, nothing of it is said on the way back (BQX)', () => {
+  const d = dashboardPage();
+  d.fns.switchView('dashboard');
+  d.frame();
+  d.fns.renderRefusedFolders();
+  d.frame();
+  assert.equal(d.live.textContent, ACCESS_SAID, 'control: said');
+  d.fns.switchView('elsewhere');
+  d.live.said.length = 0;
+  for (let i = 0; i < 4; i++) d.frame();
+  assert.deepEqual(d.live.said, [], 'nothing is said while the person is away');
+
+  d.fns.renderRefusedFolders(); // a recheck paints the row again while the Dashboard is away, with the same words
+  for (let i = 0; i < 3; i++) d.frame();
+  assert.deepEqual(d.live.said.filter(Boolean), [], 'nor as the row is painted again away');
+  d.fns.switchView('dashboard');
+  for (let i = 0; i < 4; i++) d.frame();
+  assert.deepEqual(d.live.said.filter(Boolean), [ACCESS_SAID], 'said once as the Dashboard comes back — the words painted while away, not those and the words it went with');
+
+  d.fns.switchView('elsewhere');
+  d.st.scanStats = { refused: { dirs: 0, examples: [] } };
+  d.fns.renderRefusedFolders(); // a rescan that refused nothing hides the row while the Dashboard is away
+  assert.equal(d.$('accessRow').hidden, true, 'control: the row is hidden');
+  d.live.said.length = 0;
+  d.fns.switchView('dashboard');
+  for (let i = 0; i < 4; i++) d.frame();
+  assert.deepEqual(d.live.said.filter(Boolean), [], 'the row hidden while away: nothing of what it said is said on the way back');
+
+  // Kept as it went, then spoken for while the Dashboard stood in for nothing — its welcome up, no mount — and left
+  // again: what was kept the first time is not what the row shows now, and is not said.
+  const e = dashboardPage();
+  e.fns.switchView('dashboard');
+  e.frame();
+  e.fns.renderRefusedFolders();
+  e.frame();
+  e.fns.switchView('elsewhere');
+  e.frame();
+  e.st.root = null as unknown as { path: string }; // nothing on screen: the Dashboard is opened onto its welcome, and not mounted
+  e.fns.switchView('dashboard');
+  e.st.scanStats = { refused: { dirs: 0, examples: [] } };
+  e.fns.renderRefusedFolders(); // and the row is hidden meanwhile
+  e.fns.switchView('elsewhere');
+  e.frame();
+  e.st.root = { path: '/Users/x' };
+  e.live.said.length = 0;
+  e.fns.switchView('dashboard');
+  for (let i = 0; i < 4; i++) e.frame();
+  assert.deepEqual(e.live.said.filter(Boolean), [], 'words kept from an earlier going are not said once the row has been hidden since');
+});
+
+/** History as the page registers it, on its calendar, with the calendar's own loader; `api` answers the count. */
+function historyPage(api: () => Promise<unknown>) {
+  const st = { view: null as string | null, root: { path: '/r' }, scanning: false, scanId: 's1', settledScanId: 's1', indexScanDue: false, scanningPath: null, capabilities: null };
+  const p = viewsPage(['history'], ['elsewhere'], ['function histShow(', 'async function loadCalendar(', 'function renderCalendar(', 'function treeScanId(', 'function treeScanComing('], {
+    state: st, histPanel: 'calendar', calChannel: 'created', calSeq: 0, calData: null, skeletonRows: () => '', api,
+    cmpCountsDrop: noop, fxHuntBeamSync: noop, loadJournal: noop, loadCompareOptions: noop,
+  });
+  return { ...p, live: p.$('calDegradedSaid') };
+}
+const CAL_CAPPED = 'Creation dates were read for the first 20,000 files; the days past that are not shown.';
+
+test('History\'s note on what the calendar could not count is said again on every visit back: taken back as the view goes, and said a frame after the calendar paints it again as History comes back; with no visit back, nothing (BQX)', async () => {
+  const h = historyPage(async () => ({ modified: [], created: [], degraded: [{ reason: CAL_CAPPED }] }));
+  h.fns.switchView('history');
+  await turns();
+  h.frame();
+  h.frame();
+  assert.equal(h.live.textContent, CAL_CAPPED, 'control: the calendar counted, its note said');
+  h.fns.switchView('elsewhere');
+  assert.equal(h.live.textContent, '', 'taken back as History goes');
+  h.live.said.length = 0;
+  for (let i = 0; i < 4; i++) h.frame();
+  assert.deepEqual(h.live.said, [], 'nothing while the person is away');
+  h.fns.switchView('history'); // its mount counts the calendar again, to the same note
+  await turns();
+  h.frame();
+  assert.equal(h.live.textContent, '', 'nothing in the frame History comes on screen in');
+  h.frame();
+  h.frame();
+  assert.deepEqual(h.live.said.filter(Boolean), [CAL_CAPPED], 'said again, once, a frame after');
+});
+
+test('a view whose mount paints its boxes again says only what it paints as it comes back, never the words of its last visit while its answer is on the way: History back after another scan says that scan\'s note alone (BQX)', async () => {
+  const later = 'Creation dates are not recorded on this drive, so its days are counted by when files last changed.';
+  let answer: (v: unknown) => void = noop;
+  let next: () => Promise<unknown> = async () => ({ modified: [], created: [], degraded: [{ reason: CAL_CAPPED }] });
+  const h = historyPage(() => next());
+  h.fns.switchView('history');
+  await turns();
+  h.frame();
+  h.frame();
+  assert.equal(h.live.textContent, CAL_CAPPED, 'control: said');
+  h.fns.switchView('elsewhere');
+  next = () => new Promise((resolve) => { answer = resolve; });
+  h.live.said.length = 0;
+  h.fns.switchView('history');
+  await turns();
+  for (let i = 0; i < 4; i++) h.frame();
+  assert.deepEqual(h.live.said.filter(Boolean), [], 'while the count is on its way, nothing of the last visit is said');
+  answer({ modified: [], created: [], degraded: [{ reason: later }] });
+  await turns();
+  h.frame();
+  h.frame();
+  assert.deepEqual(h.live.said.filter(Boolean), [later], 'control: the count lands, and its own note is said, alone');
+});
+
+/** Disk City as the page registers it, its line painted from a city built of `nodes` buildings as it loads. */
+function cityPage(nodes: number) {
+  const st = {
+    view: null as string | null, root: { path: '/r' }, scanning: false, scanId: 's1', settledScanId: 's1', indexScanDue: false, scanningPath: null, capabilities: null,
+    city: { drawn: nodes, total: nodes, unknownHeight: 0, unresolved: 0, height: 'size', colour: 'size', loadFailed: null as unknown,
+      builtFrom: { nodes: Array.from({ length: nodes }, () => ({})), minSize: 0, size: 1 } as unknown, raf: 0, morphRaf: 0, zoomRaf: 0, zoomTimer: 0, blocks: [] as unknown[], hover: null, drag: null },
+    treemap: { rootPath: '/r', history: { active: false } },
+  };
+  const paint: { city: () => void } = { city: noop };
+  const p = viewsPage(['city'], ['elsewhere'], ['const UNITS', 'function formatBytes(', 'const TM_SERVER_NODE_CAP', 'function treeScanId(', 'function treeScanComing(', 'function baseName(', 'function renderCityChrome('], {
+    state: st, cityLoadSeq: 0, refreshDock: noop, cityFitHeight: noop, citySetHeight: noop, citySetColour: noop, window: { addEventListener: noop, removeEventListener: noop },
+    cityOnPointerDown: noop, cityOnPointerMove: noop, cityOnPointerUp: noop, cityOnPointerLeave: noop, cityOnWheel: noop, cityOnKey: noop, cityOnResize: noop,
+    loadCity: () => paint.city(), // the city built again from the map's buildings, and its line painted
+  }, ['cityLegend', 'cityStatus']);
+  paint.city = () => p.fns.renderCityChrome();
+  return { ...p, live: p.$('cityLodSaid') };
+}
+
+test('Disk City\'s news on its line is said again on every visit back: taken back as the view goes, and said a frame after the city paints its line again as it comes back; with no visit back, nothing (BQX)', () => {
+  const cap = 'the map holds at most 20,000 items, and this folder reached that — drill in for the rest';
+  const c = cityPage(20000);
+  c.fns.switchView('city');
+  c.frame();
+  c.frame();
+  assert.equal(c.live.textContent, cap, 'control: the city built, its line\'s news said');
+  c.fns.switchView('elsewhere');
+  assert.equal(c.live.textContent, '', 'taken back as Disk City goes');
+  c.live.said.length = 0;
+  for (let i = 0; i < 4; i++) c.frame();
+  assert.deepEqual(c.live.said, [], 'nothing while the person is away');
+  c.fns.switchView('city');
+  c.frame();
+  assert.equal(c.live.textContent, '', 'nothing in the frame the city comes on screen in');
+  c.frame();
+  c.frame();
+  assert.deepEqual(c.live.said.filter(Boolean), [cap], 'said again, once, a frame after');
+});
+
+test('the notes over and under the map are taken back as the Treemap view goes — by the registry, as every view\'s regions are — so a visit back says them again: left said in the hidden view, the same words drawn on the way back in were no news, and the region came back on screen already filled (review F2.5, BQU item 24, BQX)', () => {
+  const st = {
+    view: null as string | null, root: { path: '/r' }, scanning: false, capabilities: null, live: { on: false }, lens: { held: false, at: null as unknown },
+    treemap: { rootPath: '/r', altNote: '', altZoomRaf: 0, altZoom: null as unknown, cells: [] as unknown[] },
+  };
+  const map: { draw: () => void } = { draw: noop };
+  const p = viewsPage(['treemap'], ['elsewhere'], ['function tmSetEmpty(', 'function renderAltNote(', 'function altRefiningNote('], {
+    state: st, tmAnimFrame: 0, tmResizeDeb: 0, treeScanId: () => 's1',
+    // Its unmount's teardown, and its mount's loads, the map's own landing (draw, below) among them.
+    tmCancelQueries: noop, tmCloseHints: noop, tmClearHits: noop, nlClose: noop, exitCartPreview: noop, tmSetQueryMessage: noop, disableLive: noop,
+    altRefineCancel: noop, lapseStop: noop, lassoCancel: noop, fxTmPillBeamsSync: noop, loadSavedViews: noop, refreshDock: noop, tmRejudgeQuery: noop,
+    loadTreemap: () => map.draw(),
+  });
+  const empty = 'This folder is empty.';
+  const cap = 'The map holds at most 250,000 items, and this folder reached that: 1.2 GB has no rectangle here — drill in, or open the Grid view, to see the rest.';
+  // What drawTreemap gives the two notes: an empty folder's map, or one that reached the server's cap.
+  const cases = [
+    { what: 'the note over an empty map', region: 'tmEmptySaid', words: empty, draw: () => { st.treemap.altNote = ''; p.fns.renderAltNote(); p.fns.tmSetEmpty(empty); } },
+    { what: 'the footnote under a map that reached the cap', region: 'tmAltNoteSaid', words: cap, draw: () => { st.treemap.altNote = cap; p.fns.renderAltNote(); p.fns.tmSetEmpty(''); } },
+  ];
+  for (const { what, region, words, draw } of cases) {
+    map.draw = draw;
+    p.fns.switchView('treemap');
+    p.frame();
+    p.frame();
+    assert.equal(p.$(region).textContent, words, `${what}: control, said a frame after the map is drawn`);
+    p.fns.switchView('elsewhere');
+    assert.equal(p.$(region).textContent, '', `${what}: taken back as the view goes, so nothing of it is left said in the hidden view`);
+    p.$(region).said.length = 0;
+    p.frame(); // the person on another view
+    p.frame();
+    p.fns.switchView('treemap'); // back to the map: its mount draws it again, with the same words
+    p.frame();
+    p.frame();
+    assert.deepEqual(p.$(region).said.filter(Boolean), [words], `${what}: said again, once, a frame after the map is drawn on the way back in`);
+    p.fns.switchView('elsewhere');
+  }
 });
