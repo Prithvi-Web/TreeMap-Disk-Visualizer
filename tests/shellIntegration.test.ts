@@ -65,8 +65,9 @@ test('the Quick Action passes the folder as one argument, however it is named', 
   const { documentWflow } = await import('../src/platform/macos/shellIntegration');
   const wflow = documentWflow('/Applications/My Apps/TreeMap.app/Contents/MacOS/TreeMap');
   // The classic failure: an unquoted path launches "/Applications/My" with
-  // "Apps/TreeMap.app/..." as an argument. Both sides must be quoted.
-  assert.match(wflow, /"\/Applications\/My Apps\/TreeMap\.app\/Contents\/MacOS\/TreeMap" "\$target"/);
+  // "Apps/TreeMap.app/..." as an argument. Both sides must be quoted — the
+  // program in single quotes, so nothing in its path is read by the shell (review HA-L8).
+  assert.match(wflow, /'\/Applications\/My Apps\/TreeMap\.app\/Contents\/MacOS\/TreeMap' "\$target"/);
   assert.match(wflow, /for target in "\$@"/, 'and every selected folder is iterated safely');
 });
 
@@ -301,6 +302,34 @@ test('review F1.3: the program an entry starts reads back from the entry itself,
   assert.equal(win.programOfCommandValue('C:\\Windows\\notepad.exe %1'), null);
   assert.equal(lin.programOfNautilusScript('#!/bin/sh\necho hello\n'), null);
   assert.equal(lin.programOfThunarActions('<actions>\n<action>\n\t<unique-id>someone-else</unique-id>\n\t<command>/usr/bin/gimp %f</command>\n</action>\n</actions>\n'), null);
+});
+
+test('review HA-L8: the Finder entry starts the program at any path — quotes, spaces, `$(…)` and all — as /bin/sh runs it, and runs nothing the path spells', { skip: process.platform === 'win32' }, async () => {
+  const { spawnSync } = await import('node:child_process');
+  const mac = await import('../src/platform/macos/shellIntegration');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-shell-finder-'));
+  try {
+    const marker = path.join(root, 'ran');
+    const dir = path.join(root, `My Apps & <Tools>`, `it's "Tree" (1) $(touch ${marker}) \`x\` $HOME`);
+    fs.mkdirSync(dir, { recursive: true });
+    const program = path.join(dir, 'TreeMap');
+    const out = path.join(root, 'started.txt');
+    fs.writeFileSync(program, '#!/bin/sh\nprintf \'%s\\n\' "$1" >> "$TM_STARTED"\n', { mode: 0o755 });
+    const command = /<key>COMMAND_STRING<\/key>\s*<string>([\s\S]*?)<\/string>/.exec(mac.documentWflow(program));
+    assert.ok(command, 'the workflow holds a shell script');
+    const script = command[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    const target = path.join(root, 'Folder with "quotes"');
+    // Automator runs it with the folders as its arguments; `wait` lets the backgrounded launch end before it is read.
+    const r = spawnSync('/bin/sh', ['-c', `${script}\nwait\n`, 'sh', target], { env: { ...process.env, TM_STARTED: out }, encoding: 'utf8' });
+    assert.equal(fs.existsSync(marker), false, 'nothing the path spells was run');
+    assert.equal(r.status, 0, `the script ran: ${r.stderr}`);
+    assert.equal(fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : '<the program never started>', `${target}\n`, 'the program started, with the folder as its one argument');
+    assert.equal(mac.programOfWorkflow(mac.documentWflow(program)), program, 'the program reads back as written');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  // An entry an earlier build wrote, the program in double quotes, still reads back.
+  assert.equal(mac.programOfWorkflow(`<key>COMMAND_STRING</key>\n<string>#!/bin/sh\nfor target in "$@"; do\n  "/opt/homebrew/bin/node" "$target" &amp;\ndone\n</string>`), '/opt/homebrew/bin/node');
 });
 
 test('review HA-L1: the Windows entry\'s program reads back whole whatever letters its path holds — never from text a console prints in its own code page', async () => {

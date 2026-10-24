@@ -47,6 +47,11 @@ export function bundlePath(home = os.homedir()): string {
 }
 
 /** Escape text for an XML plist string element. */
+/** A path as one word for /bin/sh: single-quoted, each `'` in it closed, escaped and reopened. */
+function shellQuote(p: string): string {
+  return `'${p.replace(/'/g, `'\\''`)}'`;
+}
+
 export function plistEscape(s: string): string {
   return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
 }
@@ -87,10 +92,12 @@ export function infoPlist(): string {
  *
  * The shell script quotes `"$@"` so every selected folder is passed as one
  * argument regardless of spaces, and backgrounds each launch so Finder's
- * Services menu is not held open waiting for the app.
+ * Services menu is not held open waiting for the app. The program is
+ * single-quoted for the shell: written inside double quotes, a path with a
+ * `"` in it started nothing, and a `$(…)` in it ran (review HA-L8).
  */
 export function documentWflow(execPath: string): string {
-  const script = `#!/bin/sh\nfor target in "$@"; do\n  "${execPath}" "$target" &\ndone\n`;
+  const script = `#!/bin/sh\nfor target in "$@"; do\n  ${shellQuote(execPath)} "$target" &\ndone\n`;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -205,6 +212,9 @@ export function programOfWorkflow(doc: string): string | null {
   const command = /<key>COMMAND_STRING<\/key>\s*<string>([\s\S]*?)<\/string>/.exec(doc);
   if (!command) return null;
   const script = command[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const quoted = /^ {2}'((?:[^']|'\\'')*)' "\$target" &$/m.exec(script);
+  if (quoted) return quoted[1].replace(/'\\''/g, "'");
+  // As builds before review HA-L8 wrote it, in double quotes.
   const line = /^ {2}"(.*)" "\$target" &$/m.exec(script);
   return line ? line[1] : null;
 }
