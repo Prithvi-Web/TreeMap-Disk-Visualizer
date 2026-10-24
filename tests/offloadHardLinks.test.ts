@@ -203,6 +203,35 @@ test('a name of a file whose other name went to the Trash is still looked at: wr
   assert.match(job.error ?? '', /^b\.bin was left in place: it changed after its copy was made \(the copy holds it as it was then\), so it was not moved to the Trash\./, job.error);
 });
 
+test('every name of a hard-linked file keeps the date the file was last opened before the offload read it: the copies and the record (leftover HE-L3)', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-offloadHardLinks-atime-'));
+  const proj = path.join(root, 'proj');
+  fs.mkdirSync(proj);
+  const a = path.join(proj, 'a.bin');
+  const b = path.join(proj, 'b.bin');
+  fs.writeFileSync(a, Buffer.alloc(2000, 9));
+  fs.linkSync(a, b);
+  const opened = new Date('2019-06-07T08:09:10Z');
+  const modified = new Date('2020-01-02T03:04:05Z');
+  // Last opened before it was last modified: the next read of it moves that date (relatime, and macOS).
+  fs.utimesSync(a, opened, modified);
+  const scan = createScanRecord(root);
+  scan.status = 'complete';
+  scan.root = dirNode(root, [dirNode(proj, [fileNode(a, 2000), fileNode(b, 0, { hardlinkDuplicate: true })])]);
+  const dest = fileTempDir('treemap-offloadHardLinks-atime-dest-');
+  const job = await withOpenFileCheck('clear', async () => {
+    const prepared = await prepareOffload(scan, [proj], dest);
+    return settled((await startOffload(scan, [proj], dest, prepared)).jobId);
+  });
+  assert.equal(job.status, 'complete', job.error);
+  for (const name of ['a.bin', 'b.bin']) {
+    assert.equal(fs.statSync(path.join(dest, 'proj', name)).atime.toISOString(), opened.toISOString(), `the copy of ${name} keeps the last-opened date`);
+  }
+  const recorded = (await getOffloadIndex()).entries.filter((e) => e.originalPath.startsWith(proj + path.sep));
+  assert.deepEqual(recorded.map((e) => [path.basename(e.originalPath), e.atimeMs]).sort(), [['a.bin', opened.getTime()], ['b.bin', opened.getTime()]],
+    'and the record keeps it for each name, so Restore puts it back on each');
+});
+
 test('a name of a file selected on its own, then a folder holding its other name: both go to the Trash', async () => {
   const root = fs.realpathSync(fileTempDir('treemap-offloadHardLinks-fileThenFolder-'));
   const a = path.join(root, 'a.bin');

@@ -1224,6 +1224,12 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
   const results: { src: string; dest: string; size: number; hash: string; meta: FileMeta; hardLinked: boolean }[] = [];
   /** Each original as it was right before its copy was made (hunt C06). */
   const looks = new Map<string, SourceLook>();
+  /**
+   * The first look this job took of each file, by file (leftover HE-L3): copying one name of a
+   * hard-linked file reads the file every name shares, so a later name's own look already holds this
+   * job's read as the date the file was last opened.
+   */
+  const firstLooks = new Map<string, SourceLook>();
   /** Copies whose dates or permissions could not be set (hunt C45). */
   const metaMisses: string[] = [];
   /**
@@ -1240,6 +1246,8 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       job.currentPath = item.src;
       const look = sourceLookOf(await fsp.lstat(item.src, { bigint: true }));
       looks.set(item.src, look);
+      const first = firstLooks.get(fileKeyOf(look));
+      if (first === undefined) firstLooks.set(fileKeyOf(look), look);
       // Owner-only until it verifies and is given its original's bits (review F1.12): a private file is
       // never readable by other accounts while it is written. Off Windows, which keeps no such bits.
       const hash = await copyWithHash(item.src, item.dest, jobProgress(job, true), process.platform === 'win32' ? {} : { createMode: 0o600 });
@@ -1264,7 +1272,8 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       // The copy keeps its original's dates and permissions (hunt C45); one a drive cannot hold is said.
       // Readable by this user whatever they are — an original another account owns can be readable
       // here with no owner bits — so Restore can always read it back; the record keeps them exact.
-      const meta = fileMetaOf(look);
+      // The last-opened date as it was before this job read the file by any of its names (leftover HE-L3).
+      const meta = fileMetaOf(first === undefined ? look : { ...look, atimeNs: first.atimeNs });
       const missed = await applyFileMeta(item.dest, meta.mode === undefined ? meta : { ...meta, mode: meta.mode | 0o400 });
       if (missed !== null) metaMisses.push(missed);
       const st = await fsp.stat(item.dest);
