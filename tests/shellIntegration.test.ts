@@ -447,6 +447,7 @@ test('review F1.4: a portable session is never offered the entry, even inside th
   const { DESKTOP_EXEC_ENV } = await import('../src/platform/desktopLauncher');
   const { initPortableMode, resetPortableMode, degradedCapabilities, PORTABLE_NO_SHELL_ENTRY } = await import('../src/services/portableMode');
   const saved = process.env[DESKTOP_EXEC_ENV];
+  let notPortable: string | null = null; // the installed app's folder for the control, removed after (review HA-L4/HA-L9)
   try {
     process.env[DESKTOP_EXEC_ENV] = path.join(path.parse(process.cwd()).root, 'Tools', 'TreeMap.exe');
     // The Windows portable build names its own folder in PORTABLE_EXECUTABLE_DIR; TREEMAP_DATA_DIR (this test's own) keeps it writing there.
@@ -459,7 +460,8 @@ test('review F1.4: a portable session is never offered the entry, even inside th
     assert.ok(degradedCapabilities(process.platform, true).some((d) => d.key === 'shellIntegration' && d.reason === PORTABLE_NO_SHELL_ENTRY),
       'the portable panel says the same sentence');
     resetPortableMode();
-    initPortableMode({ ...process.env, TREEMAP_PORTABLE: undefined, PORTABLE_EXECUTABLE_DIR: undefined }, fs.mkdtempSync(path.join(os.tmpdir(), 'tm-shell-notportable-')));
+    notPortable = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-shell-notportable-'));
+    initPortableMode({ ...process.env, TREEMAP_PORTABLE: undefined, PORTABLE_EXECUTABLE_DIR: undefined }, notPortable);
     invalidateCapabilities();
     assert.notEqual((await capabilityState('shellIntegration')).reason, PORTABLE_NO_SHELL_ENTRY, 'control: an installed app is not a portable session');
   } finally {
@@ -467,5 +469,30 @@ test('review F1.4: a portable session is never offered the entry, even inside th
     else process.env[DESKTOP_EXEC_ENV] = saved;
     resetPortableMode();
     invalidateCapabilities();
+    if (notPortable) fs.rmSync(notPortable, { recursive: true, force: true });
+  }
+  assert.ok(notPortable && !fs.existsSync(notPortable), 'the test leaves no folder behind');
+});
+
+test('review HA-L10: on Linux the program is read from a Dolphin service menu alone, or a Thunar action alone — the files TreeMap writes there — and an entry with no command TreeMap can read names none', async () => {
+  const lin = await import('../src/platform/linux/shellIntegration');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-shell-linux-readers-'));
+  const launcher = '/home/x/My Apps/TreeMap-5.2.0 (1).AppImage';
+  const dolphin = path.join(home, '.local', 'share', 'kio', 'servicemenus', 'treemap-scan.desktop');
+  const thunar = path.join(home, '.config', 'Thunar', 'uca.xml');
+  const write = (file: string, text: string) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
+  try {
+    assert.equal(await lin.installedProgram({ home }), null, 'control: no entry, no program');
+    write(dolphin, lin.dolphinServiceMenu(launcher));
+    assert.equal(await lin.installedProgram({ home }), launcher, 'KDE: the Dolphin service menu alone');
+    write(dolphin, '[Desktop Entry]\nType=Service\n');
+    assert.equal(await lin.installedProgram({ home }), null, 'a service menu with no Exec line names no program');
+    fs.rmSync(dolphin);
+    write(thunar, lin.addThunarAction('<?xml version="1.0" encoding="UTF-8"?>\n<actions>\n<action>\n\t<unique-id>someone-else</unique-id>\n\t<command>gimp %f</command>\n</action>\n</actions>\n', launcher));
+    assert.equal(await lin.installedProgram({ home }), launcher, 'XFCE: TreeMap\'s Thunar action alone, beside the person\'s own');
+    write(thunar, '<actions>\n<action>\n\t<unique-id>someone-else</unique-id>\n\t<command>gimp %f</command>\n</action>\n</actions>\n');
+    assert.equal(await lin.installedProgram({ home }), null, 'a Thunar file without TreeMap\'s action names no program');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
   }
 });
