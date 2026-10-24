@@ -43975,11 +43975,17 @@ async function renderShellIntegration(carryStatus = '') {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ install: !data.installed }),
       });
-      message = result.installed
-        ? `Added${result.targets && result.targets.length ? ' (' + result.targets.join(', ') + ')' : ''}.`
-        : 'Removed.';
-      if (result.installed && !data.installed) {
-        toast('Added — your file manager may take a moment to show it');
+      // Said of what was asked, against what the system has after it (the
+      // answer re-reads it): a failed Add said "Removed." and a Remove that
+      // left the entry said "Added." (review HA-L6).
+      const why = result.reason ? ` ${result.reason}` : '';
+      if (!data.installed) {
+        message = result.installed
+          ? `Added${result.targets && result.targets.length ? ' (' + result.targets.join(', ') + ')' : ''}.`
+          : `Not added.${why}`;
+        if (result.installed) toast('Added — your file manager may take a moment to show it');
+      } else {
+        message = result.installed ? `Not removed — the entry is still in the right-click menu.${why}` : 'Removed.';
       }
     } catch (e) {
       message = 'Failed: ' + e.message;

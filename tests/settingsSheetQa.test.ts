@@ -211,6 +211,36 @@ test('review F1.3/F1.16: an entry that starts another program is never called Tr
   assert.equal(s.blurb, '“Scan with TreeMap” is in your file manager’s right-click menu for folders. Removing it takes the entry away completely.', 'control: the app\'s own entry');
 });
 
+test('review HA-L6: the right-click button says what became of what was asked — a failed Add is "Not added." with its reason, a Remove that left the entry is "Not removed" — never "Removed." after an Add or "Added." after a Remove', async () => {
+  const pressed = async (installed: boolean, answer: Record<string, unknown>) => {
+    let posted = false; // the system as it is before the press, then as the action left it
+    const api = async (url: string, options?: ApiCall['options']) => {
+      if (url !== '/api/platform/shell-integration') return url === '/api/settings' ? { ignore: [], schedules: [] } : {};
+      if (options?.method === 'POST') { posted = true; return answer; }
+      return { supported: true, installed: posted ? answer.installed : installed };
+    };
+    const rt = openSettingsRuntime(api, ['renderShellIntegration']);
+    await rt.open();
+    await settle();
+    await (rt.dom.$('shellIntegrationBtn').onclick!() as Promise<void>);
+    await settle();
+    return { status: rt.dom.$('shellIntegrationStatus').textContent, toasts: rt.toasts };
+  };
+  const reason = 'The Finder Quick Action could not be created (EACCES: permission denied).';
+  let r = await pressed(false, { installed: false, targets: [], reason });
+  assert.deepEqual([r.status, r.toasts], [`Not added. ${reason}`, []], 'a failed Add says so, and why');
+  r = await pressed(false, { installed: false, targets: [] });
+  assert.equal(r.status, 'Not added.', 'with no reason given, still not "Removed."');
+  r = await pressed(true, { installed: true, targets: [] });
+  assert.deepEqual([r.status, r.toasts], ['Not removed — the entry is still in the right-click menu.', []], 'a Remove that left the entry is not "Added."');
+  r = await pressed(true, { installed: true, targets: [], reason: 'reg.exe did not answer within 10 s.' });
+  assert.equal(r.status, 'Not removed — the entry is still in the right-click menu. reg.exe did not answer within 10 s.');
+  r = await pressed(true, { installed: false, targets: ['finder-quick-action'] });
+  assert.equal(r.status, 'Removed.', 'control: a Remove that removed it');
+  r = await pressed(false, { installed: true, targets: ['finder-quick-action'] });
+  assert.deepEqual([r.status, r.toasts], ['Added (finder-quick-action).', ['Added — your file manager may take a moment to show it']], 'control: an Add that added it');
+});
+
 /* ══════════════ The right-click button keeps focus through its request (as K02 found of Scan) ══════════════ */
 
 /**
