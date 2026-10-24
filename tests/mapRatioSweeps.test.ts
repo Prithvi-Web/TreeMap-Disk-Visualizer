@@ -29,7 +29,8 @@ test('owner\'s refinement at every ratio from 105 to 300 %: every leaf\'s line a
   // beside it, on the realistic map coloured by Reclaim at 115, 120 and 190 %, and 800×500 and 1043×741 css px at 150 and
   // 220 % (residual 7) — which measureEdges, stepping over a band's part-covered pixel, never saw, and partings (which
   // steps over none) was not run here for it. Every line and band is now whole device pixels (residual 4), so both
-  // oracles run at every ratio. The test above paints these maps at 1, 1.25, 1.5, 1.75 and 2 alone. The dense corner is
+  // oracles run at every ratio. The test "every line stands out from the tile on EACH of its sides" in
+  // tests/mapColourPop.test.ts paints these maps at 1, 1.25, 1.5, 1.75 and 2 alone. The dense corner is
   // swept at every 0.05, and the realistic map, over three times its area, at every 0.1 and at the four further ratios
   // where it showed, by Age, where it showed, and by Reclaim (by size none of its lines fell under 3:1 at any 0.05 from
   // 1.05 to 3 in a sweep made while fixing F2.3, before the fix or after it). The theme does not move a line (the same

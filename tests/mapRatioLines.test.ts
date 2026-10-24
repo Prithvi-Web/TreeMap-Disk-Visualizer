@@ -57,8 +57,9 @@ test('owner\'s outlines at every ratio from 100 to 300 %: every leaf\'s line and
 
 test('owner\'s outlines at 125 and 175 %: every leaf\'s line and every folder\'s band reaches 3:1 against the tile beside it on the device\'s pixels, and every leaf of 8 px and up is parted from what lies beside it by a line, on every colour the map paints — the colour blocks of the whole size ramp, Age, every Reclaim score, "not scored", the History diff colours and the Trash cell, in both themes, as at 50 to 90 %, 100 %, 150 % and 200 % (item 44)', () => {
   // The colour blocks are measured at 100 % (every leaf shape), at 150 and 200 % and on a page zoomed out to 50 to 90 %
-  // (mapColourPop.test.ts), and the dense corner and the realistic map at every ratio from 105 to 300 % (above), by size,
-  // Age and Reclaim, in the dark theme; at 125 and 175 %, Windows' display scalings, no test painted every colour.
+  // (mapColourPop.test.ts), and the dense corner at every 0.05 from 105 to 300 %, by size, Age and Reclaim, and the
+  // realistic map at every 0.1 from 110 %, by Age and Reclaim (tests/mapRatioSweeps.test.ts), in the dark theme; at 125
+  // and 175 %, Windows' display scalings, no test painted every colour.
   const b = colourBlocks(EVERY_COLOUR, 16, 16);
   for (const dpr of [1.25, 1.75]) {
     for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
