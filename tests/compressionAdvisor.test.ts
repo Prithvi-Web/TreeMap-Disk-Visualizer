@@ -216,6 +216,8 @@ test('a failed encode leaves the original exactly where it was', async () => {
   const outcome = await encodeOne(file, 'hevc_videotoolbox', 0, () => undefined);
   assert.equal(outcome.ok, false);
   assert.match(outcome.error!, /Invalid argument/);
+  // It says what became of the original, as every other failure before the trash step does (HC-L1).
+  assert.match(outcome.error!, /^Kept the original — the encoder failed/, outcome.error);
   assert.equal(fs.statSync(file).size, 1000, 'untouched');
   assert.deepEqual(fs.readdirSync(dir), ['holiday.mp4'], 'and the half-written encode is cleaned up');
 });
@@ -244,6 +246,7 @@ test('an encode that produces nothing is caught before anything is trashed', asy
   const outcome = await encodeOne(file, 'hevc_videotoolbox', 0, () => undefined);
   assert.equal(outcome.ok, false);
   assert.match(outcome.error!, /produced no file/);
+  assert.match(outcome.error!, /^Kept the original — /, `the original was never touched, and the error says so (HC-L1): ${outcome.error}`);
   assert.equal(fs.statSync(file).size, 1000);
 });
 

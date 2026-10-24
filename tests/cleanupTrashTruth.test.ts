@@ -285,6 +285,22 @@ test('Shrink video says each original was kept only when each was; a run whose o
   assert.match(left.said, /b\.mov: The original is in the Trash/, 'and the row says where it is');
   const failedEncoder = await encodeRun(['/v/a.mov']).complete({ results: [{ path: '/v/a.mov', ok: false, error: 'ffmpeg exited with code 1' }], savedBytes: 0 });
   assert.doesNotMatch(failedEncoder.toasts.map((t) => t[0]).join(' | '), /each original was kept/, 'an error that does not say what became of the original claims nothing about it');
+  // Nor does it say the row says where the file is (HC-L1): that row says only what went wrong.
+  assert.match(failedEncoder.said, /^No file was replaced\./, `what is true of it is said: ${failedEncoder.said}`);
+  assert.doesNotMatch(failedEncoder.said, /says where/, `its row does not say where the file is: ${failedEncoder.said}`);
+  assert.doesNotMatch(failedEncoder.toasts.map((t) => t[0]).join(' | '), /where each file is/, 'nor does the toast');
+});
+
+test('an encoder that failed, or wrote no file, kept the original, and Shrink video says so (HC-L1)', async () => {
+  const run = await encodeRun(['/v/a.mov', '/v/b.mov']).complete({
+    results: [
+      { path: '/v/a.mov', ok: false, error: 'Kept the original — the encoder failed (ffmpeg exited with 1).' },
+      { path: '/v/b.mov', ok: false, error: 'Kept the original — the encoder produced no file.' },
+    ],
+    savedBytes: 0,
+  });
+  assert.match(run.said, /^Nothing was re-encoded\./, run.said);
+  assert.ok(run.toasts.some(([m, k]) => k === 'error' && m === 'Nothing was re-encoded — each original was kept'), JSON.stringify(run.toasts));
 });
 
 /* ═════════ C35 — git gc is not "safe": it prunes for good ═════════ */

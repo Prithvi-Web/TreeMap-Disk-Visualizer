@@ -447,14 +447,17 @@ export async function encodeOne(
     try {
       await media.encode(file, temp, encoder, before?.durationSeconds ?? null, onProgress, onSpawn);
     } catch (err) {
-      return { ...base, error: err instanceof Error ? err.message : String(err) };
+      // Nothing of the user's was touched yet, and the error says so, as every failure before the
+      // trash step does: the page says each original was kept only of errors that say it (HC-L1).
+      const why = (err instanceof Error ? err.message : String(err)).trim().replace(/\.$/, '');
+      return { ...base, error: `Kept the original — the encoder failed (${why || 'no reason given'}).` };
     }
 
     let newBytes = 0;
     try {
       newBytes = (await fs.promises.stat(temp)).size;
     } catch {
-      return { ...base, error: 'the encoder produced no file' };
+      return { ...base, error: 'Kept the original — the encoder produced no file.' };
     }
 
     const after = await media.probe(temp);
