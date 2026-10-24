@@ -266,6 +266,14 @@ if (window.treemapDesktop) {
   // palette's toggle, as it takes no key but ⌘K.
   window.treemapDesktop.onCommand?.((name) => desktopCommand(name));
 }
+/* The boot restore (restoreLastSession) reopens the last scan the server
+   holds over several requests. File › Rescan chosen with the window closed
+   reaches the page as it loads (the shell holds it until then), before that
+   scan is back on screen: it said "Scan a folder first" over a scan about to
+   reopen, and nothing was rescanned (review HA-L5, HA-L13). A Rescan waits
+   for the restore to settle, then rescans what it reopened. */
+const bootRestore = { settled: false, settle: () => {} };
+bootRestore.done = new Promise((resolve) => { bootRestore.settle = () => { bootRestore.settled = true; resolve(); }; });
 function desktopCommand(name) {
   if (topModal() && name !== 'palette') return;
   if (name === 'settings') $('settingsBtn').click();
@@ -273,6 +281,7 @@ function desktopCommand(name) {
   else if (name === 'sidebar') toggleSideNav();
   else if (name === 'shortcuts') toggleShortcuts();
   else if (name === 'rescan') {
+    if (!bootRestore.settled) { void bootRestore.done.then(() => desktopCommand(name)); return; }
     if (state.scanning) toast('A scan is already running', 'error');
     else if (state.root) rescan();
     else toast('Scan a folder first — then Rescan scans it again.', 'error');
@@ -752,6 +761,9 @@ async function restoreLastSession() {
   } catch (e) {
     console.warn('[treemap] session restore skipped:', e.message);
   } finally {
+    // A Rescan from the menu waits for this answer: the scan reopened, or none (bootRestore).
+    // Guarded: a page reader may lift this without it.
+    if (typeof bootRestore === 'object') bootRestore.settle();
     // The tour waits for this answer: whether this person has scanned before (170).
     tourBootSettled();
   }

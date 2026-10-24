@@ -245,19 +245,20 @@ test('C16: a reopened scan starts no index build — the page reopens it as it l
 
 /* ═════════════════════ C18 — the menu's commands ═════════════════════ */
 
-function commands(opts: { modal?: string | null; scanning?: boolean; root?: unknown; paletteOpen?: boolean } = {}) {
+function commands(opts: { modal?: string | null; scanning?: boolean; root?: unknown; paletteOpen?: boolean; bootRestore?: { settled: boolean; done: Promise<void> } } = {}) {
   const { $ } = makeDom();
   if (opts.paletteOpen) $('cmdkModal').cls.add('open');
   const did: string[] = [];
   const toasts: string[] = [];
-  const state = { scanning: !!opts.scanning, root: opts.root ?? null };
+  const state: { scanning: boolean; root: unknown } = { scanning: !!opts.scanning, root: opts.root ?? null };
   const fns = page(['function desktopCommand('], {
     state, $, toast: (m: string) => { toasts.push(m); },
     topModal: () => (opts.modal ? { id: opts.modal } : null),
     cmdkOpen: () => did.push('palette open'), cmdkClose: () => did.push('palette close'),
     toggleSideNav: () => did.push('sidebar'), toggleShortcuts: () => did.push('shortcuts'), rescan: () => did.push('rescan'),
+    ...(opts.bootRestore ? { bootRestore: opts.bootRestore } : {}),
   }, 'desktopCommand');
-  return { run: (n: string) => fns.desktopCommand(n), did, toasts, $ };
+  return { run: (n: string) => fns.desktopCommand(n), did, toasts, $, state };
 }
 
 test('C18: Settings…, Rescan, Command Palette…, Toggle Sidebar and Keyboard Shortcuts each do what the page\'s own control does', () => {
@@ -286,6 +287,61 @@ test('C18: Rescan while a scan runs, or with nothing scanned yet, says why it do
   assert.equal(sheet.$('settingsBtn').clicks, 0);
   sheet.run('palette');
   assert.deepEqual(sheet.did, ['palette open'], 'but the palette toggle, as ⌘K passes a sheet');
+});
+
+/** Every promise already started gets its turns — counted, never a clock. */
+const turns = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
+
+test('review HA-L5/HA-L13: File › Rescan chosen with the window closed reaches the page as it loads, before the boot restore has reopened the last scan — it waits for the restore, then rescans what it reopened, and never says "Scan a folder first" over a scan about to reopen', async () => {
+  const restoring = () => {
+    let settle!: () => void;
+    const bootRestore = { settled: false, done: new Promise<void>((r) => { settle = r; }) };
+    return { bootRestore, settle: () => { bootRestore.settled = true; settle(); } };
+  };
+  {
+    const r = restoring();
+    const c = commands({ bootRestore: r.bootRestore });
+    c.run('rescan');
+    await turns();
+    assert.deepEqual([c.did, c.toasts], [[], []], 'nothing is done or said while the last scan is still being reopened');
+    c.state.root = { path: '/Users/x/Movies' }; // the restore reopens it
+    r.settle();
+    await turns();
+    assert.deepEqual([c.did, c.toasts], [['rescan'], []], 'once it has, the Rescan asked for is done');
+  }
+  {
+    const r = restoring();
+    const c = commands({ bootRestore: r.bootRestore });
+    c.run('rescan');
+    r.settle(); // the scan had expired: the start screen names the folder, and no tree is open
+    await turns();
+    assert.deepEqual([c.did, c.toasts], [[], ['Scan a folder first — then Rescan scans it again.']], 'with nothing reopened, it says why it does nothing — then, when that is true');
+  }
+  const settled = commands({ bootRestore: { settled: true, done: new Promise<void>(() => {}) }, root: { path: '/x' } });
+  settled.run('rescan');
+  assert.deepEqual(settled.did, ['rescan'], 'control: once the restore has settled, a Rescan is done at once');
+});
+
+test('review HA-L5/HA-L13: the boot restore says it has settled only after the reopened scan is on screen — on every path, a failure too', async () => {
+  const run = async (scans: unknown, opts: { reopen?: string; fail?: boolean } = {}) => {
+    const log: string[] = [];
+    const state: Record<string, unknown> = { root: null, scanning: false };
+    const fns = page(['async function restoreLastSession('], {
+      state, requestedPath: () => null, console: { warn: () => log.push('warn') },
+      api: async (url: string) => {
+        if (opts.fail) throw new Error('The server did not answer');
+        return url === '/api/scans' ? { scans } : { roots: [] };
+      },
+      reopenScan: async () => { await turns(2); state.root = { path: '/Users/x' }; log.push('reopened'); return { outcome: opts.reopen ?? 'reopened' }; },
+      bootRestore: { settle: () => log.push(`settled${state.root ? ' over a tree' : ''}`) },
+      tourBootSettled: () => log.push('tour'),
+    }, 'restoreLastSession');
+    await fns.restoreLastSession();
+    return log;
+  };
+  assert.deepEqual(await run([{ rootPath: '/Users/x', scanId: 's1' }]), ['reopened', 'settled over a tree', 'tour'], 'a held scan: settled once it is reopened');
+  assert.deepEqual(await run([]), ['settled', 'tour'], 'nothing held: settled');
+  assert.deepEqual(await run(null, { fail: true }), ['warn', 'settled', 'tour'], 'a restore that failed has settled too: a Rescan waiting on it is answered');
 });
 
 test('C18: the page registers the menu\'s commands with the bridge', () => {
