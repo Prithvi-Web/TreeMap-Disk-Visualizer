@@ -19,6 +19,7 @@ import { describeConflicts } from '../src/services/openHandleGuard';
 import { readProvenance } from '../src/services/provenanceTracker';
 import {
   linuxTrashLocations, windowsTrashNote, recycleInfoOriginalName, listAccountBin, resolveTrashLocations, getTrashInfo, clearFreedesktopTrash, liveDriveTrashFs,
+  parseWindowsTrashDrives, WINDOWS_TRASH_DRIVES_SCRIPT,
 } from '../src/services/trash';
 import type { EmptyTrashResult } from '../src/services/trash';
 import { setCopyFaultForTests } from '../src/utils/copyVerify';
@@ -205,10 +206,29 @@ test('a Windows account\'s Recycle Bin folder is listed by the files in it, each
   assert.deepEqual(theirs, { items: [], bytes: 0, unreadable: false }, 'another account\'s folder: not this user\'s Trash, and not a failure');
 });
 
-test('on Windows the listing says which drives it reads, so the Empty Trash sheet never quotes a floor as exact (C67)', () => {
+test('on Windows the listing says which drives it reads when it could not list them, so the Empty Trash sheet never quotes a floor as exact (C67)', () => {
   const note = windowsTrashNote(['C:', 'D:', 'E:']);
+  assert.match(note, /could not list this computer\u2019s drives/, 'why it reads only these');
   assert.match(note, /C:, D: and E:/);
   assert.match(note, /every drive/, 'and that emptying it empties every drive\'s');
+});
+
+test('on Windows the listing reads the Recycle Bin of every local drive the computer has, so an empty one reads as empty; only drives it could not list make it a floor (review F1.6)', async () => {
+  const inputs = (windowsDrives: string[] | null) => ({ platform: 'win32' as const, dataHome: '', uid: null, mounts: null, fs: liveDriveTrashFs, windowsDrives });
+  const all = await resolveTrashLocations(inputs(['C:', 'F:']));
+  assert.deepEqual(all.dirs, ['C:\\$Recycle.Bin', 'F:\\$Recycle.Bin'], 'each local drive\'s Recycle Bin');
+  assert.equal(all.note, null, 'every local drive read is a whole listing, which can say the Recycle Bin is empty');
+  const unlisted = await resolveTrashLocations(inputs(null));
+  assert.deepEqual(unlisted.dirs, ['C:\\$Recycle.Bin', 'D:\\$Recycle.Bin', 'E:\\$Recycle.Bin'], 'control: the drives it falls back to');
+  assert.equal(unlisted.note, windowsTrashNote(['C:', 'D:', 'E:']), 'drives it could not list: the listing says it is a floor');
+
+  assert.deepEqual(parseWindowsTrashDrives(['C:', 'f:', 'C:', 'junk', 7, 'Z:\\']), ['C:', 'F:'], 'drive letters only, each once');
+  assert.deepEqual(parseWindowsTrashDrives('D:'), ['D:'], 'one drive: ConvertTo-Json prints a bare string');
+  assert.equal(parseWindowsTrashDrives([]), null, 'no drive named is no list');
+  assert.equal(parseWindowsTrashDrives({ Name: 'C:' }), null, 'control: nor is anything else');
+  // A mapped drive whose server is gone must not stall the Dashboard: the type is asked first, and only a local drive is asked whether it is ready.
+  assert.match(WINDOWS_TRASH_DRIVES_SCRIPT, /GetDrives\(\)/);
+  assert.match(WINDOWS_TRASH_DRIVES_SCRIPT, /\(\$_\.DriveType -eq 'Fixed' -or \$_\.DriveType -eq 'Removable'\) -and \$_\.IsReady/, 'local drives only, and only they are asked IsReady');
 });
 
 test('on Linux the Trash includes each local drive\'s own Trash folders, never a kernel table or a network share, and an unreadable mount table is said (C67)', () => {

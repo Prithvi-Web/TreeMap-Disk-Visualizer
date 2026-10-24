@@ -7,6 +7,7 @@ import { accessAdviceNow, accessCodeOf } from '../utils/accessAdvice';
 import { refuseUnderTestRunner } from './realMachineGuard';
 import { readMountTable } from '../utils/mountBoundaries';
 import type { MountEntry } from '../platform/atime';
+import { asArray, runPowerShellJson } from '../platform/windows/powershell';
 
 /**
  * Trash accounting (Feature 8). Best-effort, read-only sizing of the system
@@ -122,18 +123,43 @@ export function trashDirOverride(): string | null {
   return override && override.length > 0 ? override : null;
 }
 
-/** The drives whose Recycle Bin the Windows listing reads (hunt C67: the emptier clears every drive's). */
+/** The drives the Windows listing reads when it could not list the computer's own (hunt C67; review F1.6). */
 const WINDOWS_TRASH_DRIVES = ['C:', 'D:', 'E:'];
 
 /**
- * What the Windows listing leaves out, said (hunt C67). `Clear-RecycleBin`
- * empties the Recycle Bin on every drive, and Node has no cheap way to list
- * the drives without risking a stall on a mapped network drive — so the
- * listing is a floor there, and the Empty Trash sheet says "at least".
+ * The PowerShell that names the local drives a Recycle Bin can be on (review
+ * F1.6): fixed and removable ones with media in. `GetDrives()` and
+ * `DriveType` ask nothing of a mapped drive's server, and only a local drive
+ * is then asked whether it is ready, so a network drive whose server is gone
+ * cannot stall the listing. `Clear-RecycleBin` empties exactly these.
+ */
+export const WINDOWS_TRASH_DRIVES_SCRIPT = "ConvertTo-Json -Compress -InputObject @([System.IO.DriveInfo]::GetDrives() | Where-Object { ($_.DriveType -eq 'Fixed' -or $_.DriveType -eq 'Removable') -and $_.IsReady } | ForEach-Object { $_.Name.Substring(0, 2) })";
+
+/** The drive letters the script printed, each once, or null when it named none (review F1.6). */
+export function parseWindowsTrashDrives(out: unknown): string[] | null {
+  const named = typeof out === 'string' || Array.isArray(out) ? asArray(out as unknown) : [];
+  const drives = [...new Set(named.filter((d): d is string => typeof d === 'string' && /^[A-Za-z]:$/.test(d)).map((d) => d.toUpperCase()))];
+  return drives.length > 0 ? drives : null;
+}
+
+/** This computer's local drives, or null when PowerShell could not say. */
+async function listWindowsTrashDrives(): Promise<string[] | null> {
+  try {
+    return parseWindowsTrashDrives(await runPowerShellJson<unknown>(WINDOWS_TRASH_DRIVES_SCRIPT, { timeoutMs: 15_000 }));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What the Windows listing leaves out when it could not list the drives,
+ * said (hunt C67). `Clear-RecycleBin` empties the Recycle Bin on every drive,
+ * so a listing of three is a floor there, and the Empty Trash sheet says "at
+ * least".
  */
 export function windowsTrashNote(drives: readonly string[]): string {
   const named = drives.length > 1 ? `${drives.slice(0, -1).join(', ')} and ${drives[drives.length - 1]}` : drives.join('');
-  return `TreeMap counts the Recycle Bin on drives ${named} only; emptying it empties the Recycle Bin on every drive.`;
+  return `TreeMap could not list this computer’s drives, so it counts the Recycle Bin on drives ${named} only; emptying it empties the Recycle Bin on every drive.`;
 }
 
 /**
@@ -232,12 +258,16 @@ export interface TrashLocationInputs {
   /** Linux: the mount table's entries, or null when it could not be read. */
   mounts: readonly MountEntry[] | null;
   fs: DriveTrashFs;
+  /** Windows: the local drives, or null when they could not be listed. */
+  windowsDrives?: string[] | null;
 }
 
 /** The Trash locations on Windows and Linux, from what `inputs` says of the machine (review F1.14). */
 export async function resolveTrashLocations(inputs: TrashLocationInputs): Promise<TrashLocations> {
   if (inputs.platform === 'win32') {
-    return { dirs: WINDOWS_TRASH_DRIVES.map((d) => path.win32.join(d + '\\', '$Recycle.Bin')), note: windowsTrashNote(WINDOWS_TRASH_DRIVES), problems: [] };
+    const listed = inputs.windowsDrives ?? null;
+    const drives = listed && listed.length > 0 ? listed : WINDOWS_TRASH_DRIVES;
+    return { dirs: drives.map((d) => path.win32.join(d + '\\', '$Recycle.Bin')), note: drives === listed ? null : windowsTrashNote(drives), problems: [] };
   }
   const { home, drives, note } = linuxTrashLocations(inputs.dataHome, inputs.uid, inputs.mounts);
   const dirs = [home];
@@ -337,6 +367,7 @@ async function trashLocations(): Promise<TrashLocations> {
     uid: typeof process.getuid === 'function' ? process.getuid() : null,
     mounts: linux ? (await readMountTable('linux')).entries : null,
     fs: liveDriveTrashFs,
+    windowsDrives: linux ? null : await listWindowsTrashDrives(),
   });
 }
 
