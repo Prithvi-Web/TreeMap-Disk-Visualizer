@@ -90,6 +90,41 @@ test('a Cancel that arrives after a restore put its every file back leaves it co
   assert.equal(job.filesDone, 1);
 });
 
+test('a Cancel that arrives after the last file was tried leaves a restore with a failure an error that names it, not "cancelled"', async () => {
+  const { files, ids } = await offloaded('latefail', ['taken.bin', 'free.bin']);
+  fs.writeFileSync(files[0], 'something else stands at this name now'); // its restore is refused as occupied
+  const undo = setHardLinkForTests(async (a, b) => {
+    if (b === files[1]) cancelAllOffloadJobs(); // while the last file is put in place
+    await fsp.link(a, b);
+  });
+  let job: OffloadJob;
+  try {
+    job = await settled((await startRestore(ids)).jobId);
+  } finally {
+    undo();
+  }
+  assert.ok(fs.existsSync(files[1]), 'the free one is back');
+  assert.equal(job.status, 'error', 'every file was tried: the Cancel stopped nothing');
+  assert.match(job.error ?? '', /1 of 2 couldn't be restored — taken\.bin: something already exists/, job.error);
+});
+
+test('a Cancel that cuts the last file\'s copy short is a cancelled restore that put nothing back, not a failure', async () => {
+  const { files, ids } = await offloaded('cutshort', ['only.bin']);
+  const undo = setCopyFaultForTests((dest) => {
+    if (isRestoreCopyFor(dest, files[0])) cancelAllOffloadJobs(); // during the copy of the only file
+    return null;
+  });
+  let job: OffloadJob;
+  try {
+    job = await settled((await startRestore(ids)).jobId);
+  } finally {
+    undo();
+  }
+  assert.equal(job.status, 'cancelled', job.error);
+  assert.equal(job.filesDone, 0);
+  assert.ok(!fs.existsSync(files[0]), 'nothing was put back');
+});
+
 /** The frames of an offload job's progress stream, read until the server ends it. */
 async function framesOf(jobId: string): Promise<Record<string, unknown>[]> {
   resetRateLimiter();

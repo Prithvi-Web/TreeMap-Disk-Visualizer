@@ -1439,8 +1439,13 @@ async function restoreEntries(job: OffloadJob, entries: OffloadEntry[]): Promise
   const putBack = new Map<string, number>();
   /** Restored files whose recorded dates or permissions could not be set back (hunt C45). */
   const metaMisses: string[] = [];
+  /** Whether the Cancel stopped anything (hunt C49): a file left untried, or a copy it cut short. */
+  let stopped = false;
   for (const entry of entries) {
-    if (job.cancelled) break;
+    if (job.cancelled) {
+      stopped = true;
+      break;
+    }
     try {
       // The record says where to write; it is held to the shape TreeMap writes first (FG3).
       const refused = restoreRefusal(entry);
@@ -1476,6 +1481,7 @@ async function restoreEntries(job: OffloadJob, entries: OffloadEntry[]): Promise
       putBack.set(entry.id, Date.now());
       job.filesDone++;
     } catch (err) {
+      if (err instanceof CopyCancelled) stopped = true;
       (err instanceof CopyLeftBehind ? leftBehind : failures).push(`${entry.name}: ${messageOf(err)}`);
     }
   }
@@ -1495,10 +1501,10 @@ async function restoreEntries(job: OffloadJob, entries: OffloadEntry[]): Promise
     // Never "cancelled": a cancel that left a part-copied file is not one that left nothing.
     job.status = 'error';
     job.error = `${leftBehind.length} of ${entries.length} could not be restored, and what was begun could not be removed — ${leftBehind[0]}. Remove it before trying again; its offloaded copy is untouched.`;
-  } else if (job.cancelled && putBack.size < entries.length) {
-    // Cancelled before every file was put back (hunt C49): `filesDone` says how many were, and they stay
-    // where they are — a restore never takes back what it put back. One that put every file back is
-    // complete, however late the Cancel came.
+  } else if (stopped) {
+    // The Cancel stopped it before every file was tried (hunt C49): `filesDone` says how many were put
+    // back, and they stay where they are — a restore never takes back what it put back. A Cancel that
+    // came after every file was tried stopped nothing: the restore ends as what it did says.
     job.status = 'cancelled';
   } else if (failures.length) {
     job.status = 'error';
