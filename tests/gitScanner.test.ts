@@ -91,7 +91,8 @@ test('gc on a plain repository: hardened, told its git dir, and pruning only wha
   assert.deepEqual(plan.invocation.env, gitEnvironment(), 'the environment from scratch');
   assert.ok(!plan.invocation.args.some((a) => a === '--prune=now'), 'nothing unreachable is dropped the moment it became so');
   const ui = fs.readFileSync(path.join(__dirname, '..', 'src', 'ui', 'app', '220-clean-up-modal.js'), 'utf8');
-  assert.match(ui, /without changing any commits/, 'the promise the confirm makes, which --prune=2.weeks.ago keeps: recently dropped work survives');
+  // The confirm says what gc deletes for good, and only what --prune=2.weeks.ago removes: recently dropped work survives (hunt C35).
+  assert.match(ui, /permanently deletes what no branch, tag or recent reflog entry still points to and is more than two weeks old/, 'the promise the confirm makes, which --prune=2.weeks.ago keeps');
 });
 
 test('a .git FILE (a pointer to a git dir elsewhere) is refused before git is asked anything', async () => {
