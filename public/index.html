@@ -40058,6 +40058,16 @@ let cmpSplitSeq = 0;
 async function initCmpSplit(rootPath, whenA, whenB) {
   const seq = ++cmpSplitSeq;
   const note = $('cmpSplitNote');
+  // The card this split view is in. A compare started again, or a pick
+  // changed, while its maps load puts "Comparing…" or the line that says the
+  // picks changed in its place: the maps then answer for a card that is gone,
+  // and nothing of them is drawn or said — "No split view: …", of a card no
+  // longer on screen, stood in #cmpSaid after the next compare drew its own
+  // split view fine, and maps that answered said a script error, its range
+  // gone (review F1.1). A slower earlier compare's maps landing over a newer
+  // card are dropped the same way (review RD6).
+  const card = $('cmpSplitCard');
+  const gone = () => seq !== cmpSplitSeq || $('cmpSplitCard') !== card;
   // Left of the divider is promised to be the OLDER — keep that promise even
   // when the user picked the pair newest-first (review RD7).
   const [tA, tB] = whenA <= whenB ? [whenA, whenB] : [whenB, whenA];
@@ -40066,11 +40076,10 @@ async function initCmpSplit(rootPath, whenA, whenB) {
       api(`/api/snapshots/tree?path=${encodeURIComponent(rootPath)}&at=${tA}`),
       api(`/api/snapshots/tree?path=${encodeURIComponent(rootPath)}&at=${tB}`),
     ]);
-    if (seq !== cmpSplitSeq) return; // a slower earlier compare must not paint over a newer one (review RD6)
+    if (gone()) return;
     // closestSnapshot answers with the nearest stored tree; if both picks
     // resolve to the same one there is nothing to wipe between — say so.
     if (la.snapshot.takenAt === lb.snapshot.takenAt) {
-      const card = $('cmpSplitCard');
       if (card) card.hidden = true;
       return;
     }
@@ -40087,7 +40096,7 @@ async function initCmpSplit(rootPath, whenA, whenB) {
     range.addEventListener('input', () => cmpSplitDraw());
     cmpSplitDraw();
   } catch (e) {
-    if (seq !== cmpSplitSeq) return;
+    if (gone()) return;
     cmpSplit = null;
     if (note) note.textContent = `No split view: ${e.message}`;
     // Said in #cmpSaid, which stands in the panel from the start: the note is

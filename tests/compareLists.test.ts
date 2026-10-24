@@ -425,6 +425,145 @@ test('the split view\'s failure is said in #cmpSaid, and a compare started again
   assert.deepEqual(said, [''], 'control: the region was emptied as the compare started, and given nothing since');
 });
 
+/**
+ * The Compare panel over a server that answers each comparison and each split-view map only when the test says, and
+ * a card as a browser holds one: the split view's elements are the card's own, a fresh set for each card a compare
+ * draws, and none while another card is up — "Comparing…", or the line that says the picks changed (review F1.1).
+ */
+function splitRace() {
+  const T0 = 1_700_000_000_000;
+  const snaps = [snap('n1', '/c/corpus', T0), snap('n2', '/c/corpus', T0 + 3_600_000), snap('n3', '/c/corpus', T0 + 7_200_000)];
+  const frames: Array<() => void> = [];
+  const frame = () => { for (const fn of frames.splice(0)) fn(); };
+  const turns = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
+  /** Each comparison and map asked for, held until the test answers it. */
+  const held: Array<{ url: string; ok: (v: unknown) => void; no: (e: Error) => void }> = [];
+  // #cmpSaid as a browser keeps one: each text it is given recorded.
+  const said: string[] = [];
+  let text = '';
+  const cmpSaid = { get textContent() { return text; }, set textContent(v: string) { text = v; said.push(v); } };
+  const button: { click?: () => Promise<void> } = {};
+  const ctx = { setTransform() {}, fillRect() {}, strokeRect() {}, save() {}, restore() {}, beginPath() {}, rect() {}, clip() {}, fillStyle: '', strokeStyle: '' };
+  const SPLIT = ['cmpSplitCard', 'cmpSplitNote', 'cmpSplitFoot', 'cmpSplitRange', 'cmpSplitCanvas'];
+  /** The split view's elements in the card on screen, or null while another card is up. */
+  type Card = Record<string, { textContent?: string; innerHTML?: string; hidden?: boolean; drawn?: number }>;
+  let card: Card | null = null;
+  const cards: Card[] = [];
+  const drawCard = () => {
+    const range = { value: '50', drawn: 0, setAttribute() {}, addEventListener() { range.drawn++; } };
+    card = {
+      cmpSplitCard: { hidden: false }, cmpSplitNote: { textContent: '' }, cmpSplitFoot: { innerHTML: '' }, cmpSplitRange: range,
+      cmpSplitCanvas: { clientWidth: 200, clientHeight: 100, width: 0, height: 0, getContext: () => ctx } as never,
+    };
+    cards.push(card);
+  };
+  // Every write of the panel's body replaces the card on screen; renderCompare (below) draws one with the split view.
+  let html = '';
+  const body = { get innerHTML() { return html; }, set innerHTML(v: string) { html = v; card = null; } };
+  const els: Record<string, unknown> = {
+    cmpA: fakeSelect(), cmpB: fakeSelect(), cmpBody: body, cmpInfo: { textContent: '' }, cmpSaid,
+    cmpRunBtn: { disabled: false, addEventListener: (_t: string, fn: () => Promise<void>) => { button.click = fn; } },
+  };
+  const state = { root: { path: '/c/corpus' }, compare: { options: [] as unknown[], result: null as unknown } };
+  const noop = () => {};
+  let initSplit: (root: string, a: number, b: number) => Promise<void> = async () => {};
+  const deps: Record<string, unknown> = {
+    state,
+    $: (id: string) => (id in els ? els[id] : SPLIT.includes(id) ? (card?.[id] ?? null) : assert.fail(`the compare view touched #${id}`)),
+    api: (url: string) => {
+      if (url === '/api/scans') return Promise.resolve({ scans: [] });
+      if (url.startsWith('/api/snapshots?')) return Promise.resolve({ snapshots: snaps });
+      if (url.startsWith('/api/snapshots/compare?') || url.startsWith('/api/snapshots/tree?')) return new Promise((ok, no) => { held.push({ url, ok, no }); });
+      return assert.fail(`unexpected request ${url}`);
+    },
+    formatWhen: MINUTE_CLOCK.minute, formatWhenSeconds: MINUTE_CLOCK.second, formatBytes: (n: number) => `${n} B`, escapeHtml: (x: unknown) => String(x),
+    toast: (m: string) => assert.fail(`the page reported: ${m}`), icon: () => '', REDUCED: true,
+    cmpCountsDrop: noop, fxHuntBeamSync: noop, coverageRules: () => null, cmpCoverage: () => null,
+    // The card a comparison draws, as renderCompare draws it: written into the body, and a pair of snapshots of one
+    // folder gets the split view, whose maps it then asks for.
+    renderCompare: (r: { splitRoot?: string; whenA: number; whenB: number }) => {
+      body.innerHTML = 'RESULT';
+      drawCard();
+      if (r.splitRoot) void initSplit(r.splitRoot, r.whenA, r.whenB);
+    },
+    requestAnimationFrame: (fn: () => void) => frames.push(fn), window: { devicePixelRatio: 1 }, cssVar: () => '', sizeColor: () => '',
+  };
+  const aloud = /\nconst (\w+) = new Map\(\);[^\n]*\nfunction sayAloud\(/.exec(INDEX);
+  assert.ok(aloud, 'control: sayAloud keeps what each region says in a map declared right above it');
+  const names = ['lastPathSegment', 'loadCompareOptions', 'parseCmp', 'cmpSyncResult', 'cmpOptionLabels', 'cmpPairRefusal', 'cmpWhenPair', 'initCmpSplit', 'cmpSplitDraw', 'sayAloud', 'asSentences'];
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const page = new Function(...keys, `'use strict';\nlet cmpSplit = null; let cmpSplitSeq = 0; const ${aloud[1]} = new Map();\n${names.map(declOf).join('\n')}\n${runButtonSource()}\n` +
+    'return { load: loadCompareOptions, init: initCmpSplit, sync: cmpSyncResult, split: () => cmpSplit };')(...keys.map((k) => deps[k])) as {
+    load: () => Promise<void>; init: typeof initSplit; sync: () => void; split: () => unknown;
+  };
+  initSplit = page.init;
+  // As the page wires them.
+  for (const id of ['cmpA', 'cmpB']) (els[id] as ReturnType<typeof fakeSelect>).addEventListener('change', page.sync);
+  /** The comparison still out answers, with the two moments its picks name. */
+  const answerCompare = () => {
+    const i = held.findIndex((h) => h.url.startsWith('/api/snapshots/compare?'));
+    assert.notEqual(i, -1, 'control: a comparison is out');
+    const [h] = held.splice(i, 1);
+    const q = new URLSearchParams(h.url.slice(h.url.indexOf('?') + 1));
+    const at = (id: string | null) => ({ takenAt: snaps.find((x) => x.id === id)!.takenAt });
+    h.ok({ entries: [], totalDelta: 0, a: at(q.get('a')), b: at(q.get('b')) });
+  };
+  /** The split-view maps still out answer: with the trees, or failing with these words. */
+  const answerMaps = (fail: string | null) => {
+    const maps = held.filter((h) => h.url.startsWith('/api/snapshots/tree?'));
+    assert.equal(maps.length, 2, 'control: the split view asked for its two maps');
+    for (const h of maps) {
+      held.splice(held.indexOf(h), 1);
+      if (fail) h.no(new Error(fail));
+      else h.ok({ snapshot: { takenAt: Number(/[?&]at=(\d+)/.exec(h.url)![1]) }, nodes: [] });
+    }
+  };
+  return { page, frame, turns, said, text: () => text, cards, card: () => card, answerCompare, answerMaps, cmpA: els.cmpA as ReturnType<typeof fakeSelect>, click: () => button.click!() };
+}
+
+test('a split view still loading for a card that is gone says nothing when its maps answer — Compare pressed again, or a pick changed, while they load — so #cmpSaid never says "No split view: …" of a card no longer on screen, nor of a split view drawn fine (review F1.1, BQU item 37)', async () => {
+  for (const maps of ['fail', 'answer'] as const) {
+    for (const how of ['Compare pressed again', 'a pick changed'] as const) {
+      const r = splitRace();
+      await r.page.load();
+      void r.click();
+      await r.turns();
+      r.answerCompare();
+      await r.turns();
+      assert.equal(r.cards.length, 1, `${maps}, ${how}: control: the first compare drew its card, whose split view asks for its maps`);
+      if (how === 'Compare pressed again') {
+        void r.click(); // a double-click, or the same picks pressed again, while the maps load
+        await r.turns();
+        assert.equal(r.card(), null, `${maps}, ${how}: control: "Comparing…" stands where the card was`);
+      } else {
+        r.cmpA.pick('snap:n1');
+        assert.equal(r.card(), null, `${maps}, ${how}: control: the line that says the picks changed stands where the card was`);
+      }
+      r.said.length = 0;
+      r.answerMaps(maps === 'fail' ? 'Too many requests' : null); // the first card's maps answer now
+      await r.turns();
+      r.frame();
+      r.frame();
+      assert.deepEqual(r.said.filter((s) => /No split view/.test(s)), [], `${maps}, ${how}: nothing says the split view of a card that is gone failed — nor that a JavaScript error did`);
+      assert.equal(r.text(), '', `${maps}, ${how}: the region holds nothing of it`);
+      assert.equal(r.page.split(), null, `${maps}, ${how}: and nothing is drawn from them: the split view the page would draw is still none`);
+      if (how === 'Compare pressed again') {
+        r.answerCompare(); // the second compare lands and draws its card, whose split view draws fine
+        await r.turns();
+        assert.equal(r.cards.length, 2, `${maps}, ${how}: control: the second compare drew a card of its own`);
+        r.answerMaps(null);
+        await r.turns();
+        r.frame();
+        r.frame();
+        assert.equal(r.cards[1].cmpSplitRange.drawn, 1, `${maps}, ${how}: control: its split view is drawn`);
+        assert.equal(r.text(), '', `${maps}, ${how}: and nothing says it failed`);
+        assert.deepEqual(r.said.filter((s) => /No split view/.test(s)), [], `${maps}, ${how}: at any time`);
+      }
+    }
+  }
+});
+
 test('C08: the lists are wired to keep the result honest when a person changes them', () => {
   assert.match(INDEX, /\$\('cmpA'\)\.addEventListener\('change', cmpSyncResult\);/);
   assert.match(INDEX, /\$\('cmpB'\)\.addEventListener\('change', cmpSyncResult\);/);
