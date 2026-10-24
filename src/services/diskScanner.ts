@@ -202,7 +202,10 @@ const TOUCH_GRANULARITY_MS = 60 * 1000;
  */
 const RUNNING_SCAN_HARD_CAP_MS = 6 * 60 * 60 * 1000;
 /** Why a running scan collected at that horizon ended (evictExpiredScans), in the record a stream still holds. */
-const RUNNING_SCAN_HARD_CAP_MESSAGE = 'The scan was stopped after running for six hours, the longest TreeMap lets one scan run.';
+// Counted from when the scan started, paused time included — a paused scan
+// stays "running" — so it says the record's age, never that the scan ran for
+// six hours (review F1.9).
+const RUNNING_SCAN_HARD_CAP_MESSAGE = 'The scan was stopped six hours after it started, the longest TreeMap keeps a scan that has not finished.';
 const EVICT_INTERVAL_MS = 60 * 1000;
 
 /** In-memory store of all scans, auto-evicted after 30 minutes. */

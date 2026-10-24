@@ -75,7 +75,9 @@ test('a running scan collected at the six-hour limit is settled first, with its 
   assert.equal(getScan(rec.scanId), undefined);
   assert.equal(rec.cancelled, true, 'the engine still sees it cancelled');
   assert.equal(rec.status, 'error', 'no longer "running": the /progress timer ends on any other status, with an error frame');
-  assert.equal(rec.error, 'The scan was stopped after running for six hours, the longest TreeMap lets one scan run.');
+  // The limit counts from when the scan started, paused time included (a paused scan stays "running"):
+  // the sentence says the record's age, never that it ran for six hours (review F1.9).
+  assert.equal(rec.error, 'The scan was stopped six hours after it started, the longest TreeMap keeps a scan that has not finished.');
   assert.equal(typeof rec.finishedAt, 'number');
   const done = createScanRecord('/tmp/treemap-scanEviction-done');
   done.status = 'complete';
