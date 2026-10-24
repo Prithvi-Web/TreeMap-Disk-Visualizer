@@ -54,6 +54,20 @@ function shellQuote(p: string): string {
   return `'${p.replace(/'/g, `'\\''`)}'`;
 }
 
+/**
+ * Quote a path as the first word of a Desktop Entry `Exec=` value (Dolphin's
+ * service menu). The launcher is the person's own AppImage file since hunt
+ * C11 — `~/My Apps/TreeMap.AppImage`, a browser's `TreeMap-5.2.0 (1).AppImage`
+ * — and written bare, Dolphin split it at the space and started nothing
+ * (review F1.5). The spec's quoting: `"…"` with `\` before `"` `` ` `` `$`
+ * `\`; then the string-value escape, which doubles every `\`; and `%%` for a
+ * literal `%`.
+ */
+export function desktopEntryQuote(p: string): string {
+  const quoted = `"${p.replace(/[\\"`$]/g, (c) => `\\${c}`)}"`;
+  return quoted.replace(/\\/g, '\\\\').replace(/%/g, '%%');
+}
+
 /** Escape text for an XML attribute or element body. */
 export function xmlEscape(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]!);
@@ -87,7 +101,7 @@ export function dolphinServiceMenu(exec: string): string {
     '[Desktop Action treemapScan]',
     `Name=${SCRIPT_NAME}`,
     'Icon=treemap',
-    `Exec=${exec} %f`,
+    `Exec=${desktopEntryQuote(exec)} %f`,
     '',
   ].join('\n');
 }
@@ -127,7 +141,9 @@ export function addThunarAction(existing: string | null, exec: string): string {
     `\t<icon>treemap</icon>`,
     `\t<name>${xmlEscape(THUNAR_ACTION_NAME)}</name>`,
     '\t<unique-id>treemap-scan-1</unique-id>',
-    `\t<command>${xmlEscape(exec)} %f</command>`,
+    // Shell-quoted: Thunar splits its command the way a shell does (GLib's
+    // g_shell_parse_argv), so a launcher with a space in it stays one word (review F1.5).
+    `\t<command>${xmlEscape(shellQuote(exec))} %f</command>`,
     '\t<description>Open this folder in TreeMap</description>',
     '\t<directories/>',
     '</action>',

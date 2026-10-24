@@ -209,3 +209,69 @@ test('C11: asked to add the entry with no installed app to start, the platform r
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+/* ─────────────── Linux entries keep the launcher whole (review F1.5, F1.14) ─────────────── */
+
+/** Exec=… split as the Desktop Entry spec reads it: string escapes first, then double-quote rules, then %% → %. */
+function desktopEntryArgv(value: string): string[] {
+  const s = value.replace(/\\([\\sntr])/g, (_m, c: string) => ({ '\\': '\\', s: ' ', n: '\n', t: '\t', r: '\r' })[c]!);
+  const out: string[] = [];
+  let cur: string | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === ' ') { if (cur !== null) out.push(cur); cur = null; continue; }
+    if (c === '"') {
+      cur = cur ?? '';
+      for (i++; i < s.length && s[i] !== '"'; i++) cur += s[i] === '\\' && '"`$\\'.includes(s[i + 1]) ? s[++i] : s[i];
+      continue;
+    }
+    cur = (cur ?? '') + c;
+  }
+  if (cur !== null) out.push(cur);
+  // %% is a literal %; any other % is a field code (%f, %u…), which only the placeholder may be.
+  return out.map((a) => {
+    if (a === '%f') return a;
+    const held = a.replace(/%%/g, '\u0000');
+    return held.includes('%') ? `<field code in ${a}>` : held.replace(/\u0000/g, '%');
+  });
+}
+
+/** A command line split as GLib's g_shell_parse_argv (Thunar's custom actions) reads it. */
+function shellArgv(s: string): string[] {
+  const out: string[] = [];
+  let cur: string | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === ' ') { if (cur !== null) out.push(cur); cur = null; continue; }
+    cur = cur ?? '';
+    if (c === "'") { for (i++; i < s.length && s[i] !== "'"; i++) cur += s[i]; continue; }
+    if (c === '"') { for (i++; i < s.length && s[i] !== '"'; i++) cur += s[i] === '\\' && '"`$\\'.includes(s[i + 1]) ? s[++i] : s[i]; continue; }
+    if (c === '\\') { cur += s[++i] ?? ''; continue; }
+    cur += c;
+  }
+  if (cur !== null) out.push(cur);
+  return out;
+}
+
+const xmlUnescape = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+
+test('review F1.5/F1.14: Dolphin\'s Exec and Thunar\'s command keep an AppImage path with spaces, parentheses and quotes whole (Dolphin a % too), as each file manager splits it', async () => {
+  const { dolphinServiceMenu, addThunarAction } = await import('../src/platform/linux/shellIntegration');
+  const launchers = [
+    '/home/x/Downloads/TreeMap-5.2.0 (1).AppImage', // a browser's rename of a second download
+    '/home/x/My Apps/TreeMap 5.2.0.AppImage',
+    '/home/x/it\'s "100%" $HOME `x` \\back/TreeMap.AppImage',
+    '/home/x/odd\\"name/TreeMap.AppImage', // a backslash before a quote
+    '/opt/TreeMap/treemap',
+  ];
+  for (const exec of launchers) {
+    const line = /^Exec=(.*)$/m.exec(dolphinServiceMenu(exec));
+    assert.ok(line, 'Dolphin\'s service menu has an Exec line');
+    assert.deepEqual(desktopEntryArgv(line[1]), [exec, '%f'], `Dolphin starts ${exec}, with the folder as its one argument`);
+    // Thunar substitutes its own % codes before it splits; a launcher with a % in it is not claimed for Thunar here.
+    if (exec.includes('%')) continue;
+    const cmd = /<command>([\s\S]*?)<\/command>/.exec(addThunarAction(null, exec));
+    assert.ok(cmd, 'Thunar\'s action has a command');
+    assert.deepEqual(shellArgv(xmlUnescape(cmd[1])), [exec, '%f'], `Thunar starts ${exec}, with the folder as its one argument`);
+  }
+});
