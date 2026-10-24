@@ -27436,17 +27436,41 @@ function tmSyncQueryBar() {
  * cannot account for hits the server never sent. The caller handles truncation
  * before it reaches here.
  */
-function tmUndrawnBreakdown(paths, viewRoot, drawn) {
+function tmUndrawnBreakdown(paths, viewRoot, drawn, hidden = null) {
   let self = false;
   let outside = 0;
   let inside = 0;
+  let cloud = 0;
   for (const p of paths || []) {
     if (viewRoot && p === viewRoot) self = true;
     else if (viewRoot && !tmIsInside(p, viewRoot)) outside++;
+    else if (hidden && hidden(p)) cloud++;
     else inside++;
   }
-  // A path can be drawn more than once in principle; never report a negative.
-  return { self, outside, deeper: Math.max(0, inside - drawn) };
+  // `hidden` answers whether Hide cloud hides a path (tmHiddenByCloud): no
+  // renderer draws one then, at any depth, so it is its own reason — counted
+  // as deeper, the advice to zoom in or raise Depth could not show it (review
+  // L15). A path can be drawn more than once in principle; never report a
+  // negative.
+  return { self, outside, cloud, deeper: Math.max(0, inside - drawn) };
+}
+
+/**
+ * Whether Hide cloud hides `path` — an online-only file while the pill is on —
+ * as a predicate for tmUndrawnBreakdown, or null while it is off. Read from
+ * the page's tree, or from the map's own nodes for a file the tree's first
+ * frame left out; a path neither holds is not known to be hidden.
+ */
+function tmHiddenByCloud() {
+  if (!state.treemap.hideCloud) return null;
+  let laid = null;
+  return (p) => {
+    const n = state.pathIndex.get(p);
+    if (n) return !!n.cloudPlaceholder;
+    laid = laid || new Map((state.treemap.nodes || []).map((x) => [x.path, x]));
+    const m = laid.get(p);
+    return !!(m && m.cloudPlaceholder);
+  };
 }
 
 /**
@@ -27470,19 +27494,35 @@ function tmUndrawnBreakdown(paths, viewRoot, drawn) {
  * With no view root known, everything falls into the depth bucket, which is
  * the same answer the old code gave and the only honest one left.
  */
-function tmUndrawnMessage(found, drawn, paths, viewRoot) {
-  const b = tmUndrawnBreakdown(paths, viewRoot, drawn);
+function tmUndrawnMessage(found, drawn, paths, viewRoot, hidden = null) {
+  const b = tmUndrawnBreakdown(paths, viewRoot, drawn, hidden);
   const head = `${found} match${found === 1 ? '' : 'es'} — ${drawn} shown here.`;
   const why = [];
   if (b.self) why.push('one is this folder itself, which has no rectangle of its own');
   if (b.outside) why.push(`${b.outside} ${b.outside === 1 ? 'is' : 'are'} elsewhere in the scan, outside this folder`);
   if (b.deeper) why.push(`${b.deeper} ${b.deeper === 1 ? 'is' : 'are'} deeper than this view draws`);
+  if (b.cloud) why.push(tmCloudHiddenWords(b.cloud));
   if (!why.length) return head; // nothing left to explain; do not invent a reason
-  const advice = b.deeper && b.outside ? ' Zoom in or raise Depth for those; go up for the rest.'
-    : b.deeper ? ' Zoom in or raise Depth.'
-    : b.outside ? ' Go up to see them.'
-    : '';
+  let advice;
+  if (b.cloud) {
+    // Hide cloud's own advice beside the others, each naming the ones it shows.
+    const acts = [];
+    if (b.deeper) acts.push('zoom in or raise Depth for the deeper ones');
+    if (b.outside) acts.push('go up for the ones elsewhere');
+    acts.push(acts.length ? 'turn off Hide cloud for the online-only ones' : `turn off Hide cloud to see ${b.cloud === 1 ? 'it' : 'them'}`);
+    advice = ` ${acts.join('; ').replace(/^./, (c) => c.toUpperCase())}.`;
+  } else {
+    advice = b.deeper && b.outside ? ' Zoom in or raise Depth for those; go up for the rest.'
+      : b.deeper ? ' Zoom in or raise Depth.'
+      : b.outside ? ' Go up to see them.'
+      : '';
+  }
   return `${head} ${why.join('; ').replace(/^./, (c) => c.toUpperCase())}.${advice}`;
+}
+
+/** "3 are online-only files hidden by Hide cloud" — the matches Hide cloud hides (review L15). */
+function tmCloudHiddenWords(n) {
+  return `${formatCount(n)} ${n === 1 ? 'is an online-only file' : 'are online-only files'} hidden by Hide cloud`;
 }
 
 /**
@@ -27513,28 +27553,32 @@ function tmNoScanQueryWords() {
  * from tmUndrawnBreakdown (`paths`, the folder `viewRoot`), as the rectangle
  * map's sentence does; a `truncated` list cannot say where the rest are.
  */
-function tmSunburstQueryWords(found, degraded, paths, viewRoot, truncated) {
+function tmSunburstQueryWords(found, degraded, paths, viewRoot, truncated, hidden = null) {
   const said = degraded.map((d) => d.reason);
   if (found > 0) {
     const one = found === 1;
     const head = `${formatCount(found)} match${one ? '' : 'es'} — the sunburst does not highlight ${one ? 'it' : 'them'}.`;
-    const b = tmUndrawnBreakdown(paths, viewRoot, 0);
-    const here = b.deeper; // in the folder on screen, at any depth: what another renderer may draw
+    const b = tmUndrawnBreakdown(paths, viewRoot, 0, hidden);
+    const here = b.deeper; // in the folder on screen, at any depth, and not hidden: what another renderer may draw
     if (truncated) {
       said.push(`${head} Treemap, Circles and Voronoi highlight the ones they draw.`);
-    } else if (!b.self && !b.outside) {
+    } else if (!b.self && !b.outside && !b.cloud) {
       said.push(`${head} Switch to Treemap, Circles or Voronoi to see ${one ? 'it' : 'them'}.`);
     } else {
       const why = [];
       if (b.self) why.push('one is this folder itself');
       if (b.outside) why.push(`${formatCount(b.outside)} ${b.outside === 1 ? 'is' : 'are'} elsewhere in the scan, outside this folder`);
       if (here) why.push(`${formatCount(here)} ${here === 1 ? 'is' : 'are'} in this folder`);
+      // Hidden by Hide cloud, which hides them in every renderer (review L15).
+      if (b.cloud) why.push(tmCloudHiddenWords(b.cloud));
       const ones = here === 1 ? 'the one' : 'the ones';
       const advice = here && b.outside ? ` Switch to Treemap, Circles or Voronoi to see ${ones} in this folder, and go up there for the rest.`
         : here ? ` Switch to Treemap, Circles or Voronoi to see ${ones} in this folder.`
         : b.outside ? ` Go up in Treemap, Circles or Voronoi to see ${b.outside === 1 ? 'it' : 'them'}.`
         : '';
-      said.push(`${head} ${why.join('; ').replace(/^./, (c) => c.toUpperCase())}.${advice}`);
+      const cloudAdvice = !b.cloud ? '' : here || b.outside ? ' Turn off Hide cloud to see the online-only ones.'
+        : ` Turn off Hide cloud and switch to Treemap, Circles or Voronoi to see ${b.cloud === 1 ? 'it' : 'them'}.`;
+      said.push(`${head} ${why.join('; ').replace(/^./, (c) => c.toUpperCase())}.${advice}${cloudAdvice}`);
     }
   } else if (!degraded.length) {
     said.push('Nothing matched.');
@@ -27553,13 +27597,15 @@ const TM_SUNBURST_BARE_WORDS = 'The sunburst does not highlight matches. Switch 
 function tmQueryAnswerWords() {
   const found = state.treemap.matchTotal;
   const degraded = tmLastHits.degraded || [];
+  // Guarded: a page reader may lift this function without it.
+  const hidden = typeof tmHiddenByCloud === 'function' ? tmHiddenByCloud() : null;
   if (state.treemap.mode === 'sunburst') {
-    return tmSunburstQueryWords(found, degraded, tmLastHits.paths, state.treemap.rootPath, tmLastHits.truncated);
+    return tmSunburstQueryWords(found, degraded, tmLastHits.paths, state.treemap.rootPath, tmLastHits.truncated, hidden);
   }
   if (degraded.length) return degraded.map((d) => d.reason).join(' ');
   if (tmLastHits.truncated) return `Showing the ${formatCount(state.treemap.matchedPaths.size)} biggest of ${formatCount(found)} matches.`;
   const drawn = state.treemap.matches;
-  if (found > drawn) return tmUndrawnMessage(found, drawn, tmLastHits.paths, state.treemap.rootPath);
+  if (found > drawn) return tmUndrawnMessage(found, drawn, tmLastHits.paths, state.treemap.rootPath, hidden);
   return '';
 }
 

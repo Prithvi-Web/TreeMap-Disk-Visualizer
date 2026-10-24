@@ -1034,7 +1034,8 @@ test('HB2 (L1, L8, L14): a plain word typed over the sunburst is said once — t
 });
 
 /** What the box says, and the real functions that word a query's answer for the map now drawn. */
-const REWORD_NAMES = ['TM_SUNBURST_BARE_WORDS', 'tmIsInside', 'tmUndrawnBreakdown', 'tmUndrawnMessage', 'tmSunburstQueryWords', 'tmQueryAnswerWords', 'tmRewordQuery'];
+const REWORD_NAMES = ['TM_SUNBURST_BARE_WORDS', 'tmIsInside', 'tmUndrawnBreakdown', 'tmUndrawnMessage', 'tmSunburstQueryWords', 'tmQueryAnswerWords', 'tmRewordQuery',
+  ...['tmHiddenByCloud', 'tmCloudHiddenWords'].filter((n) => INDEX.includes(`function ${n}(`))];
 const NINE = ['/r', '/r/a/x1', '/r/a/x2', '/r/b/y1', '/r/b/y2', '/r/b/y3', '/r/c/z1', '/r/c/z2', '/r/c/z3'];
 
 function rewordHarness(mode: string) {
@@ -1046,7 +1047,9 @@ function rewordHarness(mode: string) {
   const preview = { on: false };
   const state = {
     view: 'treemap',
-    treemap: { mode, rootPath: '/r', query: 'size>1gb', queryMode: 'grammar', matchTotal: 9 as number | null, matchedPaths: new Set(NINE), matches: 3 },
+    pathIndex: new Map<string, { cloudPlaceholder?: boolean }>(),
+    treemap: { mode, rootPath: '/r', query: 'size>1gb', queryMode: 'grammar', matchTotal: 9 as number | null, matchedPaths: new Set(NINE), matches: 3,
+      hideCloud: false, nodes: [] as { path: string; cloudPlaceholder?: boolean }[] },
   };
   const page = load<{ reword: () => void; say: (t: string) => void; words: () => string; setMorph: (m: unknown) => void }>(
     [...REWORD_NAMES, 'asSentences', 'sayAloud', 'tmSetQueryMessage'], {
@@ -1321,4 +1324,34 @@ test('HB2 (L3): the keyboard\'s selection goes when a repaint stops drawing it �
   state.treemap.arcs = [];
   drawView();
   assert.equal(state.treemap.kbSel, null);
+});
+
+test('HB2 (L15): with Hide cloud on, the matches it hides are said as that — never "deeper than this view draws", whose advice cannot show them', () => {
+  const t = rewordHarness('treemap');
+  t.state.treemap.hideCloud = true;
+  for (const p of ['/r/c/z1', '/r/c/z2']) t.state.pathIndex.set(p, { cloudPlaceholder: true });
+  t.state.treemap.nodes = [{ path: '/r/c/z3', cloudPlaceholder: true }]; // laid out by the server, not in the page's tree
+  t.reword();
+  assert.equal(t.box.textContent, '9 matches — 3 shown here. One is this folder itself, which has no rectangle of its own; 2 are deeper than this view draws; ' +
+    '3 are online-only files hidden by Hide cloud. Zoom in or raise Depth for the deeper ones; turn off Hide cloud for the online-only ones.');
+  t.state.treemap.matches = 5;
+  t.reword();
+  assert.equal(t.box.textContent, '9 matches — 5 shown here. One is this folder itself, which has no rectangle of its own; 3 are online-only files hidden by Hide cloud. ' +
+    'Turn off Hide cloud to see them.');
+  t.state.treemap.hideCloud = false; t.state.treemap.matches = 3;
+  t.reword();
+  assert.match(t.box.textContent, /5 are deeper than this view draws\. Zoom in or raise Depth\.$/, 'control: Hide cloud off, they are drawable');
+  const s = rewordHarness('sunburst');
+  s.state.treemap.hideCloud = true;
+  for (const p of ['/r/c/z1', '/r/c/z2', '/r/c/z3']) s.state.pathIndex.set(p, { cloudPlaceholder: true });
+  s.reword();
+  assert.equal(s.box.textContent, '9 matches — the sunburst does not highlight them. One is this folder itself; 5 are in this folder; 3 are online-only files hidden by Hide cloud. ' +
+    'Switch to Treemap, Circles or Voronoi to see the ones in this folder. Turn off Hide cloud to see the online-only ones.');
+  // Every match in the folder on screen, some hidden: "switch to see them" alone would be followed by a map that hides them too.
+  const words = load<(...a: unknown[]) => string>(REWORD_NAMES, { state: {}, formatCount: String }, 'tmSunburstQueryWords', 'let tmMorph = null; let tmLastHits = {};');
+  assert.equal(words(2, [], ['/r/a/x1', '/r/c/z1'], '/r', false, (p: string) => p === '/r/c/z1'),
+    '2 matches — the sunburst does not highlight them. 1 is in this folder; 1 is an online-only file hidden by Hide cloud. ' +
+    'Switch to Treemap, Circles or Voronoi to see the one in this folder. Turn off Hide cloud to see the online-only ones.');
+  assert.equal(words(1, [], ['/r/c/z1'], '/r', false, () => true),
+    '1 match — the sunburst does not highlight it. 1 is an online-only file hidden by Hide cloud. Turn off Hide cloud and switch to Treemap, Circles or Voronoi to see it.');
 });
