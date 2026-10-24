@@ -389,10 +389,10 @@ test('api() passes on an abort that lands while the body is arriving, as it does
   assert.equal(await lost('/api/scan/s1/result', { signal: new AbortController().signal }), null);
 });
 
-test('/stats 404 fails as expired; ten 429s count nothing toward dead', async () => {
+test('/stats 404 fails as a record that is gone — never "expired", which a running scan does not (hunt C69); ten 429s count nothing toward dead', async () => {
   const gone = drive(() => httpError(404, 'SCAN_NOT_FOUND'));
   await gone.ticks(3);
-  assert.deepEqual(gone.failed, ['The scan expired — please run it again.'], 'a record that is gone can never finish');
+  assert.deepEqual(gone.failed, ['TreeMap’s server no longer has this scan — it may have restarted. Scan the folder again.'], 'a record that is gone can never finish');
   assert.equal(gone.timerCleared(), true);
 
   const limited = drive(() => httpError(429, 'RATE_LIMITED'));

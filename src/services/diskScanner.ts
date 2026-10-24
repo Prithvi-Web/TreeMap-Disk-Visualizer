@@ -201,6 +201,8 @@ const TOUCH_GRANULARITY_MS = 60 * 1000;
  * progress stream never finished, and the UI spun forever.
  */
 const RUNNING_SCAN_HARD_CAP_MS = 6 * 60 * 60 * 1000;
+/** Why a running scan collected at that horizon ended (evictExpiredScans), in the record a stream still holds. */
+const RUNNING_SCAN_HARD_CAP_MESSAGE = 'The scan was stopped after running for six hours, the longest TreeMap lets one scan run.';
 const EVICT_INTERVAL_MS = 60 * 1000;
 
 /** In-memory store of all scans, auto-evicted after 30 minutes. */
@@ -250,6 +252,16 @@ export function evictExpiredScans(now = Date.now()): string[] {
   for (const [id, scan] of scans) {
     if (!scanExpired(scan, now)) continue;
     scan.cancelled = true;
+    // A running record collected at the six-hour limit is settled first, as
+    // cancelScan settles one: the engines return on `cancelled` without
+    // settling, and a /progress stream holding this record ends only on a
+    // status other than 'running' — it went on heartbeating the last count
+    // for ever, and the page said "Scanning…" with no end (hunt C68).
+    if (scan.status === 'running') {
+      scan.status = 'error';
+      scan.error = RUNNING_SCAN_HARD_CAP_MESSAGE;
+      scan.finishedAt = now;
+    }
     scans.delete(id);
     // The shard first: a paused gdu shard is SIGSTOPped with its own deadline
     // disarmed, so dropping the record without killing it would leave a

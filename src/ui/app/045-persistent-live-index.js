@@ -644,11 +644,14 @@ function followScanProgress(scanId, path, fast, t0) {
       // Abandoned by the tick that counted it, or by Stop: nothing more to say.
       if (e && e.name === 'AbortError') return;
       // 500: the scan itself failed server-side. 404: the scan record is
-      // gone (evicted or the server restarted) — waiting longer can never
-      // succeed, so stop the spinner instead of polling forever.
+      // gone — waiting longer can never succeed, so stop the spinner instead
+      // of polling forever. A running scan does not expire (only at the
+      // six-hour limit, which now ends it with its reason, hunt C68): a record
+      // gone under it is almost always TreeMap's server having restarted, and
+      // "expired" said what did not happen (hunt C69).
       if (e.status === 500 || e.status === 404) {
         stop();
-        failScan(e.status === 404 ? 'The scan expired — please run it again.' : e.message);
+        failScan(e.status === 404 ? 'TreeMap’s server no longer has this scan — it may have restarted. Scan the folder again.' : e.message);
         return;
       }
       // Headers and then nothing readable: not a refusal, and no answer.
