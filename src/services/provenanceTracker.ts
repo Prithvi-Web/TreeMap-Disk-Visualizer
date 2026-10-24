@@ -36,8 +36,14 @@ export interface ProvenanceResult {
   downloadedAt: number | null;
   /** Which OS mechanism answered, e.g. "kMDItemWhereFroms". */
   mechanism: string | null;
-  /** Last time the file was opened, from its atime. Null when unknown. */
+  /** Last time the file was opened, from its atime. Null when unknown — or not opened since it last changed. */
   lastOpenedAt: number | null;
+  /**
+   * Set when a null `lastOpenedAt` is UNKNOWN, with why (hunt C92): the file's
+   * dates could not be read, or this computer does not record openings. Absent
+   * with a null date, openings are recorded and none came after the last change.
+   */
+  lastOpenedUnknown?: string;
   /** Why there is no record, when there is none. */
   absentReason?: string;
 }
@@ -64,6 +70,16 @@ function absentReasonFor(mechanism: string): string {
   return 'Nothing was recorded. macOS saves this for browser downloads; files you created yourself, or copied from another drive, have none.';
 }
 
+/** Why this computer keeps no record of openings, or null when it keeps one (the lastUsed capability's verdict). */
+async function openingsNotRecorded(): Promise<string | null> {
+  try {
+    const cap = await capabilityState('lastUsed');
+    return cap.available ? null : cap.reason ?? 'This computer does not record when files are opened.';
+  } catch {
+    return 'TreeMap could not tell whether this computer records when files are opened.';
+  }
+}
+
 export async function readProvenance(filePath: string): Promise<ProvenanceResult> {
   const provider = platform();
   const state = await capabilityState('provenance');
@@ -87,6 +103,11 @@ export async function readProvenance(filePath: string): Promise<ProvenanceResult
     mechanism: state.mechanism || null,
     lastOpenedAt: st ? lastOpened(st) : null,
   };
+  // A null date is a finding only where openings are recorded and the dates were read (hunt C92).
+  if (base.lastOpenedAt === null) {
+    const unknown = st === null ? 'TreeMap could not read this file\'s dates.' : await openingsNotRecorded();
+    if (unknown) base.lastOpenedUnknown = unknown;
+  }
 
   if (!state.available) return base;
 

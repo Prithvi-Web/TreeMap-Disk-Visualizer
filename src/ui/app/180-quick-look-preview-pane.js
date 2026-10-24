@@ -113,9 +113,12 @@ async function loadProvenance(filePath, reqId) {
   try { data = await api('/api/provenance?path=' + encodeURIComponent(filePath)); } catch { return; }
   if (reqId !== pvReqId) return; // a newer file superseded this one
 
+  // An unknown date is not "never opened" (hunt C92): the server says why it is unknown.
   const opened = data.lastOpenedAt
     ? `last opened ${escapeHtml(formatDate(data.lastOpenedAt))}`
-    : `never opened since it was saved, as far as ${platformWord({ darwin: 'this Mac', win32: 'Windows', other: 'this computer' })} records`;
+    : data.lastOpenedUnknown
+      ? `when it was last opened is not known. ${String(data.lastOpenedUnknown).replace(/\.$/, '')}`
+      : `never opened since it was saved, as far as ${platformWord({ darwin: 'this Mac', win32: 'Windows', other: 'this computer' })} records`;
 
   if (!data.supported) {
     host.innerHTML = `<div class="pv-orig-line muted">${icon('globe', 12)} ${escapeHtml(data.unsupportedReason || 'This system does not record where files came from.')}</div>`;

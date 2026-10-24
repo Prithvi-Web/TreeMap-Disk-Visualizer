@@ -472,3 +472,24 @@ test('the Trash sheet says how many items it does not list, under a header that 
   })();
   assert.doesNotMatch(text(whole.els.trashModalBody.innerHTML), /not listed/, 'a whole list says nothing more');
 });
+
+/* ═════════ C92 — an unknown last-opened date is never "never opened" ═════════ */
+
+async function provenanceSaid(data: Record<string, unknown>): Promise<string> {
+  const { $, els } = makeEls();
+  (els as Record<string, unknown>).pvOrigin = { hidden: true, innerHTML: '', querySelector: () => null };
+  const load = declared<(p: string, id: number) => Promise<void>>('async function loadProvenance(filePath, reqId) {', {
+    $, api: async () => data, escapeHtml: (s: unknown) => String(s), formatDate: () => 'Oct 2, 2026', icon: () => '',
+    platformWord: (w: { darwin: string }) => w.darwin,
+  }, 'let pvReqId = 1;');
+  await load('/x/a.zip', 1);
+  return text(((els as Record<string, unknown>).pvOrigin as { innerHTML: string }).innerHTML);
+}
+
+test('the preview pane says a last-opened date is not known, with why, rather than "never opened" (C92)', async () => {
+  const unknown = await provenanceSaid({ supported: true, found: false, absentReason: 'Nothing was recorded.', lastOpenedAt: null, lastOpenedUnknown: 'This computer does not record when files are opened.' });
+  assert.doesNotMatch(unknown, /never opened/i, `unknown is not never: ${unknown}`);
+  assert.match(unknown, /When it was last opened is not known\. This computer does not record when files are opened\./);
+  const never = await provenanceSaid({ supported: true, found: false, absentReason: 'Nothing was recorded.', lastOpenedAt: null });
+  assert.match(never, /Never opened since it was saved, as far as this Mac records\./, 'control: where openings are recorded, the old sentence stands');
+});

@@ -16,6 +16,7 @@ import { planCartCommit, commitCart, undoCartRun } from '../src/services/cartCom
 import { getCapsuleJob } from '../src/services/timeCapsule';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { describeConflicts } from '../src/services/openHandleGuard';
+import { readProvenance } from '../src/services/provenanceTracker';
 import { linuxTrashLocations, windowsTrashNote, recycleInfoOriginalName, listAccountBin } from '../src/services/trash';
 import { setCopyFaultForTests } from '../src/utils/copyVerify';
 import { createApp } from '../src/server';
@@ -223,4 +224,13 @@ test('on Linux the Trash includes each drive\'s own Trash folders, never a kerne
   assert.deepEqual(unread.dirs, ['/home/u/.local/share/Trash/files'], 'the home Trash still counts');
   assert.match(unread.note ?? '', /another drive/, 'and what is not counted is said');
   assert.deepEqual(linuxTrashLocations('/d', null, mounts).dirs, ['/d/Trash/files'], 'no uid, no per-drive folder to name');
+});
+
+/* ═════════ C92 — provenance says when a last-opened date is unknown, and why ═════════ */
+
+
+test('provenance names why a last-opened date is unknown: a file it cannot read gives a reason, never a bare null (C92)', async () => {
+  const gone = await readProvenance(path.join(os.tmpdir(), `tm-hc-no-such-${process.pid}.bin`));
+  assert.equal(gone.lastOpenedAt, null, 'control: no date');
+  assert.match(gone.lastOpenedUnknown ?? '', /could not read/, 'and why');
 });
