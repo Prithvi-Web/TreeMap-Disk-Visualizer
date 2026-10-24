@@ -227,9 +227,12 @@ OpenAPI 3 spec).
      file verifies.** Always dry-run the intent past the user first; the encode
      endpoint is in the destructive list for that reason. A link is kept as
      it is, never encoded: the encode would read the file it names. The batch
-     is one operation under agent-policy.json's byte cap. A file a program
-     holds open, one gone since the scan, or one whose encode fails keeps its
-     original, with the reason in its result, and the job goes on to the next.
+     is one operation under agent-policy.json's byte cap. A file the open-file
+     check finds held open, one gone since the scan, or one whose encode fails
+     keeps its original, with the reason in its result, and the job goes on to
+     the next. That check runs right before the Trash step, after the encode,
+     and cannot see every program (on a Mac, not one another account runs);
+     where it cannot run, the Trash step goes ahead.
    - `GET /api/missing-gigabytes?scanId=` — **one accounting statement for the
      volume the scan lives on**, and the only endpoint here whose output is an
      arithmetic claim. `{ volume, lines[], unaccountedBytes, coversWholeVolume,

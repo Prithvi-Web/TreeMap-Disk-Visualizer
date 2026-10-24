@@ -20,6 +20,7 @@ import { POLICY_FILE } from '../src/services/policy';
 import { platform } from '../src/platform';
 import { invalidateCapabilities } from '../src/platform/capabilities';
 import { waitFor } from './fixtures/waitFor';
+import { withOpenFileCheck } from './fixtures/openFileCheck';
 
 /**
  * Hunt C52: POST /api/compression/encode trashes each original once its encode verifies, but it
@@ -154,4 +155,31 @@ test('README names only the encoder TreeMap uses, and says where Shrink video is
   assert.match(shrink, /VideoToolbox/);
   assert.match(shrink, /not offered on Windows or Linux/);
   assert.doesNotMatch(shrink, /If any step fails the original is still sitting there untouched/, 'a failed rename after the Trash step leaves the original in the Trash, which the paragraph must not deny');
+});
+
+test('where the open-file check cannot run, the Trash step goes ahead and the original is replaced, as README and AGENTS.md now say (review F1.7)', async () => {
+  const { files: [video] } = await scannedRootWith(['unchecked.mp4']);
+  await withOpenFileCheck('fails', async () => {
+    const started = await post('/api/compression/encode', { paths: [video], confirm: true });
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+    await waitFor(() => getEncodeJob(started.body.jobId)?.status !== 'running', 'the encode job');
+    const [result] = getEncodeJob(started.body.jobId)!.results;
+    assert.equal(result.ok, true, `an unanswered check does not keep the original: ${result.error}`);
+    assert.ok(trashed.includes(video), 'the original went to the Trash');
+  });
+});
+
+test('README and AGENTS.md say what the open-file check before the Trash step can and cannot see, never that every open file keeps its original (review F1.7)', () => {
+  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8');
+  const shrink = readme.split('\n').find((l) => l.startsWith('**Shrink video**')) ?? '';
+  const start = agents.indexOf('`POST /api/compression/encode` —');
+  const encode = agents.slice(start, agents.indexOf('\n   - ', start)).replace(/\s+/g, ' ');
+  assert.ok(shrink && start > 0, 'both paragraphs are there');
+  for (const [doc, text] of [['README', shrink], ['AGENTS.md', encode]]) {
+    assert.doesNotMatch(text, /A file (another program|a program) holds open keeps its original/, `${doc}: no promise the check cannot keep`);
+    assert.match(text, /[Rr]ight before the Trash step/, `${doc}: when the check runs`);
+    assert.match(text, /cannot see every program/, `${doc}: what it may miss`);
+    assert.match(text, /where it cannot run(?: at all)?, the Trash step goes ahead/, `${doc}: what happens when it cannot run`);
+  }
 });
