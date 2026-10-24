@@ -47,11 +47,9 @@ export function foldedNamesOf(p: string): string[] {
   return [root, ...p.slice(root.length).split(path.sep).filter((name) => name.length > 0)].map(folded);
 }
 
-/** Whether `outer` is `inner` or a folder above it, name by name as a file system may fold names. */
-export function foldedInside(outer: string, inner: string): boolean {
-  const a = foldedNamesOf(outer);
-  const b = foldedNamesOf(inner);
-  return a.length <= b.length && a.every((name, i) => name === b[i]);
+/** Whether the folded names `outer` (`foldedNamesOf`) are `inner`'s or lead to them: the same place, or a folder above it. */
+export function namesLeadTo(outer: readonly string[], inner: readonly string[]): boolean {
+  return outer.length <= inner.length && outer.every((name, i) => name === inner[i]);
 }
 
 /** A run of folded names as one key: NUL is in no file name. */

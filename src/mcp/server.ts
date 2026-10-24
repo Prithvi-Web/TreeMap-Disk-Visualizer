@@ -16,7 +16,7 @@ import type { ReclaimScoreFactValue } from '../services/facts';
 import { adviceClaimsFor, cleanupSuggestionsCountedFor, type AdviceClaim } from '../services/cleanupMemo';
 import { suppressedNoteRoots } from '../services/notes';
 import { ruleCatalogStatus } from '../services/rulePacks';
-import { adviceHitAlong, foldedInside } from '../services/adviceGuard';
+import { adviceHitAlong, foldedNamesOf, namesLeadTo } from '../services/adviceGuard';
 import { getIgnoreMatchers } from '../services/settings';
 import { getForecast } from '../services/forecast';
 import { buildStatement } from '../services/missingGigabytes';
@@ -253,8 +253,11 @@ async function refuseAdvicePaths(paths: string[]): Promise<void> {
   // Each path as given, where it lives (links in its parents) and on the Data volume's short spelling,
   // compared name by name as a file system folds names (hunt HF-L3, HF-L5), as the scanned-root rule
   // and the agent policy judge a path — not by its spelling.
-  const spellings = paths.map((p) => ({ p, as: [...new Set([p, livesAt(p), canonicalDirOf(p)])] }));
-  const touches = (a: string, b: string): boolean => foldedInside(a, b) || foldedInside(b, a);
+  const spellings = paths.map((p) => {
+    const as = [...new Set([p, livesAt(p), canonicalDirOf(p)])];
+    return { p, as, keys: as.map(foldedNamesOf) }; // folded once: a batch is up to 500 paths
+  });
+  const touches = (a: string[], b: string[]): boolean => namesLeadTo(a, b) || namesLeadTo(b, a);
   // A scan's root as recorded and where it lives: its claims are spelled from the root as recorded.
   const rootsOf = (scan: ScanResult): string[] => [...new Set([scan.rootPath, canonicalDirOf(scan.rootPath)])];
   const catalog = ruleCatalogStatus();
@@ -268,21 +271,25 @@ async function refuseAdvicePaths(paths: string[]): Promise<void> {
       if (hit !== null) throw advisoryRefusal(p, 'is in', hit);
     }
   }
-  const scans = allScans().filter((scan) => scan.status === 'complete' && (scan.store || scan.root)
-    && spellings.some(({ as }) => as.some((q) => rootsOf(scan).some((root) => touches(root, q)))));
+  // A cloud account's scan lists no local path (trash_paths refuses cloud paths before this), and its
+  // root is no path to look up on the disk.
+  const scans = allScans().filter((scan) => scan.status === 'complete' && (scan.store || scan.root) && !scan.rootPath.startsWith('cloud://')
+    && spellings.some(({ keys }) => keys.some((q) => rootsOf(scan).some((root) => touches(foldedNamesOf(root), q)))));
   // A claim whose advice is about its folder itself (Windows' Temp folder) refuses that folder and a
   // folder holding it, never what is in it (hunt HF-L1).
-  const relationOf = (claim: AdviceClaim, at: string, q: string): 'is in' | 'holds' | null => {
-    if (foldedInside(at, q) && (claim.folderOnly !== true || foldedInside(q, at))) return 'is in';
-    return foldedInside(q, at) ? 'holds' : null;
+  const relationOf = (claim: AdviceClaim, at: string[], q: string[]): 'is in' | 'holds' | null => {
+    if (namesLeadTo(at, q) && (claim.folderOnly !== true || namesLeadTo(q, at))) return 'is in';
+    return namesLeadTo(q, at) ? 'holds' : null;
   };
   for (const scan of scans) {
-    const claims = await adviceClaimsFor(storeOf(scan), catalog.catalog);
     const roots = rootsOf(scan);
-    for (const { p, as } of spellings) {
-      for (const claim of claims) {
-        const places = roots.map((root) => (root === scan.rootPath ? claim.path : path.join(root, path.relative(scan.rootPath, claim.path))));
-        const relations = places.flatMap((at) => as.map((q) => relationOf(claim, at, q)));
+    const claims = (await adviceClaimsFor(storeOf(scan), catalog.catalog)).map((claim) => ({
+      claim,
+      places: roots.map((root) => foldedNamesOf(root === scan.rootPath ? claim.path : path.join(root, path.relative(scan.rootPath, claim.path)))),
+    }));
+    for (const { p, keys } of spellings) {
+      for (const { claim, places } of claims) {
+        const relations = places.flatMap((at) => keys.map((q) => relationOf(claim, at, q)));
         if (relations.includes('is in')) throw advisoryRefusal(p, 'is in', claim);
         if (relations.includes('holds')) throw advisoryRefusal(p, 'holds', claim);
       }
