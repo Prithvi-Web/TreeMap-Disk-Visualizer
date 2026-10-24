@@ -61,8 +61,14 @@ function kbHarness(mode: string) {
   const state = {
     root,
     pathIndex: new Map<string, Node>([[root.path, root], [library.path, library], [big.path, big]]),
-    treemap: { mode, rootPath: '/home/u/big', rootName: 'big', rootSize: 100, nodes: [] as Node[], kbSel: null as Node | null },
+    treemap: {
+      mode, rootPath: '/home/u/big', rootName: 'big', rootSize: 100, nodes: [] as Node[], kbSel: null as Node | null, hideCloud: false,
+      // What the renderer on screen last drew: the rectangle map's rectangles, the sunburst's arcs, the cells' shapes.
+      pxRects: [] as { n: Node }[], arcs: [] as { n: Node; depth: number }[], cells: [] as { n: Node; depth: number }[],
+    },
   };
+  /** The rectangle map's answer for the folder on screen, every node of it drawn (drawTreemap's pxRects). */
+  const paint = (nodes: Node[]) => { state.treemap.nodes = nodes; state.treemap.pxRects = nodes.map((n) => ({ n, x: 0, y: 0, w: 10, h: 10 })); };
   const said: string[] = [];
   const live = { set textContent(v: string) { said.push(v); }, get textContent() { return said[said.length - 1] || ''; } };
   const deps = {
@@ -78,18 +84,18 @@ function kbHarness(mode: string) {
   };
   const api = load<{ kbSiblings: () => Node[]; kbMove: (d: number) => void }>(
     ['kbSiblings', 'kbSelect', 'kbMove'], deps, '{ kbSiblings, kbMove }');
-  return { state, said, ...api };
+  return { state, said, paint, ...api };
 }
 
 test('C02: in a folder the first frame pruned, j/k move through the rectangles the map draws there', () => {
   const h = kbHarness('treemap');
   // The server laid the map out from its whole store: the folder's contents
   // are drawn although the page's tree holds it pruned, with no children.
-  h.state.treemap.nodes = [
+  h.paint([
     { path: '/home/u/big/sub', name: 'sub', size: 60, type: 'dir', depth: 1 },
     { path: '/home/u/big/sub/deep.bin', name: 'deep.bin', size: 50, type: 'file', depth: 2 },
     { path: '/home/u/big/movie.mov', name: 'movie.mov', size: 40, type: 'file', depth: 1 },
-  ];
+  ]);
   assert.deepEqual(h.kbSiblings().map((n) => n.path), ['/home/u/big/sub', '/home/u/big/movie.mov'],
     'the drawn top level of the folder on screen, biggest first');
   h.kbMove(1);
@@ -101,7 +107,7 @@ test('C02: one level further, in a folder the page never held, j never selects t
   const h = kbHarness('treemap');
   h.state.treemap.rootPath = '/home/u/big/sub';
   h.state.treemap.rootSize = 60;
-  h.state.treemap.nodes = [{ path: '/home/u/big/sub/deep.bin', name: 'deep.bin', size: 50, type: 'file', depth: 1 }];
+  h.paint([{ path: '/home/u/big/sub/deep.bin', name: 'deep.bin', size: 50, type: 'file', depth: 1 }]);
   assert.deepEqual(h.kbSiblings().map((n) => n.path), ['/home/u/big/sub/deep.bin']);
   h.kbMove(1);
   assert.equal(h.state.treemap.kbSel?.path, '/home/u/big/sub/deep.bin', 'never ~/Library, which is not on screen');
@@ -111,21 +117,50 @@ test('C02: the Trash cell and a preview\'s staged block are not stops for j/k', 
   const h = kbHarness('treemap');
   h.state.treemap.rootPath = '/home/u';
   h.state.treemap.rootSize = 1000;
-  h.state.treemap.nodes = [
+  h.paint([
     { path: '/home/u/Library', name: 'Library', size: 900, type: 'dir', depth: 1 },
     { path: '/home/u — freed', name: 'Staged', size: 100, type: 'dir', depth: 1, freed: true },
     { path: '\0trash', name: 'Trash', size: 5000, type: 'dir', depth: 1, isTrash: true },
-  ];
+  ]);
   assert.deepEqual(h.kbSiblings().map((n) => n.path), ['/home/u/Library']);
 });
 
 test('C02: in the sunburst, circles or Voronoi, a folder the page does not hold gives j/k nothing — never the scan root\'s folders', () => {
   for (const mode of ['sunburst', 'circles', 'voronoi']) {
     const h = kbHarness(mode);
+    // The scan root's shapes, as the last draw left them.
+    const drawn = h.state.root.children!.map((n) => ({ n, depth: 1 }));
+    if (mode === 'sunburst') h.state.treemap.arcs = drawn; else h.state.treemap.cells = [{ n: h.state.root, depth: 0 }, ...drawn];
     h.state.treemap.rootPath = '/home/u/big/sub'; // not in the page's tree
     assert.deepEqual(h.kbSiblings(), [], `${mode}: nothing to move through`);
     h.state.treemap.rootPath = '/home/u';
     assert.deepEqual(h.kbSiblings().map((n) => n.path), ['/home/u/Library', '/home/u/big'], `${mode}: a folder the page holds still answers`);
+  }
+});
+
+test('C02 (review F1.2): in the sunburst, circles and Voronoi j/k move through the shapes drawn — never a cloud file Hide cloud hides, nor an arc too thin to draw', () => {
+  const local: Node = { path: '/home/u/local.bin', name: 'local.bin', size: 300, type: 'file' };
+  const cloud = { path: '/home/u/icloud-only.mov', name: 'icloud-only.mov', size: 600, type: 'file', cloudPlaceholder: true } as Node;
+  const speck: Node = { path: '/home/u/speck', name: 'speck', size: 1, type: 'file' }; // 0.36°: under the sunburst's 0.8° floor
+  const sub: Node = { path: '/home/u/local.bin/x', name: 'x', size: 1, type: 'file' };
+  for (const mode of ['sunburst', 'circles', 'voronoi']) {
+    const h = kbHarness(mode);
+    const root = h.state.root;
+    root.children = [cloud, local, speck];
+    h.state.treemap.rootPath = root.path;
+    h.state.treemap.hideCloud = true;
+    if (mode === 'sunburst') {
+      // The real sunburst layout of the folder, as drawSunburst lays it.
+      const layout = load<(r: Node, g: unknown) => { n: Node; depth: number }[]>(['layoutSunburstArcs'], { state: h.state }, 'layoutSunburstArcs');
+      h.state.treemap.arcs = layout(root, { rings: 2, cx: 50, cy: 50, innerR0: 10, ringT: 10 });
+      assert.deepEqual(h.state.treemap.arcs.filter((a) => a.depth === 1).map((a) => a.n.path), [local.path], 'control: only local.bin has an arc');
+    } else {
+      // What layoutCirclePack and layoutVoronoi keep (altChildren): the folder's own shape, local.bin, and one inside it.
+      h.state.treemap.cells = [{ n: root, depth: 0 }, { n: local, depth: 1 }, { n: sub, depth: 2 }];
+    }
+    assert.deepEqual(h.kbSiblings().map((n) => n.path), [local.path], `${mode}: the stops are the shapes drawn at the folder's top level`);
+    h.kbMove(1);
+    assert.equal(h.state.treemap.kbSel?.path, local.path, `${mode}: j never selects the hidden cloud file`);
   }
 });
 

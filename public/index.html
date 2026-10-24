@@ -26877,24 +26877,28 @@ setTreemapView(state.treemap.mode); // reflect persisted choice on load
 
 /* ───────────────────────────── Keyboard-first navigation (Feature 6) ───────────────────────────── */
 /**
- * What j/k move through: the top level of the folder on screen (hunt C02).
- * The rectangle map's are the rectangles it draws there — the server lays it
- * out from the whole scan, and the page's tree holds a folder the first frame
- * pruned with no children, so read from the tree j/k did nothing there, and a
- * level further, in a folder the tree never held, moved through the scan
- * root's folders, none of them on screen, for Enter, c and Delete to act on.
- * Not the Trash cell, nor a preview's staged block: neither is an item here.
- * The other renderers draw from the tree (loadTreemap fetches what they show),
- * and a folder it does not hold gives nothing, never the scan root's folders.
+ * What j/k move through: the top level of the folder on screen (hunt C02),
+ * as the renderer on screen drew it — its rectangles, arcs or shapes there,
+ * biggest first. The rectangle map's are laid out by the server from the
+ * whole scan, and the page's tree holds a folder the first frame pruned with
+ * no children, so read from the tree j/k did nothing there, and a level
+ * further, in a folder the tree never held, moved through the scan root's
+ * folders, none of them on screen, for Enter, c and Delete to act on. Read
+ * from what was drawn, not from what was laid out: Hide cloud hides an
+ * online-only file, the rectangle map paints nothing under a device pixel and
+ * the sunburst no arc under 0.8°, and j stopped on, announced and offered to
+ * act on each of them with nothing on screen (review F1.2). Not the Trash
+ * cell, nor a preview's staged block: neither is an item here. The sunburst
+ * and the cells draw from the page's tree (loadTreemap fetches what they
+ * show), and a folder it does not hold gives nothing, never the scan root's.
  */
 function kbSiblings() {
-  if (!isSun() && !isCells()) {
-    return state.treemap.nodes.filter((n) => n.depth === 1 && !n.isTrash && !n.freed && n.size > 0)
-      .sort((a, b) => b.size - a.size);
-  }
-  const root = state.treemap.rootPath ? state.pathIndex.get(state.treemap.rootPath) : state.root;
-  if (!root || !root.children) return [];
-  return [...root.children].filter((c) => c.size > 0).sort((a, b) => b.size - a.size);
+  const sun = isSun(), cells = isCells();
+  if ((sun || cells) && !(state.treemap.rootPath ? state.pathIndex.get(state.treemap.rootPath) : state.root)) return [];
+  const drawn = (sun ? state.treemap.arcs : cells ? state.treemap.cells : state.treemap.pxRects) || [];
+  // An arc and a cell carry their ring or level; a rectangle, its node's depth in the map.
+  return drawn.filter((s) => (sun || cells ? s.depth : s.n.depth) === 1 && !s.n.isTrash && !s.n.freed && s.n.size > 0)
+    .map((s) => s.n).sort((a, b) => b.size - a.size);
 }
 /** Where the keyboard's selected cell sits on screen — the point its card, and its menu, open at — or null when it is not drawn. */
 function kbCellPoint(node) {

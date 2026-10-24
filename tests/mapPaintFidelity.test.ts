@@ -285,6 +285,37 @@ test('hunt C71: with Hide cloud on and every item here a cloud file, the empty m
   assert.match(said.at(-1)!, /^Nothing here is big enough to draw — 1000000000 B in files too small for a rectangle/);
 });
 
+test('hunt C02 (review F1.2): j/k move through exactly the rectangles the map painted — never a cloud file Hide cloud hides, nor one under a device pixel', () => {
+  const cell = (name: string, size: number, x: number, w: number, extra: Record<string, unknown> = {}) =>
+    ({ name, path: `/r/${name}`, size, type: 'file', depth: 1, expanded: false, x, y: 0, w, h: 100, ...extra });
+  const nodes = [
+    cell('local.bin', 3e8, 0, 60),
+    cell('icloud-only.mov', 6e8, 60, 39.95, { cloudPlaceholder: true }), // online only: Hide cloud skips it
+    cell('sliver.txt', 1e3, 99.95, 0.05), // a twentieth of a pixel wide on this map: never painted
+  ];
+  const map = mapPainter(nodes, () => [10, 132, 255], true, 1, 100);
+  map.paint();
+  assert.deepEqual(map.state.treemap.pxRects.map((p: any) => p.n.path), ['/r/local.bin'], 'control: the map painted local.bin alone');
+  const said: string[] = [];
+  const state = { treemap: Object.assign(map.state.treemap, { mode: 'treemap', rootPath: '/r', rootSize: 9e8, kbSel: null as any }), pathIndex: new Map(), root: null };
+  const kb = load<{ kbSiblings: () => any[]; kbMove: (d: number) => void }>(['kbSiblings', 'kbSelect', 'kbMove'], {
+    state, isSun: () => false, isCells: () => false, presentView() {}, kbShowTip() {}, hideTooltip() {},
+    $: (id: string) => (id === 'tmKbAnnounce' ? { set textContent(v: string) { said.push(v); } } : null),
+    formatBytes: (b: number) => `${b} B`, cartHas: () => false,
+  }, '{ kbSiblings, kbMove }');
+  assert.deepEqual(kb.kbSiblings().map((n) => n.path), ['/r/local.bin'], 'the stops are what was painted');
+  kb.kbMove(1);
+  assert.equal(state.treemap.kbSel?.path, '/r/local.bin', 'j never selects, announces or offers to act on the hidden cloud file');
+  assert.match(said.at(-1)!, /^local\.bin, file/);
+  state.treemap.kbSel = null;
+  kb.kbMove(-1);
+  assert.equal(state.treemap.kbSel?.path, '/r/local.bin', 'nor k the sliver no pixel shows');
+  // With Hide cloud off the cloud file is painted, and is a stop.
+  map.state.treemap.hideCloud = false;
+  map.paint();
+  assert.deepEqual(kb.kbSiblings().map((n) => n.path), ['/r/icloud-only.mov', '/r/local.bin'], 'control: painted, it is a stop, biggest first');
+});
+
 type LensOp = { kind: string; style?: unknown; lineWidth?: number; box: number[] | null; seg?: number[]; rule?: string; shapes?: number[][]; text?: string; at?: number[]; font?: string; baseline?: string };
 /**
  * What the real lensPaint draws over `pxRects` with the cursor `at`, in order: each fill and stroke with its paint and the box it covered.
