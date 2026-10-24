@@ -346,6 +346,14 @@ async function cartTrashAll() {
     $('confirmOk').innerHTML = icon('x', 15) + 'Close';
     $('confirmCancel').hidden = true;
     onConfirmTrash = () => {};
+    // What is already gone leaves the cart now, as a commit takes it out (review F1.22): with nothing
+    // to move there is no commit, and the same sheet came back for it at every press.
+    const gone = (plan.items || []).filter((i) => i.code === 'ITEM_GONE').map((i) => i.path);
+    if (gone.length) {
+      cartDropTrashed(gone);
+      saveCart(); renderCart(); refreshCartButtons();
+      $('confirmText').innerHTML += `<div class="cart-mf-note">${gone.length === 1 ? 'The item already gone was' : `The ${formatCount(gone.length)} items already gone were`} taken out of your cart.</div>`;
+    }
   } else {
     cartCommitKey = 'cart-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
     // The refusals travel with the commit. Only the deletable paths are sent,
@@ -473,7 +481,9 @@ function cartManifestHtml(plan, missingFromScan) {
     // items held are the distinct staged paths, and the programs the
     // distinct processes holding them.
     const held = new Set(conflicts.map((c) => c.path)).size;
-    const programs = new Set(conflicts.map((c) => (c.pid !== undefined ? c.pid : c.processName))).size;
+    // Programs by name, as describeConflicts counts them (review F1.11): a dev server and its worker
+    // are two processes of one program. A conflict with no name is told apart by its process id.
+    const programs = new Set(conflicts.map((c) => c.processName || `pid ${c.pid}`)).size;
     const where = programs > 1 ? 'other programs' : 'another program';
     html += `<div class="cart-mf-note">${icon('alert', 13)} ${going.length === 1 && held === 1
       ? `It is open in ${where} right now, which will stop the move.`
@@ -646,7 +656,13 @@ function cartCommitSummary(result) {
       (gone.length > 6 ? `<div class="cart-mf-row muted">…and ${formatCount(gone.length - 6)} more</div>` : '') + `</div>`;
   }
   if (failed.length) {
-    html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(failed.length)} could not be moved to the Trash (${escapeHtml(failed[0].reason)}). ${failed.length === 1 ? 'It is untouched, and its copy was discarded.' : 'Those are untouched, and their copies were discarded.'}</div>`;
+    // Each by name, with its own reason (review F1.23): one reason said for all of them hid the rest.
+    html += `<div class="cart-mf-left">${icon('alert', 13)} <b>${formatCount(failed.length)} could not be moved to the Trash.</b> ` +
+      `${failed.length === 1 ? 'It is untouched, its copy was discarded, and it is still in your cart:' : 'Those are untouched, their copies were discarded, and they are still in your cart:'}</div>` +
+      `<div class="cart-mf-list">` + failed.slice(0, 6).map((f) =>
+        `<div class="cart-mf-row"><span class="nm" title="${escapeHtml(f.path)}">${escapeHtml(baseName(f.path))}</span>` +
+        `<span class="why">${escapeHtml(f.reason || 'The Trash did not take it.')}</span></div>`).join('') +
+      (failed.length > 6 ? `<div class="cart-mf-row muted">…and ${formatCount(failed.length - 6)} more</div>` : '') + `</div>`;
   }
   if (unverified.length) {
     html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(unverified.length)} could not be confirmed as moved to the Trash: ${escapeHtml(unverified[0].reason)} ${unverified.length === 1 ? 'It stays' : 'They stay'} in your cart.</div>`;

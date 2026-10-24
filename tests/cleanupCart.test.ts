@@ -835,9 +835,9 @@ test('the rest of the cart\'s one-item sentences agree in number: the sheet, a r
   assert.match(openTwo, /1 of these is open in another program right now, which will stop the whole batch\./, openTwo);
 
   const refused = plainText(summarySays({ failedToTrash: [{ path: DMG.path, reason: 'in use' }] }));
-  assert.match(refused, /1 could not be moved to the Trash \(in use\)\. It is untouched, and its copy was discarded\./, refused);
+  assert.match(refused, /1 could not be moved to the Trash\. It is untouched, its copy was discarded, and it is still in your cart:\s*Installer\.dmg\s*in use/, refused);
   const refusedTwo = plainText(summarySays({ failedToTrash: [{ path: DMG.path, reason: 'in use' }, { path: '/c/x', reason: 'in use' }] }));
-  assert.match(refusedTwo, /2 could not be moved to the Trash \(in use\)\. Those are untouched, and their copies were discarded\./, refusedTwo);
+  assert.match(refusedTwo, /2 could not be moved to the Trash\. Those are untouched, their copies were discarded, and they are still in your cart:/, refusedTwo);
 });
 
 test('the Time Capsule keeps its copies for "1 day", not "1 days" (QA third pass D08)', () => {

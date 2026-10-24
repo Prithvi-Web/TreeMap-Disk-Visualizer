@@ -362,7 +362,7 @@ test('an item the Trash refused is reported once, as not moved, never also as "l
     skipped: [{ path: '/c/held.txt', code: 'NOT_DELETED', reason: 'TreeMap did not hand it to the Trash: Chrome has it open.' }],
     failedToTrash: [{ path: '/c/held.txt', reason: 'Chrome has it open' }],
   });
-  assert.match(said, /1 could not be moved to the Trash \(Chrome has it open\)/, `control: ${said}`);
+  assert.match(said, /1 could not be moved to the Trash\. It is untouched, its copy was discarded, and it is still in your cart: held\.txt Chrome has it open/, `control: ${said}`);
   assert.doesNotMatch(said, /left in place/, 'the same item is not reported a second time');
   const both = cartSummary({
     skipped: [{ path: '/c/big.iso', code: 'CAPSULE_FULL', reason: 'Too big for the Undo Vault.' }, { path: '/c/held.txt', code: 'NOT_DELETED', reason: 'x' }],
@@ -432,6 +432,52 @@ test('a commit takes an item already gone out of the cart, as it does what went 
   }, `let cartLastRun = null; let cartShown = 0;\n${blockAt('function cartDropTrashed(trashed) {')}`);
   await run(['/c/a.bin', '/c/gone.bin'], [{ path: '/c/gone2.bin', code: 'ITEM_GONE', reason: 'It is no longer there — nothing to delete.' }, { path: '/c/big.iso', code: 'CAPSULE_FULL', reason: 'Too big.' }]);
   assert.deepEqual([...cart], ['/c/big.iso'], 'what went and what was already gone leave the cart; what was left in place stays');
+});
+
+test('each item the Trash refused is named, with its own reason (review F1.23)', () => {
+  const said = cartSummary({
+    trashed: ['/c/ok.bin'], bytesFreed: 5,
+    skipped: [
+      { path: '/c/a.bin', code: 'NOT_DELETED', reason: 'x' }, { path: '/c/b.bin', code: 'NOT_DELETED', reason: 'y' },
+      { path: '/c/big.iso', code: 'CAPSULE_FULL', reason: 'Too big.' },
+    ],
+    failedToTrash: [{ path: '/c/a.bin', reason: 'Chrome has it open' }, { path: '/c/b.bin', reason: 'Permission denied' }],
+  });
+  assert.match(said, /2 could not be moved to the Trash\. Those are untouched, their copies were discarded, and they are still in your cart: a\.bin Chrome has it open b\.bin Permission denied/,
+    `each by name, each with its own reason: ${said}`);
+  assert.match(said, /1 left in place .*big\.iso Too big\./, 'control: the item only left in place, apart');
+  const many = cartSummary({ failedToTrash: Array.from({ length: 8 }, (_, i) => ({ path: `/c/f${i}.bin`, reason: 'in use' })) });
+  assert.match(many, /f5\.bin in use …and 2 more/, `a long list is cut as the others are: ${many}`);
+  assert.doesNotMatch(many, /f6\.bin/);
+});
+
+test('the cart counts the programs holding staged items by name: two processes of one program are one program (review F1.11)', () => {
+  const item = [{ path: '/c/node_modules', bytes: 1, willDelete: true }];
+  const conflict = (pid: number, processName?: string) => ({ path: '/c/node_modules', pid, ...(processName ? { processName } : {}), openPath: `/c/node_modules/${pid}.js` });
+  const oneProgram = cartSheet({ items: item, openHandles: { checked: true, complete: true, conflicts: [conflict(101, 'node'), conflict(102, 'node')] } });
+  assert.match(oneProgram, /It is open in another program right now, which will stop the move\./, `a dev server and its worker are one program: ${oneProgram}`);
+  const unnamed = cartSheet({ items: item, openHandles: { checked: true, complete: true, conflicts: [conflict(101), conflict(102)] } });
+  assert.match(unnamed, /It is open in other programs right now/, `with no name, processes are told apart by their ids: ${unnamed}`);
+});
+
+test('a cart whose every item is already gone takes it out when the sheet says so, so the next press does not repeat it (review F1.22)', async () => {
+  const GONE = 'It is no longer there — nothing to delete.';
+  const cart = new Set(['/c/a.bin', '/c/big.iso']);
+  let saves = 0;
+  const { $, els } = makeEls();
+  const trashAll = declared<() => Promise<void>>('async function cartTrashAll() {', {
+    $, state: { cart }, ensureNodes: async () => {}, cartKnownPaths: () => [...cart], outermostPaths: (p: string[]) => p,
+    icon: () => '', REDUCED: true, formatCount: String, toast: () => {}, resetOpenHandleWarning: () => {},
+    cartDryRun: async () => ({ items: [{ path: '/c/a.bin', willDelete: false, code: 'ITEM_GONE', reason: GONE }, { path: '/c/big.iso', willDelete: false, code: 'CAPSULE_FULL', reason: 'Too big.' }] }),
+    cartManifestHtml: () => 'manifest', cartExecuteCommit: async () => assert.fail('nothing to commit'),
+    saveCart: () => { saves++; }, renderCart: () => {}, refreshCartButtons: () => {},
+    tmIsInside: (p: string, dir: string) => p.startsWith(dir + '/'),
+  }, `let confirmPaths = []; let onConfirmTrash = null; let cartCommitKey = '';\n${blockAt('function cartDropTrashed(trashed) {')}`);
+  await trashAll();
+  assert.match(els.confirmOk.innerHTML, /Close/, 'control: nothing can be moved, so the sheet only reports');
+  assert.deepEqual([...cart], ['/c/big.iso'], 'the item already gone leaves the cart; the one left in place stays');
+  assert.ok(saves > 0, 'and the cart is saved without it');
+  assert.match(text(els.confirmText.innerHTML), /The item already gone was taken out of your cart\./, 'the sheet says so');
 });
 
 /* ═════════ C75 — an undo that stops part-way says what it put back, and the map catches up ═════════ */
