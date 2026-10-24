@@ -1210,6 +1210,37 @@ test('a read named in a POST body counts; another scan\'s read does not; a scan 
   assert.equal(g.live(), 1, 'a read that answers arms the warning again');
 });
 
+test('reads of the scan re-arm the warning at most once a minute, the server\'s own grain, and every read is still noted (review F1.12)', () => {
+  const landed = 1_000_000;
+  const MIN = 60_000;
+  const state: Record<string, unknown> = { scanId: 's1', scanStats: { expiresAt: landed + 30 * MIN } };
+  const h = expiryHarness(state);
+  h.clock.t = landed + 5 * MIN;
+  h.noteScanUsed('/api/scan/s1/subtree?path=%2FA');
+  assert.equal(h.timers.length, 1, 'the first read arms the warning');
+  // Thirty seconds later the map asks again, and again: no timer is taken back and made anew.
+  h.clock.t += 30_000;
+  h.noteScanUsed('/api/scan/s1/subtree?path=%2FB');
+  h.clock.t += 29_999;
+  h.noteScanUsed('/api/query', JSON.stringify({ scanId: 's1', q: 'ext:mp4' }));
+  assert.equal(h.timers.length, 1, 'reads inside the minute do not clear and re-create the timer');
+  assert.equal(h.timers[0].cleared, false, 'the warning armed by the first read stands');
+  assert.deepEqual(state.scanUsed, { scanId: 's1', at: landed + 5 * MIN + 59_999 }, 'yet each read is noted, so the warning moves when its moment comes');
+  // A read a full minute after the one before it re-arms it. (Reads that keep coming inside the
+  // minute re-arm nothing; the timer armed earlier moves itself when its moment comes, tested above.)
+  h.clock.t += 60_000;
+  h.noteScanUsed('/api/scan/s1/treemap');
+  assert.equal(h.timers.length, 2, 'a read a minute on re-arms the warning');
+  assert.equal(h.timers[0].cleared, true, 'and the one before is taken back');
+  assert.equal(h.timers[1].ms, 27 * MIN, 'two minutes before 30 minutes after this read, less the one-minute grain');
+  // Another scan on hand: its first read re-arms at once, whatever the last scan's read was.
+  state.scanId = 's2';
+  state.scanStats = { expiresAt: h.clock.t + 30 * MIN };
+  h.clock.t += 10_000;
+  h.noteScanUsed('/api/scan/s2/subtree');
+  assert.equal(h.timers.length, 3, 'the first read of another scan re-arms its warning, inside the minute or not');
+});
+
 /* ══════════════ a11y-keyboard-5 — a screen reader hears the scan ══════════════ */
 
 test('the scan speaks: start, progress every ten seconds, and a finish no toast says — a failure, and a finish a toast says, are the toast\'s alone (BQU item 35)', () => {
