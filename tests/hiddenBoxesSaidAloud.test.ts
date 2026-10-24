@@ -1128,6 +1128,18 @@ test('a toast raised while focus is outside the open sheet — on another toast\
   assert.equal(u.$('trashModalOutsideSaid').textContent, '', 'a sheet that is not modal leaves nothing out, and says nothing again');
 });
 
+test('a toast raised with focus in the sheet, whose focus leaves the sheet for a button outside it before the frame — a toast that takes focus onto its own button — is said in the stack alone: where focus is is judged in the frame its words go in, not as it was raised (review F1.7, BQU item 34)', () => {
+  const t = toasts();
+  t.open('cleanModal');
+  t.fns.toast('Moved 3 items to the Trash'); // focus in the sheet as it is raised
+  const button = new El(); // a toast's own button, outside every sheet, which takes focus in the same frame
+  button.parent = t.$('toasts');
+  t.doc.activeElement = button;
+  t.frame();
+  assert.equal(t.$('toasts').children.length, 1, 'control: the toast is up in the stack, read with focus outside the sheet');
+  assert.equal(t.$('cleanModalOutsideSaid').textContent, '', 'and the sheet does not say it too: heard in both it would be heard twice');
+});
+
 test('a toast with a button raised over an open sheet is said in the sheet too, unless it takes focus — which leaves the sheet for its button, read with the message it describes (BQT item 26)', () => {
   let top: El | null = null;
   const timers: Array<() => void> = [];
@@ -1511,15 +1523,16 @@ function scanVoiceWatchSrc(): string {
 }
 
 /**
- * The scan's voice and the sheets' lifted from the page, over Els: the page under its main part, the sheet on top the
- * test's, and the page's own watch of the two regions (scanVoiceWatchSrc), told of each write as a browser tells it.
+ * The scan's voice and the sheets' lifted from the page, over Els, with toast() and the real aloudWait: the page under
+ * its main part, the sheet on top the test's, and the page's own watch of the two regions (scanVoiceWatchSrc), told of
+ * each write as a browser tells it.
  */
 function scanVoice() {
   let top: El | null = null;
   const timers: Array<{ fn: () => void; ms: number }> = [];
-  const doc = { body: null as unknown as El, activeElement: null as El | null, createTextNode: (data: string) => ({ nodeType: 3, data: String(data) }) };
-  const p = waitingPage(['const TOAST_MIN_MS', 'const TOAST_MS_PER_CHAR', ...SHEET, 'const scanVoiceSheet', 'const scanVoiceHeld', 'let scanVoiceWatch', 'function scanVoiceHolding(', 'function scanVoiceSays(', 'function scanVoiceChanged('], {
-    topModal: () => top, document: doc,
+  const doc = { body: null as unknown as El, activeElement: null as El | null, createTextNode: (data: string) => ({ nodeType: 3, data: String(data) }), createElement: () => new El() };
+  const p = waitingPage(['const TOAST_MIN_MS', 'const TOAST_MS_PER_CHAR', ...SHEET, 'function toast(', 'const scanVoiceSheet', 'const scanVoiceHeld', 'let scanVoiceWatch', 'function scanVoiceHolding(', 'function scanVoiceSays(', 'function scanVoiceChanged('], {
+    topModal: () => top, document: doc, icon: () => '<svg aria-hidden="true"></svg>',
     setTimeout: (fn: () => void, ms: number) => { timers.push({ fn, ms }); return timers.length; },
   }, [scanVoiceWatchSrc()]);
   doc.body = p.body;
@@ -1646,17 +1659,52 @@ test('words the scan\'s voice holds back as a sheet goes are taken back by whate
   }
 });
 
-test('a sheet opened in the task its words come in says them a frame after its first, never in the frame it comes on screen in — the scan\'s words, and a toast raised as it opens (BQU item 36)', () => {
+test('a sheet opened in the task its words come in says them a frame after its first, never in the frame it comes on screen in — the scan\'s words, and a toast raised as it opens (BQU item 36, review F1.8)', () => {
+  for (const [what, words] of [['the scan\'s words', '1,200 items scanned so far'], ['a toast', 'Could not save the scanning budget: offline']] as const) {
+    const v = scanVoice();
+    /** Each frame's rendering of the sheet's region: on screen or not, and its words. */
+    const rendered: Array<{ on: boolean; text: string }> = [];
+    const frame = () => { v.frame(); rendered.push({ on: v.sheetLive.getClientRects().length > 0, text: v.sheetLive.textContent }); };
+    v.open();
+    if (what === 'a toast') v.fns.toast(words, 'error'); // through the page's own toast(), focus in the sheet
+    else v.write(v.scan, words);
+    frame();
+    frame();
+    assert.deepEqual(rendered, [{ on: true, text: '' }, { on: true, text: words }],
+      `${what}: the frame the sheet comes on screen in renders its region empty, and the next says the words: a change, which is heard`);
+  }
+});
+
+test('words the scan\'s voice gives the open sheet and takes back before its frame are never said there, though a toast raised in that frame keeps the region saying: the toast is said, alone or with the words that replaced them (review F1.5)', () => {
+  for (const then of ['', '1 item scanned so far']) {
+    const v = scanVoice();
+    v.open();
+    v.frame();
+    v.fns.toast('Could not read the Undo Vault: offline', 'error'); // focus in the sheet: said there too
+    v.write(v.scan, 'Scanning…');
+    v.write(v.scan, then); // in the same frame: the scan refused at once (failScan empties the region), or its first count
+    v.frame();
+    assert.deepEqual(v.sheetLive.said.filter((w) => w.includes('Scanning…')), [], `${then || 'emptied'}: "Scanning…", taken back before its frame, is never said in the sheet`);
+    assert.equal(v.sheetLive.textContent, then ? `Could not read the Undo Vault: offline. ${then}` : 'Could not read the Undo Vault: offline',
+      `${then || 'emptied'}: the toast is said — with the words that replaced them, each its own sentence`);
+  }
+});
+
+test('words the scan\'s voice holds back are its words only while the node it holds them with is all the region holds: other words written in the same task — a scan started another way as the folder check ends — are what it says from that write on, before the watch hears of it (review F1.6)', () => {
   const v = scanVoice();
-  /** Each frame's rendering of the sheet's region: on screen or not, and its words. */
-  const rendered: Array<{ on: boolean; text: string }> = [];
-  const frame = () => { v.frame(); rendered.push({ on: v.sheetLive.getClientRects().length > 0, text: v.sheetLive.textContent }); };
   v.open();
-  v.write(v.scan, '1,200 items scanned so far');
-  frame();
-  frame();
-  assert.deepEqual(rendered, [{ on: true, text: '' }, { on: true, text: '1,200 items scanned so far' }],
-    'the frame the sheet comes on screen in renders its region empty, and the next says the words: a change, which is heard');
+  v.frame();
+  v.close(); // the sheet goes, and the page is not heard again until the net lifts inert
+  v.write(v.scan, 'Checking that the folder exists…');
+  assert.equal(v.scan.textContent, '', 'control: the check\'s words are held back, the region empty but for the node it holds them with');
+  assert.equal(v.fns.scanVoiceSays(v.scan), 'Checking that the folder exists…', 'control: and are what it says, or holds back');
+  v.scan.textContent = 'Starting scan…'; // a scan started another way, in the task the check ends in
+  assert.equal(v.fns.scanVoiceSays(v.scan), 'Starting scan…',
+    'from that write on the region says the new words, in its own task too: the folder check, asking then whether its own words still stand (scanTheBox), leaves them in place');
+  v.microtasks();
+  v.mo.inert(v.main, false);
+  for (let i = 0; i < 3; i++) v.frame();
+  assert.equal(v.scan.textContent, 'Starting scan…', 'and once the page is heard they are said');
 });
 
 test('the scan\'s voice is watched as it is written: a change to #scanAnnounce or #stopAnnounce — its text replaced, or its text node\'s words — reaches scanVoiceChanged once for that region, and nothing else does (BQU item 33)', () => {
