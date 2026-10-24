@@ -572,8 +572,11 @@ OpenAPI 3 spec).
      junk rule the list was made with — off, a folder holding `.DS_Store` is
      not empty.
    - `POST /api/offload` with `{ scanId, paths, dest }` moves data to another
-     drive the safe way: copy → verify SHA-256 → only then trash originals;
-     any failure rolls back and leaves local data untouched. A selection that
+     drive the safe way: copy → verify SHA-256 → only then trash originals.
+     A failure before every copy verifies rolls back and leaves local data
+     untouched; after that nothing is rolled back — an original that cannot
+     go to the Trash, or is left in place by the checks below, stays where
+     it is beside its verified copy, and the job says which. A selection that
      is or holds a link is refused before anything is copied
      (`400 LINK_IN_SELECTION`), since a copy would follow it; a destination
      inside the selection, or a selection inside the destination, is refused

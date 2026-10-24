@@ -32,8 +32,10 @@ import { mountedReadOnly } from '../utils/mountBoundaries';
  * Files are COPIED to the destination, every copy is READ BACK and its
  * SHA-256 compared against the hash streamed during the copy, and only when
  * every item verifies do the local originals go to the system Trash — never
- * a bare move. Any failure (destination full, verify mismatch, cancel)
- * rolls back everything this job wrote and leaves local data untouched.
+ * a bare move. A failure before then (destination full, verify mismatch,
+ * cancel) rolls back everything this job wrote and leaves local data
+ * untouched; after it nothing is rolled back, and an original that cannot go
+ * to the Trash, or is left in place, stays beside its verified copy.
  *
  * A manifest in the app-data dir records every offloaded file (original
  * path, destination, size, hash, date); a merged copy also lands at the
