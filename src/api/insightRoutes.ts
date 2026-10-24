@@ -5,6 +5,7 @@ import {
   allScans,
   collectLargestFoldersAsync,
   compareTrees,
+  sameIgnoreRules,
   isRecorded,
 } from '../services/diskScanner';
 import { emptyFoldersForScan } from '../services/emptyFolders';
@@ -725,7 +726,7 @@ insightRouter.get('/compare', storageModeGate, (req: Request, res: Response) => 
   assertSameBoundary(scanA, scanB);
   const storeA = storeOf(scanA);
   const storeB = storeOf(scanB);
-  const { entries, truncated, unlistedFolders } = compareTrees(storeA, storeB);
+  const { entries, truncated, unlistedFolders, ruleFolders } = compareTrees(storeA, storeB, { sameRules: sameIgnoreRules(scanA, scanB) });
   const result: CompareResult = {
     scanIdA: scanA.scanId,
     scanIdB: scanB.scanId,
@@ -734,6 +735,7 @@ insightRouter.get('/compare', storageModeGate, (req: Request, res: Response) => 
     entries,
     truncated,
     ...(unlistedFolders > 0 ? { unlistedFolders } : {}),
+    ...(ruleFolders > 0 ? { ruleFolders } : {}),
   };
   res.json(result);
 });

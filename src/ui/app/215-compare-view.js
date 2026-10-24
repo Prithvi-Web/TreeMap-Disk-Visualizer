@@ -194,7 +194,7 @@ $('cmpRunBtn').addEventListener('click', async () => {
       const diff = await api(`/api/compare?scanIdA=${a.id}&scanIdB=${b.id}`);
       if (state.compare.result !== pair) return; // the picks changed meanwhile: cmpSyncResult has spoken
       fxHuntBeamSync('cmpBody', false);
-      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: diff.truncated, unlistedFolders: diff.unlistedFolders || 0, deep: true, whenA: a.when, whenB: b.when, rules });
+      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: diff.truncated, unlistedFolders: diff.unlistedFolders || 0, ruleFolders: diff.ruleFolders || 0, deep: true, whenA: a.when, whenB: b.when, rules });
     } else {
       const diff = await api(`/api/snapshots/compare?a=${a.id}&b=${b.id}`);
       if (state.compare.result !== pair) return;
@@ -382,12 +382,13 @@ function renderCompare(r) {
       ${r.rules ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} Your “Don’t scan” rules changed between these two scans, so part of this difference is what was scanned, not what is on disk.</div>` : ''}
       ${r.notCompared ? snapshotNotComparedHtml(r.notCompared) : ''}
       ${r.unlistedFolders ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} ${formatCount(r.unlistedFolders)} folder${r.unlistedFolders === 1 ? '' : 's'} one of these scans could not list in full (refused, unreadable, not entered, or holding an entry it could not look at), so what only one scan listed in ${r.unlistedFolders === 1 ? 'it' : 'them'} is not compared — not called removed or added.</div>` : ''}
+      ${r.ruleFolders ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} ${formatCount(r.ruleFolders)} folder${r.ruleFolders === 1 ? '' : 's'} a “Don’t scan” rule left entries out of, under rules that are not the same for both scans, so what only one scan listed in ${r.ruleFolders === 1 ? 'it' : 'them'} is not compared — not called removed or added.</div>` : ''}
       ${r.entries.length ? '<div id="cmpCounts"></div>' : ''}
       ${r.entries.length
         ? r.entries.slice(0, shown).map(en => deltaRow(en, maxD, { offerSnapshots: true, rules: r.rules || null })).join('')
         // What it could not compare is said just above: then only what both scans list is known not to
         // differ, and "nothing changed" beside a total that moved was untrue (review F1.1).
-        : r.notCompared || r.unlistedFolders
+        : r.notCompared || r.unlistedFolders || r.ruleFolders
           ? '<div class="muted">No differences in what both scans list.</div>'
           : `<div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No differences — nothing changed between these two.</div>`}
     </div>`;

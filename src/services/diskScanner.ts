@@ -955,6 +955,7 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
     // Phase 4: the mode the scan is kept in, `memory` until T16's chooser (storageMode.ts).
     storageMode: newScanStorageMode(),
     boundary,
+    ignoreRules: ignoreRulesKey(ignore),
   };
   defineRootAccessor(scan);
   if (opts.record === false) unrecorded.add(scan);
@@ -2144,6 +2145,20 @@ export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): Em
 
 const COMPARE_CAP = 1000;
 
+/** The "Don't scan" patterns a scan runs under, as one key (`ScanResult.ignoreRules`, leftover HE-L6). */
+function ignoreRulesKey(ignore: readonly CompiledIgnore[]): string {
+  return JSON.stringify(ignore.map((m) => m.raw).sort());
+}
+
+/**
+ * Whether two scans are known to have run under the same "Don't scan" patterns (leftover HE-L6): only
+ * then did a rule leave out of one exactly what it left out of the other. A record with no key (a cloud
+ * listing, one made by hand) is not known to.
+ */
+export function sameIgnoreRules(a: ScanResult, b: ScanResult): boolean {
+  return a.ignoreRules !== undefined && a.ignoreRules === b.ignoreRules;
+}
+
 /**
  * Structural diff of two scans of the same root. Subtrees present in only
  * one scan collapse to a single added/removed entry (a new node_modules is
@@ -2156,14 +2171,20 @@ const COMPARE_CAP = 1000;
  * never emitted as removed or added (hunt C47): one scan run with Full Disk Access and one without
  * listed everything in ~/Library/Mail as removed. Such folders are counted in `unlistedFolders`;
  * children both scans list are compared as ever. A folder that left out only what a "Don't scan" rule
- * matched is compared whole (review F1.3): under the same rules both scans left out the same, and a
- * change of rules between them is the page's to explain (coverageExplains).
+ * matched is compared whole (review F1.3) when `sameRules` says both scans ran under the same rules
+ * (`sameIgnoreRules`): then both left out the same. Otherwise what one scan's rule left out the other may
+ * have listed, so it is not compared either (leftover HE-L6) — a rule added between two scans listed the
+ * node_modules it hid as removed — and such folders are counted in `ruleFolders`.
  */
-export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entries: CompareEntry[]; truncated: boolean; unlistedFolders: number } {
+export function compareTrees(sourceA: TreeSource, sourceB: TreeSource, opts: { sameRules?: boolean } = {}): { entries: CompareEntry[]; truncated: boolean; unlistedFolders: number; ruleFolders: number } {
   const a = asStore(sourceA);
   const b = asStore(sourceB);
   const entries: CompareEntry[] = [];
   let unlistedFolders = 0;
+  let ruleFolders = 0;
+  const sameRules = opts.sameRules === true;
+  /** Whether a rule may have left out of folder `id` something the other scan listed (leftover HE-L6). */
+  const ruled = (store: ScanStore, id: number): boolean => !sameRules && store.flag(id, Flag.LeftOutByRule);
 
   const emit = (store: ScanStore, id: number, childPath: string, sizeA: number | null, sizeB: number | null): void => {
     const delta = (sizeB ?? 0) - (sizeA ?? 0);
@@ -2186,8 +2207,10 @@ export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entrie
     for (const c of a.childIds(aId)) aChildren.set(a.name(c), c);
     // Whether each scan listed this folder whole: a child one of them did not list is not known to be gone or new.
     // Counted only where that left a child out, so a folder neither scan entered (/dev in a scan of /) says nothing.
-    const aWhole = !listingUnknown(a, aId);
-    const bWhole = !listingUnknown(b, bId);
+    const aUnknown = listingUnknown(a, aId);
+    const bUnknown = listingUnknown(b, bId);
+    const aWhole = !aUnknown && !ruled(a, aId);
+    const bWhole = !bUnknown && !ruled(b, bId);
     let leftOut = false;
 
     for (const cb of b.childIds(bId)) {
@@ -2213,12 +2236,15 @@ export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entrie
         emit(a, ca, a.childPath(ca, dirPath), a.size(ca), null); // disappeared between scans
       }
     }
-    if (leftOut) unlistedFolders++;
+    if (leftOut) {
+      if (aUnknown || bUnknown) unlistedFolders++;
+      else ruleFolders++;
+    }
   };
 
   recurse(a.rootId, b.rootId, b.rootPath);
   entries.sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
-  return { entries: entries.slice(0, COMPARE_CAP), truncated: entries.length > COMPARE_CAP, unlistedFolders };
+  return { entries: entries.slice(0, COMPARE_CAP), truncated: entries.length > COMPARE_CAP, unlistedFolders, ruleFolders };
 }
 
 /** What a comparison says of the folders one of its scans did not list in full (hunt C47), or null when there are none. */
@@ -2226,6 +2252,13 @@ export function unlistedFoldersNote(count: number): string | null {
   if (count === 0) return null;
   return `${formatCount(count)} folder${count === 1 ? '' : 's'} one of these scans could not list in full (refused, unreadable, not entered, ` +
     'or holding an entry it could not look at), so what is in them that only one scan listed is not compared — neither removed nor added.';
+}
+
+/** What a comparison says of the folders a "Don't scan" rule left entries out of under rules not the same for both scans (leftover HE-L6), or null. */
+export function ruleFoldersNote(count: number): string | null {
+  if (count === 0) return null;
+  return `${formatCount(count)} folder${count === 1 ? '' : 's'} a "Don't scan" rule left entries out of, under rules that are not the same for both scans, ` +
+    `so what only one scan listed in ${count === 1 ? 'it' : 'them'} is not compared — neither removed nor added.`;
 }
 
 /** collectFileTypes' per-extension tally, fed one file at a time by either walk. */

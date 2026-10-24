@@ -74,6 +74,21 @@ test('a folder one of the scans could not list in full is said, and what is in i
   assert.doesNotMatch(html, /could not list in full/, 'nothing said when every folder was listed');
 });
 
+test('a folder a "Don\'t scan" rule left entries out of under rules not the same for both scans is said, apart from the unlisted ones, and the card never says nothing changed (leftover HE-L6)', () => {
+  html = '';
+  (ctx.renderCompare as (r: unknown) => void)({ entries: [], totalDelta: -9000, truncated: false, unlistedFolders: 0, ruleFolders: 1, deep: true, whenA: 1, whenB: 2, rules: null });
+  const one = html.replace(/\s+/g, ' ');
+  assert.match(one, /1 folder a “Don’t scan” rule left entries out of, under rules that are not the same for both scans, so what only one scan listed in it is not compared — not called removed or added\./, one);
+  assert.doesNotMatch(one, /could not list in full/, 'no scan failed to list it');
+  assert.doesNotMatch(one, /nothing changed/, one);
+  assert.match(one, /No differences in what both scans list\./, one);
+  html = '';
+  (ctx.renderCompare as (r: unknown) => void)({ entries: [], totalDelta: 0, truncated: false, ruleFolders: 3, deep: true, whenA: 1, whenB: 2, rules: null });
+  assert.match(html, /3 folders a “Don’t scan” rule left entries out of, under rules that are not the same for both scans, so what only one scan listed in them is not compared/, html);
+  // The scan pair's answer carries the count to the card.
+  assert.match(INDEX, /const diff = await api\(`\/api\/compare\?scanIdA=\$\{a\.id\}&scanIdB=\$\{b\.id\}`\);[\s\S]{0,300}renderCompare\(\{[^}]*ruleFolders: diff\.ruleFolders \|\| 0/, 'the /api/compare answer\'s ruleFolders reaches renderCompare');
+});
+
 test('two History records: the card says how many top-level items it could not compare (hunt C46)', () => {
   html = '';
   (ctx.renderCompare as (r: unknown) => void)({ entries: [], totalDelta: 0, truncated: false, notCompared: 1, deep: false, whenA: 1, whenB: 2, rules: null });

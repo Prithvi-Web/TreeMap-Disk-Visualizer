@@ -7,6 +7,8 @@ import {
   collectLargestFiles,
   collectLargestFolders,
   compareTrees,
+  ruleFoldersNote,
+  sameIgnoreRules,
   unlistedFoldersNote,
   allScans,
 } from '../services/diskScanner';
@@ -849,6 +851,8 @@ export function buildMcpServer(): McpServer {
         'shrank, biggest absolute change first. Subtrees present in only one scan collapse to a single entry. ' +
         'What only one scan listed in a folder the other could not list in full (refused, unreadable, not entered, or holding an entry it could not look at) ' +
         'is not compared, never called vanished or appeared; unlistedFolders and unlistedNote say how many such folders. ' +
+        'So is what only one scan listed in a folder a "Don\'t scan" rule left entries out of, when the two scans did not run under ' +
+        'the same rules (under the same rules both left out the same, and the folder is compared whole); ruleFolders and ruleNote say how many. ' +
         'Run scan_path on the same folder at two different times to get the two scanIds.',
       inputSchema: {
         scanIdA: z.string().min(1).describe('The earlier scan'),
@@ -868,9 +872,10 @@ export function buildMcpServer(): McpServer {
         assertSameBoundary(scanA, scanB);
         const storeA = storeOf(scanA);
         const storeB = storeOf(scanB);
-        const { entries, truncated, unlistedFolders } = compareTrees(storeA, storeB);
+        const { entries, truncated, unlistedFolders, ruleFolders } = compareTrees(storeA, storeB, { sameRules: sameIgnoreRules(scanA, scanB) });
         const totalDelta = storeB.size(storeB.rootId) - storeA.size(storeA.rootId);
         const unlistedNote = unlistedFoldersNote(unlistedFolders); // hunt C47
+        const ruleNote = ruleFoldersNote(ruleFolders); // leftover HE-L6
         return ok({
           scanIdA,
           scanIdB,
@@ -883,6 +888,7 @@ export function buildMcpServer(): McpServer {
           })),
           truncated: truncated || entries.length > limit,
           ...(unlistedNote !== null ? { unlistedFolders, unlistedNote } : {}),
+          ...(ruleNote !== null ? { ruleFolders, ruleNote } : {}),
         });
       }),
   );

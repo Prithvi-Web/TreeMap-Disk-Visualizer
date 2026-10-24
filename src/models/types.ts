@@ -259,6 +259,12 @@ export interface ScanResult {
    * served by `GET /api/scan/:id/boundary`.
    */
   boundary?: ScanBoundaryRecord;
+  /**
+   * The "Don't scan" patterns this scan ran under, as one key (leftover HE-L6): Compare reads a folder
+   * that left out only what a rule matched as listed in full only when both scans' keys are the same.
+   * Absent on a cloud listing and on a record made by hand. Kept off `buildScanStats`.
+   */
+  ignoreRules?: string;
 }
 
 /** A native scan's plan, made before it walks (Track U, U-30 and U-31). */
@@ -770,6 +776,12 @@ export interface CompareResult {
    * called removed or added.
    */
   unlistedFolders?: number;
+  /**
+   * Present when a "Don't scan" rule left entries out of a folder and the two scans are not known to have
+   * run under the same rules (leftover HE-L6): how many such folders. What only one scan listed in them
+   * is not compared — never called removed or added.
+   */
+  ruleFolders?: number;
 }
 
 /* ---------- Settings: ignore list + scheduled scans ---------- */

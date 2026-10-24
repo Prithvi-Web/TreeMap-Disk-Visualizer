@@ -10,7 +10,7 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { compareTrees, createScanRecord, getScan, peekScan, startScan } from '../src/services/diskScanner';
+import { compareTrees, createScanRecord, getScan, peekScan, sameIgnoreRules, startScan } from '../src/services/diskScanner';
 import { buildStoreFromTree, Flag, storeOf } from '../src/services/scanStore';
 import { markLeftOutByRule, markUnlisted } from '../src/services/scanRefusals';
 import { updateSettings } from '../src/services/settings';
@@ -103,11 +103,17 @@ test('a folder that left out only what a "Don\'t scan" rule matched is compared 
   };
   const before = { 'proj/': 0, 'proj/a.txt': 1000, 'proj/b.txt': 3000 };
   const now = { 'proj/': 0, 'proj/a.txt': 1000, 'proj/c.txt': 2000 };
-  const whole = compareTrees(storeOf(ruled(before)), storeOf(ruled(now)));
+  const whole = compareTrees(storeOf(ruled(before)), storeOf(ruled(now)), { sameRules: true });
   assert.deepEqual(rows(whole), ['proj/b.txt removed', 'proj/c.txt added']);
   assert.equal(whole.unlistedFolders, 0, 'nothing in it is unknown');
+  assert.equal(whole.ruleFolders, 0);
+  // Rules not known to be the same (leftover HE-L6): what one scan's rule left out the other may have listed.
+  const unsure = compareTrees(storeOf(ruled(before)), storeOf(ruled(now)));
+  assert.deepEqual(rows(unsure), [], 'nothing is called removed or added in a folder a rule may have left it out of');
+  assert.equal(unsure.ruleFolders, 1, 'the folder is counted as one a rule left entries out of');
+  assert.equal(unsure.unlistedFolders, 0, 'and not as one a scan could not list');
   for (const order of ['after', 'before'] as const) {
-    const unread = compareTrees(storeOf(ruled(before)), storeOf(ruled(now, order)));
+    const unread = compareTrees(storeOf(ruled(before)), storeOf(ruled(now, order)), { sameRules: true });
     assert.deepEqual(rows(unread), ['proj/c.txt added'], `${order}: a read failure in the newer scan leaves b.txt unknown; c.txt is new to an older listing that held all the rest`);
     assert.equal(unread.unlistedFolders, 1);
   }
@@ -129,13 +135,51 @@ test('two real scans under a "Don\'t scan" rule: a file deleted beside the rule\
     fs.rmSync(path.join(proj, 'dist'), { recursive: true });
     fs.writeFileSync(path.join(proj, 'fresh.txt'), Buffer.alloc(2000));
     const b = await scanToEnd(root);
-    const r = compareTrees(storeOf(a), storeOf(b));
+    assert.equal(sameIgnoreRules(a, b), true, 'both ran under the one rule');
+    const r = compareTrees(storeOf(a), storeOf(b), { sameRules: sameIgnoreRules(a, b) });
     const at = (e: { path: string; change: string }): string => `${path.relative(root, e.path).split(path.sep).join('/')} ${e.change}`;
     assert.deepEqual(r.entries.map(at).sort(), ['proj/dist removed', 'proj/fresh.txt added']);
     assert.equal(r.unlistedFolders, 0);
+    assert.equal(r.ruleFolders, 0);
   } finally {
     await updateSettings({ ignore: [] });
   }
+});
+
+test('two real scans whose "Don\'t scan" rules differ: what the rule hid or let back in is neither removed nor added, over HTTP and MCP, and the folder is counted (leftover HE-L6)', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-compareUnlisted-rulechange-'));
+  const proj = path.join(root, 'proj');
+  fs.mkdirSync(path.join(proj, 'node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 'node_modules', 'x.js'), Buffer.alloc(9000));
+  fs.writeFileSync(path.join(proj, 'a.txt'), 'a');
+  const noRule = await scanToEnd(root);
+  let ruled: ScanResult;
+  try {
+    await updateSettings({ ignore: [{ pattern: 'node_modules', scope: 'scan' }] });
+    ruled = await scanToEnd(root);
+  } finally {
+    await updateSettings({ ignore: [] });
+  }
+  const again = await scanToEnd(root);
+  assert.equal(sameIgnoreRules(noRule, ruled), false);
+  assert.equal(sameIgnoreRules(noRule, again), true, 'no rules either time is the same rules');
+  assert.equal(sameIgnoreRules(createScanRecord(root), createScanRecord(root)), false, 'records that say nothing of their rules are not known to share them');
+  for (const [a, b, what] of [[noRule, ruled, 'a rule added'], [ruled, again, 'a rule dropped']] as const) {
+    const body = await getJson(`/api/compare?scanIdA=${a.scanId}&scanIdB=${b.scanId}`);
+    assert.deepEqual(body.entries, [], `${what}: node_modules, on the disk throughout, is not called removed or added: ${JSON.stringify(body.entries)}`);
+    assert.equal(body.ruleFolders, 1, what);
+    assert.equal(body.unlistedFolders, undefined, `${what}: no scan failed to list anything`);
+    const reply = (await client.callTool({ name: 'compare_scans', arguments: { scanIdA: a.scanId, scanIdB: b.scanId } })) as { isError?: boolean; structuredContent?: Record<string, unknown> };
+    assert.ok(!reply.isError, JSON.stringify(reply));
+    const s = reply.structuredContent ?? {};
+    assert.deepEqual(s.entries, [], what);
+    assert.equal(s.ruleFolders, 1, what);
+    assert.equal(s.unlistedFolders, undefined, what);
+    assert.equal(s.ruleNote, '1 folder a "Don\'t scan" rule left entries out of, under rules that are not the same for both scans, so what only one scan listed in it is not compared — neither removed nor added.');
+  }
+  const same = await getJson(`/api/compare?scanIdA=${noRule.scanId}&scanIdB=${again.scanId}`);
+  assert.deepEqual(same.entries, []);
+  assert.equal(same.ruleFolders, undefined, 'under the same rules nothing is counted');
 });
 
 /* ---------- a folder the operating system refuses, over HTTP and MCP ---------- */
