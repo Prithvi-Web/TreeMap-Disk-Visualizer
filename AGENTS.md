@@ -185,11 +185,14 @@ OpenAPI 3 spec).
      only; no file is opened and no content is ever returned. **Never delete
      these.** The only remediation offered is `POST /api/security/relocate`,
      which moves one file by rename (both ends must be inside a scanned root,
-     an occupied destination aborts, nothing is ever removed), and only an SSH
-     key carries a `suggestedPath` (`~/.ssh`). Beside it, `relocateRefusal`
+     an occupied destination aborts, nothing is ever removed), and a
+     `suggestedPath` is offered only for a file under the home folder whose
+     kind has a home of its own: an SSH key `~/.ssh`, an AWS `credentials` file
+     `~/.aws`, `gcloud-credentials.json` `~/.config/gcloud`, `azureprofile.json`
+     `~/.azure`, a kubeconfig `~/.kube`. Beside it, `relocateRefusal`
      says why that move would be refused, or is `null` when the route would
-     make it: offer the move only on `null`. It names `~/.ssh` outside every
-     scanned folder, the agent policy, a finding that is a link rather than
+     make it: offer the move only on `null`. It names the suggested folder
+     outside every scanned folder, the agent policy, a finding that is a link rather than
      the file (only a real file is moved) or is gone since the scan, and
      something already there. A `.key` file is listed as
      minor with no move, because on a Mac it is usually a Keynote document;

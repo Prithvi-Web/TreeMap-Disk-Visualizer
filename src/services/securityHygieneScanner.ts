@@ -62,6 +62,12 @@ export interface SecurityPattern {
    */
   suggestedHome?: string;
   /**
+   * Where a file of one name should live, where a pattern's names belong to different tools (hunt
+   * C66): an Azure profile offered "Move to .aws" lands where no Azure tool reads it. By lower-case
+   * name; it wins over `suggestedHome`.
+   */
+  suggestedHomeByName?: Record<string, string>;
+  /**
    * A file larger than this is not what the pattern means, so it is not a
    * finding. Decided from the scan's own size, never by opening the file.
    */
@@ -206,7 +212,7 @@ export const SECURITY_PATTERNS: SecurityPattern[] = [
     severity: 'high',
     names: ['credentials', 'gcloud-credentials.json', 'azureprofile.json'],
     expectedIn: ['.aws', '.config/gcloud', '.azure', '.config/openstack'],
-    suggestedHome: '.aws',
+    suggestedHomeByName: { credentials: '.aws', 'gcloud-credentials.json': '.config/gcloud', 'azureprofile.json': '.azure' },
   },
   {
     id: 'kubeconfig',
@@ -630,11 +636,11 @@ export function collectSecurityFindings(
         // Proposing to move a key found on an external drive into ~/.ssh is a
         // surprising place to put someone's file, and the rename would fail
         // across filesystems anyway. And never for a file a program owns.
-        suggestedPath:
+        suggestedPath: (() => {
+          const home = pattern.suggestedHomeByName?.[name.toLowerCase()] ?? pattern.suggestedHome;
           // The shared containment test: a bare check for a leading ".." read "~/..data" as outside home.
-          !appOwned && pattern.suggestedHome && isInside(homeDir, childPath)
-            ? path.join(homeDir, pattern.suggestedHome)
-            : undefined,
+          return !appOwned && home && isInside(homeDir, childPath) ? path.join(homeDir, home) : undefined;
+        })(),
         exposed: Boolean(syncFolder || exposedFolder),
         appOwned,
       });

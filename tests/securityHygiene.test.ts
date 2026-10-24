@@ -1342,3 +1342,16 @@ test('the API\'s appOwnedCount is declared where an agent reads it, beside the t
   assert.doesNotMatch(said, /ship inside/, 'never as files that ship inside a program: a program\'s data folder is app-owned too (review F1.3)');
   assert.match(said, /keeps for itself \(a program, its data or its packages\)/, 'but as what they are');
 });
+
+test('each cloud credential file is offered the folder its own provider keeps it in, never another provider\'s (hunt C66)', () => {
+  const at = path.join(HOME, 'Downloads');
+  const offered = Object.fromEntries(findingsFor([file('credentials', at), file('gcloud-credentials.json', at), file('azureprofile.json', at)])
+    .map((f) => [path.basename(f.path), f.suggestedPath]));
+  assert.deepEqual(offered, {
+    credentials: path.join(HOME, '.aws'),
+    'gcloud-credentials.json': path.join(HOME, '.config', 'gcloud'),
+    'azureprofile.json': path.join(HOME, '.azure'),
+  });
+  const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8');
+  assert.doesNotMatch(agents, /only an SSH\s+key carries a `suggestedPath`/, 'AGENTS.md no longer says only an SSH key is offered a move');
+});
