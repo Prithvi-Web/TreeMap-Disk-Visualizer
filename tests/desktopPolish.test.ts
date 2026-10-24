@@ -949,6 +949,24 @@ test('main (review HA-L2): a window closed while it scans a folder the shell han
   } finally { h.dispose(); }
 });
 
+test('main (review F1.5): a window closed while folders wait behind its scan keeps them — the next window\'s page is pushed the first and told the rest', async () => {
+  const dir = mkTmp();
+  const [a, b, c] = ['a', 'b', 'c'].map((n) => path.join(dir, n));
+  for (const f of [a, b, c]) fs.mkdirSync(f);
+  const h = await loadMain({ dataDir: dir });
+  try {
+    await h.loadPage();
+    for (const f of [a, b, c]) h.stub.app.emit('open-file', { preventDefault() {} }, f); // a three-folder dock drop
+    assert.deepEqual(h.win().webContents.on_channel('treemap:scan-path'), [a]);
+    contractPage(h).start(a);
+    h.win().close(); // ⌘W during the first scan
+    h.stub.app.emit('activate'); // the Dock icon clicked: a new window
+    await h.loadPage();
+    assert.deepEqual(h.win().webContents.on_channel('treemap:scan-path'), [b], 'the second, waiting when the window closed, is scanned as the next page comes up');
+    assert.deepEqual(h.win().webContents.on_channel('treemap:scan-queued'), [{ path: c, before: 0 }], 'and the third is said to wait behind it');
+  } finally { h.dispose(); }
+});
+
 test('main (review F1.8): a folder asked for while the page scans it — a scan the page started itself — is said to be scanning already, and is not walked again after it', async () => {
   const dir = mkTmp();
   const [a, b] = ['a', 'b'].map((n) => path.join(dir, n));
