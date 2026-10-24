@@ -127,20 +127,34 @@ test('a Cancel that cuts the last file\'s copy short is a cancelled restore that
 
 test('a Cancel that lands between two files, with no copy under way, stops the restore there: cancelled, the later files never tried (review F1.17)', async () => {
   const { files, ids } = await offloaded('between', ['first.bin', 'second.bin', 'third.bin']);
-  const undo = setHardLinkForTests(async (a, b) => {
-    if (b === files[0]) cancelAllOffloadJobs(); // while the first file is put in place: no copy is running to stop
+  let cancelled = false;
+  const undoLink = setHardLinkForTests(async (a, b) => {
+    if (b === files[0]) {
+      cancelAllOffloadJobs(); // while the first file is put in place: no copy is running to stop
+      cancelled = true;
+    }
     await fsp.link(a, b);
+  });
+  // Every restore copy reads its file through this seam, a chunk at a time (leftover HE-L8): a later file
+  // whose copy began, only to be cut short at its first chunk, looks by every other measure here like one
+  // never tried — its status, the count put back, and the file not being there.
+  let chunksAfterCancel = 0;
+  const undoCopy = setCopyFaultForTests(() => {
+    if (cancelled) chunksAfterCancel++;
+    return null;
   });
   let job: OffloadJob;
   try {
     job = await settled((await startRestore(ids)).jobId);
   } finally {
-    undo();
+    undoLink();
+    undoCopy();
   }
   assert.equal(job.status, 'cancelled', `the Cancel stopped two files from being tried: ${job.error}`);
   assert.equal(job.filesDone, 1);
   assert.ok(fs.existsSync(files[0]), 'the file put back before the Cancel stays');
-  assert.deepEqual([files[1], files[2]].map((f) => fs.existsSync(f)), [false, false], 'the later files were never tried');
+  assert.deepEqual([files[1], files[2]].map((f) => fs.existsSync(f)), [false, false], 'the later files are not back');
+  assert.equal(chunksAfterCancel, 0, 'and no copy of a later file began: they were never tried');
 });
 
 /** The frames of an offload job's progress stream, read until the server ends it. */
