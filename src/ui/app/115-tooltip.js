@@ -130,8 +130,15 @@ function showTooltip(x, y, node, pctOfRoot = null) {
     (node.logicalSize ? ` · ${formatBytes(node.logicalSize)} uncompressed` : '') +
     // While the cart preview is up a click does nothing (it previews the map
     // after the cart), so the tooltip says when the archive can be opened, as
-    // the key does (BQG-5 item 15).
-    (containerListable(node) && !node.children ? (tmPreview.on ? ' · you can look inside it after the preview' : ' · click to look inside') : '') +
+    // the key does (BQG-5 item 15). Only a click on the map looks inside, and
+    // only on an archive directly in the folder on screen: one further down
+    // opens the folder one level down that holds it (D26), and a Grid click
+    // previews it, so neither was offered a click it does not do (hunt C27).
+    (containerListable(node) && !node.children && state.view === 'treemap'
+      ? (tmPreview.on ? ' · you can look inside it after the preview'
+        : tmStepToward(state.treemap.rootPath, node.path) === node.path ? ' · click to look inside'
+          : ' · open its folder to look inside')
+      : '') +
     ` · modified ${formatDate(node.modifiedAt)}` +
     // Only meaningful while sorting the grid by atime — and atime is best-effort
     // (absent for gdu/cloud scans and noatime mounts), so missing shows as "—".

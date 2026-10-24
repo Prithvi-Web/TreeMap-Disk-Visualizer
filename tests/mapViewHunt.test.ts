@@ -548,3 +548,34 @@ test('C26: a folder drawn hatched — more in it than drawn — is not counted "
   assert.equal(cellsLine([{ n: { path: '/r', type: 'dir', children: [{}] }, depth: 0, leaf: true, more: true }]), '0 shapes · 0 without children · 1 GB total',
     'never "0 shapes · 1 without children" of the folder on screen, which holds 50,000 files');
 });
+
+/* ══════════════ C27 — "click to look inside" only where a click does ══════════════ */
+
+function tooltipFor(node: Record<string, unknown>, where: { view?: string; rootPath?: string; preview?: boolean } = {}) {
+  const tip = { innerHTML: '', style: {} as Record<string, string>, dataset: {} as Record<string, string>, offsetWidth: 0, offsetHeight: 0 };
+  const show = load<(x: number, y: number, node: unknown) => void>(['showTooltip', 'containerListable', 'sizeInk', 'tmStepToward', 'tmIsInside'], {
+    $: () => tip, icon: () => '', escapeHtml: (s: unknown) => String(s), formatBytes: (n: number) => `${n} B`, sizeColor: () => '#fff',
+    formatDate: () => 'then', state: { view: where.view ?? 'treemap', grid: { sort: 'size' }, treemap: { rootPath: where.rootPath ?? '/r' } },
+    kindFor: () => ({ tint: '#000', icon: 'file' }), resolveAllocation() {}, resolveScore() {}, resolveHumanScale() {},
+    allocationTooltipLine: () => '', reclaimTooltipLine: () => '', humanScaleTooltipLine: () => '', noteTooltipLine: () => '',
+    window: { innerWidth: 1000, innerHeight: 800 }, tmPreview: { on: !!where.preview },
+  }, 'showTooltip');
+  show(1, 1, node);
+  return tip.innerHTML;
+}
+
+test('C27: an archive below the next level is not offered "click to look inside" — a click there opens the folder that holds it', () => {
+  const zip = (p: string) => ({ name: p.split('/').pop(), path: p, type: 'file', size: 5, modifiedAt: 0, container: 'zip', depth: p.split('/').length - 2 });
+  assert.match(tooltipFor(zip('/r/a.zip')), / · click to look inside/, 'control: an archive directly in the folder on screen expands on a click');
+  const deep = tooltipFor(zip('/r/Docs/a.zip'));
+  assert.doesNotMatch(deep, /click to look inside/, 'a click opens /r/Docs, one level per click (D26)');
+  assert.match(deep, / · open its folder to look inside/);
+  // Windows-shaped paths take the same rule.
+  assert.match(tooltipFor(zip('C:\\r\\Docs\\a.zip'), { rootPath: 'C:\\r' }), / · open its folder to look inside/);
+  assert.match(tooltipFor(zip('C:\\r\\a.zip'), { rootPath: 'C:\\r' }), / · click to look inside/);
+});
+
+test('C27: the Grid\'s card offers no click to look inside — a click there previews the archive', () => {
+  const html = tooltipFor({ name: 'a.zip', path: '/r/a.zip', type: 'file', size: 5, modifiedAt: 0, container: 'zip' }, { view: 'grid' });
+  assert.doesNotMatch(html, /look inside/);
+});

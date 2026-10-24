@@ -438,9 +438,9 @@ test('B37: a .dmg on screen previews like a plain file — the server cannot lis
 /** The page's showTooltip over stubs, with the cart preview `previewOn`; answers the tooltip and a function that shows a node. */
 function tooltipWorld(previewOn = false) {
   const tip = { innerHTML: '', style: {} as Record<string, string>, dataset: {} as Record<string, string>, offsetWidth: 0, offsetHeight: 0 };
-  const show = load<(x: number, y: number, node: unknown) => void>(['showTooltip', 'containerListable', 'sizeInk'], {
+  const show = load<(x: number, y: number, node: unknown) => void>(['showTooltip', 'containerListable', 'sizeInk', 'tmStepToward', 'tmIsInside'], {
     $: () => tip, icon: () => '', escapeHtml: (s: unknown) => String(s), formatBytes: (n: number) => `${n} B`, sizeColor: () => '#fff',
-    formatDate: () => 'then', state: { view: 'treemap', grid: {}, treemap: {} }, kindFor: () => ({ tint: '#000', icon: 'file' }),
+    formatDate: () => 'then', state: { view: 'treemap', grid: {}, treemap: { rootPath: '/r' } }, kindFor: () => ({ tint: '#000', icon: 'file' }),
     resolveAllocation() {}, resolveScore() {}, resolveHumanScale() {},
     allocationTooltipLine: () => '', reclaimTooltipLine: () => '', humanScaleTooltipLine: () => '', noteTooltipLine: () => '',
     window: { innerWidth: 1000, innerHeight: 800 }, tmPreview: { on: previewOn },
@@ -461,7 +461,7 @@ test('the tooltip does not invite a click "to look inside" an archive while the 
 
 test('B37: the tooltip never invites a click "to look inside" a .dmg', () => {
   const tip = { innerHTML: '', style: {} as Record<string, string>, dataset: {} as Record<string, string>, offsetWidth: 0, offsetHeight: 0 };
-  const show = load<(x: number, y: number, node: unknown) => void>(['showTooltip', 'containerListable', 'sizeInk'], { // sizeInk: the size line's readable ink (B21), over the sizeColor below
+  const show = load<(x: number, y: number, node: unknown) => void>(['showTooltip', 'containerListable', 'sizeInk', 'tmStepToward', 'tmIsInside'], { // sizeInk: the size line's readable ink (B21), over the sizeColor below
     tmPreview: { on: false },
     $: () => tip,
     icon: () => '',
@@ -469,7 +469,7 @@ test('B37: the tooltip never invites a click "to look inside" a .dmg', () => {
     formatBytes: (n: number) => `${n} B`,
     sizeColor: () => '#fff',
     formatDate: () => 'then',
-    state: { view: 'treemap', grid: {}, treemap: {} },
+    state: { view: 'treemap', grid: {}, treemap: { rootPath: '/r' } },
     kindFor: () => ({ tint: '#000', icon: 'file' }),
     resolveAllocation() {}, resolveScore() {}, resolveHumanScale() {},
     allocationTooltipLine: () => '', reclaimTooltipLine: () => '', humanScaleTooltipLine: () => '', noteTooltipLine: () => '',
