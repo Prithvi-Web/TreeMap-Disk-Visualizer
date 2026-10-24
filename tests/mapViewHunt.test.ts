@@ -521,3 +521,30 @@ test('C25: the box then explains the undrawn match truthfully — this folder it
   // What renderSearchOverlay now counts for the cells above: one drawn of the two found.
   assert.equal(msg(2, 1, ['/r', '/r/big.mov'], '/r'), '2 matches — 1 shown here. One is this folder itself, which has no rectangle of its own.');
 });
+
+/* ══════════════ C26 — "without children" counts what has none ══════════════ */
+
+function cellsLine(cells: Record<string, unknown>[]) {
+  const st = { textContent: '' };
+  const state = { treemap: { query: '', queryMode: 'bare', matchedPaths: null, history: { active: false }, cells, rootSize: 1e9 } };
+  const render = load<() => void>(['renderCellsStatus'], {
+    $: (id: string) => (id === 'tmStatus' ? st : null), isCells: () => true, state, tmPreview: { on: false },
+    formatCount: (n: number) => n.toLocaleString('en-US'), formatBytes: (b: number) => `${b / 1e9} GB`,
+  }, 'renderCellsStatus');
+  render();
+  return st.textContent;
+}
+
+test('C26: a folder drawn hatched — more in it than drawn — is not counted "without children"; the line says how many there are', () => {
+  const root = { n: { path: '/r', type: 'dir' }, depth: 0, leaf: false };
+  const file = (p: string) => ({ n: { path: p, type: 'file' }, depth: 1, leaf: true, more: false });
+  const held = (p: string) => ({ n: { path: p, type: 'dir', children: [{}] }, depth: 2, leaf: true, more: true });
+  const open = { n: { path: '/r/d', type: 'dir', children: [{}] }, depth: 1, leaf: false, more: false };
+  assert.equal(cellsLine([root, open, file('/r/a.mov'), file('/r/b.txt'), held('/r/d/x'), held('/r/d/y'), held('/r/d/z')]),
+    '6 shapes · 2 without children · 3 folders drawn without their contents · 1 GB total');
+  assert.equal(cellsLine([root, open, file('/r/a.mov'), held('/r/d/x')]), '3 shapes · 1 without children · 1 folder drawn without its contents · 1 GB total');
+  assert.equal(cellsLine([root, file('/r/a.mov'), file('/r/b.txt')]), '2 shapes · 2 without children · 1 GB total', 'no hatched folder, no words about one');
+  // A folder of 50,000 small files: the coverage gate leaves only the folder on screen, hatched.
+  assert.equal(cellsLine([{ n: { path: '/r', type: 'dir', children: [{}] }, depth: 0, leaf: true, more: true }]), '0 shapes · 0 without children · 1 GB total',
+    'never "0 shapes · 1 without children" of the folder on screen, which holds 50,000 files');
+});

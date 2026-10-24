@@ -1002,11 +1002,12 @@ test('while a rescan paints the saved index\'s tree under a query in the highlig
       treemap: { rootPath: '/r', query: 'ext:mov,mkv', queryRoot: '/r', queryMode: 'bare', queryScanId: null, matches: 0, matchedPaths: null, matchTotal: null,
         mode: cells ? 'circles' : 'treemap', history: { active: false }, minSize: 4000, rootSize: 9.5e9, nodes, nodesFor: { scanId: 'scan-old', nodes },
         pxRects: [{ n: a, x: 0, y: 0, w: 100, h: 100 }, { n: b, x: 100, y: 0, w: 100, h: 100 }],
-        cells: [{ n: { path: '/r' }, kind: 'circle', cx: 100, cy: 50, r: 50 }, { n: a, kind: 'circle', cx: 50, cy: 50, r: 40, leaf: true }, { n: b, kind: 'circle', cx: 150, cy: 50, r: 40, leaf: true }] } };
+        cells: [{ n: { path: '/r' }, depth: 0, kind: 'circle', cx: 100, cy: 50, r: 50 }, { n: a, depth: 1, kind: 'circle', cx: 50, cy: 50, r: 40, leaf: true }, { n: b, depth: 1, kind: 'circle', cx: 150, cy: 50, r: 40, leaf: true }] } };
     const t = state.treemap as Record<string, unknown>;
     const c = mapUnderQueryPage(state, () => ({ hits: [{ path: '/r/a.mov', name: 'a.mov', size: 5e9 }], total: 266 }), cells);
     const footer = () => c.$('tmStatus').textContent;
-    const answered = cells ? ['circle at 100', 'circle at 150'] : ['rect at 100']; // b.txt, and in circles the folder around both
+    // b.txt; never the folder on screen's own circle, whose disc would dim every shape in it (hunt C25).
+    const answered = cells ? ['circle at 150'] : ['rect at 100'];
     // Control: the older scan's tree, the query answered — what it did not match is dimmed, and the footer counts it.
     await c.fns.run('ext:mov,mkv');
     assert.deepEqual(c.dimmed, answered, `${drawn}: control: the answer dims what it did not match`);

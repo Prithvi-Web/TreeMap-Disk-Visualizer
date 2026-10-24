@@ -931,10 +931,21 @@ function renderCellsStatus() {
   const waiting = state.treemap.queryMode === 'grammar' && !state.treemap.matchedPaths;
   if ((state.treemap.query.trim() && !waiting) || state.treemap.history.active || tmPreview.on) return;
   const cells = state.treemap.cells;
-  const leaves = cells.reduce((k, c) => k + (c.leaf ? 1 : 0), 0);
+  // A shape not subdivided is not one without children (hunt C26): a folder
+  // the depth limit, a floor, the coverage gate or the cell budget stopped at
+  // is drawn hatched — there is more in it (altHasMore) — and was counted as
+  // "without children", 300 of them on a home folder at Depth 2. Those are
+  // said apart; the folder on screen (depth 0) is neither.
+  let bare = 0, held = 0;
+  for (const c of cells) {
+    if (c.depth === 0 || !c.leaf) continue;
+    if (c.more) held++; else bare++;
+  }
   st.textContent =
     `${formatCount(Math.max(0, cells.length - 1))} shape${cells.length === 2 ? '' : 's'} · ` +
-    `${formatCount(leaves)} without children · ${formatBytes(state.treemap.rootSize)} total`;
+    `${formatCount(bare)} without children · ` +
+    (held ? `${formatCount(held)} folder${held === 1 ? '' : 's'} drawn without ${held === 1 ? 'its' : 'their'} contents · ` : '') +
+    `${formatBytes(state.treemap.rootSize)} total`;
 }
 
 /** Blit the buffer, then the overlays that change without a re-layout. */
