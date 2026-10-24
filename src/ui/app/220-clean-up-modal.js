@@ -334,12 +334,22 @@ async function startEncode(paths) {
       videoJobStream.close(); videoJobStream = null;
       const ok = (d.results || []).filter(r => r.ok).length;
       const failed = (d.results || []).filter(r => !r.ok);
+      // A job that stopped (an error, a cancel) never tried the rest (hunt C34).
+      const notReached = Math.max(0, paths.length - (d.results || []).length);
       $('vidFill').style.width = '100%';
       // The originals went to the Trash, which still holds them: smaller, not yet freed (D54).
-      $('vidProgText').innerHTML = `${ok} re-encoded, ${formatBytes(d.savedBytes || 0)} smaller. The originals are in the Trash until you empty it.` +
+      // Only those of the files re-encoded did: a file whose check failed kept its original.
+      const said = (ok
+        ? `${formatCount(ok)} re-encoded, ${formatBytes(d.savedBytes || 0)} smaller. ${ok === 1 ? 'The original is' : `The ${formatCount(ok)} originals are`} in the Trash until you empty it.`
+        : 'Nothing was re-encoded.') +
+        (d.error ? ` It stopped: ${String(d.error).replace(/\.?$/, '.')}` : '') +
+        (notReached ? ` ${formatCount(notReached)} ${notReached === 1 ? 'was' : 'were'} not reached, and ${notReached === 1 ? 'is' : 'are'} as before.` : '');
+      $('vidProgText').innerHTML = escapeHtml(said) +
         (failed.length ? `<div class="vid-failed">${failed.map(f =>
           `<div>${escapeHtml(baseName(f.path))}: ${escapeHtml(f.error || 'failed')}</div>`).join('')}</div>` : '');
-      toast(`Re-encoded ${ok} file${ok === 1 ? '' : 's'} — ${formatBytes(d.savedBytes || 0)} smaller once you empty the Trash`);
+      if (ok) toast(`Re-encoded ${formatCount(ok)} file${ok === 1 ? '' : 's'} — ${formatBytes(d.savedBytes || 0)} smaller once you empty the Trash`);
+      if (d.error || notReached) toast(`Shrink video stopped${d.error ? `: ${d.error}` : ''}${notReached ? ` — ${formatCount(notReached)} not reached` : ''}`, 'error', 9000);
+      else if (!ok) toast('Nothing was re-encoded — each original was kept', 'error');
       rescan({ unattended: true }); // the job ends when it ends, not at a click (review F2.1)
     }
   };
@@ -530,7 +540,7 @@ document.addEventListener('click', (e) => {
   const repo = gc.getAttribute('data-gc');
   const name = repo.split(/[\\/]/).pop() || repo;
   $('confirmTitle').innerHTML = icon('gitBranch', 18) + 'Run git gc?';
-  $('confirmText').innerHTML = `Run <b>git gc --aggressive</b> on <b>${escapeHtml(name)}</b>?<br><span style="color:var(--text-3)">Safe — it compacts the repo without changing any commits. Large repos can take a while.</span>`;
+  $('confirmText').innerHTML = `Run <b>git gc --aggressive</b> on <b>${escapeHtml(name)}</b>?<br><span style="color:var(--text-3)">It compacts the repository, and permanently deletes what no branch, tag or recent reflog entry still points to and is more than two weeks old, such as a dropped stash. Those objects do not go to the Trash or the Undo Vault, and this cannot be undone. Large repos can take a while.</span>`;
   setConfirmButton('Run git gc', 'gitBranch');
   onConfirmTrash = () => runGitGcAction(repo);
   $('confirmModal').classList.add('open');
@@ -855,6 +865,17 @@ function fillFolder(command, names) {
  * the server for them again to change a sort order would be a round trip to
  * learn nothing new.
  */
+/**
+ * A group's list is cut at the server's 200 (ITEMS_PER_RULE) while its badge
+ * counts every match (hunt C62): said under the description when it is cut,
+ * with what "Select all" then picks. Nothing when the list is whole.
+ */
+function smartListedNote(g) {
+  const listed = (g.items || []).length;
+  if (!(g.count > listed)) return '';
+  return `<div class="smart-desc muted">${formatCount(listed)} of ${formatCount(g.count)} listed, the first the scan found, largest first. Select all picks only these.</div>`;
+}
+
 function renderSmartGroups(catalog) {
   const host = $('smartResults');
   const catLabel = { regenerable: 'Regenerables', cache: 'Caches', junk: 'Junk' };
@@ -899,9 +920,9 @@ function renderSmartGroups(catalog) {
         <b class="smart-title">${escapeHtml(g.title)}</b>
         <button class="icon-btn why-btn" data-why="${gi}" aria-expanded="false" aria-controls="smartWhy${gi}"
           title="Why is this suggested?" aria-label="Why is ${escapeHtml(g.title)} suggested?">${icon('help', 13)}</button>
-        <span class="size-badge num" style="color:${sizeInk(g.totalSize)}">${g.items.length} · ${formatBytes(g.totalSize)}</span>
+        <span class="size-badge num" style="color:${sizeInk(g.totalSize)}">${formatCount(g.count ?? g.items.length)} · ${formatBytes(g.totalSize)}</span>
       </div>
-      <div class="smart-desc">${escapeHtml(g.description)}</div>
+      <div class="smart-desc">${escapeHtml(g.description)}</div>${smartListedNote(g)}
       ${remedies.map(([what, text]) => `<div class="smart-remedy"><span class="rc-lbl">${what}:</span> ${remedyHtml(text)}</div>`).join('')}
       <div class="smart-why" id="smartWhy${gi}" hidden>
         <div class="smart-why-line"><b>What matched:</b> ${escapeHtml(g.why || 'This rule did not record what it matches.')}</div>
@@ -1165,7 +1186,12 @@ async function findBySavedView(scanId) {
   if (!view) { toast('Pick a saved view first', 'error'); return; }
   const out = await api('/api/query', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ scanId, q: view.q, limit: 500, sort: 'size' }),
+    // Files only, asked of the server (hunt C29): a size term matches folders
+    // too, every folder above a big file is at least as big, and folders
+    // dropped here after the server cut the list to 500 left few files or
+    // none, beside a count that included the folders. Grouped, so an `or` in
+    // the view stays inside it.
+    body: JSON.stringify({ scanId, q: `(${view.q}) type:file`, limit: 500, sort: 'size' }),
   });
   // §2.2's degraded list is why this is not just a hit count: a query needing
   // a signal this machine cannot supply must not come back looking like
@@ -1470,9 +1496,22 @@ function activeCleanSelection() {
     if (!ck.checked) return;
     chosen.set(ck.dataset.path, Number(ck.dataset.bytes) || 0);
   });
+  // A path inside another chosen path is not an item of its own (hunt C30):
+  // a browser-caches rule names ~/Library/Caches/Google/Chrome and the
+  // browser profiles name …/Chrome/Default/Cache. Its bytes are already in
+  // the folder's, and it goes to the Trash with it — sent on its own, it was
+  // reported as "could not be trashed" once the folder had taken it.
+  const insideChosen = (p) => {
+    for (let i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')); i > 0;
+      i = Math.max(p.lastIndexOf('/', i - 1), p.lastIndexOf('\\', i - 1))) {
+      if (chosen.has(p.slice(0, i))) return true;
+    }
+    return false;
+  };
+  const outer = new Map([...chosen].filter(([p]) => !insideChosen(p)));
   let bytes = 0;
-  for (const size of chosen.values()) bytes += size;
-  return { paths: [...chosen.keys()], bytes, noun: 'item', sizes: chosen };
+  for (const size of outer.values()) bytes += size;
+  return { paths: [...outer.keys()], bytes, noun: 'item', sizes: outer };
 }
 
 /*
@@ -1601,6 +1640,8 @@ async function runCleanTrash(selection, options) {
   btn.disabled = true;
   $('cleanProgress').classList.add('on');
   let done = 0, failed = 0, blocked = 0, recovered = 0;
+  // The first failure's own sentence, said with the count (hunt C73).
+  let failedWhy = '';
   // Folders offered as empty that the server, looking again, could not show empty: left where
   // they are on purpose, each reason said as itself (Track U, U-4; U-4b L4), never as a failure.
   const left = { FOLDER_NOT_EMPTY: 0, FOLDER_UNREADABLE: 0, FOLDER_NO_ANSWER: 0, FOLDER_NOT_CHECKED: 0, FOLDER_TOO_MANY_ENTRIES: 0, NOT_A_FOLDER: 0 };
@@ -1618,7 +1659,7 @@ async function runCleanTrash(selection, options) {
       done += result.deleted.length;
       for (const p of result.deleted) recovered += counted.get(p) || 0;
       for (const f of result.failed) {
-        if (Object.prototype.hasOwnProperty.call(left, f.code)) { left[f.code]++; leftOut++; } else failed++;
+        if (Object.prototype.hasOwnProperty.call(left, f.code)) { left[f.code]++; leftOut++; } else { failed++; if (!failedWhy && f.reason) failedWhy = f.reason; }
       }
       blocked += (result.blocked || []).length;
       const settled = done + failed + leftOut + blocked;
@@ -1632,7 +1673,7 @@ async function runCleanTrash(selection, options) {
   // Measured, what the moved files took; not measured, the size they claim,
   // which is the most that comes back — "up to", as the footer said (review F1.6).
   if (done) toast(`Moved ${done} item${done > 1 ? 's' : ''} to Trash${recovered ? ` (${onDiskSizes ? '' : 'up to '}${formatBytes(recovered)}) — the space comes back when you empty the Trash` : ''}`);
-  if (failed) toast(`${failed} could not be trashed`, 'error');
+  if (failed) toast(`${failed} could not be trashed${failedWhy ? `: ${failedWhy}` : ''}`, 'error', 9000);
   const stays = (many) => `left where ${many ? 'they are' : 'it is'}`;
   const leftSaid = {
     FOLDER_NOT_EMPTY: (n, many) => `${n} folder${many ? 's are' : ' is'} no longer empty — ${stays(many)}. Rescan to see what is in ${many ? 'them' : 'it'}.`,

@@ -988,6 +988,7 @@ test('Shrink Video reports a smaller file and an original in the Trash, not spac
     EventSource: FakeEventSource,
     videoJobStream: null,
     formatBytes: (n: number) => `${n}B`,
+    formatCount: String,
     escapeHtml: (s: string) => s,
     baseName: (p: string) => p,
     rescan: () => {},
@@ -1853,10 +1854,11 @@ function smartCards(groups: unknown[]): string {
   // The fill helpers, lifted where the page has them (renderSmartGroups names them when it uses them).
   const fill = ['shellWord', 'fillFolder'].filter((n) => new RegExp(`function ${n}\\s*\\(`).test(INDEX));
   const render = pageDecls<(catalog: unknown) => void>(
-    ['escapeHtml', 'confidenceWording', 'catalogNote', 'smartItemsOf', 'REMEDY_PROSE_WORDS', 'remedyIsCommand', 'remedyHtml', ...fill, 'renderSmartGroups'],
+    ['escapeHtml', 'confidenceWording', 'catalogNote', 'smartItemsOf', 'REMEDY_PROSE_WORDS', 'remedyIsCommand', 'remedyHtml', ...fill, 'smartListedNote', 'renderSmartGroups'],
     {
       $: (id: string) => { assert.equal(id, 'smartResults'); return host; },
       smartGroups: groups, smartSort: 'size', icon: () => '', sizeInk: () => '#888', formatBytes: (n: number) => `${n} B`,
+      formatCount: String,
       formatDate: () => 'Oct 2, 2026', chipFor: () => '', reclaimBadge: () => '', scoreFor: () => null, cartButtonHtml: () => '',
       refreshCartButtons() {}, updateCleanSummary() {}, byReclaimDesc: () => () => 0, ensureScores: async () => {}, toast() {}, RECLAIM_BATCH: 2000,
     },

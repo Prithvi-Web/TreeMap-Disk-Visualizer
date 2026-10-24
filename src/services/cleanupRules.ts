@@ -345,6 +345,7 @@ class SuggestionWalk implements SlicedWalk {
         description: rule.description,
         items: [],
         totalSize: 0,
+        count: 0,
         category: rule.category,
         regenerateCmd: (rule as ProjectDirRule).restoreCommand,
         confidence: rule.confidence,
@@ -356,6 +357,7 @@ class SuggestionWalk implements SlicedWalk {
     }
     const size = store.size(node);
     group.totalSize += size;
+    group.count += 1;
     if (group.items.length < ITEMS_PER_RULE) {
       group.items.push({
         name,

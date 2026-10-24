@@ -83,6 +83,7 @@ function group(id: string, items: { path: string; size: number }[]): CleanupSugg
     description: 'test group',
     items: items.map((i) => ({ name: path.basename(i.path), path: i.path, size: i.size, type: 'dir' as const, modifiedAt: 0 })),
     totalSize: items.reduce((s, i) => s + i.size, 0),
+    count: items.length,
     category: 'regenerable',
   };
 }

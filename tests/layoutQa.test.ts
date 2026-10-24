@@ -2681,7 +2681,7 @@ const REMEDY_CODE: Record<string, string[]> = {
 function smartGroupsHtml(groups: Array<Record<string, unknown>>): string {
   const host = { innerHTML: '', querySelectorAll: () => [] as unknown[] };
   const esc = (v: unknown) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  const names = ['confidenceWording', 'catalogNote', 'smartItemsOf', 'renderSmartGroups'];
+  const names = ['confidenceWording', 'catalogNote', 'smartItemsOf', 'smartListedNote', 'renderSmartGroups'];
   // The remedy helpers the page may have, lifted with it when it does.
   for (const helper of ['REMEDY_PROSE_WORDS', 'remedyIsCommand', 'remedyHtml', 'shellWord', 'fillFolder']) {
     if (INDEX.includes(`function ${helper}(`) || INDEX.includes(`const ${helper} = `)) names.unshift(helper);
@@ -2689,6 +2689,7 @@ function smartGroupsHtml(groups: Array<Record<string, unknown>>): string {
   const render = runPageDecls<(catalog: unknown) => void>(names, {
     $: (id: string) => { assert.equal(id, 'smartResults'); return host; },
     smartGroups: groups, smartSort: 'size', icon: () => '<svg class="ic"></svg>', escapeHtml: esc,
+    formatCount: String,
     sizeInk: () => '#888', formatBytes: (n: number) => `${(n / 1e6).toFixed(1)} MB`, formatDate: () => 'Oct 2, 2026', chipFor: () => '<span class="chip"></span>',
     reclaimBadge: () => '', scoreFor: () => null, cartButtonHtml: () => '<button class="icon-btn"></button>', refreshCartButtons() {}, updateCleanSummary() {},
     byReclaimDesc: () => () => 0, ensureScores: async () => {}, toast() {}, RECLAIM_BATCH: 2000,

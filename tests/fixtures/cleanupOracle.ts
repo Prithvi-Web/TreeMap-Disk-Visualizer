@@ -70,6 +70,7 @@ export function oracleCleanupSuggestions(
         description: rule.description,
         items: [],
         totalSize: 0,
+        count: 0,
         category: rule.category,
         regenerateCmd: (rule as ProjectDirRule).restoreCommand,
         confidence: rule.confidence,
@@ -80,6 +81,7 @@ export function oracleCleanupSuggestions(
       groups.set(rule.id, group);
     }
     group.totalSize += store.size(node);
+    group.count += 1;
     if (group.items.length < ITEMS_PER_RULE) {
       group.items.push({
         name: store.name(node),

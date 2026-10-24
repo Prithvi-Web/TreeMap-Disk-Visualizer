@@ -1340,6 +1340,8 @@ export interface CleanupSuggestionGroup {
   description: string;
   items: CleanupSuggestionItem[];
   totalSize: number;
+  /** Every match, as `totalSize` counts them: `items` lists at most ITEMS_PER_RULE (hunt C62). */
+  count: number;
   category: SuggestionCategory;
   /** Command that recreates this group's contents (regenerable groups only). */
   regenerateCmd?: string;

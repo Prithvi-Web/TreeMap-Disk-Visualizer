@@ -533,6 +533,7 @@ const schemas: Json = {
       description: str(),
       items: arr(ref('CleanupSuggestionItem'), 'Largest first, capped at 200 per rule'),
       totalSize: int('Exact total across all matches'),
+      count: int('How many items matched, every one, as totalSize counts them: items lists at most 200'),
       category: { type: 'string', enum: ['regenerable', 'cache', 'junk'] },
       regenerateCmd: str('How the contents come back (regenerable groups only): a command, or a sentence where nothing need be run ("automatic on next run"). As the rule pack writes it: a `<folder>` in it stands for each item\'s own folder name ("python3 -m venv <folder>", for .venv, venv or env), to be filled in, shell-quoted, before it is run'),
       confidence: { type: 'string', enum: ['high', 'medium', 'low'], description: 'How sure the rule pack is that this is safe to reclaim' },
