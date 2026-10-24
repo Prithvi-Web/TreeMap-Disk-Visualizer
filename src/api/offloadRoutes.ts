@@ -212,7 +212,8 @@ offloadRouter.get('/offload/:jobId/progress', (req: Request, res: Response) => {
 
   const finish = (j: OffloadJob): void => {
     if (j.status === 'complete') send(res, { type: 'complete', filesDone: j.filesDone, bytesDone: j.bytesDone, ...(j.error ? { warning: j.error } : {}) });
-    else if (j.status === 'cancelled') send(res, { type: 'cancelled' });
+    // How many files the job had done (hunt C49): a cancelled restore's files already put back stay there.
+    else if (j.status === 'cancelled') send(res, { type: 'cancelled', filesDone: j.filesDone });
     else send(res, { type: 'error', message: j.error ?? 'Offload failed' });
     closeClient(client);
   };

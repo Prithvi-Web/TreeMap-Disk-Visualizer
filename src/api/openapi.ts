@@ -2255,7 +2255,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'post',
     path: '/api/offload/{jobId}/cancel',
-    summary: 'Cooperatively cancel a running offload/restore job (rolls back what it wrote)',
+    summary: 'Cooperatively cancel a running offload/restore job: an offload stopped before every copy verifies removes what it copied and trashes nothing; a restore keeps the files it already put back (its cancelled frame says how many, filesDone), and one that put every file back finishes complete',
     tag: 'offload',
     destructive: false,
     parameters: [pathParam('jobId', 'Job id')],

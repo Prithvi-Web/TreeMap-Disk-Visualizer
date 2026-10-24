@@ -1493,7 +1493,10 @@ async function restoreEntries(job: OffloadJob, entries: OffloadEntry[]): Promise
     // Never "cancelled": a cancel that left a part-copied file is not one that left nothing.
     job.status = 'error';
     job.error = `${leftBehind.length} of ${entries.length} could not be restored, and what was begun could not be removed — ${leftBehind[0]}. Remove it before trying again; its offloaded copy is untouched.`;
-  } else if (job.cancelled) {
+  } else if (job.cancelled && putBack.size < entries.length) {
+    // Cancelled before every file was put back (hunt C49): `filesDone` says how many were, and they stay
+    // where they are — a restore never takes back what it put back. One that put every file back is
+    // complete, however late the Cancel came.
     job.status = 'cancelled';
   } else if (failures.length) {
     job.status = 'error';

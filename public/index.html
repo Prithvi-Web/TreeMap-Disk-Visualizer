@@ -29690,7 +29690,7 @@ async function runRestoreJob(ids) {
     watchOffloadJob(resp.jobId, 'Restoring…', (ev) => {
       if (!ev || !ev.warning) toast('Restored and verified');
       loadOffloadIndex();
-    });
+    }, 'restore');
   } catch (e) {
     toast(e.message, 'error');
   }
@@ -29749,11 +29749,13 @@ function watchJob(opts) {
       opts.onSettled(ev);
     } else if (ev.type === 'cancelled') {
       done();
-      toast(opts.cancelledMessage);
+      // A function of the frame where what was done before the Cancel matters (a restore, hunt C49).
+      toast(typeof opts.cancelledMessage === 'function' ? opts.cancelledMessage(ev) : opts.cancelledMessage);
       opts.onSettled(ev);
     } else if (ev.type === 'shutdown') {
       done();
-      toast('Server shutting down — the job rolled back safely', 'error');
+      // Said when the server goes, before the job has settled: no claim about how it ends (hunt C49).
+      toast(opts.shutdownMessage || 'Server shutting down — the job was stopped before it finished', 'error');
       opts.onSettled(ev);
     }
   };
@@ -29765,14 +29767,30 @@ function watchJob(opts) {
   };
 }
 
-function watchOffloadJob(jobId, title, onComplete) {
+/**
+ * A cancelled Restore's word (hunt C49): a restore never takes back a file it put back, so the files it
+ * had restored stay where they are — never the offload's "everything rolled back".
+ */
+function restoreCancelledMessage(ev) {
+  const n = (ev && ev.filesDone) || 0;
+  return n > 0
+    ? `Restore stopped — ${formatCount(n)} file${n === 1 ? ' already restored stays where it is' : 's already restored stay where they are'}; the rest are still only on the destination`
+    : 'Restore cancelled — nothing was restored; the offloaded copies are still on the destination';
+}
+
+/** Follows an offload, or (`kind` 'restore') the Offloaded tab's Restore, in the shared progress modal. */
+function watchOffloadJob(jobId, title, onComplete, kind) {
+  const restore = kind === 'restore';
   watchJob({
     title,
     icon: 'archive',
     progressUrl: `/api/offload/${jobId}/progress`,
     cancelUrl: `/api/offload/${jobId}/cancel`,
-    footNote: 'Nothing is removed until every copy is verified.',
-    cancelledMessage: 'Offload cancelled — everything rolled back, nothing was deleted',
+    footNote: restore ? 'Each file is put back only once its copy verifies; the offloaded copies stay on the destination.' : 'Nothing is removed until every copy is verified.',
+    cancelledMessage: restore ? restoreCancelledMessage : 'Offload cancelled — everything rolled back, nothing was deleted',
+    shutdownMessage: restore
+      ? 'Server shutting down — the restore was stopped before it finished; files it had already restored stay where they are'
+      : 'Server shutting down — the offload was stopped before it finished; no original goes to the Trash before every copy verifies',
     lostMessage: 'Lost the progress stream — check the Offloaded tab for the result',
     onComplete,
     onSettled: () => loadOffloadIndex(),

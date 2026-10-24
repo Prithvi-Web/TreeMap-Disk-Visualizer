@@ -932,7 +932,8 @@ export type OffloadStreamEvent =
    */
   | { type: 'complete'; filesDone: number; bytesDone: number; warning?: string }
   | { type: 'error'; message: string }
-  | { type: 'cancelled' }
+  /** `filesDone`: how many files the job had done — a cancelled restore's stay where it put them (hunt C49). */
+  | { type: 'cancelled'; filesDone: number }
   | { type: 'shutdown' };
 
 /* ---------- Undo Vault (B3) ---------- */
