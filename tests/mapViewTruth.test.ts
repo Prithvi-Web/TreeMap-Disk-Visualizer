@@ -2190,7 +2190,7 @@ function mapAndNote(serve: (minSize: number, state: { treemap: { rootPath: strin
   };
   const page = load<{ loadTreemap: (p: string) => Promise<void>; liveRelayout: () => Promise<void>; note: () => string }>(
     ['treeScanId', 'loadTreemap', 'liveRelayout', ...CAP_NOTE_DECLS], {
-      state, REDUCED: true, isSun: () => false, isCells: () => false, exitCartPreview() {},
+      state, REDUCED: true, isSun: () => false, isCells: () => false, exitCartPreview() {}, tmPreview: { on: false },
       $: () => ({ classList: { add() {}, remove() {} }, disabled: false }),
       api: async (u: string) => { const m = Number(/[?&]minSize=(\d+)/.exec(u)![1]); asked.push(m); return serve(m, state); },
       toast: (m: string) => { throw new Error('the page reported: ' + m); },

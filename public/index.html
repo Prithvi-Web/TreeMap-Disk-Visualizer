@@ -9787,20 +9787,21 @@ async function purgeSnapshotsAction() {
 }
 
 /** Inject a synthetic Trash cell at the top level of a home-folder treemap. */
-function maybeInjectTrash() {
+function maybeInjectTrash(nodes = state.treemap.nodes) {
+  // `nodes`: the map's own, or a live layout's about to replace them (C24).
   if (state.treemap.mode !== 'treemap') return;
   if (!state.root || !state.system || !state.trash) return;
   if (state.treemap.rootPath !== state.root.path) return;
   if (state.root.path !== state.system.homeDir) return;
   const tb = state.trash.totalBytes;
-  if (!(tb > 0) || !state.treemap.nodes.length) return;
+  if (!(tb > 0) || !nodes.length) return;
   const rootSize = state.treemap.rootSize || state.root.size;
   if (rootSize <= 0) return;
   const frac = tb / (rootSize + tb);
   const trashW = Math.max(6, Math.min(34, frac * 100)); // keep visible, never dominant
   const scale = (100 - trashW) / 100;
-  for (const n of state.treemap.nodes) { n.x *= scale; n.w *= scale; }
-  state.treemap.nodes.push({
+  for (const n of nodes) { n.x *= scale; n.w *= scale; }
+  nodes.push({
     name: 'Trash', path: '\0trash', size: tb, type: 'dir', modifiedAt: Date.now(),
     depth: 1, expanded: false, isTrash: true, x: 100 - trashW, y: 0, w: trashW, h: 100,
   });
@@ -23294,6 +23295,10 @@ async function setHistoryIndex(i) {
   try {
     const layout = await historyLayoutFor(snap);
     if (seq !== h.seq || state.view !== 'treemap') return; // superseded
+    // A point in time replaces the map the cart preview is a picture of: the
+    // preview goes first, silently, as every load drops it (C24). Drawn under
+    // its banner, a past snapshot read as the preview.
+    exitCartPreview(true);
     if (state.live.on) { disableLive(); toast('Live mode paused while viewing history'); }
     h.active = true;
     h.viewingAt = layout.snapshot.takenAt;
@@ -23527,6 +23532,7 @@ function lapseStart() {
   const discrete = REDUCED || !isRectMap();
   // During an export only the export itself may start playback (review H4).
   if (h.snaps.length < 2 || L.playing || state.view !== 'treemap' || (lapseExporting && !lapseInternalStart)) return;
+  exitCartPreview(true); // playback draws the past, never under the preview's banner (C24)
   if (state.live.on) { disableLive(); toast('Live mode paused while playing history'); }
   const seq = ++L.seq;
   // A scrub's 260 ms morph must not fight the transport for the node set.
@@ -23810,6 +23816,11 @@ function renderLiveFeed() {
 async function liveRelayout() {
   const live = state.live;
   if (!live.on || live.dirty <= 0 || state.scanning || state.treemap.history.active || state.view !== 'treemap') return;
+  // While the cart preview is up the map is its picture: a live layout
+  // replaced its re-tiled nodes, and the banner went on describing hatched
+  // staged blocks no longer drawn (hunt C24). The changes stay owed, and are
+  // laid out once the preview is left.
+  if (tmPreview.on) return;
   live.dirty = 0;
   if (isSun()) { animateSunburstTo(sunburstRoot()); return; }
   if (isCells()) { drawCells(); return; } // re-solved from the tree the watcher just updated
@@ -23824,15 +23835,21 @@ async function liveRelayout() {
     let floor = state.treemap.minSize > 0 ? state.treemap.minSize : TM_MIN_SIZE;
     let data = await ask(floor);
     // Called off, or the map moved to another folder while this was asked:
-    // its rectangles are not that folder's.
+    // its rectangles are not that folder's. A preview put up meanwhile keeps
+    // its picture, and the layout stays owed (C24).
     if (!live.on || state.treemap.rootPath !== at) return;
+    if (tmPreview.on) { live.dirty++; return; }
     if (!data.nodes.length && data.root.size > 0 && floor > 1) {
       floor = 1;
       data = await ask(floor);
       if (!live.on || state.treemap.rootPath !== at) return;
+      if (tmPreview.on) { live.dirty++; return; }
     }
     state.treemap.rootSize = data.root.size;
     state.treemap.minSize = floor; // the floor this layout was asked with (tmNodeCapNote)
+    // The Trash beside the home folder is the page's own cell, laid in by
+    // every load of it: a live layout dropped it (C24).
+    maybeInjectTrash(data.nodes);
     animateTreemapTo(data.nodes);
   } catch { /* transient — next tick retries */ }
 }

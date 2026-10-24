@@ -227,20 +227,21 @@ async function purgeSnapshotsAction() {
 }
 
 /** Inject a synthetic Trash cell at the top level of a home-folder treemap. */
-function maybeInjectTrash() {
+function maybeInjectTrash(nodes = state.treemap.nodes) {
+  // `nodes`: the map's own, or a live layout's about to replace them (C24).
   if (state.treemap.mode !== 'treemap') return;
   if (!state.root || !state.system || !state.trash) return;
   if (state.treemap.rootPath !== state.root.path) return;
   if (state.root.path !== state.system.homeDir) return;
   const tb = state.trash.totalBytes;
-  if (!(tb > 0) || !state.treemap.nodes.length) return;
+  if (!(tb > 0) || !nodes.length) return;
   const rootSize = state.treemap.rootSize || state.root.size;
   if (rootSize <= 0) return;
   const frac = tb / (rootSize + tb);
   const trashW = Math.max(6, Math.min(34, frac * 100)); // keep visible, never dominant
   const scale = (100 - trashW) / 100;
-  for (const n of state.treemap.nodes) { n.x *= scale; n.w *= scale; }
-  state.treemap.nodes.push({
+  for (const n of nodes) { n.x *= scale; n.w *= scale; }
+  nodes.push({
     name: 'Trash', path: '\0trash', size: tb, type: 'dir', modifiedAt: Date.now(),
     depth: 1, expanded: false, isTrash: true, x: 100 - trashW, y: 0, w: trashW, h: 100,
   });

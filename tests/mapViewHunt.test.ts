@@ -409,3 +409,77 @@ test('C23: Up disabled while focus is elsewhere takes nothing; the Grid and Disk
   const sets = city.match(/\$\('cityUpBtn'\)\.disabled = /g) || [];
   assert.ok(sets.length >= 1 && wired.length === sets.length, `every place loadCity disables Disk City's Up hands focus on (${wired.length} of ${sets.length})`);
 });
+
+/* ══════════════ C24 — Live, the slider and Play leave the cart preview's picture alone ══════════════ */
+
+/** The real liveRelayout (and maybeInjectTrash) over a stubbed server, with the preview `on` or not. */
+function liveHarness(opts: { preview: boolean; home?: boolean; previewDuringFetch?: boolean }) {
+  const asked: string[] = [];
+  const previewNodes = [{ path: '/r/a', size: 40, depth: 1, x: 0, y: 0, w: 40, h: 100 }, { path: '/r — freed', size: 60, depth: 1, freed: true, x: 40, y: 0, w: 60, h: 100 }];
+  const tmPreview = { on: opts.preview };
+  const state = {
+    scanId: 's1', scanning: false, view: 'treemap', root: { path: '/r' },
+    system: { homeDir: opts.home ? '/r' : '/elsewhere' }, trash: { totalBytes: 50 },
+    live: { on: true, dirty: 2 },
+    treemap: { mode: 'treemap', rootPath: '/r', rootSize: 100, minSize: 4000, maxDepth: 4, nodes: previewNodes as Record<string, unknown>[], history: { active: false } },
+  };
+  const deps = {
+    state, tmPreview, TM_MIN_SIZE: 4000,
+    isSun: () => false, isCells: () => false, animateSunburstTo() {}, drawCells() {}, sunburstRoot: () => null,
+    api: async (u: string) => {
+      asked.push(u);
+      if (opts.previewDuringFetch) tmPreview.on = true;
+      return { root: { path: '/r', size: 100 }, nodes: [{ path: '/r/a', size: 100, depth: 1, x: 0, y: 0, w: 100, h: 100 }] };
+    },
+    animateTreemapTo: (nodes: Record<string, unknown>[]) => { state.treemap.nodes = nodes; },
+    Date,
+  };
+  const liveRelayout = load<() => Promise<void>>(['maybeInjectTrash', 'liveRelayout'], deps, 'liveRelayout');
+  return { state, asked, previewNodes, liveRelayout };
+}
+
+test('C24: a live re-layout waits while the cart preview is up — its hatched staged blocks stay drawn, and the change is laid out after', async () => {
+  const h = liveHarness({ preview: true });
+  await h.liveRelayout();
+  assert.deepEqual(h.asked, [], 'nothing asked while the preview is up');
+  assert.equal(h.state.treemap.nodes, h.previewNodes, 'the preview\'s picture is not replaced under its banner');
+  assert.equal(h.state.live.dirty, 2, 'the disk\'s changes are kept for the relayout after the preview');
+  const f = liveHarness({ preview: false, previewDuringFetch: true });
+  await f.liveRelayout();
+  assert.equal(f.state.treemap.nodes, f.previewNodes, 'a preview entered while the layout was asked: its picture stays');
+  assert.ok(f.state.live.dirty > 0, 'and the relayout is still owed');
+  const n = liveHarness({ preview: false });
+  await n.liveRelayout();
+  assert.deepEqual(n.state.treemap.nodes.map((x) => x.path), ['/r/a'], 'control: with no preview the live layout lands');
+});
+
+test('C24: a live re-layout of the home folder keeps the Trash cell beside it', async () => {
+  const h = liveHarness({ preview: false, home: true });
+  await h.liveRelayout();
+  const trash = h.state.treemap.nodes.find((x) => x.isTrash);
+  assert.ok(trash, 'the Trash cell is laid in again, as every load of the home folder does');
+  assert.equal(h.state.treemap.nodes.filter((x) => x.isTrash).length, 1);
+});
+
+test('C24: a point on the time slider, and Play, leave the cart preview first — never a past snapshot under its banner', async () => {
+  const calls: string[] = [];
+  const state = {
+    view: 'treemap', live: { on: false }, root: { path: '/r' },
+    treemap: { rootSize: 0, hover: null, kbSel: null, nodes: [], history: { snaps: [{ takenAt: 1 }, { takenAt: 2 }], index: 0, seq: 0, active: false, scrubbing: true, viewingAt: 0, tree: null },
+      lapse: { playing: false, seq: 0, pos: 0, completed: false, loop: false, onDone: null } },
+  };
+  const deps = {
+    state, REDUCED: true, isSun: () => false, isCells: () => false, isRectMap: () => true,
+    exitCartPreview: (silent: boolean) => { calls.push(`exit:${silent}`); },
+    historyLayoutFor: async () => ({ snapshot: { takenAt: 1 }, root: { size: 1 }, nodes: [] }),
+    animateTreemapTo: () => { calls.push('draw'); }, updateTimeLabel() {}, toast() {}, disableLive() {}, loadTreemap() {},
+    cancelAnimationFrame() {}, $: () => ({ value: '0' }), lapseReflect() {}, lapsePrefetch() {}, performance: { now: () => 0 },
+    requestAnimationFrame: () => 0, lapseExporting: false, lapseInternalStart: false, tmAnimFrame: 0,
+  };
+  const page = load<{ seek: (i: number) => Promise<void>; play: () => void }>(['setHistoryIndex', 'lapseStart'], deps, '{ seek: setHistoryIndex, play: lapseStart }');
+  await page.seek(0);
+  assert.deepEqual(calls, ['exit:true', 'draw'], 'the preview is left before the snapshot is drawn');
+  calls.length = 0;
+  page.play();
+  assert.equal(calls[0], 'exit:true', 'Play (and the time-lapse export it drives) leaves the preview first');
+});
