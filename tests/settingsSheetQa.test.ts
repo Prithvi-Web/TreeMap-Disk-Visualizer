@@ -609,15 +609,55 @@ test('"Clear target" is an edit like the others: the live target and its meter s
   // until Settings was reopened or the page reloaded.
   const dom = fakeDom({ cleanupGoalValue: { value: '50' } });
   const adopted: unknown[] = [];
-  const handler = braced("$('cleanupGoalClear').addEventListener('click', () => {");
+  // Clear target and the constant and listeners beside it (review HD-L16).
+  const at = INDEX.indexOf("$('cleanupGoalClear').addEventListener('click', () => {");
+  const handler = INDEX.slice(INDEX.lastIndexOf('// An edit like every other field here', at), INDEX.indexOf('/* ── Reclaim Score weights', at));
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  new Function('$', 'adoptCartGoal', `'use strict'; ${braced('function setSettingsStatus(')} ${handler});`)(dom.$, (bytes: unknown) => { adopted.push(bytes); return null; });
+  new Function('$', 'adoptCartGoal', `'use strict'; ${braced('function setSettingsStatus(')} ${handler}`)(dom.$, (bytes: unknown) => { adopted.push(bytes); return null; });
   const clear = dom.$('cleanupGoalClear').listeners.click;
   assert.ok(clear, 'Clear target has a click handler');
   clear();
   assert.equal(dom.$('cleanupGoalValue').value, '', 'the box is emptied');
   assert.deepEqual(adopted, [], 'the live target is not touched — Save carries the change to the meter');
   assert.match(dom.$('settingsStatus').textContent, /press Save to keep it/, 'and the sheet says Save is what keeps it');
+});
+
+/*
+ * "Target cleared — press Save to keep it" stayed up once a new target was typed, untrue while Save would
+ * store the new figure; and a second press of Clear target was silent, the same words being no news to
+ * sayAloud (review HD-L16).
+ */
+test('"Target cleared" is retired once a new target is typed or its unit changed, and each press of Clear target is said (review HD-L16)', () => {
+  const dom = fakeDom({ cleanupGoalValue: { value: '50' } });
+  const at = INDEX.indexOf("$('cleanupGoalClear').addEventListener('click', () => {");
+  const region = INDEX.slice(INDEX.lastIndexOf('// An edit like every other field here', at), INDEX.indexOf('/* ── Reclaim Score weights', at));
+  assert.ok(region.includes('cleanupGoalClear'), 'control: the region holds Clear target');
+  const said: string[] = [];
+  const memory = new Map<string, string>();
+  // The page's rule (sayAloud, 040): the same words again are no news, and are not said.
+  const sayAloud = (id: string, words: string) => { if (memory.get(id) === words) return; memory.set(id, words); if (words) said.push(words); };
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function('$', 'adoptCartGoal', 'sayAloud', `'use strict'; ${braced('function setSettingsStatus(')} ${region}`)(dom.$, () => null, sayAloud);
+  const clear = dom.$('cleanupGoalClear').listeners.click;
+  clear();
+  assert.deepEqual(said, ['Target cleared — press Save to keep it'], 'control: the first press is said');
+  clear();
+  assert.equal(said.length, 2, 'a second press is said again');
+
+  assert.ok(dom.$('cleanupGoalValue').listeners.input, 'typing a target is listened to');
+  assert.ok(dom.$('cleanupGoalUnit').listeners.change, 'and so is a change of unit');
+  dom.$('cleanupGoalValue').value = '20';
+  dom.$('cleanupGoalValue').listeners.input();
+  assert.equal(dom.$('settingsStatus').textContent, '', 'a new target typed retires the line');
+  clear();
+  dom.$('cleanupGoalUnit').listeners.change();
+  assert.equal(dom.$('settingsStatus').textContent, '', 'and so does a new unit');
+
+  // A line about something else is not retired by typing.
+  const unread = 'Your settings could not be read, so Save is off — nothing here can overwrite them.';
+  dom.$('settingsStatus').textContent = unread;
+  dom.$('cleanupGoalValue').listeners.input();
+  assert.equal(dom.$('settingsStatus').textContent, unread, 'control: why Save is off stays');
 });
 
 /* ══════════════ D76 — Save closes the sheet once the server has the settings ══════════════ */

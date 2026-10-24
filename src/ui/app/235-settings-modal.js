@@ -252,10 +252,19 @@ function collectCleanupGoal() {
 // An edit like every other field here: Save carries it to the cart's meter
 // (renderCleanupGoalFields), so "Close without saving" leaves the target and
 // the meter as they were (review F1.10).
+const TARGET_CLEARED = 'Target cleared — press Save to keep it';
 $('cleanupGoalClear').addEventListener('click', () => {
   $('cleanupGoalValue').value = '';
-  setSettingsStatus('Target cleared — press Save to keep it');
+  // Each press is said (review HD-L16): the same words as the last are no news to sayAloud, so the line is
+  // emptied first.
+  setSettingsStatus('');
+  setSettingsStatus(TARGET_CLEARED);
 });
+// A new target typed, or its unit changed, retires the line (review HD-L16): left up, it was untrue while
+// Save would store the new figure. A line about anything else stays.
+for (const [id, type] of [['cleanupGoalValue', 'input'], ['cleanupGoalUnit', 'change']]) {
+  $(id).addEventListener(type, () => { if ($('settingsStatus').textContent === TARGET_CLEARED) setSettingsStatus(''); });
+}
 
 /* ── Reclaim Score weights (v4 §3.2) ──
    Six sliders and a reset. §3.2 requires the weights to be user-editable, and
