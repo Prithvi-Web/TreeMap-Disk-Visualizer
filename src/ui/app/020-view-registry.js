@@ -97,6 +97,11 @@ const VIEWS = [
       // view was gone, re-painted a hidden canvas, and left tmQueryErr visible
       // so the NEXT entry resurrected the bar with a query from two views ago.
       tmCancelQueries();
+      // And a map load still out: landed after the view was gone, it rewrote
+      // the shared root and nodes under Disk City, whose Up, building clicks
+      // and card then spoke of another folder (hunt C72). Disk City's own
+      // unmount does the same for its loads (cityLoadSeq).
+      tmLoadSeq++;
       tmCloseHints();
       tmClearHits();
       // §9.6 — the plain-words popover is position:fixed and anchored to a

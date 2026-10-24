@@ -592,3 +592,49 @@ test('C28: in Sunburst the hint does not offer the lasso or the Z lens, which do
     assert.equal(els.tmHintFlat.hidden, hidden, `${mode}: ${hidden ? 'not offered — lassoAvailable() and the Z key refuse the sunburst' : 'offered'}`);
   }
 });
+
+/* ══════════════ C72 — leaving the Treemap invalidates a map load still out ══════════════ */
+
+/** The registry's `{ id: '<id>', … }` view object, as the page declares it. */
+function viewSource(id: string): string {
+  const at = INDEX.indexOf(`id: '${id}', label:`);
+  assert.notEqual(at, -1, `the ${id} view is in the page`);
+  const start = INDEX.lastIndexOf('{', at);
+  let depth = 0;
+  for (let i = start; i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1);
+  }
+  return assert.fail(`the ${id} view never closes`);
+}
+
+test('C72: a map load still out when the Treemap is left never lands under the view that took its place', async () => {
+  let answer: (v: unknown) => void = () => {};
+  const noop = () => {};
+  const el = () => ({ classList: { add: noop, remove: noop, toggle: noop }, disabled: false, hidden: false, innerHTML: '', textContent: '' });
+  const els: Record<string, ReturnType<typeof el>> = {};
+  const state = {
+    scanId: 's1', scanning: false, view: 'treemap', root: { path: '/r', name: 'r', size: 100 }, pathIndex: new Map(), live: { on: false },
+    lens: { held: false, at: null },
+    treemap: { mode: 'treemap', rootPath: '/r', rootName: 'r', rootSize: 100, maxDepth: 4, nodes: [] as unknown[], nodesFor: null as unknown, hover: null, kbSel: null,
+      history: { scrubbing: false, active: false }, altZoomRaf: 0, altZoom: null, cells: [], altNote: '' },
+  };
+  const deps = {
+    state, $: (id: string) => (els[id] ||= el()), REDUCED: true, isSun: () => false, isCells: () => false, exitCartPreview: noop,
+    api: () => new Promise((land) => { answer = land; }),
+    renderCrumbs: noop, maybeInjectTrash: noop, exitHistoryState: noop, refreshTimebar: noop, drawView: noop, reportError: noop,
+    requestAnimationFrame: (f: () => void) => f(), tmCanvas: {},
+    // The rest of the Treemap view's unmount: each stops what it names.
+    tmCancelQueries: noop, tmCloseHints: noop, tmClearHits: noop, nlClose: noop, tmSetQueryMessage: noop, disableLive: noop,
+    cancelAnimationFrame: noop, altRefineCancel: noop, lapseStop: noop, clearTimeout: noop, tmResizeDeb: 0, lassoCancel: noop, fxTmPillBeamsSync: noop,
+  };
+  const page = load<{ loadTreemap: (p: string) => Promise<void>; view: { unmount: () => void } }>(
+    ['treeScanId', 'TM_MIN_SIZE', 'loadTreemap'], deps, `{ loadTreemap, view: (${viewSource('treemap')}) }`, 'let tmLoadSeq = 0; let tmAnimFrame = 0;');
+  const out = page.loadTreemap('/r/A'); // a click on folder A
+  page.view.unmount(); // Disk City opened before the answer landed
+  state.view = 'city';
+  answer({ root: { path: '/r/A', name: 'A', size: 60 }, nodes: [{ path: '/r/A/x', size: 60, depth: 1 }] });
+  await out;
+  assert.equal(state.treemap.rootPath, '/r', 'the shared root the city stands on is not rewritten to A');
+  assert.deepEqual(state.treemap.nodes, [], 'nor its nodes');
+});
