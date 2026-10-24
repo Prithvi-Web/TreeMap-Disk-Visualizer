@@ -420,7 +420,8 @@ function repoInsideAScan(): string {
   const root = fileTempDir('treemap-guard-gc-');
   const repo = path.join(root, 'repo');
   fs.mkdirSync(repo);
-  createScanRecord(root);
+  // Only a completed scan grants the scanned-root rule (C08); a created record is still running.
+  createScanRecord(root).status = 'complete';
   return repo;
 }
 
@@ -670,7 +671,7 @@ test('outside a test runner, git gc goes ahead: to git, which the disarmed machi
   fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
   const real = fs.realpathSync.native(repo);
   const imports = [`import { runGitGc } from ${SRC_MODULE('services/gitScanner')};`, `import { createScanRecord } from ${SRC_MODULE('services/diskScanner')};`];
-  const setup = [`createScanRecord(${JSON.stringify(root)});`];
+  const setup = [`createScanRecord(${JSON.stringify(root)}).status = 'complete';`];
 
   const onTheMachine = childAtTheDoor({ imports, setup, act: `return runGitGc(${JSON.stringify(repo)});` });
   const first = assertWentAhead('git gc', onTheMachine);
