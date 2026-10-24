@@ -1,10 +1,7 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { buildMcpServer, trashCallsInFlight } from './server';
-import { cancelAllScans } from '../services/diskScanner';
-import { cancelAllDuplicateJobs } from '../services/duplicateFinder';
-import { anyOffloadJobRunning, cancelAllOffloadJobs } from '../services/offload';
-import { shutdownWhenSettled } from './shutdown';
+import { buildMcpServer } from './server';
+import { createMcpShutdown } from './mcpShutdown';
 
 /**
  * TreeMap MCP entry point (`npm run mcp`) — stdio transport for MCP clients
@@ -16,25 +13,15 @@ import { shutdownWhenSettled } from './shutdown';
  * All logging goes to stderr — stdout is the MCP protocol channel.
  */
 
-let shuttingDown = false;
-
 /**
  * Cancel everything, then exit once a cancelled offload has rolled back and saved its record and any
- * trash_paths call has answered (bounded; hunt C58) — not in the same tick, which skipped both.
+ * trash_paths call has answered (bounded; hunt C58) — not in the same tick, which skipped both. Once,
+ * however many signals arrive (mcpShutdown.ts).
  */
-function shutdown(): void {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  void shutdownWhenSettled({
-    cancel: () => {
-      cancelAllScans();
-      cancelAllDuplicateJobs();
-      cancelAllOffloadJobs();
-    },
-    busy: () => anyOffloadJobRunning() || trashCallsInFlight() > 0,
-    exit: (code) => process.exit(code),
-  });
-}
+const shutdownOnce = createMcpShutdown({ exit: (code) => process.exit(code) });
+const shutdown = (): void => {
+  void shutdownOnce();
+};
 
 async function main(): Promise<void> {
   const server = buildMcpServer();
