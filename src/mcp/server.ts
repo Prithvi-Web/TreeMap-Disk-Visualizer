@@ -991,7 +991,9 @@ export function buildMcpServer(): McpServer {
           try {
             await refuseAdvicePaths(paths);
           } catch (err) {
-            if (err instanceof AppError && err.code === 'ADVISORY_PATH') {
+            // Both refusals are the tool's own, so both are audited (hunt HF-L4): an advice-only path, and
+            // the fail-closed refusal of every path while a rule pack cannot be read.
+            if (err instanceof AppError && (err.code === 'ADVISORY_PATH' || err.code === 'RULE_PACKS_UNAVAILABLE')) {
               await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: null, dryRun, outcome: 'refused', code: err.code });
             }
             throw err;

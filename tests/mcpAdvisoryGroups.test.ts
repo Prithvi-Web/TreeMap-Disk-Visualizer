@@ -206,6 +206,13 @@ test('while a rule pack cannot be read, trash_paths fails closed: it refuses eve
         const text = r.content?.[0]?.text ?? '';
         assert.equal(r.isError, true, `dryRun=${dryRun} went ahead: ${JSON.stringify(r.structuredContent ?? text)}`);
         assert.match(text, /RULE_PACKS_UNAVAILABLE/, text);
+        // A refusal the endpoint decides is audited, as AGENTS.md says (hunt HF-L4).
+        const [line] = await readAudit(1);
+        assert.deepEqual(
+          [line?.action, line?.source, line?.outcome, line?.code, line?.dryRun, line?.paths],
+          ['files.trash', 'mcp', 'refused', 'RULE_PACKS_UNAVAILABLE', dryRun, [SCRATCH_A]],
+          `dryRun=${dryRun}: the fail-closed refusal is audited`,
+        );
       }
     });
     assert.deepEqual(trashed, [], 'nothing reached a Trash step');

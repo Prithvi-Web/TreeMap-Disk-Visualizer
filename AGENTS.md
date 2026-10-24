@@ -1113,9 +1113,11 @@ read-what-you-saw) permission to act.
   outcome). The refusals recorded are the ones the endpoint itself decides:
   the agent policy and its byte cap, an open file and the offload plan, each
   with its code, a folder an `onlyEmptyFolders` delete or dry run left where
-  it is (one `refused` entry per code, apart from the paths that went), and
-  a relocation whose move failed, as refused — a relocation's and an
-  encode's policy refusals among them. A request refused before that is not recorded, because it never
+  it is (one `refused` entry per code, apart from the paths that went),
+  MCP `trash_paths`' advice-only refusal (`ADVISORY_PATH`) and its
+  fail-closed one while a rule pack cannot be read
+  (`RULE_PACKS_UNAVAILABLE`), and a relocation whose move failed, as
+  refused — a relocation's and an encode's policy refusals among them. A request refused before that is not recorded, because it never
   became an operation:
   by the path rules (`PATH_INVALID`, `PATH_BLOCKED`, `CLOUD_PATH`,
   `SPILL_PATH`, `APP_DATA_PATH`, `SAFETY_RECORD`, `OUTSIDE_SCAN_ROOT`, `VIRTUAL_PATH`), a missing or malformed
@@ -1277,9 +1279,9 @@ read-what-you-saw) permission to act.
   typed. A rule whose advice is about its folder itself
   (`adviceCovers: "folder"` in its pack: Windows' Temp folder, which
   programs expect to exist) refuses only that folder and a folder holding
-  it, never a file or folder in it. While a rule pack cannot be read it trashes nothing
-  (`500 RULE_PACKS_UNAVAILABLE`): nothing can say which paths are advice
-  only.
+  it, never a file or folder in it. While a rule pack cannot be read it
+  trashes nothing (`500 RULE_PACKS_UNAVAILABLE`, audited as refused):
+  nothing can say which paths are advice only.
 - A size field is a raw byte count. Many have a human-formatted twin beside
   them, named after the field (`sizeFormatted`, `bytesFormatted`,
   `totalFormatted`, `deltaFormatted`, …), but not every size field has one:
