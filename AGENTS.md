@@ -1111,7 +1111,11 @@ read-what-you-saw) permission to act.
   match kind** — and Autopilot lists what it left alone in `skipped`, with
   the note as the stated reason, in previews and run records alike. Both
   mutating routes are in the pinned destructive list because writing or
-  deleting a note arms or disarms automation over real files.
+  deleting a note arms or disarms automation over real files. A `notes.json`
+  that cannot be parsed is never written over: all three routes answer
+  `500 NOTES_UNREADABLE` with the reason, never an empty list, and every
+  consumer of the pauses refuses the same way until it is repaired or
+  removed (the unreadable original is kept beside it).
 - **Budget gauges (v4 §9.4).** `GET /api/scan/{scanId}/budget-gauges` pairs
   each in-scan folder budget with a projected breach date — a NEW endpoint
   because `/budgets` is under byte-identity lock. The projection reuses

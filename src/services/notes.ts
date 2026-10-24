@@ -1,5 +1,5 @@
 import path from 'path';
-import { readJsonFile, readJsonFileChecked, writeJsonFile } from './storage';
+import { readJsonFileChecked, writeJsonFile } from './storage';
 import { canonicalDirOf, isInside, realPlaceNow, sanitizePath } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
 
@@ -80,9 +80,22 @@ function normalizeRows(raw: unknown): FolderNote[] {
     }));
 }
 
+/**
+ * The store, or NOTES_UNREADABLE when notes.json is there but cannot be parsed (the hunt, C05). An
+ * empty list in its place let the next save write that one note over the file and lift every pause
+ * the file held, with nothing said: listing, saving and removing a note refuse instead, so nothing is
+ * written over it until a person repairs or removes it.
+ */
 async function load(): Promise<NoteStore> {
-  const store = await readJsonFile<NoteStore>(NOTES_FILE, { notes: [] });
-  return { notes: normalizeRows(store.notes) };
+  const read = await readJsonFileChecked<NoteStore>(NOTES_FILE);
+  if (!read.ok && read.reason === 'corrupt') {
+    throw new AppError(
+      500,
+      'NOTES_UNREADABLE',
+      `notes.json could not be read (${read.detail || 'invalid JSON'}), so your notes cannot be shown or changed, and nothing is written over the file. The pauses they carry still hold: suggestions and automatic cleanup refuse rather than run unpaused. The unreadable original was kept beside the file; repair or remove it to use notes again.`,
+    );
+  }
+  return { notes: read.ok ? normalizeRows(read.value?.notes) : [] };
 }
 
 export async function listNotes(): Promise<FolderNote[]> {

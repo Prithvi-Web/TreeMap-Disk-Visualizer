@@ -693,6 +693,48 @@ test('a corrupt notes.json fails CLOSED — automation refuses rather than runni
   }
 });
 
+test('a corrupt notes.json is never written over — listing, saving and removing a note refuse with the reason, and every pause it held still holds (hunt C05)', async () => {
+  // The hunt (C05): load() fell back to an empty list on a parse error, so
+  // GET /api/notes answered [] and the next save rewrote the file with that
+  // one note — every earlier pause lifted, and Autopilot ran inside those
+  // folders again. An unreadable file must be kept, and said.
+  await clearNotes();
+  const notesFile = path.join(process.env.TREEMAP_DATA_DIR!, 'notes.json');
+  const garbage = '{ "notes": [ { "path": "/a", "text": "keep", "suppress": true }, TRUNCATED';
+  try {
+    fs.writeFileSync(notesFile, garbage);
+    await assert.rejects(listNotes(), (e: any) => e.code === 'NOTES_UNREADABLE' && /nothing is written over/i.test(e.message));
+    await assert.rejects(setNote(path.join(os.homedir(), 'other'), 'new note'), (e: any) => e.code === 'NOTES_UNREADABLE');
+    await assert.rejects(deleteNote('/a'), (e: any) => e.code === 'NOTES_UNREADABLE');
+    assert.equal(fs.readFileSync(notesFile, 'utf8'), garbage, 'the unreadable file is kept exactly as it was');
+    await assert.rejects(suppressedNoteRoots(), (e: any) => e.code === 'NOTES_UNREADABLE', 'the pauses still hold');
+
+    const { port, close } = await listen();
+    try {
+      const got = await req(port, 'GET', '/api/notes');
+      assert.equal(got.status, 500);
+      assert.equal(got.body.code, 'NOTES_UNREADABLE', 'never an empty list');
+      const put = await req(port, 'PUT', '/api/notes', { path: path.join(os.homedir(), 'other'), text: 'x' });
+      assert.equal(put.body.code, 'NOTES_UNREADABLE');
+      assert.equal(fs.readFileSync(notesFile, 'utf8'), garbage, 'the route wrote nothing over it either');
+    } finally {
+      await close();
+    }
+  } finally {
+    fs.rmSync(notesFile, { force: true });
+    for (const f of fs.readdirSync(process.env.TREEMAP_DATA_DIR!)) {
+      if (f.startsWith('notes.json.corrupt')) fs.rmSync(path.join(process.env.TREEMAP_DATA_DIR!, f), { force: true });
+    }
+  }
+});
+
+test('the page says why the notes could not be read, rather than booting with none (hunt C05)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'ui', 'app', '160-folder-budgets.js'), 'utf8');
+  const body = src.slice(src.indexOf('async function loadNotes'), src.indexOf('let noteTarget'));
+  assert.match(body, /NOTES_UNREADABLE/, 'loadNotes tells an unreadable notes.json apart');
+  assert.match(body, /toast\(e\.message, 'error'\)/, 'and says the server\'s reason');
+});
+
 test('cloud:// pseudo-paths are refused — a note there could never do its job', async () => {
   await assert.rejects(setNote('cloud://gdrive/Photos', 'keep'), (e: any) => e.code === 'NOTE_INVALID');
 });

@@ -293,10 +293,13 @@ async function loadNotes() {
   try {
     const data = await api('/api/notes');
     state.notes = new Map((data.notes || []).map((n) => [n.path, n]));
-  } catch {
+  } catch (e) {
     // No server-side notes is a fine state to boot in; the editor will say
-    // so the moment a save fails for a real reason.
+    // so the moment a save fails for a real reason. A notes.json the server
+    // cannot read is said now (the hunt, C05): the page would otherwise show
+    // no notes and no pauses while every pause the file holds still applies.
     state.notes = new Map();
+    if (e && e.code === 'NOTES_UNREADABLE') toast(e.message, 'error');
   }
 }
 
