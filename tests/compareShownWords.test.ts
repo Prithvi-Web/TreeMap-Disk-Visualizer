@@ -80,6 +80,26 @@ test('two History records: the card says how many top-level items it could not c
   assert.match(html, /1 top-level item is in only one of these scans’ lists of the largest 100, so it is not compared\./, html);
 });
 
+test('with nothing listed beside items or folders it could not compare, the card never says nothing changed (review F1.1)', () => {
+  const said = (r: Record<string, unknown>): string => {
+    html = '';
+    (ctx.renderCompare as (r: unknown) => void)({ entries: [], truncated: false, deep: false, whenA: 1, whenB: 2, rules: null, ...r });
+    return html.replace(/\s+/g, ' ');
+  };
+  // A new 4 GB download in a folder of more than 100 items: neither list can vouch for the other's item.
+  const cut = said({ totalDelta: 10_000_000_000, notCompared: 2 });
+  assert.doesNotMatch(cut, /nothing changed/, cut);
+  assert.match(cut, /No differences in what both scans list\./, cut);
+  // ~/Library/Mail refused in one scan: the total shrank by what it held there.
+  const unlisted = said({ totalDelta: -12_000, unlistedFolders: 1 });
+  assert.doesNotMatch(unlisted, /nothing changed/, unlisted);
+  assert.match(unlisted, /No differences in what both scans list\./, unlisted);
+  // Everything compared and nothing differs: that is said as ever.
+  const same = said({ totalDelta: 0 });
+  assert.match(same, /No differences — nothing changed between these two\./, same);
+  assert.doesNotMatch(same, /in what both scans list/, same);
+});
+
 test('a list it draws whole says nothing of a cut', () => {
   const { rows, line } = cardFor(150, false);
   assert.equal(rows, 150);

@@ -381,7 +381,11 @@ function renderCompare(r) {
       ${r.entries.length ? '<div id="cmpCounts"></div>' : ''}
       ${r.entries.length
         ? r.entries.slice(0, shown).map(en => deltaRow(en, maxD, { offerSnapshots: true, rules: r.rules || null })).join('')
-        : `<div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No differences — nothing changed between these two.</div>`}
+        // What it could not compare is said just above: then only what both scans list is known not to
+        // differ, and "nothing changed" beside a total that moved was untrue (review F1.1).
+        : r.notCompared || r.unlistedFolders
+          ? '<div class="muted">No differences in what both scans list.</div>'
+          : `<div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No differences — nothing changed between these two.</div>`}
     </div>`;
   // Animated counts: the from-zero roll the quick stats use, on the totals
   // just computed — and the same four counts again as discrete square

@@ -259,7 +259,13 @@ async function renderTrendDeltas() {
     const head = `<div class="muted" style="margin-bottom:10px;" >${from} → ${to} — ${total}` +
       (rules ? ' — your “Don’t scan” rules changed between these two, so part of this is what was scanned, not what is on disk' : '') +
       `</div>` + (diff.notCompared ? snapshotNotComparedHtml(diff.notCompared) : '');
-    if (!diff.entries.length) { host.innerHTML = head + '<div class="muted">No top-level changes between the last two snapshots.</div>'; return; }
+    if (!diff.entries.length) {
+      // Items it could not compare (said in `head`) may be where the total moved (review F1.15).
+      host.innerHTML = head + (diff.notCompared
+        ? '<div class="muted">No changes among the top-level items both scans list.</div>'
+        : '<div class="muted">No top-level changes between the last two snapshots.</div>');
+      return;
+    }
     const maxD = Math.abs(diff.entries[0].delta) || 1;
     // Keyed by root path: the same folder's next comparison rolls whatever
     // digits survived in place; a different root snaps.

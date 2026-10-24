@@ -40258,7 +40258,13 @@ async function renderTrendDeltas() {
     const head = `<div class="muted" style="margin-bottom:10px;" >${from} → ${to} — ${total}` +
       (rules ? ' — your “Don’t scan” rules changed between these two, so part of this is what was scanned, not what is on disk' : '') +
       `</div>` + (diff.notCompared ? snapshotNotComparedHtml(diff.notCompared) : '');
-    if (!diff.entries.length) { host.innerHTML = head + '<div class="muted">No top-level changes between the last two snapshots.</div>'; return; }
+    if (!diff.entries.length) {
+      // Items it could not compare (said in `head`) may be where the total moved (review F1.15).
+      host.innerHTML = head + (diff.notCompared
+        ? '<div class="muted">No changes among the top-level items both scans list.</div>'
+        : '<div class="muted">No top-level changes between the last two snapshots.</div>');
+      return;
+    }
     const maxD = Math.abs(diff.entries[0].delta) || 1;
     // Keyed by root path: the same folder's next comparison rolls whatever
     // digits survived in place; a different root snaps.
@@ -40836,7 +40842,11 @@ function renderCompare(r) {
       ${r.entries.length ? '<div id="cmpCounts"></div>' : ''}
       ${r.entries.length
         ? r.entries.slice(0, shown).map(en => deltaRow(en, maxD, { offerSnapshots: true, rules: r.rules || null })).join('')
-        : `<div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No differences — nothing changed between these two.</div>`}
+        // What it could not compare is said just above: then only what both scans list is known not to
+        // differ, and "nothing changed" beside a total that moved was untrue (review F1.1).
+        : r.notCompared || r.unlistedFolders
+          ? '<div class="muted">No differences in what both scans list.</div>'
+          : `<div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No differences — nothing changed between these two.</div>`}
     </div>`;
   // Animated counts: the from-zero roll the quick stats use, on the totals
   // just computed — and the same four counts again as discrete square

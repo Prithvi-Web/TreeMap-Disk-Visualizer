@@ -102,12 +102,13 @@ function decl(name: string): string {
   return assert.fail(`${name} never closes`);
 }
 
-test('Trends\' last-change list says how many items it could not compare', async () => {
+/** Trends' last-change list over stand-ins, for one comparison answer: answers what it drew. */
+async function trendDeltasFor(answer: Record<string, unknown>): Promise<string> {
   const host = { innerHTML: '' };
   const snaps = [snapOf([['a', 1]]), snapOf([['a', 2]])];
   const deps: Record<string, unknown> = {
     $: () => host, state: { view: 'trends', trends: { path: ROOT, snapshots: snaps } },
-    api: async () => ({ totalDelta: 50_000, entries: [], notCompared: 2 }),
+    api: async () => answer,
     coverageRules: () => null, coverageFor: () => null, formatDate: (t: number) => `d${t}`, cmpWhenPair: () => ['x', 'y'],
     formatBytes: (n: number) => `${n} B`, formatCount: (n: number) => String(n), escapeHtml: (s: unknown) => String(s), chipFor: () => '', coverageExplains: () => null,
     FxNum: { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } }, fxBarsIn: () => {},
@@ -115,5 +116,19 @@ test('Trends\' last-change list says how many items it could not compare', async
   const keys = Object.keys(deps);
   const render = new Function(...keys, `${decl('renderTrendDeltas')}\n${decl('snapshotNotComparedHtml')}\n${decl('deltaRow')}\nreturn renderTrendDeltas;`)(...keys.map((k) => deps[k])) as () => Promise<void>;
   await render();
+  return host.innerHTML;
+}
+
+test('Trends\' last-change list says how many items it could not compare', async () => {
+  const host = { innerHTML: await trendDeltasFor({ totalDelta: 50_000, entries: [], notCompared: 2 }) };
   assert.match(host.innerHTML, /2 top-level items are in only one of these scans’ lists of the largest 100, so they are not compared\./, host.innerHTML);
+  // Nothing listed beside a total that grew: never "no changes" (review F1.15).
+  assert.doesNotMatch(host.innerHTML, /No top-level changes between the last two snapshots/, host.innerHTML);
+  assert.match(host.innerHTML, /No changes among the top-level items both scans list\./, host.innerHTML);
+});
+
+test('Trends\' last-change list with everything compared and nothing changed still says so', async () => {
+  const drawn = await trendDeltasFor({ totalDelta: 0, entries: [] });
+  assert.match(drawn, /No top-level changes between the last two snapshots\./, drawn);
+  assert.doesNotMatch(drawn, /both scans list/, drawn);
 });
