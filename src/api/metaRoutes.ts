@@ -264,7 +264,8 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
       virtualPaths: 'Entries inside archives are listings, not files — only the archive itself can be acted on',
       offload:
         'Offload copies, verifies SHA-256, and only then trashes originals. A failure before every copy verifies rolls back and leaves local data ' +
-        'untouched; after that, an original that cannot go to the Trash, or that changed since its copy was made, stays where it is beside its verified copy',
+        'untouched; after that, an original that cannot go to the Trash, or that changed after its copy was made, stays where it is beside its verified copy, ' +
+        'and one that changed while it was being copied stays with that copy removed',
       dryRun:
         'DELETE /api/files, POST /api/offload and POST /api/offload/restore accept dryRun: true — the exact manifest, nothing acted on',
       policy:

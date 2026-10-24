@@ -29557,7 +29557,8 @@ async function confirmOffloadPlan(paths, dest, destName, notes, isCurrent, withS
     notes +
     // Drawn where it is true (hunt C91): after every copy verifies nothing is rolled back.
     `<br><span style="color:var(--text-3)">A failure before every copy verifies rolls back completely — nothing local is touched until then. ` +
-    `An original that cannot go to the Trash afterwards, or that changed since its copy was made, stays where it is beside its verified copy.</span>` +
+    `An original that cannot go to the Trash afterwards, or that changed after its copy was made, stays where it is beside its verified copy; ` +
+    `one that changed while it was being copied stays too, and that copy, which may mix old and new, is removed.</span>` +
     // An original that is a part of an installed program, from the dry run's
     // own manifest (review F1.4): once its copy verifies it goes to the Trash,
     // and the program stops working here.

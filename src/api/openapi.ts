@@ -2179,7 +2179,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'post',
     path: '/api/offload',
-    summary: 'Copy → verify SHA-256 → only then trash the local originals; a failure before every copy verifies rolls back, and an original that cannot go to the Trash afterwards, or changed since its copy was made, stays beside its verified copy',
+    summary: 'Copy → verify SHA-256 → only then trash the local originals; a failure before every copy verifies rolls back, and an original that cannot go to the Trash afterwards, or changed after its copy was made, stays beside its verified copy; one that changed while it was being copied stays, that copy removed',
     tag: 'offload',
     destructive: true,
     parameters: [idempotencyHeader],

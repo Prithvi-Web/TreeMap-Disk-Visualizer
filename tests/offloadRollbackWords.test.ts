@@ -35,18 +35,23 @@ for (const [where, text] of PLACES) {
 }
 
 test('the confirm sheet draws the line: a failure before every copy verifies rolls back, and an original that cannot go to the Trash afterwards stays beside its copy', () => {
-  const sheet = read('src/ui/app/125-offload.js');
+  // Written as joined template literals: read as the one sentence it is.
+  const sheet = read('src/ui/app/125-offload.js').replace(/`\s*\+\s*\n\s*`/g, '');
   assert.match(sheet, /A failure before every copy verifies rolls back completely — nothing local is touched until then\./);
-  assert.match(sheet, /An original that cannot go to the Trash afterwards, or that changed since its copy was made, stays where it is beside its verified copy\./);
+  assert.match(sheet, /An original that cannot go to the Trash afterwards, or that changed after its copy was made, stays where it is beside its verified copy; one that changed while it was being copied stays too, and that copy, which may mix old and new, is removed\./);
 });
 
 test('the MCP offload tool says the same', () => {
   // Its description is written as joined string literals: read as the one sentence it is.
   const joined = read('src/mcp/server.ts').replace(/'\s*\+\s*\n\s*'/g, '');
-  assert.match(joined, /A failure before every copy verifies rolls back and leaves local data untouched; after that, an original that cannot go to the Trash, or that changed since its copy was made, stays where it is beside its verified copy/);
+  assert.match(joined, /A failure before every copy verifies rolls back and leaves local data untouched; after that, an original that cannot go to the Trash, or that changed after its copy was made, stays where it is beside its verified copy, and one that changed while it was being copied stays with that copy removed/);
 });
 
 test('the capabilities manifest, the agents\' machine-readable safety statement, draws the same line (review F1.10)', () => {
   const joined = read('src/api/metaRoutes.ts').replace(/'\s*\+\s*\n\s*'/g, '');
-  assert.match(joined, /offload:\s*'Offload copies, verifies SHA-256, and only then trashes originals\. A failure before every copy verifies rolls back and leaves local data untouched; after that, an original that cannot go to the Trash, or that changed since its copy was made, stays where it is beside its verified copy'/);
+  assert.match(joined, /offload:\s*'Offload copies, verifies SHA-256, and only then trashes originals\. A failure before every copy verifies rolls back and leaves local data untouched; after that, an original that cannot go to the Trash, or that changed after its copy was made, stays where it is beside its verified copy, and one that changed while it was being copied stays with that copy removed'/);
+});
+
+test('the OpenAPI document says the same of the offload route (review F1.9)', () => {
+  assert.match(read('src/api/openapi.ts'), /an original that cannot go to the Trash afterwards, or changed after its copy was made, stays beside its verified copy; one that changed while it was being copied stays, that copy removed/);
 });

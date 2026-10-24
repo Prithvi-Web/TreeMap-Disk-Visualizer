@@ -856,8 +856,9 @@ export function buildMcpServer(): McpServer {
       description:
         'Move files/folders to a destination the safe way: copy → verify SHA-256 → only then move the local ' +
         'originals to the OS Trash. A failure before every copy verifies rolls back and leaves local data untouched; ' +
-        'after that, an original that cannot go to the Trash, or that changed since its copy was made, stays where it is ' +
-        'beside its verified copy, and the finished job\'s error says which. DESTRUCTIVE unless ' +
+        'after that, an original that cannot go to the Trash, or that changed after its copy was made, stays where it is ' +
+        'beside its verified copy, and one that changed while it was being copied stays with that copy removed; ' +
+        'the finished job\'s error says which. DESTRUCTIVE unless ' +
         'dryRun: true, which returns the exact copy plan (files, bytes, destinations) without touching anything ' +
         '— always dry-run first. Sources must live inside a completed scan; pass jobId instead to keep waiting ' +
         'on a started job. A destination on the same drive as a source is refused (DEST_SAME_VOLUME): there an ' +

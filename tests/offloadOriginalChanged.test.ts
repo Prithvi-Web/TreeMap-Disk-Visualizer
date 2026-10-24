@@ -10,6 +10,8 @@ process.env.TREEMAP_NO_GDU = '1';
 import { createScanRecord } from '../src/services/diskScanner';
 import { getOffloadIndex, getOffloadJob, prepareOffload, setOffloadVerifyForTests, startOffload } from '../src/services/offload';
 import { setTrashStepForTests } from '../src/services/cleaner';
+import { setCopyFaultForTests } from '../src/utils/copyVerify';
+import { platform } from '../src/platform';
 import type { FileNode, OffloadJob, ScanResult } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
@@ -155,4 +157,135 @@ test('a change time that moved alone is said as "may have changed", and the fold
   assert.equal(job.status, 'complete', job.error);
   assert.deepEqual(trashed, [], 'the folder was not handed to the Trash');
   assert.match(job.error ?? '', /b\.txt may have changed after its copy was made/, job.error);
+});
+
+/**
+ * A file written to WHILE its copy streams (a database, a mailbox or a VM disk in use) gives a copy that
+ * matches its own stream's hash — so it verifies — but equals neither the old file nor the new one
+ * (review F1.9). It must never be recorded as a copy Restore could bring back, nor described as "the
+ * file as it was then". Each file is looked at again right after its copy: one that changed meanwhile
+ * has its copy removed and not recorded, and its item stays, said as changed while it was copied.
+ */
+async function offloadEditedMidCopy(label: string, scan: ScanResult, paths: string[], file: string, edit?: () => void): Promise<{ job: OffloadJob; dest: string; trashed: string[] }> {
+  const dest = fileTempDir(`treemap-offloadOriginalChanged-${label}-dest-`);
+  let edits = 0;
+  const undo = setCopyFaultForTests((destPath) => {
+    if (edits === 0 && destPath.endsWith(path.basename(file))) {
+      edits++;
+      if (edit) edit();
+      else {
+        // The first chunk is read; write same-size bytes near the end, which the copy has not read yet.
+        const fd = fs.openSync(file, 'r+');
+        try { fs.writeSync(fd, Buffer.alloc(16, 0x58), 0, 16, 280_000); } finally { fs.closeSync(fd); }
+      }
+    }
+    return null;
+  });
+  const before = trashedPaths.length;
+  try {
+    const job = await withOpenFileCheck('clear', async () => {
+      const prepared = await prepareOffload(scan, paths, dest);
+      return settled((await startOffload(scan, paths, dest, prepared)).jobId);
+    });
+    assert.equal(edits, 1, 'the file was written to while its copy streamed');
+    return { job, dest, trashed: trashedPaths.slice(before) };
+  } finally {
+    undo();
+  }
+}
+
+test('a file written to while its copy streamed: the copy, which may mix old and new, is removed and never recorded, and its folder stays (review F1.9)', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-offloadOriginalChanged-torn-'));
+  const proj = path.join(root, 'proj');
+  fs.mkdirSync(proj);
+  const db = path.join(proj, 'db.bin');
+  fs.writeFileSync(db, Buffer.alloc(300_000, 0x41));
+  fs.writeFileSync(path.join(proj, 'b.txt'), 'b');
+  const scan = createScanRecord(root);
+  scan.status = 'complete';
+  scan.root = dirNode(root, [dirNode(proj, [fileNode(path.join(proj, 'b.txt')), fileNode(db)])]);
+  const { job, dest, trashed } = await offloadEditedMidCopy('torn', scan, [proj], db);
+  assert.equal(job.status, 'complete', job.error);
+  assert.deepEqual(trashed, [], 'the folder was not handed to the Trash');
+  assert.match(job.error ?? '', /proj was left in place: db\.bin changed while it was being copied, so its copy, which may mix old and new, was removed and not recorded/, job.error);
+  assert.doesNotMatch(job.error ?? '', /as it was then/, 'never said to hold the file as it was');
+  assert.match(job.error ?? '', /Its other verified copies stand at /, job.error);
+  assert.equal(fs.existsSync(path.join(dest, 'proj', 'db.bin')), false, 'the torn copy is not left at the destination');
+  const entries = (await getOffloadIndex()).entries.filter((e) => e.originalPath.startsWith(proj + path.sep));
+  assert.deepEqual(entries.map((e) => path.basename(e.originalPath)), ['b.txt'], 'only the copy that verified whole is recorded for Restore');
+  assert.ok(entries.every((e) => e.originalKept === true), 'as a copy whose original stayed');
+});
+
+test('a file selected on its own and written to while it was copied stays, with no copy standing for it', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-offloadOriginalChanged-tornfile-'));
+  const db = path.join(root, 'mail.db');
+  fs.writeFileSync(db, Buffer.alloc(300_000, 0x41));
+  const scan = createScanRecord(root);
+  scan.status = 'complete';
+  scan.root = dirNode(root, [fileNode(db)]);
+  const { job, dest, trashed } = await offloadEditedMidCopy('tornfile', scan, [db], db);
+  assert.equal(job.status, 'complete', job.error);
+  assert.deepEqual(trashed, []);
+  assert.match(job.error ?? '', /mail\.db was left in place: it changed while it was being copied, so its copy, which may mix old and new, was removed and not recorded\./, job.error);
+  assert.doesNotMatch(job.error ?? '', /copies stand at/, 'no copy of it stands anywhere');
+  assert.equal(fs.existsSync(path.join(dest, 'mail.db')), false);
+  assert.equal((await getOffloadIndex()).entries.filter((e) => e.originalPath === db).length, 0);
+});
+
+test('a change time that moved alone while the copy streamed is said as "may have changed", and that copy is not kept either', { skip: process.platform === 'win32' ? 'a permission on Windows is the read-only attribute' : false }, async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-offloadOriginalChanged-tornctime-'));
+  const db = path.join(root, 'cache.db');
+  fs.writeFileSync(db, Buffer.alloc(300_000, 0x41));
+  const scan = createScanRecord(root);
+  scan.status = 'complete';
+  scan.root = dirNode(root, [fileNode(db)]);
+  const { job, dest, trashed } = await offloadEditedMidCopy('tornctime', scan, [db], db, () => fs.chmodSync(db, 0o600));
+  assert.deepEqual(trashed, []);
+  assert.match(job.error ?? '', /cache\.db was left in place: it may have changed while it was being copied, so its copy, which may mix old and new, was removed and not recorded\./, job.error);
+  assert.equal(fs.existsSync(path.join(dest, 'cache.db')), false);
+});
+
+test('beside a file that changed while it was copied, the job never says everything was offloaded', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-offloadOriginalChanged-tornplus-'));
+  const db = path.join(root, 'live.db');
+  const other = path.join(root, 'other.txt');
+  fs.writeFileSync(db, Buffer.alloc(300_000, 0x41));
+  fs.writeFileSync(other, 'other');
+  const scan = createScanRecord(root);
+  scan.status = 'complete';
+  scan.root = dirNode(root, [fileNode(db), fileNode(other)]);
+  // The Trash refuses other.txt: "Offloaded everything, but 1 original couldn't be moved" would be untrue.
+  setTrashStepForTests(async (p) => { throw new Error(`the Trash refused ${path.basename(p)} (a test)`); });
+  try {
+    const { job, trashed } = await offloadEditedMidCopy('tornplus', scan, [db, other], db);
+    assert.deepEqual(trashed, []);
+    assert.match(job.error ?? '', /^Offloaded everything else, but 1 original couldn't be moved to the Trash/, job.error);
+    assert.match(job.error ?? '', /live\.db was left in place: it changed while it was being copied/, job.error);
+  } finally {
+    setTrashStepForTests(async (p) => {
+      trashedPaths.push(p);
+      fs.renameSync(p, path.join(FAKE_TRASH, `${trashedPaths.length}-${path.basename(p)}`));
+    });
+  }
+});
+
+test('beside a file that changed while it was copied, an original found open at the trash step never reads as everything copied', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-offloadOriginalChanged-tornopen-'));
+  const db = path.join(root, 'open.db');
+  const other = path.join(root, 'notes.txt');
+  fs.writeFileSync(db, Buffer.alloc(300_000, 0x41));
+  fs.writeFileSync(other, 'notes');
+  const scan = createScanRecord(root);
+  scan.status = 'complete';
+  scan.root = dirNode(root, [fileNode(db), fileNode(other)]);
+  const provider = platform() as unknown as { getOpenHandlesBatch: (paths: string[]) => Promise<unknown> };
+  const { job, trashed } = await offloadEditedMidCopy('tornopen', scan, [db, other], db, () => {
+    const fd = fs.openSync(db, 'r+');
+    try { fs.writeSync(fd, Buffer.alloc(16, 0x58), 0, 16, 280_000); } finally { fs.closeSync(fd); }
+    // Opened after the offload's own check before the copy: the trash step's check finds it.
+    provider.getOpenHandlesBatch = async () => ({ handles: [{ path: other, pid: process.pid + 1, processName: 'Notes' }], complete: true });
+  });
+  assert.deepEqual(trashed, []);
+  assert.match(job.error ?? '', /^Everything else was copied and verified to .*, but the originals are still here/, job.error);
+  assert.match(job.error ?? '', /open\.db was left in place: it changed while it was being copied/, job.error);
 });

@@ -1193,6 +1193,19 @@ async function changedSinceCopy(top: string, files: readonly string[], looks: Re
   };
 }
 
+/**
+ * Whether the file at `src` moved since `look`, taken right before its copy began, asked the moment the
+ * copy ends (review F1.9): 'changed' when its size, modified time or file id moved, 'may have changed'
+ * when only its change time did, or null — and null too when it cannot be looked at, which its item's
+ * look right before its trash step reads.
+ */
+async function changedWhileCopied(src: string, look: SourceLook): Promise<'changed' | 'may have changed' | null> {
+  const now = await fsp.lstat(src, { bigint: true }).catch(() => null);
+  if (now === null) return null;
+  if (!now.isFile() || now.size !== look.size || now.mtimeNs !== look.mtimeNs || now.ino !== look.ino) return 'changed';
+  return now.ctimeNs !== look.ctimeNs ? 'may have changed' : null;
+}
+
 async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string[], destDir: string, listed: ListedSelection): Promise<void> {
   const createdFiles: string[] = [];
   let createdDirs: string[] = [];
@@ -1201,6 +1214,12 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
   const looks = new Map<string, SourceLook>();
   /** Copies whose dates or permissions could not be set (hunt C45). */
   const metaMisses: string[] = [];
+  /**
+   * Originals that changed while their copy was made (review F1.9), by path: the copy matches its own
+   * stream's hash, so it verifies, but may mix old and new — it is removed and never recorded, and its
+   * item stays. `left` says where a copy that could not be removed still is, or null.
+   */
+  const torn = new Map<string, { how: 'changed' | 'may have changed'; left: string | null }>();
   try {
     createdDirs = await ensureDirs(plan);
     for (const item of plan) {
@@ -1211,6 +1230,15 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       looks.set(item.src, look);
       const hash = await copyWithHash(item.src, item.dest, jobProgress(job, true));
       createdFiles.push(item.dest);
+      // Looked at again the moment its copy ends (review F1.9): one written to meanwhile has a copy that
+      // may mix old and new. A look that fails is the trash step's to read.
+      const how = await changedWhileCopied(item.src, look);
+      if (how !== null) {
+        const left = await fsp.rm(item.dest, { force: true }).then(() => null, (err: unknown) => `${item.dest} (${describeFsError(err)})`);
+        torn.set(item.src, { how, left });
+        job.filesDone++;
+        continue;
+      }
 
       job.phase = 'verifying';
       job.currentPath = item.dest;
@@ -1242,11 +1270,14 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       if (unlisted !== null) leftInPlace.push({ folder, ...unlisted });
     }
     const held = new Set(leftInPlace.map((l) => l.folder));
-    const toTrash = topPaths.filter((p) => !held.has(p));
+    const filesOf = plannedUnder(plan, topPaths);
+    // An item holding a file that changed while it was copied has no whole copy of it (review F1.9): it stays.
+    const tornTops = topPaths.filter((p) => (filesOf.get(p) ?? []).some((f) => torn.has(f)));
+    const toTrash = topPaths.filter((p) => !held.has(p) && !tornTops.includes(p));
+    const everything = torn.size > 0 ? 'everything else' : 'everything';
     let trashed: { deleted: string[]; failed: { path: string; reason: string; code?: string }[] } = { deleted: [], failed: [] };
     // And each item once more at its own turn, right before its trash step (hunt C06): one holding a file
     // that is not what was copied is left in place, its verified copies standing and recorded.
-    const filesOf = plannedUnder(plan, topPaths);
     try {
       if (toTrash.length > 0) trashed = await moveToTrash(toTrash, { checkEach: (top) => changedSinceCopy(top, filesOf.get(top) ?? [], looks) });
     } catch (err) {
@@ -1259,13 +1290,13 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       // job says exactly that. Rethrowing anything else keeps real failures
       // rolling back as before.
       if (!(err instanceof AppError) || err.code !== 'OPEN_HANDLE_CONFLICT') throw err;
-      job.error = `Everything was copied and verified to ${destDir}, but the originals are still here: ${err.message}`;
+      job.error = `${torn.size > 0 ? 'Everything else' : 'Everything'} was copied and verified to ${destDir}, but the originals are still here: ${err.message}`;
     }
     const changed = trashed.failed.filter((f) => f.code === ORIGINAL_CHANGED || f.code === ORIGINAL_UNREADABLE);
     const failedToTrash = trashed.failed.filter((f) => !changed.includes(f));
     if (failedToTrash.length) {
       // Copies are safe at the destination; report the leftovers honestly.
-      job.error = `Offloaded everything, but ${failedToTrash.length} original${failedToTrash.length === 1 ? '' : 's'} couldn't be moved to the Trash: ${failedToTrash[0].reason}`;
+      job.error = `Offloaded ${everything}, but ${failedToTrash.length} original${failedToTrash.length === 1 ? '' : 's'} couldn't be moved to the Trash: ${failedToTrash[0].reason}`;
     }
     if (leftInPlace.length > 0) {
       const [first] = leftInPlace;
@@ -1274,6 +1305,17 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
         `${path.basename(first.folder)} was left in place${more}: it now holds ${path.relative(first.folder, first.at) || path.basename(first.folder)}, ` +
         `which was not copied (${first.why === 'the scan did not list it' ? 'it was made after the offload was planned' : first.why}), ` +
         `so it was not moved to the Trash. Its verified copies stand at ${destDir}.`;
+      job.error = job.error ? `${job.error} Also: ${kept}` : kept;
+    }
+    if (tornTops.length > 0) {
+      const [top] = tornTops;
+      const files = filesOf.get(top) ?? [];
+      const file = files.find((f) => torn.has(f)) as string;
+      const { how, left } = torn.get(file) as { how: string; left: string | null };
+      const more = tornTops.length > 1 ? ` (and ${formatCount(tornTops.length - 1)} more item${tornTops.length === 2 ? '' : 's'})` : '';
+      const others = files.some((f) => !torn.has(f)) ? ` Its other verified copies stand at ${destDir}.` : '';
+      const kept = `${path.basename(top)} was left in place${more}: ${file === top ? 'it' : path.relative(top, file)} ${how} while it was being copied, ` +
+        `so its copy, which may mix old and new, ${left === null ? 'was removed and not recorded' : `could not be removed from ${left}, and is not recorded`}.${others}`;
       job.error = job.error ? `${job.error} Also: ${kept}` : kept;
     }
     if (changed.length > 0) {
