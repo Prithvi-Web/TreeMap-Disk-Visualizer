@@ -242,9 +242,18 @@ function histShow(panel) {
   histPanel = panel;
   for (const b of $('histSeg').querySelectorAll('button'))
     b.setAttribute('aria-selected', String(b.dataset.panel === panel));
-  $('histPanelCalendar').hidden = panel !== 'calendar';
-  $('histPanelJournal').hidden = panel !== 'journal';
-  $('histPanelCompare').hidden = panel !== 'compare';
+  // A panel that gives way takes back what its notes said, as a view does as
+  // it goes (unsayWithin, review F1.5): left said in the hidden panel, the
+  // same words painted as it comes back were no news, and its region came
+  // back on screen already filled. Only the panel going: what a panel hidden
+  // already holds until it is heard (Compare's, BQT item 28) stays. Guarded:
+  // a page reader may lift this without the registry's helper.
+  for (const [id, on] of [['histPanelCalendar', panel === 'calendar'], ['histPanelJournal', panel === 'journal'], ['histPanelCompare', panel === 'compare']]) {
+    const el = $(id);
+    const going = !el.hidden && !on;
+    el.hidden = !on;
+    if (going && typeof unsayWithin === 'function') unsayWithin(el);
+  }
   if (state.view !== 'history') return; // reflect-only until the view mounts
   if (panel === 'calendar') loadCalendar();
   else if (panel === 'journal') loadJournal();

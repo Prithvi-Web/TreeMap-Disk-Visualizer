@@ -363,34 +363,45 @@ function renderEmptyState(view) {
 const viewSaidAsItWent = new Map();
 
 /**
- * A view's own regions, taken back as it goes (review F2.5, BQX). sayAloud
- * says nothing when a region already says the same words, so a region left
- * said as its view went stayed said in the hidden view: it came back on
- * screen already filled, which is seldom announced, and the same words
- * painted on the way back in were no news — the view's notes were silent on
- * every return. So every live region inside the view that sayAloud holds
- * words for is emptied, words about to go in with it, and its words are
- * forgotten rather than kept as said: whatever next speaks for it, the same
- * words or none, is news. A region sayAloud says nothing in (a part's
+ * What the live regions inside `host` said, taken back as it is hidden — a
+ * view as it goes, a panel of one as another takes its place (review F2.5,
+ * BQX, review F1.5). sayAloud says nothing when a region already says the
+ * same words, so a region left said as its part went stayed said while
+ * hidden: it came back on screen already filled, which is seldom announced,
+ * and the same words painted on the way back in were no news — its notes
+ * were silent on every return. So every live region inside it that sayAloud
+ * holds words for is emptied, words about to go in with it, and its words
+ * are forgotten rather than kept as said: whatever next speaks for it, the
+ * same words or none, is news. A region sayAloud says nothing in (a part's
  * working sentence, sayWorking's) is left as it is, and so is everything
- * outside the view: the scan's voice, the toasts and the sheets' regions.
- * A view whose mount paints its boxes again says them as it paints. One
- * whose boxes are painted whatever view is up, and whose mount paints none
- * of them (`paintedWhileAway`), keeps what they said, for viewSayAgain.
- * Guarded: a page reader may lift this without sayAloud's map.
+ * outside it. Answers each region's words taken back, by its id. Guarded: a
+ * page reader may lift this without sayAloud's map.
  */
-function viewUnsay(view) {
-  const host = $('view-' + view.id);
-  if (!host || typeof aloudSaid === 'undefined') return;
-  const kept = viewSaidAsItWent.get(view.id) || new Map();
+function unsayWithin(host) {
+  const taken = new Map();
+  if (!host || typeof aloudSaid === 'undefined') return taken;
   for (const live of host.querySelectorAll('[aria-live]')) {
     if (!aloudSaid.has(live.id)) continue;
-    const words = aloudSaid.get(live.id);
+    taken.set(live.id, aloudSaid.get(live.id));
     aloudSaid.delete(live.id);
     live.textContent = '';
+  }
+  return taken;
+}
+
+/**
+ * A view's own regions, taken back as it goes (unsayWithin) — never the
+ * scan's voice, the toasts or the sheets' regions, which are outside every
+ * view. A view whose mount paints its boxes again says them as it paints.
+ * One whose boxes are painted whatever view is up, and whose mount paints
+ * none of them (`paintedWhileAway`), keeps what they said, for viewSayAgain.
+ */
+function viewUnsay(view) {
+  const kept = viewSaidAsItWent.get(view.id) || new Map();
+  for (const [id, words] of unsayWithin($('view-' + view.id))) {
     // Spoken for since an earlier going: what was kept then is not what it shows now.
-    kept.delete(live.id);
-    if (words && view.paintedWhileAway) kept.set(live.id, words);
+    kept.delete(id);
+    if (words && view.paintedWhileAway) kept.set(id, words);
   }
   if (kept.size) viewSaidAsItWent.set(view.id, kept);
   else viewSaidAsItWent.delete(view.id);

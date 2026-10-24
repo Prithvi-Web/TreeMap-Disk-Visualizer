@@ -2037,7 +2037,8 @@ test('the notice rendered again for the view already up — a scan that lands, f
    notes were silent on every return. The registry now takes back, as any view goes, every live region inside it that
    sayAloud holds words for (viewUnsay) — and a view painted while it is away, whose mount paints none of its boxes
    (the Dashboard's, which the scan, the index and the access recheck paint whatever view is up), says them again as
-   it comes back (viewSayAgain). */
+   it comes back (viewSayAgain) — never while a scan runs, when they stand for the last scan (review F1.1, F1.4). The
+   same take-back (unsayWithin) runs for a History panel as another takes its place (review F1.5). */
 
 /** Each view's live regions, read from the markup: view id → the ids of the live regions inside its section. */
 const VIEW_REGIONS: ReadonlyMap<string, string[]> = (() => {
@@ -2053,7 +2054,7 @@ const VIEW_REGIONS: ReadonlyMap<string, string[]> = (() => {
 /** Whether the page's script says words in the region with this id through sayAloud. */
 const saidBySayAloud = (id: string) => INDEX.includes(`sayAloud('${id}', `);
 
-const SWITCH = ['const VIEW_BY_ID', 'let mountedView', 'function viewBlockedReason(', 'function switchView(', 'const viewSaidAsItWent', 'function viewUnsay(', 'function viewSayAgain('];
+const SWITCH = ['const VIEW_BY_ID', 'let mountedView', 'function viewBlockedReason(', 'function switchView(', 'const viewSaidAsItWent', 'function unsayWithin(', 'function viewUnsay(', 'function viewSayAgain('];
 
 /** A view's registration in the page, as its source: the object that opens with `id: '<id>'`, brace-matched. */
 function viewSrc(id: string): string {
@@ -2408,6 +2409,108 @@ test('every box of the Dashboard said as it went is said again as it comes back,
   for (let i = 0; i < 4; i++) d.frame();
   assert.deepEqual(Object.keys(boxes).map((id) => d.$(id).said.filter(Boolean)), Object.values(boxes).map((w) => [w]),
     'each of the four said again, once, as the Dashboard comes back — not only the first of them');
+});
+
+const HIST_PANELS = ['histPanelCalendar', 'histPanelJournal', 'histPanelCompare'];
+
+/**
+ * History as the page registers it, with its calendar's and its journal's own loaders, and its three panels as the
+ * markup holds them: each in the view's section, holding the live regions the markup puts in it, the calendar's up.
+ * `api` answers by the path asked.
+ */
+function historyPanelsPage(api: (path: string) => Promise<unknown>) {
+  const st = { view: null as string | null, root: { path: '/r' }, scanning: false, scanId: 's1', settledScanId: 's1', indexScanDue: false, scanningPath: null, capabilities: null };
+  const p = viewsPage(['history'], ['elsewhere'], ['function histShow(', 'async function loadCalendar(', 'function renderCalendar(', 'async function loadJournal(',
+    'function renderJournal(', 'function treeScanId(', 'function treeScanComing('], {
+    state: st, histPanel: 'calendar', calChannel: 'created', calSeq: 0, calData: null, journalSeq: 0, skeletonRows: () => '', api,
+    cmpCountsDrop: noop, fxHuntBeamSync: noop, loadCompareOptions: noop,
+  });
+  const section = p.$('view-history');
+  for (const id of HIST_PANELS) {
+    const panel = Object.assign(p.$(id), { id, parent: section });
+    panel.hidden = id !== 'histPanelCalendar';
+    const regions = VIEW_REGIONS.get('history')!.filter((r) => ancestorsOf(r).map(idIn).includes(id)).map((r) => Object.assign(p.$(r), { parent: panel }));
+    panel.querySelectorAll = (sel) => (sel === '[aria-live]' ? regions : []);
+  }
+  return p;
+}
+const JOURNAL_PORTABLE = 'This portable session keeps no journal: nothing is written to this computer.';
+
+/** History with its panels, on a portable session (the journal's note) and a capped creation count (the calendar's), opened on its calendar. */
+async function historyOnItsPanels() {
+  for (const [id, panel] of [['calDegradedSaid', 'histPanelCalendar'], ['journalPortableSaid', 'histPanelJournal'], ['cmpSaid', 'histPanelCompare']]) {
+    assert.ok(ancestorsOf(id).map(idIn).includes(panel), `control: #${id} is inside #${panel}`);
+  }
+  const h = historyPanelsPage(async (path) => (path.startsWith('/api/journal') ? { entries: [] }
+    : path === '/api/platform/portable' ? { portable: true, degraded: [{ key: 'journal', reason: JOURNAL_PORTABLE }] }
+      : { modified: [], created: [], degraded: [{ reason: CAL_CAPPED }] }));
+  const cal = h.$('calDegradedSaid');
+  h.fns.switchView('history');
+  await turns();
+  h.frame();
+  h.frame();
+  assert.equal(cal.textContent, CAL_CAPPED, 'control: the calendar\'s note said');
+  return { ...h, cal, journal: h.$('journalPortableSaid'), cmp: h.$('cmpSaid') };
+}
+
+test('History\'s calendar note is taken back as its panel gives way to the journal, as a view\'s regions are as it goes, and said again a frame after its panel is back: Calendar, Journal, Calendar (review F1.5)', async () => {
+  const h = await historyOnItsPanels();
+  h.fns.histShow('journal');
+  assert.equal(h.cal.textContent, '', 'taken back as its panel gives way: nothing of it left said in the hidden panel');
+  h.cal.said.length = 0;
+  await turns();
+  h.frame();
+  h.frame();
+  assert.equal(h.journal.textContent, JOURNAL_PORTABLE, 'control: the journal\'s note said');
+  assert.deepEqual(h.cal.said, [], 'nothing of the calendar while its panel is hidden');
+  h.fns.histShow('calendar'); // the calendar counted again, to the same note
+  await turns();
+  h.frame();
+  assert.equal(h.cal.textContent, '', 'nothing in the frame its panel comes on screen in: a region that appears filled is seldom announced');
+  h.frame();
+  h.frame();
+  assert.deepEqual(h.cal.said.filter(Boolean), [CAL_CAPPED], 'said again, once, a frame after its panel is back');
+});
+
+test('History\'s journal note is taken back as its panel gives way to the calendar, and said again as its panel is back: Journal, Calendar, Journal (review F1.5)', async () => {
+  const h = await historyOnItsPanels();
+  h.fns.histShow('journal');
+  await turns();
+  h.frame();
+  h.frame();
+  assert.equal(h.journal.textContent, JOURNAL_PORTABLE, 'control: the journal\'s note said');
+  h.fns.histShow('calendar');
+  assert.equal(h.journal.textContent, '', 'taken back as its panel gives way');
+  h.journal.said.length = 0;
+  await turns();
+  h.frame();
+  h.frame();
+  h.fns.histShow('journal'); // the journal read again, to the same note
+  await turns();
+  for (let i = 0; i < 3; i++) h.frame();
+  assert.deepEqual(h.journal.said.filter(Boolean), [JOURNAL_PORTABLE], 'said again, once, as its panel is back');
+});
+
+test('only a History panel that gives way is taken back: the panel up, picked again, says nothing twice, and what a panel hidden all along holds until it is heard is said as it comes on screen (review F1.5)', async () => {
+  const h = await historyOnItsPanels();
+  const held = 'Compare is held back until the scan finishes.';
+  h.fns.sayAloud('cmpSaid', held); // Compare's answer, come in while its panel is hidden: held until it is heard
+  h.frame();
+  h.frame();
+  assert.deepEqual(h.cmp.said.filter(Boolean), [], 'control: held while the Compare panel is hidden');
+  h.fns.histShow('journal');
+  await turns();
+  h.frame();
+  h.frame();
+  assert.equal(h.journal.textContent, JOURNAL_PORTABLE, 'control: the journal\'s note said');
+  h.journal.said.length = 0;
+  h.fns.histShow('journal'); // the panel up, picked again: the journal read again, to the same note
+  await turns();
+  for (let i = 0; i < 4; i++) h.frame();
+  assert.deepEqual([h.journal.said.filter(Boolean), h.journal.textContent], [[], JOURNAL_PORTABLE], 'the panel up, picked again: nothing said twice, and its note still said');
+  h.fns.histShow('compare');
+  for (let i = 0; i < 3; i++) h.frame();
+  assert.deepEqual(h.cmp.said.filter(Boolean), [held], 'what the Compare panel held while hidden — never on screen, so never giving way — is said as it comes on screen');
 });
 
 /** Disk City as the page registers it, its line painted from a city built of `nodes` buildings as it loads. */
