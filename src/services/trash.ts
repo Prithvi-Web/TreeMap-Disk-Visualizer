@@ -580,9 +580,16 @@ async function clearDirectoryContents(dir: string, failed: EmptyTrashResult['fai
  * before anything is removed, and an `info` folder that is a link is never
  * followed (review F1.2/F1.9/F1.12). `locate` stands in for the machine's
  * locations in a test.
+ *
+ * What it could not clear is a failure (review F1.4): a Trash folder that is
+ * there but could not be read, and each drive Trash folder that did not answer
+ * as the locations were listed. Passed over in silence, a fallback that
+ * removed nothing came back clean, and the page said the Trash was emptied.
  */
 export async function clearFreedesktopTrash(failed: EmptyTrashResult['failed'], locate: () => Promise<TrashLocations> = trashLocations, fs: DriveTrashFs = liveDriveTrashFs): Promise<void> {
-  for (const filesDir of (await locate()).dirs) {
+  const { dirs, problems } = await locate();
+  for (const code of problems) failed.push({ location: 'a Trash folder on a drive', reason: describeFsError({ code }) });
+  for (const filesDir of dirs) {
     const infoDir = path.join(path.dirname(filesDir), 'info');
     for (const dir of [filesDir, infoDir]) {
       if (dir === infoDir) {
@@ -593,8 +600,10 @@ export async function clearFreedesktopTrash(failed: EmptyTrashResult['failed'], 
       let entries: string[];
       try {
         entries = await fsp.readdir(dir);
-      } catch {
-        continue; // location doesn't exist — nothing to clear
+      } catch (err) {
+        // Not there: nothing to clear. There but unreadable: nothing in it was removed.
+        if (!meansAbsent(err)) failed.push({ location: dir, reason: describeFsError(err) });
+        continue;
       }
       for (const name of entries) {
         try {

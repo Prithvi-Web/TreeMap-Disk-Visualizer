@@ -24,6 +24,7 @@ import {
 } from '../src/services/trash';
 import type { EmptyTrashResult } from '../src/services/trash';
 import { setCopyFaultForTests } from '../src/utils/copyVerify';
+import { describeFsError } from '../src/utils/errno';
 import { createApp } from '../src/server';
 import { isRestoreCopyFor } from './fixtures/restoreCopy';
 import { waitFor } from './fixtures/waitFor';
@@ -379,6 +380,48 @@ test('on Linux without gio, the freedesktop fallback that empties the Trash clea
       console.warn = warn;
     }
   } finally {
+    await fsp.rm(root, { recursive: true, force: true });
+  }
+});
+
+const RUNS_AS_ROOT = typeof process.getuid === 'function' && process.getuid() === 0;
+
+test('on Linux without gio, a freedesktop fallback that could not read a Trash folder, or was told a drive\'s Trash did not answer, is no emptied Trash (review F1.4)', { skip: POSIX_ONLY || (RUNS_AS_ROOT && 'root reads a folder whose mode is 000') }, async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'treemap-f14-'));
+  const files = path.join(root, 'Trash', 'files');
+  type Locations = Awaited<ReturnType<typeof resolveTrashLocations>>;
+  const at = (dirs: string[], problems: string[]) => async () => ({ dirs, problems, note: null } as unknown as Locations);
+  const noGio = async (cmd: string): Promise<void> => { throw new Error(`spawn ${cmd} ENOENT`); };
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    fs.mkdirSync(files, { recursive: true });
+    fs.mkdirSync(path.join(root, 'Trash', 'info'));
+    fs.writeFileSync(path.join(files, 'old.bin'), Buffer.alloc(3000));
+    // A Trash folder this user may not read: nothing in it was seen, let alone removed.
+    fs.chmodSync(files, 0o000);
+    let locked;
+    try {
+      locked = await runTrashEmptiers(emptyTrashCommands('linux'), noGio, (failed) => clearFreedesktopTrash(failed, at([files], [])));
+    } finally {
+      fs.chmodSync(files, 0o755);
+    }
+    assert.equal(locked.ran, false, `a Trash folder that could not be read was not emptied: ${JSON.stringify(locked)}`);
+    assert.deepEqual(locked.failed.map((f) => f.location), ['gio', files], 'gio\'s absence and the unread folder are both said');
+    assert.ok(locked.failed.every((f) => typeof f.reason === 'string' && f.reason.length > 0), 'each with its reason');
+    assert.ok(fs.existsSync(path.join(files, 'old.bin')), 'and the file is still there');
+
+    // A drive's Trash folder that did not answer as the locations were listed: it may hold a Trash, which nothing emptied.
+    const unanswered = await runTrashEmptiers(emptyTrashCommands('linux'), noGio, (failed) => clearFreedesktopTrash(failed, at([], ['EIO'])));
+    assert.equal(unanswered.ran, false, `a drive's Trash that did not answer was not emptied: ${JSON.stringify(unanswered)}`);
+    assert.equal(unanswered.failed.length, 2, 'gio\'s absence and the drive that did not answer are both said');
+    assert.equal(unanswered.failed[1].reason, describeFsError({ code: 'EIO' }), 'the drive\'s failure is said in words');
+
+    // Control: a Trash folder that is not there is nothing to clear, not a failure.
+    const absent = await runTrashEmptiers(emptyTrashCommands('linux'), noGio, (failed) => clearFreedesktopTrash(failed, at([path.join(root, 'nowhere', 'files')], [])));
+    assert.deepEqual(absent, { ran: true, failed: [] }, 'an absent Trash folder is an empty one');
+  } finally {
+    console.warn = warn;
     await fsp.rm(root, { recursive: true, force: true });
   }
 });
