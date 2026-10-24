@@ -1020,6 +1020,28 @@ test('main (review F1.2): a folder the page hands over while it scans waits in t
   } finally { h.dispose(); }
 });
 
+test('main (review F1.2): a folder whose turn comes when a scan ends is scanned without taking focus from the app the person moved to; one asked for now — a Dock drop — brings the window forward', async () => {
+  const dir = mkTmp();
+  const [a, b] = ['a', 'b'].map((n) => path.join(dir, n));
+  for (const f of [a, b]) fs.mkdirSync(f);
+  const h = await loadMain({ dataDir: dir });
+  try {
+    await h.loadPage();
+    const page = contractPage(h);
+    page.start(a);
+    await h.stub.ipcMain.invoke('treemap:request-scans', [b]); // dropped on the window while /a ran
+    h.win().focused = false; // the person moved to another app
+    page.finish({ ok: true, path: a });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.deepEqual(page.pushed(), [b], 'its turn came');
+    assert.equal(h.win().focused, false, 'and it took no focus: keys typed in the other app stay there');
+    page.start(b);
+    page.finish({ ok: true, path: b });
+    h.stub.app.emit('open-file', { preventDefault() {} }, a); // dropped on the Dock now
+    assert.equal(h.win().focused, true, 'control: a folder asked for now brings the window forward');
+  } finally { h.dispose(); }
+});
+
 test('main (C88): a second launch\'s relative folder is read against the directory it was launched from, not this process\'s', async () => {
   const dir = mkTmp();
   const proj = path.join(dir, 'proj');

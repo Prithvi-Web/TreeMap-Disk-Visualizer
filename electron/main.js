@@ -117,12 +117,18 @@ function pageReady() {
   return !!mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading();
 }
 
-/** Hand the page the next queued folder, if it is ready for one. */
+/**
+ * Hand the page the next queued folder, if it is ready for one. It brings no
+ * window forward: every way of asking now — a Dock drop, "Open With", a
+ * second launch, the File menu, the tray — shows the window itself, and a
+ * folder whose turn comes when a scan ends, minutes later, took focus from
+ * whatever app the person had moved to, keys typed there and all — now the
+ * folders dropped on the window wait here too (review F1.2).
+ */
 function pumpScanQueue() {
   if (!pageReady()) return;
   const dir = scanQueue.next();
   if (!dir) return;
-  showMainWindow();
   mainWindow.webContents.send('treemap:scan-path', dir);
 }
 
