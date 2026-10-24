@@ -380,3 +380,32 @@ test('review F1.15/F1.16: an entry already in place is seen, and can be removed,
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+/* ─────────────── A portable session adds nothing to this computer (review F1.4) ─────────────── */
+
+test('review F1.4: a portable session is never offered the entry, even inside the desktop app — it adds nothing to this computer, as its own panel says', async () => {
+  const { DESKTOP_EXEC_ENV } = await import('../src/platform/desktopLauncher');
+  const { initPortableMode, resetPortableMode, degradedCapabilities, PORTABLE_NO_SHELL_ENTRY } = await import('../src/services/portableMode');
+  const saved = process.env[DESKTOP_EXEC_ENV];
+  try {
+    process.env[DESKTOP_EXEC_ENV] = path.join(path.parse(process.cwd()).root, 'Tools', 'TreeMap.exe');
+    // The Windows portable build names its own folder in PORTABLE_EXECUTABLE_DIR; TREEMAP_DATA_DIR (this test's own) keeps it writing there.
+    resetPortableMode();
+    initPortableMode({ ...process.env, PORTABLE_EXECUTABLE_DIR: path.join(path.parse(process.cwd()).root, 'Tools') });
+    invalidateCapabilities();
+    const portable = await capabilityState('shellIntegration');
+    assert.equal(portable.available, false, 'a portable session writes nothing to the host, and a right-click entry would name a copy that may be gone');
+    assert.equal(portable.reason, PORTABLE_NO_SHELL_ENTRY);
+    assert.ok(degradedCapabilities(process.platform, true).some((d) => d.key === 'shellIntegration' && d.reason === PORTABLE_NO_SHELL_ENTRY),
+      'the portable panel says the same sentence');
+    resetPortableMode();
+    initPortableMode({ ...process.env, TREEMAP_PORTABLE: undefined, PORTABLE_EXECUTABLE_DIR: undefined }, fs.mkdtempSync(path.join(os.tmpdir(), 'tm-shell-notportable-')));
+    invalidateCapabilities();
+    assert.notEqual((await capabilityState('shellIntegration')).reason, PORTABLE_NO_SHELL_ENTRY, 'control: an installed app is not a portable session');
+  } finally {
+    if (saved === undefined) delete process.env[DESKTOP_EXEC_ENV];
+    else process.env[DESKTOP_EXEC_ENV] = saved;
+    resetPortableMode();
+    invalidateCapabilities();
+  }
+});

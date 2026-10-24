@@ -33,11 +33,14 @@ function desktopToken(env) {
  * The program the right-click "Scan with TreeMap" entry starts (hunt C11):
  * the installed app's own executable — or, in a Linux AppImage, the AppImage
  * file the runtime names in APPIMAGE, since the executable lives in a mount
- * that is gone once TreeMap quits.
+ * that is gone once TreeMap quits; in the Windows portable build, the .exe
+ * electron-builder names in PORTABLE_EXECUTABLE_FILE, since it runs from a
+ * temporary folder deleted when it quits (review F1.4). A portable session
+ * is not offered the entry at all; this names the copy that stays.
  */
 function desktopExec(env, execPath) {
-  const appImage = env && typeof env.APPIMAGE === 'string' ? env.APPIMAGE : '';
-  return appImage || execPath;
+  const named = (key) => (env && typeof env[key] === 'string' ? env[key] : '');
+  return named('APPIMAGE') || named('PORTABLE_EXECUTABLE_FILE') || execPath;
 }
 
 /**

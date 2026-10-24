@@ -227,12 +227,19 @@ export function degradedCapabilities(platform: NodeJS.Platform = process.platfor
       reason: 'Watching a whole filesystem for changes needs root. TreeMap watches the folders it has scanned instead, which covers what you are looking at.',
     });
   }
-  out.push({
-    key: 'shellIntegration',
-    reason: 'A portable session deliberately adds nothing to this computer, so the "Scan with TreeMap" right-click entry is not offered.',
-  });
+  out.push({ key: 'shellIntegration', reason: PORTABLE_NO_SHELL_ENTRY });
   return out;
 }
+
+/**
+ * Why a portable session does not add the right-click entry — said by its
+ * panel and by the capability alike, which enforces it (review F1.4): the
+ * entry is written to this computer, and it would name a copy that may be
+ * gone — the Windows portable build runs from a temporary folder deleted when
+ * it quits.
+ */
+export const PORTABLE_NO_SHELL_ENTRY =
+  'A portable session deliberately adds nothing to this computer, so it does not add the "Scan with TreeMap" right-click entry.';
 
 let cached: PortableStatus | null = null;
 

@@ -5,6 +5,7 @@ import { granteeFor } from '../utils/accessAdvice';
 import { rememberFdaState } from '../utils/fdaState';
 import type { Capabilities, CapabilityState, FullDiskAccessCapability } from './types';
 import { desktopLauncher, NOT_IN_DESKTOP_APP } from './desktopLauncher';
+import { portableStatus, PORTABLE_NO_SHELL_ENTRY } from '../services/portableMode';
 
 /**
  * Runtime capability detection (§2.2).
@@ -93,10 +94,12 @@ async function detect(): Promise<Capabilities> {
     safeProbe('Disk layout', () => p.probeVolumeTopology(), unavailable('none')),
     safeProbe('Download history', () => p.probeProvenance(), unavailable('none')),
     // Offered only inside the installed desktop app, the one program the entry
-    // can start (desktopLauncher, hunt C11): its mechanism is still named.
+    // can start (desktopLauncher, hunt C11), and never in a portable session,
+    // which adds nothing to this computer (review F1.4): its mechanism is still named.
     safeProbe('File manager integration', async () => {
       const state = await p.probeShellIntegration();
-      return desktopLauncher() ? state : { ...state, available: false, reason: NOT_IN_DESKTOP_APP };
+      if (!desktopLauncher()) return { ...state, available: false, reason: NOT_IN_DESKTOP_APP };
+      return portableStatus().portable ? { ...state, available: false, reason: PORTABLE_NO_SHELL_ENTRY } : state;
     }, unavailable('none')),
     safeProbe('Last-opened dates', () => p.probeLastUsed(), unavailable('none')),
     safeProbe('Backup status', () => p.probeBackupMembership(), unavailable('none')),

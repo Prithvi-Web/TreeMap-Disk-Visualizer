@@ -900,6 +900,8 @@ test('main (C11): the installed app names itself as the program "Scan with TreeM
   assert.equal(desktop.desktopExec({ APPIMAGE: '/home/x/Apps/TreeMap.AppImage' }, '/tmp/.mount_TreeMaXYZ/treemap'), '/home/x/Apps/TreeMap.AppImage',
     'the AppImage file, not its temporary mount');
   assert.equal(desktop.desktopExec({}, '/Applications/TreeMap.app/Contents/MacOS/TreeMap'), '/Applications/TreeMap.app/Contents/MacOS/TreeMap');
+  assert.equal(desktop.desktopExec({ PORTABLE_EXECUTABLE_FILE: 'E:\\Tools\\TreeMap-5.2.0.exe' }, 'C:\\Users\\x\\AppData\\Local\\Temp\\1a2b3c\\TreeMap.exe'),
+    'E:\\Tools\\TreeMap-5.2.0.exe', 'the Windows portable build: the .exe that stays, not the temporary folder deleted when it quits (review F1.4)');
 });
 
 test('main: the application menu is the packaged template, and its items reach the page as commands', async () => {
