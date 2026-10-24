@@ -1021,6 +1021,11 @@ test('main (review F1.2): a menu command chosen while the window is closed, or i
     h.stub.app.emit('activate');
     await h.loadPage();
     assert.deepEqual(commands(), [], 'a command held for a window that closed unloaded is not delivered to a later window');
+    h.win().close();
+    click(/^Settings/);
+    click(/^Rescan$/); // two commands before the page is up
+    await h.loadPage();
+    assert.deepEqual(commands(), ['rescan'], 'the latest one only is held: two chosen before the page loads are not replayed as two (review HA-L7)');
   } finally { h.dispose(); }
 });
 
