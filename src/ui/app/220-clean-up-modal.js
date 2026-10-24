@@ -1198,15 +1198,26 @@ async function findBySavedView(scanId) {
   // `name:"my report` is one term; grouped below, it swallowed the `)` and failed ("This bracket is
   // never closed") for a view the map's box runs. Closed at its own end, every term is as it was.
   const viewQ = (view.q.split('"').length - 1) % 2 === 1 ? view.q + '"' : view.q;
-  const out = await api('/api/query', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    // Files only, asked of the server (hunt C29): a size term matches folders
-    // too, every folder above a big file is at least as big, and folders
-    // dropped here after the server cut the list to 500 left few files or
-    // none, beside a count that included the folders. Grouped, so an `or` in
-    // the view stays inside it.
-    body: JSON.stringify({ scanId, q: `(${viewQ}) type:file`, limit: 500, sort: 'size' }),
-  });
+  let out;
+  try {
+    out = await api('/api/query', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      // Files only, asked of the server (hunt C29): a size term matches folders
+      // too, every folder above a big file is at least as big, and folders
+      // dropped here after the server cut the list to 500 left few files or
+      // none, beside a count that included the folders. Grouped, so an `or` in
+      // the view stays inside it.
+      body: JSON.stringify({ scanId, q: `(${viewQ}) type:file`, limit: 500, sort: 'size' }),
+    });
+  } catch (e) {
+    // What the server refused is the view with type:file added (review F1.21): a view near the
+    // 4,000-character limit goes past it once added to, and the server's sentence alone named a
+    // length the view does not have.
+    if (e && e.code === 'QUERY_PARSE_ERROR') {
+      throw Object.assign(new Error(`Clean Up runs this view with “type:file” added, to rank files only, and that query was refused: ${e.message}`), { code: e.code });
+    }
+    throw e;
+  }
   // §2.2's degraded list is why this is not just a hit count: a query needing
   // a signal this machine cannot supply must not come back looking like
   // "nothing matched".

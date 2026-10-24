@@ -175,6 +175,22 @@ test('a saved view whose quote is left open is closed where it ends, so grouping
   assert.equal(sent[1], '(name:"my report" ext:pdf) type:file', 'control: a closed quote is left as written');
 });
 
+test('when the server refuses the query Clean Up built from a view, the message says the view was sent with type:file added (review F1.21)', async () => {
+  const refusing = (err: Error) => declared<(scanId: string) => Promise<unknown>>('async function findBySavedView(scanId) {', {
+    selectedSavedView: () => ({ q: `name:${'x'.repeat(3994)}` }), toast: () => {},
+    api: async () => { throw err; },
+  });
+  const tooLong = Object.assign(new Error('That query is too long (4,011 characters; the limit is 4,000).'), { code: 'QUERY_PARSE_ERROR' });
+  await assert.rejects(refusing(tooLong)('s1'), (e: Error & { code?: string }) => {
+    assert.equal(e.message, 'Clean Up runs this view with \u201ctype:file\u201d added, to rank files only, and that query was refused: That query is too long (4,011 characters; the limit is 4,000).',
+      'a view near the limit is told why a length it does not have was refused');
+    assert.equal(e.code, 'QUERY_PARSE_ERROR', 'and the code is kept');
+    return true;
+  });
+  const gone = Object.assign(new Error('The scan behind this has expired.'), { code: 'SCAN_NOT_FOUND', resultsExpired: true });
+  await assert.rejects(refusing(gone)('s1'), (e: Error) => e === gone, 'control: any other failure is passed on as it came');
+});
+
 /* ═════════ C30 — Smart suggestions: a path inside a chosen folder is not counted again ═════════ */
 
 test('Smart suggestions count and send a folder once, never again for paths inside it (C30)', () => {
