@@ -192,7 +192,9 @@ systemRouter.post('/system/snapshots/restore', idempotency, async (req: Request,
     if (err instanceof AppError) {
       // A refusal of the file the restore would replace names that file; any other, the one asked
       // for. A restore that failed after that file went to the Trash names both, as an error (hunt
-      // C54): this request did move it. A copy that ran and failed is an error, not a refusal.
+      // C54): this request did move it. A restore that could not do its work — a copy that failed,
+      // snapshots that could not be listed, a destination folder that could not be checked, before
+      // the copy or during it — is an error, not a refusal (review F1.8).
       const replaced = err instanceof FailedAfterReplace;
       await appendAudit({
         action: 'snapshots.restore', source: 'http', tokenId: tokenIdFor('http'),

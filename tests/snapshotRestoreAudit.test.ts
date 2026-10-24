@@ -120,3 +120,34 @@ test('with nothing replaced, a copy that failed is an error and a dismissed prom
   [line] = await readAudit(1);
   assert.deepEqual([line.outcome, line.code, line.paths], ['refused', 'AUTHORIZATION_DECLINED', [original]]);
 });
+
+test('a restore that could not do its work before any copy ran is an error too: snapshots that could not be listed, a destination folder that could not be checked (review F1.8)', async () => {
+  const original = path.join(ELSEWHERE, 'e.txt');
+  const destination = path.join(SCANNED, 'absent-e.txt');
+  const list = provider.listSnapshots;
+  const folder = provider.restoreFolderRefusal;
+  try {
+    provider.listSnapshots = async () => { throw new Error('the listing failed (a test)'); };
+    let out = await restore({ path: original, destination });
+    assert.deepEqual([out.status, out.body.code], [409, 'SNAPSHOTS_UNREADABLE'], JSON.stringify(out.body));
+    let [line] = await readAudit(1);
+    assert.deepEqual([line.outcome, line.code, line.paths], ['error', 'SNAPSHOTS_UNREADABLE', [original]]);
+    provider.listSnapshots = list;
+    provider.restoreFolderRefusal = async () => { throw new Error('the folder did not answer (a test)'); };
+    out = await restore({ path: original, destination });
+    assert.deepEqual([out.status, out.body.code], [409, 'DESTINATION_FOLDER_UNAVAILABLE'], JSON.stringify(out.body));
+    [line] = await readAudit(1);
+    assert.deepEqual([line.outcome, line.code, line.paths], ['error', 'DESTINATION_FOLDER_UNAVAILABLE', [original]]);
+  } finally {
+    provider.listSnapshots = list;
+    provider.restoreFolderRefusal = folder;
+  }
+});
+
+test('AGENTS.md says which failures are errors as they happen, never that snapshots that could not be listed were a copy that ran (review F1.8)', () => {
+  const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.doesNotMatch(agents, /a copy that ran and failed \(`RESTORE_FAILED`, `DESTINATION_FOLDER_UNAVAILABLE`, `SNAPSHOTS_UNREADABLE`\)/);
+  assert.match(agents, /snapshots that could not be listed \(`SNAPSHOTS_UNREADABLE`\)/);
+  assert.match(agents, /a destination folder that could not be checked or opened, before the copy or during it \(`DESTINATION_FOLDER_UNAVAILABLE`\)/);
+  assert.match(agents, /A dismissed password prompt with nothing replaced stays `refused`\./);
+});
