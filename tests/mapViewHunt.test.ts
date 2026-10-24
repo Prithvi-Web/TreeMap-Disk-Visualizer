@@ -483,3 +483,41 @@ test('C24: a point on the time slider, and Play, leave the cart preview first �
   page.play();
   assert.equal(calls[0], 'exit:true', 'Play (and the time-lapse export it drives) leaves the preview first');
 });
+
+/* ══════════════ C25 — Circles and Voronoi: the folder on screen is no drawn match ══════════════ */
+
+test('C25: in Circles and Voronoi the scanned folder\'s own cell is neither counted, outlined nor dimmed as one of the shapes', () => {
+  for (const [kind, rootMatches] of [['circle', true], ['poly', true], ['circle', false], ['poly', false]] as const) {
+    const shape = (path: string, depth: number, cx: number) => (kind === 'circle'
+      ? { n: { path, depth }, depth, kind, cx, cy: 50, r: depth === 0 ? 50 : 10, leaf: depth > 0 }
+      : { n: { path, depth }, depth, kind, cx, cy: 50, leaf: depth > 0, poly: [{ x: cx, y: 0 }, { x: cx + 10, y: 0 }, { x: cx + 10, y: 10 }] });
+    const cells = [shape('/r', 0, 50), shape('/r/big.mov', 1, 20), shape('/r/small', 1, 80)];
+    const stroked: string[] = [];
+    const dimmedAt: number[] = [];
+    const ctx = new Proxy({}, {
+      get: (_t, k) => (k === 'arc' ? (x: number) => { dimmedAt.push(x); } : k === 'moveTo' ? (x: number) => { if (kind === 'poly') dimmedAt.push(x); } : () => {}),
+      set: () => true,
+    });
+    const state = {
+      treemap: { mode: kind === 'circle' ? 'circles' : 'voronoi', query: 'size>1gb', queryMode: 'grammar', matchedPaths: new Set(rootMatches ? ['/r', '/r/big.mov'] : ['/r/big.mov']),
+        matchTotal: 2, matches: 0, cells, pxRects: [], history: { active: false }, rootSize: 100 },
+    };
+    const renderSearchOverlay = load<() => void>(['renderSearchOverlay'], {
+      state, tmSearchBuffer: { width: 1, height: 1 }, tmBuffer: { width: 1, height: 1 }, tmSearchCtx: ctx, window: { devicePixelRatio: 1 },
+      document: { documentElement: { dataset: { theme: 'dark' } } }, cssVar: () => '#0A84FF', isCells: () => true, treemapMatch: () => false,
+      altCellPath: (_c: unknown, c: { n: { path: string } }) => { stroked.push(c.n.path); }, updateTmStatus() {},
+    }, 'renderSearchOverlay');
+    renderSearchOverlay();
+    const at = `${kind}, the folder ${rootMatches ? 'matching' : 'not matching'}`;
+    assert.equal(state.treemap.matches, 1, `${at}: one drawn match — the folder on screen has no shape of its own, as on the rectangle map`);
+    assert.deepEqual(stroked, ['/r/big.mov'], `${at}: only the matching file is outlined`);
+    assert.ok(!dimmedAt.includes(50), `${at}: the folder's own cell is not in the scrim — it dimmed every shape inside it, matches too`);
+    assert.ok(dimmedAt.includes(80), `${at}: control — the shape that did not match is dimmed`);
+  }
+});
+
+test('C25: the box then explains the undrawn match truthfully — this folder itself, and none deeper', () => {
+  const msg = load<(f: number, d: number, p: string[], r: string) => string>(['tmIsInside', 'tmUndrawnBreakdown', 'tmUndrawnMessage'], {}, 'tmUndrawnMessage');
+  // What renderSearchOverlay now counts for the cells above: one drawn of the two found.
+  assert.equal(msg(2, 1, ['/r', '/r/big.mov'], '/r'), '2 matches — 1 shown here. One is this folder itself, which has no rectangle of its own.');
+});

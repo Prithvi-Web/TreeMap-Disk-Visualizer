@@ -2804,10 +2804,16 @@ function renderSearchOverlay() {
     // where two matches were the only colour left on an almost white panel.
     // Non-zero winding unions the subpaths instead, so an overlap costs
     // nothing, which is what dimming should do.
+    // Never the folder on screen's own cell (depth 0): it has no shape of its
+    // own, as the rectangle map has no rectangle for it, so it is neither
+    // dimmed — its disc held every shape, and dimmed them all, matches too —
+    // nor outlined and counted as a drawn match: the box then said "one is
+    // this folder itself, which has no rectangle of its own" of a folder it
+    // had just counted as drawn, one short on what lay deeper (hunt C25).
     ctx.beginPath();
     let anyDim = false;
     for (const c of state.treemap.cells) {
-      if (isMatch(c.n)) continue;
+      if (c.depth === 0 || isMatch(c.n)) continue;
       if (c.kind === 'circle') {
         ctx.moveTo(c.cx + c.r, c.cy);
         ctx.arc(c.cx, c.cy, Math.max(0.4, c.r), 0, Math.PI * 2);
@@ -2820,7 +2826,7 @@ function renderSearchOverlay() {
     }
     if (anyDim) { ctx.fillStyle = scrim; ctx.fill(); }
     for (const c of state.treemap.cells) {
-      if (!isMatch(c.n)) continue;
+      if (c.depth === 0 || !isMatch(c.n)) continue;
       matches++;
       altCellPath(ctx, c);
       ctx.strokeStyle = accent;
