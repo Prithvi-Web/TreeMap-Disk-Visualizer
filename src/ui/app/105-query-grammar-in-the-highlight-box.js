@@ -436,10 +436,17 @@ function tmQueryAnswerWords() {
  * Left alone: words of no answer on hand — cleared, or asked for newer text
  * still out — and words over a picture that is not the map: the cart
  * preview's, a morph's passing frame (its last one words the box), another
- * view's.
+ * view's; a past snapshot's and a time-lapse frame's, since the answer is
+ * the live scan's and a file the snapshot lacks is no deeper (review F1.2,
+ * F1.4) — the map landing back on Live words it; and the shapes Circles or
+ * Voronoi have laid so far, a new count every slice, each said aloud
+ * (review F1.6) — the slice that settles the layout words it.
  */
 function tmRewordQuery() {
   if (state.view !== 'treemap' || tmPreview.on || tmMorph) return;
+  if (state.treemap.history.active || state.treemap.lapse.playing) return;
+  // Guarded: a page reader may lift this function without it.
+  if (typeof altLayoutRefining === 'function' && altLayoutRefining()) return;
   const q = state.treemap.query.trim();
   let words;
   if (state.treemap.queryMode === 'grammar') {

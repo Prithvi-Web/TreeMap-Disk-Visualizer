@@ -456,6 +456,16 @@ function altRefiningNote(drawn) {
   return `still laying out — ${formatCount(drawn)} shapes so far`;
 }
 
+/**
+ * Whether Circles or Voronoi is still laying out the map on screen: the
+ * shapes drawn are a slice of it, and the next frame adds more. Read from the
+ * note each slice writes before it repaints (buildCells, altRefineSchedule),
+ * as renderAltNote reads it.
+ */
+function altLayoutRefining() {
+  return isCells() && state.treemap.altNote === altRefiningNote(state.treemap.cells.length);
+}
+
 function altRefineCancel() {
   altRefineSeq++;
   if (state.treemap.altRaf) { cancelAnimationFrame(state.treemap.altRaf); state.treemap.altRaf = 0; }

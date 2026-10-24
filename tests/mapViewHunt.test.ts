@@ -1049,7 +1049,8 @@ function rewordHarness(mode: string) {
     view: 'treemap',
     pathIndex: new Map<string, { cloudPlaceholder?: boolean }>(),
     treemap: { mode, rootPath: '/r', query: 'size>1gb', queryMode: 'grammar', matchTotal: 9 as number | null, matchedPaths: new Set(NINE), matches: 3,
-      hideCloud: false, nodes: [] as { path: string; cloudPlaceholder?: boolean }[] },
+      hideCloud: false, nodes: [] as { path: string; cloudPlaceholder?: boolean }[],
+      history: { active: false }, lapse: { playing: false }, cells: [] as unknown[], altNote: '' },
   };
   const page = load<{ reword: () => void; say: (t: string) => void; words: () => string; setMorph: (m: unknown) => void }>(
     [...REWORD_NAMES, 'asSentences', 'sayAloud', 'tmSetQueryMessage'], {
@@ -1095,6 +1096,9 @@ test('HB2 (L6, L12): the words are left alone where they speak of no answer on h
     ['the cart preview up, a picture of the cart', (t) => { t.preview.on = true; }],
     ['a morph still running', (t) => { t.setMorph({}); }],
     ['another view on screen', (t) => { t.state.view = 'city'; }],
+    // The answer is the live scan's: what a snapshot draws holds other files (review F1.2, F1.4).
+    ['a past snapshot on the map (the time slider)', (t) => { t.state.treemap.history.active = true; }],
+    ['the time-lapse playing', (t) => { t.state.treemap.lapse.playing = true; }],
   ];
   for (const [what, arrange] of cases) {
     const t = rewordHarness('treemap');
@@ -1108,6 +1112,11 @@ test('HB2 (L6, L12): the words are left alone where they speak of no answer on h
   t.setMorph({}); t.state.treemap.matches = 8; t.reword();
   t.setMorph(null); t.reword(); // the morph's last frame
   assert.deepEqual(t.said, ['9 matches — 8 shown here. One is this folder itself, which has no rectangle of its own.'], 'control: the morph\'s end words what it ended on, once');
+  const past = rewordHarness('treemap');
+  past.state.treemap.history.active = true; past.state.treemap.matches = 4; past.reword(); // a snapshot holding 4 of the 9
+  past.state.treemap.history.active = false; past.state.treemap.matches = 8; past.reword(); // back to Live: the map lands through drawView
+  assert.deepEqual(past.said, ['9 matches — 8 shown here. One is this folder itself, which has no rectangle of its own.'],
+    'control: never "5 are deeper" of files the snapshot does not hold, and worded once back on the live map');
   const typed = rewordHarness('treemap');
   typed.state.treemap.query = '  size>1gb '; typed.state.treemap.matches = 8; typed.reword();
   assert.equal(typed.said.length, 1, 'control: the text in the box, spaced, is the query answered');
@@ -1140,6 +1149,51 @@ test('HB2 (L6, L12): the map\'s every repaint words the box — drawView after a
   }
 });
 
+test('HB2 review (F1.6): over Circles or Voronoi the box is worded once the layout settles — never at each slice of a layout still being laid out', () => {
+  const said: string[] = []; // what the box's live region says
+  const live = { _t: '', set textContent(v: string) { this._t = v; if (v) said.push(v); }, get textContent() { return this._t; } };
+  const box = { textContent: '', hidden: true, classList: { toggle() {} } };
+  const els: Record<string, unknown> = { tmQueryErr: box, tmQuerySaid: live, tmSearch: { classList: { toggle() {} }, setAttribute() {} }, tmStatus: { textContent: '' } };
+  const frames: (() => void)[] = [];
+  const shape = (path: string, depth: number) => ({ n: { path }, depth, kind: 'circle', cx: 0, cy: 0, r: 1 });
+  // One layout's slices, breadth first: the shapes laid so far grow, and the matches among them with them — 0, 1, 2, 4, 6,
+  // then all 8 of the 9 that can be drawn (the ninth is the folder on screen itself).
+  const slices = [0, 1, 2, 4, 6, 8].map((k, i, all) => ({
+    cells: [shape('/r', 0), ...NINE.slice(1, 1 + k).map((p) => shape(p, 2))], done: i === all.length - 1, note: '', resume: {},
+  }));
+  let next = 0;
+  const state = {
+    view: 'treemap', pathIndex: new Map(),
+    treemap: { mode: 'circles', rootPath: '/r', query: 'size>1gb', queryMode: 'grammar', matchTotal: 9, matchedPaths: new Set(NINE), matches: 0,
+      hideCloud: false, nodes: [], history: { active: false }, lapse: { playing: false }, cells: [] as unknown[], altNote: '', altMs: 0,
+      altRaf: 0, altZoomRaf: 0, altZoom: null, colorMode: 'size', rootSize: 100 },
+  };
+  const noop = () => {};
+  const drawView = load<() => void>([...REWORD_NAMES, 'asSentences', 'sayAloud', 'tmSetQueryMessage', 'renderSearchOverlay', 'updateTmStatus',
+    'altRefiningNote', 'buildCells', 'altRefineSchedule', 'repaintCells', 'drawCells', 'drawView',
+    ...['altLayoutRefining'].filter((n) => INDEX.includes(`function ${n}(`))], {
+    state, tmPreview: { on: false }, $: (id: string) => els[id], tmSyncQueryBar: noop,
+    requestAnimationFrame: (f: () => void) => frames.push(f), cancelAnimationFrame: noop, performance: { now: () => 0 },
+    formatCount: (n: number) => n.toLocaleString('en-US'), formatBytes: (b: number) => `${b} B`, formatWhen: () => 'then',
+    isSun: () => false, isCells: () => true,
+    tmSearchBuffer: { width: 1, height: 1 }, tmBuffer: { width: 1, height: 1 }, tmSearchCtx: ctxStub(), tmBufCtx: ctxStub(),
+    window: { devicePixelRatio: 1 }, document: { documentElement: { dataset: { theme: 'dark' } } }, cssVar: () => '#0A84FF',
+    treemapMatch: () => false, tmKidsOf: () => new Map(), altCellPath: noop,
+    sunburstRoot: () => ({ path: '/r' }), altRefineCancel: noop, fxShapeSync: noop, tmSizeCanvas: () => ({ cssW: 100, cssH: 100, dpr: 1 }),
+    layoutCirclePack: () => slices[next++], layoutVoronoi: () => slices[next++],
+    drawPackedCircle: noop, drawVoronoiCell: noop, altDrawLabels: noop, presentCells: noop, renderCellsStatus: noop, paintCells: noop,
+    renderTmLegend: noop, renderAltNote: noop, altNoteSettled: noop, fetchScoresForTreemap: noop,
+  }, 'drawView', 'const aloudSaid = new Map(); let tmMorph = null; let altRefineSeq = 0; let altNoteRefitDue = false; let altNoteRefitting = false; ' +
+    'let tmLastHits = { q: "size>1gb", paths: ' + JSON.stringify(NINE) + ', total: 9, truncated: false, stage: null, degraded: [] };');
+  drawView(); // a drill, Depth or Hide cloud: the layout's first slice, then one slice a frame
+  while (frames.length) frames.shift()!();
+  assert.equal(next, slices.length, 'control: every slice of the layout ran');
+  assert.equal(state.treemap.matches, 8, 'control: the settled layout draws 8 of the 9');
+  assert.deepEqual(said, ['9 matches — 8 shown here. One is this folder itself, which has no rectangle of its own.'],
+    'one sentence, of the settled map: never "8 are deeper than this view draws. Zoom in or raise Depth." of a half-laid one, nor a new one each slice');
+  assert.equal(box.textContent, said[0]);
+});
+
 test('HB2 (L2, L7, L10): a plain word over the sunburst is told again on the way back into the Treemap', () => {
   const said: string[] = [];
   const box = { textContent: '' };
@@ -1149,7 +1203,7 @@ test('HB2 (L2, L7, L10): a plain word over the sunburst is told again on the way
   const state = {
     view: 'treemap', root: { path: '/r' }, scanning: false, scanId: 's1', live: { on: false }, lens: { held: false, at: null },
     treemap: { mode: 'sunburst', colorMode: 'size', rootPath: '/r', query: 'node_modules', queryMode: 'bare', queryScanId: null, matchTotal: null as number | null,
-      matchedPaths: null, matches: 0, altZoomRaf: 0, altZoom: null, cells: [], altNote: '' },
+      matchedPaths: null, matches: 0, altZoomRaf: 0, altZoom: null, cells: [], altNote: '', history: { active: false }, lapse: { playing: false } },
   };
   const deps: Record<string, unknown> = {
     state, $: (id: string) => (els[id] ||= el()), tmPreview: { on: false }, formatCount: String, isSun: () => state.treemap.mode === 'sunburst',
