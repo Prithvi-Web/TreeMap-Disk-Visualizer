@@ -532,6 +532,10 @@ function tmApplyQuery(raw) {
     // matches, so "found nothing" would be a guess.
     const hint = q && !isSun() && !(state.treemap.matches > 0) ? tmUnknownFieldHint(q) : null;
     if (hint) tmSetQueryMessage(hint, false);
+    // Over the sunburst a word typed found no highlight, no count and no
+    // words — a box that looked as if it had found nothing (review F1.8).
+    // A grammar query says the same (tmSunburstQueryWords).
+    if (q && isSun()) tmSetQueryMessage('The sunburst does not highlight matches. Switch to Treemap, Circles or Voronoi to see what matches.', false);
     return;
   }
   void tmRunGrammarQuery(q);

@@ -378,8 +378,10 @@ test('a longer word is matched to a field two edits away', async () => {
 test('the sunburst, which counts no matches, never claims none were found', async () => {
   // presentSunburst draws no search highlight and leaves the match count as
   // the last map left it, so "no file name here contains" would be a guess.
+  // What it says instead is that it highlights none (hunt HB review F1.8).
   const { said } = await bareMessage('sise>1gb', 0, 'sunburst');
-  assert.equal(said.filter(Boolean).length, 0, JSON.stringify(said));
+  assert.deepEqual(said.filter(Boolean), ['The sunburst does not highlight matches. Switch to Treemap, Circles or Voronoi to see what matches.'], JSON.stringify(said));
+  assert.ok(!said.some((t) => /No file name here contains|is not a query field/.test(t)), `never the field hint's guess: ${JSON.stringify(said)}`);
 });
 
 test('a filename search that found something is left alone', async () => {

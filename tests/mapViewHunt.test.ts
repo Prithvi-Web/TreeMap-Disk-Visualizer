@@ -301,8 +301,35 @@ async function switchRenderer(to: string, query: { mode: string; text: string })
 test('C20: switching renderer under a grammar query asks it again, so the box speaks of the renderer now on screen', async () => {
   assert.deepEqual((await switchRenderer('sunburst', { mode: 'grammar', text: 'size>1gb' })).asked, ['size>1gb']);
   assert.deepEqual((await switchRenderer('treemap', { mode: 'grammar', text: 'size>1gb' })).asked, ['size>1gb']);
-  assert.deepEqual((await switchRenderer('sunburst', { mode: 'bare', text: 'movie' })).asked, [], 'a bare word is the page\'s own filter, asked of nobody');
+  // A bare word is the page's own filter, asked of no server (tmApplyQuery, below): applied again, its words follow the renderer (review F1.8).
+  assert.deepEqual((await switchRenderer('sunburst', { mode: 'bare', text: 'movie' })).asked, ['movie']);
+  assert.deepEqual((await switchRenderer('treemap', { mode: 'bare', text: 'movie' })).asked, ['movie']);
   assert.deepEqual((await switchRenderer('sunburst', { mode: 'grammar', text: '  ' })).asked, [], 'nothing typed, nothing asked');
+});
+
+/** The real tmApplyQuery with `raw` typed, over `mode`: what the box says, and whether anything was asked of the server. */
+function bareWordIn(mode: string, raw: string, matches = 0) {
+  const said: string[] = [];
+  const grammar: string[] = [];
+  const state = { root: { path: '/r' }, treemap: { mode, query: '', queryMode: 'bare', matchedPaths: null, matchTotal: null as number | null, matches } };
+  const apply = load<(q: string) => void>(['TM_GRAMMAR_FIELDS', 'TM_GRAMMAR_RE', 'tmIsGrammarQuery', 'tmApplyQuery'], {
+    state, tmCancelQueries() {}, tmClearHits() {}, tmSetQueryMessage: (t: string) => { said.push(t); },
+    isSun: () => mode === 'sunburst', isCells: () => mode === 'circles' || mode === 'voronoi',
+    presentSunburst() {}, renderSearchOverlay() {}, renderCellsStatus() {}, presentCells() {}, presentTreemap() {},
+    tmUnknownFieldHint: () => null, tmRunGrammarQuery: async (q: string) => { grammar.push(q); },
+  }, 'tmApplyQuery');
+  apply(raw);
+  return { said: said.at(-1), grammar };
+}
+
+test('C20 (review F1.8): a plain word typed over the sunburst is told the sunburst highlights no match — never a silent box', () => {
+  const sun = bareWordIn('sunburst', 'node_modules');
+  assert.equal(sun.said, 'The sunburst does not highlight matches. Switch to Treemap, Circles or Voronoi to see what matches.');
+  assert.deepEqual(sun.grammar, [], 'still the page\'s own filter: nothing is asked of the server');
+  assert.equal(bareWordIn('sunburst', '  ').said, '', 'an emptied box says nothing');
+  for (const mode of ['treemap', 'circles', 'voronoi']) {
+    assert.equal(bareWordIn(mode, 'node_modules', 3).said, '', `${mode}: control — a renderer that highlights says nothing of it`);
+  }
 });
 
 /* ══════════════ C21 — a query's answer comes back with the Treemap ══════════════ */

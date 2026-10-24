@@ -331,11 +331,13 @@ function setTreemapView(mode) {
         if (state.view === 'treemap' && state.treemap.mode === mode) lapseSeekTo(wasAt);
       }).catch(() => {});
     }
-    // A grammar query in the box is asked again once the new renderer has
-    // drawn: what the box said of it — "3 shown here", or that the sunburst
-    // highlights none — was said of the renderer just left (hunt C20).
+    // A query in the box is applied again once the new renderer has drawn:
+    // what the box said of it — "3 shown here", or that the sunburst
+    // highlights none — was said of the renderer just left (hunt C20). A
+    // grammar query is asked again; a plain word is the page's own filter,
+    // asked of no server, and its words follow the renderer too (review F1.8).
     const q = state.treemap.query;
-    if (state.treemap.queryMode === 'grammar' && q && q.trim() && load && typeof load.then === 'function') {
+    if (q && q.trim() && load && typeof load.then === 'function') {
       load.then(() => {
         if (state.view === 'treemap' && state.treemap.mode === mode && state.treemap.query === q) tmApplyQuery(q);
       }).catch(() => {});

@@ -26858,11 +26858,13 @@ function setTreemapView(mode) {
         if (state.view === 'treemap' && state.treemap.mode === mode) lapseSeekTo(wasAt);
       }).catch(() => {});
     }
-    // A grammar query in the box is asked again once the new renderer has
-    // drawn: what the box said of it — "3 shown here", or that the sunburst
-    // highlights none — was said of the renderer just left (hunt C20).
+    // A query in the box is applied again once the new renderer has drawn:
+    // what the box said of it — "3 shown here", or that the sunburst
+    // highlights none — was said of the renderer just left (hunt C20). A
+    // grammar query is asked again; a plain word is the page's own filter,
+    // asked of no server, and its words follow the renderer too (review F1.8).
     const q = state.treemap.query;
-    if (state.treemap.queryMode === 'grammar' && q && q.trim() && load && typeof load.then === 'function') {
+    if (q && q.trim() && load && typeof load.then === 'function') {
       load.then(() => {
         if (state.view === 'treemap' && state.treemap.mode === mode && state.treemap.query === q) tmApplyQuery(q);
       }).catch(() => {});
@@ -27553,6 +27555,10 @@ function tmApplyQuery(raw) {
     // matches, so "found nothing" would be a guess.
     const hint = q && !isSun() && !(state.treemap.matches > 0) ? tmUnknownFieldHint(q) : null;
     if (hint) tmSetQueryMessage(hint, false);
+    // Over the sunburst a word typed found no highlight, no count and no
+    // words — a box that looked as if it had found nothing (review F1.8).
+    // A grammar query says the same (tmSunburstQueryWords).
+    if (q && isSun()) tmSetQueryMessage('The sunburst does not highlight matches. Switch to Treemap, Circles or Voronoi to see what matches.', false);
     return;
   }
   void tmRunGrammarQuery(q);
