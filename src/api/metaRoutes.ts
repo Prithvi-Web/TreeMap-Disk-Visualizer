@@ -275,7 +275,8 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
         'the file it would replace inside its endpoint, so every refusal of that file, SAFETY_RECORD for a link TreeMap reaches app-data through among them, ' +
         'is recorded (snapshots.restore, refused, naming that file) — GET /api/audit reads it back',
       idempotency:
-        'Destructive endpoints honor an Idempotency-Key header: a retried request replays the stored response instead of executing twice',
+        'Destructive endpoints honor an Idempotency-Key header: a retried request replays the stored response instead of executing twice, ' +
+        'and a retry sent while the first is still running waits for its answer (and runs only when the first failed)',
       appDataFolder:
         "TreeMap's own app-data folder (settings, Autopilot policies, the offload manifest, the Undo Vault) is never where a request writes, moves " +
         'or copies a file — a relocation\'s to, an offload\'s dest and its copies, a snapshot restore\'s destination, an encode: 403 APP_DATA_PATH, ' +

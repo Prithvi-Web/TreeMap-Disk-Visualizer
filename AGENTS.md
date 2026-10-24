@@ -1196,8 +1196,11 @@ read-what-you-saw) permission to act.
   files — and `POST /api/trash/empty`, `/api/system/snapshots/purge` and
   `/api/git/gc` — honors an `Idempotency-Key` header: repeating a successful
   request with the same key within ~10 minutes replays the stored response
-  (`Idempotency-Replayed: true`) instead of executing again. Send one on every
-  such call you might retry. The configuration writes (settings, notes, the
+  (`Idempotency-Replayed: true`) instead of executing again. A repeat sent
+  while the first is still running (a retry after a client timeout) waits for
+  it and replays its answer, or runs when the first failed; a client that
+  gave up does not end that wait. Send one on every such call you might
+  retry. The configuration writes (settings, notes, the
   scanning budget, Autopilot policies, cloud disconnect),
   `DELETE /api/timecapsule/{id}` and `POST /api/zombie-handles/restart` do not
   honor it.
