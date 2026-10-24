@@ -2046,10 +2046,14 @@ subscribe(TOPIC.scan, (scanId) => { if (scanId) setTimeout(drainScanQueue, 0); }
    index and a reopened scan are no scan of their own and say nothing. Never
    said, the shell's queue waited for ever: every folder it was handed after
    the first was dropped without a word until the app was relaunched. A
-   browser tab has no bridge, and nothing is said. */
+   browser tab has no bridge, and nothing is said. The shell's answer is
+   handed back (scanFinished's: how many folders a Stop dropped, review
+   F1.1); one that fails is no answer, never an unhandled rejection. */
 function tellDesktop(method, arg) {
   const bridge = typeof window === 'undefined' || !window ? null : window.treemapDesktop;
-  if (bridge && typeof bridge[method] === 'function') bridge[method](arg);
+  if (!bridge || typeof bridge[method] !== 'function') return undefined;
+  const answer = bridge[method](arg);
+  return answer && typeof answer.then === 'function' ? answer.then((v) => v, () => null) : answer;
 }
 
 /* ── Results expire ──

@@ -189,11 +189,18 @@ async function stopScan() {
   closeEventSource();
   endScanChrome();
   // A Stop means stop — folders waiting behind this one are not started — and
-  // each was told it would scan, so it is said that they will not (hunt C19).
-  const dropped = clearScanQueue();
-  if (dropped > 0) toast(`${dropped} queued folder${dropped === 1 ? '' : 's'} will not be scanned.`);
-  // The desktop shell hears the scan ended, as a Stop, which it keeps quiet about (tellDesktop, hunt C01).
-  if (typeof tellDesktop === 'function') tellDesktop('scanFinished', { ok: false, path: stopped || '', stopped: true });
+  // it is said, once, how many will not be scanned (hunt C19): the page's own
+  // queue, and the folders the desktop shell still held (a dock drop, File ›
+  // Scan folder…, "Scan with TreeMap" behind this scan), which it drops as it
+  // hears the Stop and answers how many of (review F1.1). The shell keeps the
+  // Stop itself quiet (tellDesktop, hunt C01). No answer — a browser tab, or
+  // one that failed — counts the page's own.
+  const dropped = Number(clearScanQueue()) || 0;
+  const told = typeof tellDesktop === 'function' ? tellDesktop('scanFinished', { ok: false, path: stopped || '', stopped: true }) : undefined;
+  const sayDropped = (n) => { if (n > 0) toast(`${n} queued folder${n === 1 ? '' : 's'} will not be scanned.`); };
+  if (told && typeof told.then === 'function') {
+    void told.then((answer) => sayDropped(dropped + (answer && Number.isInteger(answer.dropped) && answer.dropped > 0 ? answer.dropped : 0)));
+  } else sayDropped(dropped);
   // Every scanId-keyed endpoint answers a cancelled scan with
   // 500 SCAN_FAILED "Scan stopped by user". Leaving the id in state and then
   // remounting the views below turns one deliberate Stop into a wall of red

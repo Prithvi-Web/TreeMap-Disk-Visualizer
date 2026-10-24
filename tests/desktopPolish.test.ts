@@ -573,13 +573,14 @@ test('preload exposes the documented desktop bridge and routes each call to its 
   await api.requestScans(['/a', '/b']);
   assert.equal(await api.openPrivacySettings('full-disk-access'), 'invoked', 'the page gets the shell\'s answer back');
   api.scanProgress(0.4);
-  api.scanFinished({ ok: true, path: '/a' });
-  assert.deepEqual(invoked.map((i) => i.channel), ['treemap:resolve-scan-path', 'treemap:request-scans', 'treemap:open-privacy-settings']);
+  assert.equal(await api.scanFinished({ ok: true, path: '/a' }), 'invoked',
+    'the page gets the shell\'s answer to a scan\'s end back: after a Stop, how many folders it held were dropped (review F1.1)');
+  assert.deepEqual(invoked.map((i) => i.channel), ['treemap:resolve-scan-path', 'treemap:request-scans', 'treemap:open-privacy-settings', 'treemap:scan-finished']);
   assert.deepEqual(invoked[1].args, [['/a', '/b']]);
   assert.deepEqual(invoked[2].args, ['full-disk-access'], 'the pane goes by name, untouched: the shell holds the URL');
+  assert.deepEqual(invoked[3].args, [{ ok: true, path: '/a' }]);
   assert.deepEqual(sent, [
     { channel: 'treemap:scan-progress', args: [0.4] },
-    { channel: 'treemap:scan-finished', args: [{ ok: true, path: '/a' }] },
   ]);
   const got: string[] = [];
   api.onScanPath((p: string) => got.push(`scan:${p}`));
@@ -718,18 +719,18 @@ test('main: scan progress drives the dock bar; a finish while unfocused bounces 
     h.stub.ipcMain.fire('treemap:scan-progress', 0.3);
     h.stub.ipcMain.fire('treemap:scan-progress', 'junk');
     assert.deepEqual(w.progress, [2, 0.3, -1]);
-    h.stub.ipcMain.fire('treemap:scan-finished', { ok: true, path: '/Volumes/Archive', files: 10, bytes: GB });
+    h.stub.ipcMain.invoke('treemap:scan-finished', { ok: true, path: '/Volumes/Archive', files: 10, bytes: GB });
     assert.equal(w.progress.at(-1), -1, 'the bar is cleared when the scan ends');
     assert.deepEqual(h.stub.app.dockBounces, ['informational']);
     assert.equal(FakeNotification.shown.length, 1);
     assert.equal(FakeNotification.shown[0].title, 'Finished scanning Archive');
-    h.stub.ipcMain.fire('treemap:scan-finished', { ok: false, path: '/x', stopped: true });
+    h.stub.ipcMain.invoke('treemap:scan-finished', { ok: false, path: '/x', stopped: true });
     assert.equal(FakeNotification.shown.length, 1, 'Stop is the user\'s own action — no notice');
     assert.deepEqual(h.stub.app.dockBounces, ['informational'], 'and no bounce');
-    h.stub.ipcMain.fire('treemap:scan-finished', { ok: false, path: '/x', error: 'boom' });
+    h.stub.ipcMain.invoke('treemap:scan-finished', { ok: false, path: '/x', error: 'boom' });
     assert.deepEqual(h.stub.app.dockBounces, ['informational', 'critical']);
     w.focused = true;
-    h.stub.ipcMain.fire('treemap:scan-finished', { ok: true, path: '/y' });
+    h.stub.ipcMain.invoke('treemap:scan-finished', { ok: true, path: '/y' });
     assert.equal(FakeNotification.shown.length, 2, 'a focused window needs no notice: the user is looking at it');
     assert.equal(h.stub.app.dockBounces.length, 2);
   } finally { h.dispose(); }
@@ -741,7 +742,7 @@ test('main (Windows): a finish while unfocused flashes the taskbar button, and f
   try {
     await h.loadPage();
     const w = h.win();
-    h.stub.ipcMain.fire('treemap:scan-finished', { ok: true, path: 'C:\\Users\\x\\Downloads' });
+    h.stub.ipcMain.invoke('treemap:scan-finished', { ok: true, path: 'C:\\Users\\x\\Downloads' });
     assert.deepEqual(w.flashes, [true]);
     assert.equal(h.stub.app.dockBounces.length, 0, 'no dock on Windows');
     w.emit('focus');
@@ -765,7 +766,7 @@ test('main: dropped folders are queued and scanned one after another, in order; 
     assert.deepEqual(paths(), [], 'nothing is pushed before the page has loaded');
     await h.loadPage();
     assert.deepEqual(paths(), [a]);
-    h.stub.ipcMain.fire('treemap:scan-finished', { ok: true, path: a });
+    h.stub.ipcMain.invoke('treemap:scan-finished', { ok: true, path: a });
     await new Promise((r2) => setTimeout(r2, 400));
     assert.deepEqual(paths(), [a, b]);
     h.stub.ipcMain.fire('treemap:scan-progress', -1);
@@ -788,7 +789,7 @@ test('main: folders handed over by the OS before the window exists (dock drop, s
     assert.deepEqual(w.webContents.on_channel('treemap:scan-path'), []);
     await h.loadPage();
     assert.deepEqual(w.webContents.on_channel('treemap:scan-path'), [a]);
-    h.stub.ipcMain.fire('treemap:scan-finished', { ok: true, path: a });
+    h.stub.ipcMain.invoke('treemap:scan-finished', { ok: true, path: a });
     await new Promise((r2) => setTimeout(r2, 400));
     assert.deepEqual(w.webContents.on_channel('treemap:scan-path'), [a, b]);
   } finally { h.dispose(); }
@@ -804,11 +805,11 @@ function contractPage(h: Awaited<ReturnType<typeof loadMain>>) {
   return {
     pushed,
     start: () => h.stub.ipcMain.fire('treemap:scan-progress', 2),
-    finish: (result: Record<string, unknown>) => h.stub.ipcMain.fire('treemap:scan-finished', result),
+    finish: (result: Record<string, unknown>) => h.stub.ipcMain.invoke('treemap:scan-finished', result),
   };
 }
 
-test('main (C01): the queue cycle — a folder handed over while a scan runs waits for its end, a Stop ends it too, and each pushed folder is scanned in turn', async () => {
+test('main (C01): the queue cycle — a folder handed over while a scan runs waits for its end, a Stop ends it and drops what waits (review F1.1), and each pushed folder is scanned in turn', async () => {
   const dir = mkTmp();
   const [a, b, c, d] = ['a', 'b', 'c', 'd'].map((n) => path.join(dir, n));
   for (const x of [a, b, c, d]) fs.mkdirSync(x);
@@ -820,16 +821,19 @@ test('main (C01): the queue cycle — a folder handed over while a scan runs wai
     page.start();
     await h.stub.ipcMain.invoke('treemap:request-scans', [a, b]); // File › Scan folder…, two folders
     assert.deepEqual(page.pushed(), [], 'nothing is pushed over a running scan — the page would refuse it');
-    page.finish({ ok: true, path: '/Users/x/Desktop', files: 3, bytes: 10 });
+    assert.deepEqual(page.finish({ ok: true, path: '/Users/x/Desktop', files: 3, bytes: 10 }), { dropped: 0 }, 'a scan that finished drops nothing');
     await new Promise((r) => setTimeout(r, 400));
     assert.deepEqual(page.pushed(), [a], 'its end releases the queue: the first folder is pushed');
     page.start();
     h.stub.app.emit('second-instance', {}, ['/Applications/TreeMap.app/Contents/MacOS/TreeMap', c], dir);
     await new Promise((r) => setTimeout(r, 400));
     assert.deepEqual(page.pushed(), [a], '"Scan with TreeMap" waits behind it too');
-    page.finish({ ok: false, path: a, stopped: true });
+    assert.deepEqual(page.finish({ ok: false, path: a, stopped: true }), { dropped: 2 },
+      'a Stop means stop: the two folders still waiting (b, and c from the second launch) are dropped, and the page is told how many');
     await new Promise((r) => setTimeout(r, 400));
-    assert.deepEqual(page.pushed(), [a, b], 'a Stop ends the scan, and the next folder is pushed');
+    assert.deepEqual(page.pushed(), [a], 'and none of them starts behind the Stop');
+    await h.stub.ipcMain.invoke('treemap:request-scans', [b, c]);
+    assert.deepEqual(page.pushed(), [a, b], 'scanning works again after a Stop: asked again, the folder is pushed at once');
     page.start();
     page.finish({ ok: false, path: b, error: 'TreeMap isn’t allowed to read it.' });
     await new Promise((r) => setTimeout(r, 400));

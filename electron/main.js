@@ -227,11 +227,18 @@ ipcMain.on('treemap:scan-progress', (_event, value) => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(progress);
 });
 
-ipcMain.on('treemap:scan-finished', (_event, result) => {
+/**
+ * A scan ended. A Stop also drops the folders this queue still holds — a Stop
+ * means stop, and the next one started 300 ms later (review F1.1) — and the
+ * page is answered how many, so its "will not be scanned" counts them too.
+ */
+ipcMain.handle('treemap:scan-finished', (_event, result) => {
   scanQueue.finished();
+  const dropped = result && typeof result === 'object' && result.stopped ? scanQueue.clear() : 0;
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(-1);
   announceScanFinished(result);
   pumpSoon();
+  return { dropped };
 });
 
 /** A scan ended while the user was elsewhere: bounce, flash, and say what finished. */

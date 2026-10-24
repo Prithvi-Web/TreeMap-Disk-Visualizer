@@ -18,14 +18,17 @@
  *                                  bar, -1 (or null) clears it. Send it at scan start
  *                                  (2), a few times a second at most while scanning,
  *                                  and it is cleared for you by scanFinished.
- *  - scanFinished(result)        { ok, path, files?, bytes?, error?, stopped? } at EVERY
- *                                  terminal path — finish, failure, and Stop (with
- *                                  stopped: true, which keeps the shell silent). It
- *                                  clears the progress bar, releases the scan queue
- *                                  so the next dropped folder starts, and — when the
- *                                  window is not focused — bounces the dock / flashes
- *                                  the taskbar and posts a notification. A page that
- *                                  never calls this leaves queued folders waiting;
+ *  - scanFinished(result)        → Promise<{ dropped }>. { ok, path, files?, bytes?,
+ *                                  error?, stopped? } at EVERY terminal path — finish,
+ *                                  failure, and Stop (with stopped: true, which keeps
+ *                                  the shell silent). It clears the progress bar and
+ *                                  — when the window is not focused — bounces the dock
+ *                                  / flashes the taskbar and posts a notification. A
+ *                                  finish or failure releases the scan queue so the
+ *                                  next dropped folder starts; a Stop drops every
+ *                                  folder still waiting in it instead, and `dropped`
+ *                                  says how many (0 otherwise). A page that never
+ *                                  calls this leaves queued folders waiting;
  *                                  scanProgress(-1) also counts as "done".
  *  - openPrivacySettings(pane)   → Promise<{ opened, reason? }>. Opens one System
  *                                  Settings pane, named — today only 'full-disk-access'
@@ -72,9 +75,9 @@ contextBridge.exposeInMainWorld('treemapDesktop', {
   scanProgress(fraction) {
     ipcRenderer.send('treemap:scan-progress', fraction);
   },
-  /** Every terminal path of a scan: { ok, path, files, bytes, error, stopped }. */
+  /** Every terminal path of a scan: { ok, path, files, bytes, error, stopped } → { dropped }. */
   scanFinished(result) {
-    ipcRenderer.send('treemap:scan-finished', result);
+    return ipcRenderer.invoke('treemap:scan-finished', result);
   },
   /** Open a System Settings pane by name → { opened, reason? }. The shell owns the URL. */
   openPrivacySettings(pane) {

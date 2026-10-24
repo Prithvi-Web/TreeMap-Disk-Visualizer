@@ -163,8 +163,13 @@ test('C01: a paint from the saved index, a reopened scan and a scan shown after 
   assert.deepEqual((await finish({ scanId: 's3', scanningAfter: true })).told, [], 'a scan begun since: its own end is the one the shell hears');
 });
 
-/** failScan / quietRescanFailed / stopScan, with the page's queue recorded. */
-function ending(decl: string, returns: string) {
+/**
+ * failScan / quietRescanFailed / stopScan, with the page's queue recorded.
+ * `queued` is how many folders wait in the page's own queue; `answer` is what
+ * the shell's scanFinished gives back (the desktop app's: a promise of
+ * `{ dropped }`, the folders it still held that a Stop dropped).
+ */
+function ending(decl: string, returns: string, opts: { queued?: number; answer?: unknown } = {}) {
   const b = bridge();
   const { $ } = makeDom();
   const order: string[] = [];
@@ -172,13 +177,13 @@ function ending(decl: string, returns: string) {
   const state: Record<string, unknown> = { scanning: true, scanningPath: '/Users/x/Movies', scanId: 's4', settledScanId: null, root: null, view: 'dashboard', abortScan: null, scanGen: 3, scanRequestGen: 0 };
   const api = {
     scanProgress: b.api.scanProgress,
-    scanFinished: (r: unknown) => { order.push('shell'); b.api.scanFinished(r); },
+    scanFinished: (r: unknown) => { order.push('shell'); b.api.scanFinished(r); return opts.answer; },
   };
   const fns = page([TELL, decl], {
     state, $, window: { treemapDesktop: api },
     toast: (m: string) => { toasts.push(m); },
     drainScanQueue: () => { order.push('drain'); },
-    clearScanQueue: () => { order.push('clear'); return 2; },
+    clearScanQueue: () => { order.push('clear'); return opts.queued ?? 2; },
   }, returns);
   return { fns, told: b.told, order, toasts };
 }
@@ -203,6 +208,24 @@ test('C01 + C19: Stop tells the shell (stopped, so it says nothing), and says ho
   assert.deepEqual(e.told, [['scanFinished', { ok: false, path: '/Users/x/Movies', stopped: true }]]);
   assert.deepEqual(e.order, ['clear', 'shell'], 'the page\'s queue is emptied first: nothing of it starts after a Stop');
   assert.ok(e.toasts.includes('2 queued folders will not be scanned.'), `the two folders told they would scan are told they will not (${e.toasts.join(' | ')})`);
+});
+
+test('review F1.1/F1.13: a Stop counts the folders the desktop shell still held — its answer — with the page\'s own, in one sentence, singular or plural', async () => {
+  const settle = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r)); };
+  const said = async (queued: number, answer: unknown) => {
+    const e = ending('async function stopScan(', 'stopScan', { queued, answer });
+    await e.fns.stopScan();
+    await settle();
+    return e.toasts.filter((t) => /queued folder/.test(t));
+  };
+  assert.deepEqual(await said(0, Promise.resolve({ dropped: 1 })), ['1 queued folder will not be scanned.'],
+    'the one folder the shell held — a dock drop behind this scan — is dropped, and said so, in the singular');
+  assert.deepEqual(await said(1, Promise.resolve({ dropped: 2 })), ['3 queued folders will not be scanned.'],
+    'the page\'s one and the shell\'s two, in one sentence, never two');
+  assert.deepEqual(await said(1, undefined), ['1 queued folder will not be scanned.'], 'with no answer (a browser tab has no shell), the page\'s own count');
+  assert.deepEqual(await said(0, Promise.resolve({ dropped: 0 })), [], 'nothing waiting anywhere: nothing to say');
+  assert.deepEqual(await said(1, Promise.reject(new Error('No handler registered'))), ['1 queued folder will not be scanned.'],
+    'an answer that fails is no answer: the page\'s own count is said, and nothing is thrown');
 });
 
 /* ═════════════════════ C16 — a reopened scan builds no index ═════════════════════ */

@@ -281,6 +281,18 @@ class ScanQueue {
     this.current = null;
   }
 
+  /**
+   * A Stop: every folder still waiting is dropped, not started — a Stop means
+   * stop, and the next folder starting 300 ms after it meant pressing Stop
+   * once per folder (review F1.1). Answers how many were waiting, which the
+   * page says will not be scanned.
+   */
+  clear() {
+    const dropped = this.pending.length;
+    this.pending = [];
+    return dropped;
+  }
+
   reset() {
     this.busy = false;
     this.current = null;
