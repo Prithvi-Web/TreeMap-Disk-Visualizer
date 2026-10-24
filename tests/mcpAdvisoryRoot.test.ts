@@ -46,6 +46,13 @@ function writePacks(): void {
       rule({ id: 'test-vm-disk', kind: 'directory', title: 'Test VM disk', description: 'A virtual machine disk.', action: 'advice', adviceCommand: 'vmtool compact', names: ['vmdisk.bundle'] }),
       rule({ id: 'test-vm-data', kind: 'location', title: 'Test VM data', description: 'A virtual machine\'s data folder.', action: 'advice', adviceCommand: 'vmtool reclaim', paths: ['{localAppData}/dockerish/data', '{localAppData}/scratchdir'] }),
       rule({ id: 'test-render', kind: 'project-directory', title: 'Test render files', description: 'Render files of a video project.', action: 'advice', adviceCommand: 'Delete render files in the editor', names: ['Render Files'], requiresSibling: ['Original Media'], restoreCommand: 'Render again in the editor' }),
+      // Hunt HF-L6: the branches adviceGuard claims, each with a rule of its own.
+      rule({ id: 'test-vm-file', kind: 'file', title: 'Test VM disk file', description: 'A virtual machine disk file.', action: 'advice', adviceCommand: 'vmtool shrink', names: ['disk.vhdx'] }),
+      rule({ id: 'test-cache-bundle', kind: 'project-directory', title: 'Test cache bundle', description: 'A cache bundle with its index.', action: 'advice', adviceCommand: 'cachetool purge', names: ['Cache Bundle'], requiresChild: ['index.db'], restoreCommand: 'Rebuilt by cachetool' }),
+      rule({ id: 'test-proxy', kind: 'project-directory', title: 'Test proxy media', description: 'Proxy media nobody marked to keep.', action: 'advice', adviceCommand: 'Delete proxies in the editor', names: ['Proxy Media'], forbidsChild: ['keep.me'], restoreCommand: 'Made again by the editor' }),
+      rule({ id: 'test-renders', kind: 'project-directory', title: 'Test renders', description: 'Renders beside a project file.', action: 'advice', adviceCommand: 'Delete renders in the editor', names: ['Renders'], requiresSibling: ['project.*'], restoreCommand: 'Render again' }),
+      rule({ id: 'test-build', kind: 'project-directory', title: 'Test build output', description: 'Build output beside a manifest.', category: 'regenerable', names: ['build'], requiresSibling: ['package.json'], restoreCommand: 'npm run build' }),
+      rule({ id: 'test-locked-build', kind: 'location', title: 'Test locked build', description: 'A build folder another tool owns.', action: 'advice', adviceCommand: 'buildtool clean', paths: ['{localAppData}/lockedparent/build'] }),
     ],
   }));
   for (const pack of ['macos', 'linux', 'windows']) {
@@ -254,4 +261,67 @@ test('a scan whose root is typed through macOS\'s Data volume still finds the fo
   if (!volumeFolds(root, long)) return t.skip('the Data volume does not show this folder');
   await scanAt(long);
   await assertRefused([path.join(root, 'vmfolder')], 'vmtool compact');
+});
+
+/* Hunt HF-L6: every branch adviceGuard states, pinned. Each scan is rooted AT the folder or file under
+ * test, so no scan's walk lists it as an item and the path alone must decide. */
+
+test('a file an advice-only file rule names is refused, judged from the path itself', async () => {
+  const root = tree('treemap-mcp-advroot-filerule-', ['vm/disk.vhdx', 'vm/notes.txt']);
+  const disk = path.join(root, 'vm', 'disk.vhdx');
+  await scanAt(disk);
+  await assertRefused([disk], 'vmtool shrink');
+  await scanAt(path.join(root, 'vm', 'notes.txt'));
+  await assertAllowed(path.join(root, 'vm', 'notes.txt'));
+});
+
+test('a project rule\'s required child and refused child are read from the disk', async () => {
+  const root = tree('treemap-mcp-advroot-children-', [
+    'with/Cache Bundle/index.db', 'without/Cache Bundle/blob.bin',
+    'plain/Proxy Media/clip.mov', 'kept/Proxy Media/keep.me',
+  ]);
+  for (const sub of ['with', 'without', 'plain', 'kept']) {
+    const dir = sub === 'with' || sub === 'without' ? 'Cache Bundle' : 'Proxy Media';
+    await scanAt(path.join(root, sub, dir));
+  }
+  await assertRefused([path.join(root, 'with', 'Cache Bundle')], 'cachetool purge');
+  await assertAllowed(path.join(root, 'without', 'Cache Bundle'));
+  await assertRefused([path.join(root, 'plain', 'Proxy Media')], 'Delete proxies in the editor');
+  await assertAllowed(path.join(root, 'kept', 'Proxy Media'));
+});
+
+test('a sibling pattern ending in .* matches any extension', async () => {
+  const root = tree('treemap-mcp-advroot-wildcard-', ['film/Renders/a.mov', 'film/project.fcpx', 'other/Renders/a.mov', 'other/projectnotes']);
+  await scanAt(path.join(root, 'film', 'Renders'));
+  await scanAt(path.join(root, 'other', 'Renders'));
+  await assertRefused([path.join(root, 'film', 'Renders')], 'Delete renders in the editor');
+  await assertAllowed(path.join(root, 'other', 'Renders'));
+});
+
+test('a folder whose sibling cannot be listed is not claimed by a trash project rule first, so an advice rule still refuses it', {
+  // A folder this user may enter but not list: POSIX permissions (Windows has no such mode, and root reads anything).
+  skip: process.platform === 'win32' || process.getuid?.() === 0,
+}, async () => {
+  const parent = path.join(LOCAL, 'lockedparent');
+  const build = path.join(parent, 'build');
+  fs.mkdirSync(build, { recursive: true });
+  fs.writeFileSync(path.join(build, 'out.js'), Buffer.alloc(1_024, 4));
+  fs.writeFileSync(path.join(parent, 'package.json'), '{}');
+  await scanAt(build);
+  fs.chmodSync(parent, 0o300);
+  try {
+    assert.throws(() => fs.readdirSync(parent), 'the folder holding it cannot be listed');
+    await assertRefused([build], 'buildtool clean');
+  } finally {
+    fs.chmodSync(parent, 0o755);
+  }
+});
+
+test('a path named through a link into an advice-only folder is refused, as where it lives', {
+  skip: process.platform === 'win32', // a symbolic link needs a privilege the Windows runner's user may not hold
+}, async () => {
+  const root = tree('treemap-mcp-advroot-link-', ['vm/vmdisk.bundle/disk.img']);
+  fs.symlinkSync(path.join(root, 'vm', 'vmdisk.bundle'), path.join(root, 'alias'));
+  await scanAt(root);
+  await assertRefused([path.join(root, 'alias', 'disk.img')], 'vmtool compact');
 });
