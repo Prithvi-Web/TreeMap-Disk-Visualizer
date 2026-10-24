@@ -842,12 +842,16 @@ test('the Undo Vault tab prints a copy\'s reason in the cart\'s words, and an ol
  * The owner's pronouns are not stated, so the repository says "the owner" — in its code, its comments, its tests
  * and its docs — and never a pronoun guessed for them (BQU item 42). Every gendered personal pronoun is held out
  * of every text file of the repository's own: the words are built from parts here, so this file does not say them.
- * Third-party notices (build/) and the vendored dependencies are not the repository's words.
+ * Third-party notices and licence texts — build/'s, native/THIRD_PARTY_NOTICES.txt and native/licence-texts/, which
+ * scripts/rust-notices.js copies from each crate and seals — and the vendored dependencies are not the repository's
+ * words (review F2.4).
  */
 const GENDERED = new RegExp(String.raw`\b(?:${['h' + 'e', 'sh' + 'e', 'h' + 'is', 'h' + 'im', 'h' + 'er', 'h' + 'ers', 'h' + 'imself', 'h' + 'erself'].join('|')})\b`, 'i');
 const OWN_TEXT = /\.(?:ts|js|cjs|mjs|html|css|md|json|rs|toml|ya?ml|sh|service|txt)$/;
+/** What a walk of the repository's own words never enters or reads: dependencies, build output, binaries, other people's notices. */
+const NOT_OWN = ['node_modules', 'target', 'dist', 'prebuilt', 'licence-texts', 'THIRD_PARTY_NOTICES.txt'];
 
-/** Every text file of the repository's own words under `dir`, in path order: no dependencies, build output or binaries. */
+/** Every text file of the repository's own words under `dir`, in path order: no dependencies, build output, binaries or third-party notices. */
 function ownTextUnder(dir: string): string[] {
   const out: string[] = [];
   const walk = (at: string): void => {
@@ -855,7 +859,7 @@ function ownTextUnder(dir: string): string[] {
     // Not there, or gone since its parent was read: nothing to read. Any other failure is the test's.
     try { entries = fs.readdirSync(at, { withFileTypes: true }); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return; throw e; }
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (['node_modules', 'target', 'dist', 'prebuilt'].includes(entry.name)) continue;
+      if (NOT_OWN.includes(entry.name)) continue;
       const full = path.join(at, entry.name);
       if (entry.isDirectory()) walk(full);
       else if (OWN_TEXT.test(entry.name)) out.push(full);
@@ -871,6 +875,13 @@ test('nothing the repository writes calls the owner by a pronoun guessed for the
     ...fs.readdirSync(ROOT).filter((name) => name.endsWith('.md')).map((name) => path.join(ROOT, name)),
   ];
   assert.ok(files.some((f) => f.endsWith(path.join('src', 'ui', 'app', '050-treemap-view.js'))) && files.length > 500, `control: the repository's own text files are read (${files.length})`);
+  assert.ok(files.some((f) => f.endsWith(path.join('tests', 'copyNaming.test.ts'))) && files.some((f) => f.endsWith(path.join('native', 'README.md'))),
+    'control: the tests and the native module\'s own words are read');
+  // The notices are other people's words — licence texts and copyright lines — regenerated from Cargo.lock and sealed
+  // (tests/rustNotices.test.ts), so a contributor's name in a new crate's licence that spells one of the words held
+  // out is no fault of this repository's, and could not be fixed by hand (review F2.4).
+  assert.deepEqual(files.filter((f) => /THIRD_PARTY_NOTICES|licence-texts/.test(path.relative(ROOT, f))).map((f) => path.relative(ROOT, f)), [],
+    'the third-party notices and licence texts are not read as the repository\'s own words');
   /** A file's text, or none where it went between the listing and the read (another test's file, made and removed). */
   const textOf = (f: string): string => {
     try { return fs.readFileSync(f, 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return ''; throw e; }
