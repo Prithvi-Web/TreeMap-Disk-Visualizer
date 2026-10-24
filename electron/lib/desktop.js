@@ -114,7 +114,11 @@ function growthNotification(alert, formatBytes) {
 
 /**
  * The banner for a scan that ended while the window was in the background.
- * `null` means "say nothing": the user pressed Stop themselves.
+ * `null` means "say nothing": the user pressed Stop themselves. `files` is the
+ * page's files count — "files", since the page keeps "items" for files and
+ * folders (review F1.6) — and `refused` the folders that could not be read,
+ * which a partial scan says in the same breath, as the page's toast does
+ * (review F1.8).
  */
 function scanFinishedNotice(result, formatBytes) {
   if (!result || typeof result !== 'object' || result.stopped) return null;
@@ -124,8 +128,10 @@ function scanFinishedNotice(result, formatBytes) {
     const parts = [];
     const files = asCount(result.files);
     const bytes = asCount(result.bytes);
-    if (files !== null) parts.push(`${files.toLocaleString('en-US')} items`);
+    const refused = asCount(result.refused);
+    if (files !== null) parts.push(`${files.toLocaleString('en-US')} file${files === 1 ? '' : 's'}`);
     if (bytes !== null) parts.push(formatBytes(bytes));
+    if (refused) parts.push(`${refused.toLocaleString('en-US')} folder${refused === 1 ? '' : 's'} could not be read`);
     const summary = parts.join(' · ');
     return { title: `Finished scanning ${name}`, body: summary ? `${summary}\n${target}` : target };
   }

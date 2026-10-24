@@ -329,7 +329,12 @@ test('progressBarValue maps the page contract onto Electron: 0…1 shows, above 
 test('scanFinishedNotice: says what finished and how much; silent when the user pressed Stop', () => {
   const ok = desktop.scanFinishedNotice({ ok: true, path: '/Volumes/Archive', files: 128400, bytes: 42.1 * GB }, formatBytes);
   assert.equal(ok.title, 'Finished scanning Archive');
-  assert.match(ok.body, /128,400 items/);
+  assert.match(ok.body, /128,400 files/, 'the page sends the files count, and "items" there means files and folders (review F1.6)');
+  assert.doesNotMatch(ok.body, /items/);
+  assert.match(desktop.scanFinishedNotice({ ok: true, path: '/x/y', files: 1, bytes: 10 }, formatBytes).body, /^1 file · /, 'one file is "1 file"');
+  const partial = desktop.scanFinishedNotice({ ok: true, path: '/Users/x', files: 812, bytes: 4.2 * GB, refused: 3 }, formatBytes);
+  assert.equal(partial.body, '812 files · 4.2 GB · 3 folders could not be read\n/Users/x', 'a partial scan says so in the same breath, as the page\'s toast does (review F1.8)');
+  assert.match(desktop.scanFinishedNotice({ ok: true, path: '/x/y', files: 2, bytes: 10, refused: 1 }, formatBytes).body, / · 1 folder could not be read\n/);
   assert.match(ok.body, /42\.1 GB/);
   assert.match(ok.body, /\/Volumes\/Archive/);
   const bare = desktop.scanFinishedNotice({ ok: true, path: '/x/y' }, formatBytes);

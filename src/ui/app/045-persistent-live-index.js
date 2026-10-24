@@ -1076,7 +1076,9 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0, afterStop =
   // the page loaded, nor one shown after its Stop, which told the shell; nor
   // when a scan has begun since, whose own end the shell will hear.
   if (!reopenedAt && !afterStop && !state.scanning && typeof tellDesktop === 'function') {
-    tellDesktop('scanFinished', { ok: true, path: root.path, files: typeof files === 'number' ? files : undefined, bytes: root.size });
+    // With the folders that could not be read, which its notice says as the toast does (review F1.8).
+    const refused = stats && stats.refused && stats.refused.dirs > 0 ? stats.refused.dirs : 0;
+    tellDesktop('scanFinished', { ok: true, path: root.path, files: typeof files === 'number' ? files : undefined, bytes: root.size, ...(refused ? { refused } : {}) });
   }
   // Re-entering the view repaints what it holds, focus on it included (review F2.6).
   withFocusKept(() => { switchView(state.view); });

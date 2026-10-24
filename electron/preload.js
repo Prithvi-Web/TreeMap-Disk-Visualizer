@@ -19,7 +19,9 @@
  *                                  (2), a few times a second at most while scanning,
  *                                  and it is cleared for you by scanFinished.
  *  - scanFinished(result)        → Promise<{ dropped }>. { ok, path, files?, bytes?,
- *                                  error?, stopped? } at EVERY terminal path — finish,
+ *                                  refused?, error?, stopped? } (files: the files
+ *                                  count; refused: folders that could not be read)
+ *                                  at EVERY terminal path — finish,
  *                                  failure, and Stop (with stopped: true, which keeps
  *                                  the shell silent). It clears the progress bar and
  *                                  — when the window is not focused — bounces the dock

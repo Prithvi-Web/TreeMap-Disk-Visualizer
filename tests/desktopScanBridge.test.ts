@@ -123,7 +123,7 @@ test('C01: in a browser tab there is no bridge, and nothing is said or thrown', 
 });
 
 /** finishScan, run with a scan id in state (or none), recording what it tells the shell and what it builds. */
-async function finish(opts: { scanId: string | null; reopenedAt?: number; afterStop?: boolean; scanningAfter?: boolean }) {
+async function finish(opts: { scanId: string | null; reopenedAt?: number; afterStop?: boolean; scanningAfter?: boolean; refused?: number }) {
   const b = bridge();
   const { $ } = makeDom();
   const log: string[] = [];
@@ -145,15 +145,19 @@ async function finish(opts: { scanId: string | null; reopenedAt?: number; afterS
     loadDashboardLists: async () => true,
   };
   const fns = page([TELL, 'async function finishScan('], given, 'finishScan');
-  await fns.finishScan(root, 1200, { fileCount: 812, dirCount: 40, durationMs: 1100 }, { reopenedAt: opts.reopenedAt ?? 0, afterStop: !!opts.afterStop });
+  const stats = { fileCount: 812, dirCount: 40, durationMs: 1100, ...(opts.refused ? { refused: { dirs: opts.refused } } : {}) };
+  await fns.finishScan(root, 1200, stats, { reopenedAt: opts.reopenedAt ?? 0, afterStop: !!opts.afterStop });
   for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
   return { told: b.told, log, builds, badges, asked, info };
 }
 
-test('C01: a scan that completed now tells the shell it finished — with the folder, its items and its size — after the views have it', async () => {
+test('C01: a scan that completed now tells the shell it finished — with the folder, its files and its size — after the views have it', async () => {
   const r = await finish({ scanId: 's1' });
   assert.deepEqual(r.told, [['scanFinished', { ok: true, path: '/Users/x/Downloads', files: 812, bytes: 4_200_000_000 }]]);
   assert.deepEqual(r.log, ['emit:s1'], 'the views heard it first (where the page\'s own queue starts its next folder too)');
+  const partial = await finish({ scanId: 's1', refused: 3 });
+  assert.deepEqual(partial.told, [['scanFinished', { ok: true, path: '/Users/x/Downloads', files: 812, bytes: 4_200_000_000, refused: 3 }]],
+    'a partial scan tells the shell how many folders could not be read, which its notice says as the page\'s toast does (review F1.8)');
 });
 
 test('C01: a paint from the saved index, a reopened scan and a scan shown after its Stop tell the shell nothing; nor does one with another scan begun since', async () => {
