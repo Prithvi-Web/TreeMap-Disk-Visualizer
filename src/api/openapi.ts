@@ -1515,11 +1515,11 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/empty-folders',
-    summary: 'Topmost recursively-empty directories: only folders the scan listed in full, each looked at again on disk (withheld counts the ones left out); none from a gdu scan (reason)',
+    summary: 'Topmost recursively-empty directories: only folders the scan listed in full, each looked at again on disk (withheld counts the ones left out); none from a gdu scan (reason); never one a pausing folder note covers or holds (paused counts them)',
     tag: 'insights',
     destructive: false,
     parameters: [scanIdQuery, queryParam('ignoreJunk', "OS junk files don't count as content (default true)", bool())],
-    responses: { '200': jsonResponse('Empty folders', ref('EmptyFoldersResult')) },
+    responses: { '200': jsonResponse('Empty folders', ref('EmptyFoldersResult')), '500': errorResponse('NOTES_UNREADABLE — notes.json could not be read, so the folders its notes pause cannot be left out; nothing is listed until it is repaired or removed') },
   },
   {
     method: 'get',
@@ -1544,7 +1544,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'insights',
     destructive: false,
     parameters: [scanIdQuery],
-    responses: { '200': jsonResponse('Repositories', obj({ repos: arr(opaque('Per-repo breakdown')) }, ['repos'])) },
+    responses: { '200': jsonResponse('Repositories', obj({ repos: arr(opaque('Per-repo breakdown')) }, ['repos'])), '500': errorResponse('NOTES_UNREADABLE — notes.json could not be read, so the folders its notes pause cannot be left out; nothing is listed until it is repaired or removed') },
   },
   {
     method: 'get',
@@ -1608,7 +1608,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/compression/candidates',
-    summary: 'Large video in an older codec that HEVC would store in less space, with ESTIMATED savings',
+    summary: 'Large video in an older codec that HEVC would store in less space, with ESTIMATED savings — never a file a pausing folder note covers (paused counts them; 500 NOTES_UNREADABLE when notes.json cannot be read)',
     tag: 'insights',
     destructive: false,
     parameters: [scanIdQuery, queryParam('limit', 'How many files to probe, 1–200 (default 60)', int())],
@@ -1631,6 +1631,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
           ['scanId', 'available', 'candidates'],
         ),
       ),
+      '500': errorResponse('NOTES_UNREADABLE — notes.json could not be read, so the folders its notes pause cannot be left out; nothing is listed until it is repaired or removed'),
     },
   },
   {
@@ -1876,7 +1877,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/packages/orphans',
-    summary: 'Package-manager artifacts classified as orphaned (no project file beside it, a virtualenv\u2019s interpreter gone, or a superseded Homebrew keg), active, or shared cache',
+    summary: 'Package-manager artifacts classified as orphaned (no project file beside it, a virtualenv\u2019s interpreter gone, or a superseded Homebrew keg), active, or shared cache — never one a pausing folder note covers or holds (500 NOTES_UNREADABLE when notes.json cannot be read)',
     tag: 'cleanup',
     destructive: false,
     parameters: [scanIdQuery],
@@ -1897,6 +1898,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
           ['scanId', 'ecosystems'],
         ),
       ),
+      '500': errorResponse('NOTES_UNREADABLE — notes.json could not be read, so the folders its notes pause cannot be left out; nothing is listed until it is repaired or removed'),
     },
   },
   {
@@ -1983,10 +1985,10 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/notes',
-    summary: 'Notes pinned to folders. A suppressing note excludes its whole subtree from Smart suggestions and Autopilot matching',
+    summary: 'Notes pinned to folders. A suppressing note excludes its whole subtree from Smart suggestions (/api/cleanup/suggestions, the agent summary, MCP cleanup_suggestions), package leftovers (/api/packages/orphans), re-encode candidates (/api/compression/candidates), empty folders (/api/empty-folders), Git repositories (/api/git/repos), browser caches (/api/cleanup/browser-profiles) and every Autopilot match; those five lists also leave out a folder holding a noted one',
     tag: 'notes',
     destructive: false,
-    responses: { '200': jsonResponse('Every folder note', obj({ notes: arr(ref('FolderNote')) }, ['notes'])) },
+    responses: { '200': jsonResponse('Every folder note', obj({ notes: arr(ref('FolderNote')) }, ['notes'])), '500': errorResponse('NOTES_UNREADABLE — notes.json could not be parsed, or is not the store TreeMap writes; nothing is written over it, its pauses still hold, and the unreadable original is kept beside it') },
   },
   {
     method: 'put',
@@ -2002,7 +2004,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       },
       ['path', 'text'],
     )),
-    responses: { '200': jsonResponse('The stored note', obj({ note: ref('FolderNote') }, ['note'])) },
+    responses: { '200': jsonResponse('The stored note', obj({ note: ref('FolderNote') }, ['note'])), '500': errorResponse('NOTES_UNREADABLE — notes.json could not be parsed, or is not the store TreeMap writes; nothing is written over it, its pauses still hold, and the unreadable original is kept beside it') },
   },
   {
     method: 'delete',
@@ -2011,7 +2013,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'notes',
     destructive: true,
     parameters: [queryParam('path', 'The noted folder', str())],
-    responses: { '200': jsonResponse('Whether a note existed there', obj({ ok: bool(), existed: bool() }, ['ok', 'existed'])) },
+    responses: { '200': jsonResponse('Whether a note existed there', obj({ ok: bool(), existed: bool() }, ['ok', 'existed'])), '500': errorResponse('NOTES_UNREADABLE — notes.json could not be parsed, or is not the store TreeMap writes; nothing is written over it, its pauses still hold, and the unreadable original is kept beside it') },
   },
 
   /* ------------ cleanup ------------ */
@@ -2047,7 +2049,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'cleanup',
     destructive: false,
     parameters: [scanIdQuery],
-    responses: { '200': jsonResponse('Profiles', opaque('scanId, profiles[]: browser, profile, path, totalBytes, items[]')) },
+    responses: { '200': jsonResponse('Profiles', opaque('scanId, profiles[]: browser, profile, path, totalBytes, items[]')), '500': errorResponse('NOTES_UNREADABLE — notes.json could not be read, so the folders its notes pause cannot be left out; nothing is listed until it is repaired or removed') },
   },
   {
     method: 'get',

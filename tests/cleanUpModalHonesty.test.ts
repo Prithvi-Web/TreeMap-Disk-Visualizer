@@ -1149,6 +1149,36 @@ test('large videos a pausing note left out are said on the pane — never "no la
   assert.match(efficient, /1 large video was left out because a note pauses the folder it is in\./, efficient);
 });
 
+/*
+ * renderGitRepos swallowed a failed /api/git/repos and left the earlier list — its "Run git gc" buttons
+ * still live — under a pane whose other lists had cleared (review HD-L15).
+ */
+test('Git repositories takes down an earlier list when its own request fails, as the lists beside it do — never stale "Run git gc" buttons (review HD-L15)', async () => {
+  const run = async (onScreenOnceAnswered: string) => {
+    const host = { innerHTML: '<button class="pill" data-gc="/old/repo">Run git gc</button>' };
+    let tree = 's1';
+    await runnable(bodyOf('async function renderGitRepos() {'), {
+      $: (id: string) => (id === 'gitRepos' ? host : assert.fail(`nothing else is touched: ${id}`)),
+      treeScanId: () => tree,
+      api: async () => { tree = onScreenOnceAnswered; throw Object.assign(new Error('notes.json could not be read'), { code: 'NOTES_UNREADABLE' }); },
+      escapeHtml: String, icon: () => '', formatBytes: String, MB: 1e6,
+    })();
+    return host.innerHTML;
+  };
+  assert.equal(await run('s1'), '', 'its request failed for the tree on screen: the earlier list goes');
+  assert.match(await run('s2'), /Run git gc/, 'control: another tree on screen by then — its own load paints, and this leaves the host alone');
+});
+
+test('large videos a pausing note left out are said beside the videos the pane lists too (review HD-L11)', async () => {
+  const listed = await videoPane({
+    candidates: [{ name: 'a.mov', path: '/v/a.mov', size: 9e9, estimatedBytes: 5e9, estimatedSaving: 4e9, reason: 'H264 video' }],
+    shortlisted: 1, unreadable: 0, paused: 2,
+  });
+  assert.match(listed, /a\.mov/, 'control: the video is listed');
+  assert.match(listed, /2 large videos were left out because a note pauses the folders they are in\./, listed);
+  assert.equal(listed.split('left out because a note pauses').length - 1, 1, 'said once');
+});
+
 test('videos that could not be read are counted and named as unjudged, never as efficient', async () => {
   const html = await videoPane({ shortlisted: 4, unreadable: 2 });
   assert.match(html, /2 large videos couldn’t be read/, html);

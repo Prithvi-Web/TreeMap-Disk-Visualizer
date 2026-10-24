@@ -788,6 +788,13 @@ test('after notes that could not be read, the note sheet reads them again before
   answers.push(unreadable);
   await page.openNoteDialog(folder);
   assert.equal($('noteModal').opened, 0, 'still unreadable: the sheet does not open, so Save cannot write over a note it never showed');
+  assert.deepEqual(toasts.slice(1), ['notes.json could not be read'], 'and says why again (review HD-L12)');
+
+  // Any other failed read — the server not answering — keeps the sheet shut too, and says why (review HD-L12).
+  answers.push(() => Promise.reject(new Error('Failed to fetch')));
+  await page.openNoteDialog(folder);
+  assert.equal($('noteModal').opened, 0, 'a read that failed for any reason: the sheet does not open');
+  assert.deepEqual(toasts.slice(2), ['Could not read your notes: Failed to fetch'], 'and it says why, once');
 
   answers.push(async () => ({ notes: [{ path: folder.path, text: 'client archive, keep', suppress: false }] }));
   await page.openNoteDialog(folder);
@@ -851,7 +858,7 @@ import { createScanRecord } from '../src/services/diskScanner';
 import { buildStoreFromTree } from '../src/services/scanStore';
 import { shortlistFromScan } from '../src/services/compressionAdvisor';
 import { emptyFoldersForScan } from '../src/services/emptyFolders';
-import { notePausedTest } from '../src/services/notes';
+import { notePausedTest, prepareSuppressed, suppressedRootCovering, noteRootInside } from '../src/services/notes';
 
 test('a pausing note keeps its folder out of Package leftovers, as the note sheet promises (hunt C39, C61)', async () => {
   await clearNotes();
@@ -941,6 +948,35 @@ test('a pausing note covers no cloud listing — not even a note over the folder
     }
     await clearNotes();
   }
+});
+
+/*
+ * F1.3 patched notePausedTest only. Smart suggestions — and so the agent summary and MCP
+ * cleanup_suggestions — resolved cloud:// ids under the server's working folder, so a pausing note over
+ * an ancestor of that folder emptied a cloud scan's suggestions (review HD-L4).
+ */
+test('Smart suggestions, the agent summary and MCP read no note into a cloud listing — not even one over the folder the server runs in (review HD-L4)', () => {
+  const root = 'cloud://gdrive';
+  const leaf = (name: string, rel: string, size: number, extension: string): FileNode =>
+    ({ name, path: `${root}/${rel}`, type: 'file', modifiedAt: 0, isHidden: false, size, extension });
+  const cloudTree: FileNode = {
+    name: 'gdrive', path: root, type: 'dir', modifiedAt: 0, isHidden: false, size: 1_000_000, children: [
+      { name: 'node_modules', path: `${root}/node_modules`, type: 'dir', modifiedAt: 0, isHidden: false, size: 900_000, children: [leaf('a.js', 'node_modules/a.js', 900_000, 'js')] },
+      leaf('package.json', 'package.json', 100_000, 'json'),
+    ],
+  };
+  const ids = (noted: string[]) => collectCleanupSuggestions(buildStoreFromTree(cloudTree), NO_IGNORE, undefined, undefined, noted).map((g) => g.id);
+  const none = ids([]);
+  assert.ok(none.includes('regen-node-modules'), `control: the cloud listing has a suggestion: ${none.join(', ')}`);
+  const overServer = path.dirname(process.cwd());
+  assert.deepEqual(ids([overServer]), none, 'a note over the server\'s folder pauses nothing of a cloud listing');
+  // The helpers every list uses, each asked about a cloud id.
+  assert.deepEqual(prepareSuppressed([overServer], root), [], 'a walk of a cloud listing has no note to judge');
+  assert.equal(suppressedRootCovering(`${root}/node_modules`, prepareSuppressed([overServer], root)), null, 'no note covers a cloud id');
+  assert.equal(suppressedRootCovering(`${root}/node_modules`, prepareSuppressed([overServer], process.cwd())), null, 'whatever walk asks');
+  assert.equal(noteRootInside(root, prepareSuppressed([path.resolve(`${root}/node_modules`)], process.cwd())), null, 'no note sits inside a cloud id');
+  assert.equal(isUnderAny(`${root}/node_modules`, [overServer]), false, 'nor is a cloud id under any note');
+  assert.equal(isUnderAny(path.join(process.cwd(), 'src'), [overServer]), true, 'control: a local path under the note is');
 });
 
 test('Empty folders judges the pause before its cap and its count: a free folder past a thousand paused ones is still offered, and totalCount and paused say which is which (review F1.12, F1.11)', async () => {

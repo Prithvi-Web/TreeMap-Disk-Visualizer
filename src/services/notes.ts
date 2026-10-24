@@ -261,6 +261,9 @@ function realSpellingOf(p: string): string {
  * whole walk covers all of it. A few realpaths a walk; the per-node checks stay string compares.
  */
 export function prepareSuppressed(roots: string[], walkRoot: string): PreparedSuppression[] {
+  // A cloud listing names no local path, so no note pauses any of it (review HD-L4): path.resolve placed
+  // its ids under the server's working folder, where a note over that folder covered every one.
+  if (isCloudId(walkRoot)) return [];
   const walk = { at: path.resolve(walkRoot), real: realSpellingOf(walkRoot) };
   const walkReal = foldCase(walk.real);
   return roots.map((r) => {
@@ -283,7 +286,7 @@ function spellingsOf(root: PreparedSuppression): { folded: string; foldedSep: st
 
 /** The prepared root covering `p` (p at or under it), or null. */
 export function suppressedRootCovering(p: string, prepared: PreparedSuppression[]): string | null {
-  if (prepared.length === 0) return null;
+  if (prepared.length === 0 || isCloudId(p)) return null; // a cloud id is under no note (review HD-L4)
   const target = foldCase(path.resolve(p));
   for (const root of prepared) {
     if (spellingsOf(root).some((s) => target === s.folded || target.startsWith(s.foldedSep))) return root.raw;
@@ -297,7 +300,7 @@ export function suppressedRootCovering(p: string, prepared: PreparedSuppression[
  * that CONTAINS a noted keeper deletes the very thing the note protects.
  */
 export function noteRootInside(p: string, prepared: PreparedSuppression[]): string | null {
-  if (prepared.length === 0) return null;
+  if (prepared.length === 0 || isCloudId(p)) return null; // nor does a note sit inside one (review HD-L4)
   const target = foldCase(path.resolve(p));
   const targetSep = target.endsWith(path.sep) ? target : target + path.sep;
   for (const root of prepared) {
@@ -342,7 +345,7 @@ function isCloudId(p: string): boolean {
  * `/a/b`. Case rules follow the platform, like `samePath` in osPaths.
  */
 export function isUnderAny(p: string, roots: string[]): boolean {
-  if (roots.length === 0) return false;
+  if (roots.length === 0 || isCloudId(p)) return false; // a cloud id names no local path (review HD-L4)
   const target = foldCase(path.resolve(p));
   for (const root of roots) {
     const r = foldCase(path.resolve(root));

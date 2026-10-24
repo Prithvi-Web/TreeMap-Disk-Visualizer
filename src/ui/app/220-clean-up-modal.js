@@ -531,7 +531,10 @@ async function renderGitRepos() {
   const scanId = treeScanId();
   if (!scanId) { host.innerHTML = ''; return; }
   let repos = [];
-  try { ({ repos } = await api('/api/git/repos?scanId=' + scanId)); } catch { return; }
+  // A failed request takes down the earlier list, as Package leftovers and Browser caches do (review HD-L15):
+  // kept, its "Run git gc" buttons stood under a pane whose other lists had cleared. Another tree on screen
+  // by then: its own load paints, and what it painted stays.
+  try { ({ repos } = await api('/api/git/repos?scanId=' + scanId)); } catch { if (scanId === treeScanId()) host.innerHTML = ''; return; }
   if (scanId !== treeScanId()) return; // another tree is on screen: its own load paints
   const notable = (repos || []).filter((r) => r.totalBytes > MB);
   if (!notable.length) { host.innerHTML = ''; return; }

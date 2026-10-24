@@ -244,3 +244,20 @@ test('the offload declares the 400 its plan answers for a destination it cannot 
   assert.match(prepare, /await assertDestWritable\(destDir\);/, 'asked where a dry run and a real run both plan');
   assert.match(said('post', '/api/offload', '400'), /\bDEST_NOT_WRITABLE\b[^;]*a dry run too/, 'and the document declares it, for a dry run too');
 });
+
+test('every route that refuses an unreadable notes.json declares 500 NOTES_UNREADABLE, every list a note pauses says so, and the notes list names those lists (review HD-L5)', () => {
+  const lists: Array<[string, string]> = [
+    ['get', '/api/empty-folders'], ['get', '/api/packages/orphans'], ['get', '/api/compression/candidates'],
+    ['get', '/api/git/repos'], ['get', '/api/cleanup/browser-profiles'],
+  ];
+  const notes: Array<[string, string]> = [['get', '/api/notes'], ['put', '/api/notes'], ['delete', '/api/notes']];
+  assert.deepEqual([...lists, ...notes].filter(([m, r]) => !said(m, r, '500').includes('NOTES_UNREADABLE')).map(([m, r]) => `${m} ${r}`), [],
+    'each declares the 500 it answers');
+  assert.deepEqual(lists.filter(([m, r]) => !/pausing folder note/.test(String(op(m, r).summary))).map(([, r]) => r), [],
+    'each list says a pausing folder note leaves entries out');
+  const named = String(op('get', '/api/notes').summary);
+  assert.deepEqual(['/api/cleanup/suggestions', ...lists.map(([, r]) => r), 'Autopilot'].filter((x) => !named.includes(x)), [],
+    `the notes list names every list a note pauses: ${named}`);
+  // The code refuses where these say it does.
+  for (const file of ['src/api/insightRoutes.ts', 'src/api/settingsRoutes.ts']) assert.match(source(file), /notePausedTest|suppressedNoteRoots/, file);
+});
