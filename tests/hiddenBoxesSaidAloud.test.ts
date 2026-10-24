@@ -1983,7 +1983,7 @@ test('the scanning budget\'s line in Settings says what is running now in its ow
 test('a view that is not available on this computer says so in its own region, a frame after its notice shows — the notice itself no live region shown already filled; and nothing is left said once it goes (BQT item 28)', () => {
   const main = new El();
   const made: El[] = [];
-  const p = page(['function renderCapabilityNotice('], {
+  const p = page(['let capabilityNoticeSays', 'function renderCapabilityNotice('], {
     document: { createElement: () => { const e = new El(); made.push(e); return e; }, querySelector: () => main, body: main },
     icon: () => '<svg aria-hidden="true"></svg>',
   }, ['capabilityNotice']);
@@ -2003,7 +2003,7 @@ test('a view opened from its own tab, which gives the reason it is not available
   const reason = 'Reading which applications own what needs macOS.';
   const main = new El();
   const doc = { createElement: () => new El(), querySelector: () => main, body: main, activeElement: null as El | null };
-  const p = page(['function renderCapabilityNotice('], { document: doc, icon: () => '<svg aria-hidden="true"></svg>' }, ['capabilityNotice']);
+  const p = page(['let capabilityNoticeSays', 'function renderCapabilityNotice('], { document: doc, icon: () => '<svg aria-hidden="true"></svg>' }, ['capabilityNotice']);
   const tab = (view: string, title: string) => { const t = new El(); t.setAttribute('role', 'tab'); t.dataset.view = view; t.title = title; return t; };
   doc.activeElement = tab('apps', reason); // arrowed onto in the sidebar, or clicked
   p.fns.renderCapabilityNotice({ id: 'apps', label: 'Apps' }, reason);
@@ -2022,4 +2022,48 @@ test('a view opened from its own tab, which gives the reason it is not available
   p.frame();
   assert.equal(p.$('capabilityNoticeSaid').textContent, `Apps isn’t available on this computer. ${reason}`, 'and a tab whose title is not the reason reads no reason: the region says it');
   assert.match(pageFn('function applyCapabilitiesToTabs('), /btn\.title = reason \|\| view\.label;/, 'control: an unavailable view\'s tab gives its reason as its title');
+});
+
+test('the notice rendered again for the view already up — a scan that lands, fails or is stopped re-enters it — keeps the words it said, wherever focus has gone since: chosen again by where focus was then, the reason was said a second time, or never (review F2.6, BQU item 39)', () => {
+  const reason = 'Volume topology is not available on this computer.';
+  const view = { id: 'missing', label: 'Missing GB' };
+  const short = 'Missing GB isn’t available on this computer.';
+  const main = new El();
+  const doc = { createElement: () => new El(), querySelector: () => main, body: main, activeElement: null as El | null };
+  const p = page(['let capabilityNoticeSays', 'function renderCapabilityNotice('], { document: doc, icon: () => '<svg aria-hidden="true"></svg>' }, ['capabilityNotice']);
+  const tab = new El(); // its tab in the sidebar, whose title gives the reason
+  tab.setAttribute('role', 'tab');
+  tab.dataset.view = 'missing';
+  tab.title = reason;
+  const inPage = new El(); // a control in the page
+  inPage.parent = main;
+  const live = p.$('capabilityNoticeSaid');
+  const where = (at: El) => (at === tab ? 'on its tab' : 'in the page');
+  for (const [opened, words, then] of [[tab, short, inPage], [inPage, `${short} ${reason}`, tab]] as const) {
+    doc.activeElement = opened;
+    p.fns.renderCapabilityNotice(view, reason);
+    p.frame();
+    assert.equal(live.textContent, words, `control: the view opened with focus ${where(opened)} says what its tab does not`);
+    live.said.length = 0;
+    doc.activeElement = then; // focus moves on: a click into the page, or back onto the tab
+    p.fns.renderCapabilityNotice(view, reason); // the view up, re-entered: switchView(state.view)
+    p.frame();
+    assert.deepEqual(live.said, [], `opened with focus ${where(opened)}, rendered again with focus ${where(then)}: nothing more is said`);
+    assert.equal(live.textContent, words, `opened with focus ${where(opened)}: the region still says what it said`);
+    p.fns.renderCapabilityNotice({ id: 'dashboard', label: 'Dashboard' }, null); // another view opened: the notice goes
+    assert.equal(live.textContent, '', 'control: and nothing of it is left said');
+  }
+  // A new reason for the view up is news: its words are chosen again, by where focus is now.
+  doc.activeElement = tab;
+  p.fns.renderCapabilityNotice(view, reason);
+  p.frame();
+  const other = 'Reading the disk layout needs macOS 12 or later.';
+  doc.activeElement = inPage;
+  p.fns.renderCapabilityNotice(view, other);
+  p.frame();
+  assert.equal(live.textContent, `${short} ${other}`, 'a new reason for the view up is said, with the reason: no tab is focused that gives it');
+  // So is another view not available for the same reason, opened straight from this one.
+  p.fns.renderCapabilityNotice({ id: 'apps', label: 'Apps' }, other);
+  p.frame();
+  assert.equal(live.textContent, `Apps isn’t available on this computer. ${other}`, 'another view\'s notice says its own name, though its reason is the same');
 });

@@ -8837,6 +8837,8 @@ function withFocusKept(change) {
   if (to) to.focus({ preventScroll: true });
 }
 
+/** What the notice on screen says, for which view and reason, while it is up: { id, reason, words }, or null (below). */
+let capabilityNoticeSays = null;
 /**
  * The *unavailable* state (§3.5 #5) for a capability-gated view: the specific
  * reason, never a blank panel.
@@ -8856,7 +8858,7 @@ function renderCapabilityNotice(view, reason) {
   }
   // Guarded: a page reader may lift this function without sayAloud.
   const say = (words) => { if (typeof sayAloud === 'function') sayAloud('capabilityNoticeSaid', words); };
-  if (!reason) { host.style.display = 'none'; say(''); return; }
+  if (!reason) { host.style.display = 'none'; capabilityNoticeSays = null; say(''); return; }
   const title = `${view.label} isn’t available on this computer`;
   host.innerHTML =
     `<div style="display:flex;gap:10px;align-items:flex-start;">${icon('alert', 18)}` +
@@ -8869,10 +8871,20 @@ function renderCapabilityNotice(view, reason) {
   // with focus on it. Then the reason is said there, and the region says only
   // that the view is not available: said in both, the reason was heard twice
   // (BQU item 39). Opened any other way, the region says both.
-  const at = document.activeElement;
-  const tabSaysIt = !!at && typeof at.getAttribute === 'function' && at.getAttribute('role') === 'tab'
-    && !!at.dataset && at.dataset.view === view.id && at.title === reason;
-  say(tabSaysIt ? `${title}.` : `${title}.\n${reason}`);
+  // Chosen as the notice comes up, and kept while the same notice is
+  // rendered again — the view up re-entered as a scan lands, fails or is
+  // stopped, or as the capabilities are read again: where focus is by then
+  // says nothing of how the view was opened, and words chosen again by it
+  // were new words, said again with the reason, or the reason never said
+  // (review F2.6). A new reason, or another view, is chosen for afresh.
+  const shown = capabilityNoticeSays;
+  if (!shown || shown.id !== view.id || shown.reason !== reason) {
+    const at = document.activeElement;
+    const tabSaysIt = !!at && typeof at.getAttribute === 'function' && at.getAttribute('role') === 'tab'
+      && !!at.dataset && at.dataset.view === view.id && at.title === reason;
+    capabilityNoticeSays = { id: view.id, reason, words: tabSaysIt ? `${title}.` : `${title}.\n${reason}` };
+  }
+  say(capabilityNoticeSays.words);
 }
 
 /** Reflect capability changes onto the tab bar itself. */
