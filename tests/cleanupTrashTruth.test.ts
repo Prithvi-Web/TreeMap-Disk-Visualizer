@@ -399,10 +399,14 @@ test('an undo that stops part-way says how many it put back and rescans; one tha
   assert.ok(toasts.some((m) => /3 of the 5 items were put back before the undo stopped/.test(m)), `what came back is said: ${toasts.join(' | ')}`);
   assert.equal(rescans, 1, 'and the map is scanned again, as after a whole undo');
   toasts.length = 0;
+  opts.onSettled({ type: 'cancelled', entriesDone: 1, entryCount: 5 });
+  assert.ok(toasts.some((m) => /^1 of the 5 items was put back before the undo stopped/.test(m)), `one is "was": ${toasts.join(' | ')}`);
+  assert.equal(rescans, 2, 'control: and rescanned');
+  toasts.length = 0;
   opts.onSettled({ type: 'cancelled', entriesDone: 0, entryCount: 5 });
   opts.onSettled({ type: 'cancelled' });
   assert.deepEqual(toasts, [], 'nothing put back, nothing said');
-  assert.equal(rescans, 1, 'and nothing rescanned');
+  assert.equal(rescans, 2, 'and nothing rescanned');
 });
 
 test('the progress dialog hands a stopped job\'s event to the page that asked (C75)', () => {

@@ -36626,7 +36626,7 @@ async function cartUndoRun(runId) {
       renderCart(); refreshCartButtons();
       const back = ev && ev.entriesDone > 0 ? ev.entriesDone : 0;
       if (!back) return;
-      toast(`${formatCount(back)} of the ${formatCount(ev.entryCount || job.entryCount)} items were put back before the undo stopped; the rest stay in the Undo Vault.`, 'error', 12000);
+      toast(`${formatCount(back)} of the ${formatCount(ev.entryCount || job.entryCount)} items ${back === 1 ? 'was' : 'were'} put back before the undo stopped; the rest stay in the Undo Vault.`, 'error', 12000);
       rescan({ unattended: true });
     },
   });
