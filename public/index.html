@@ -36587,6 +36587,10 @@ async function cartTrashAll() {
     if (gone.length) {
       cartDropTrashed(gone);
       saveCart(); renderCart(); refreshCartButtons();
+      // A cart emptied so hides its dock, and with it the button this sheet would give focus back to
+      // as it closes, leaving it on <body> (HC-L6). Focus goes to a control on screen first, which
+      // the sheet then remembers as where it came from.
+      if (!$('cartDock').classList.contains('show')) cartFocusReturn();
       $('confirmText').innerHTML += `<div class="cart-mf-note">${gone.length === 1 ? 'The item already gone was' : `The ${formatCount(gone.length)} items already gone were`} taken out of your cart.</div>`;
     }
   } else {

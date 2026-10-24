@@ -47,13 +47,13 @@ function fnDecl(name: string): string {
   throw new Error(`unbalanced function ${name}`);
 }
 
-type El = { hidden: boolean; innerHTML: string; textContent: string; style: Record<string, string>; classes: Set<string>; classList: { add(c: string): void; remove(c: string): void } };
+type El = { hidden: boolean; innerHTML: string; textContent: string; style: Record<string, string>; classes: Set<string>; classList: { add(c: string): void; remove(c: string): void; contains(c: string): boolean } };
 function makeEls(): { $: (id: string) => El; els: Record<string, El> } {
   const els: Record<string, El> = {};
   const $ = (id: string): El => (els[id] ||= (() => {
     const classes = new Set<string>();
     return { hidden: false, innerHTML: '', textContent: '', style: {}, classes,
-      classList: { add: (c: string) => { classes.add(c); }, remove: (c: string) => { classes.delete(c); } } };
+      classList: { add: (c: string) => { classes.add(c); }, remove: (c: string) => { classes.delete(c); }, contains: (c: string) => classes.has(c) } };
   })());
   return { $, els };
 }
@@ -513,24 +513,50 @@ test('the cart counts the programs holding staged items by name: two processes o
   assert.match(unnamed, /It is open in other programs right now/, `with no name, processes are told apart by their ids: ${unnamed}`);
 });
 
-test('a cart whose every item is already gone takes it out when the sheet says so, so the next press does not repeat it (review F1.22)', async () => {
-  const GONE = 'It is no longer there — nothing to delete.';
-  const cart = new Set(['/c/a.bin', '/c/big.iso']);
-  let saves = 0;
+/** cartTrashAll over a cart and a dry run's answer; renderCart shows the dock while the cart holds anything, as the page's does. */
+function cartPress(cart: Set<string>, answer: (roots: string[]) => Array<Record<string, unknown>>) {
+  const seen = { saves: 0, dryRuns: 0, focusReturns: 0, toasts: [] as string[] };
   const { $, els } = makeEls();
   const trashAll = declared<() => Promise<void>>('async function cartTrashAll() {', {
     $, state: { cart }, ensureNodes: async () => {}, cartKnownPaths: () => [...cart], outermostPaths: (p: string[]) => p,
-    icon: () => '', REDUCED: true, formatCount: String, toast: () => {}, resetOpenHandleWarning: () => {},
-    cartDryRun: async () => ({ items: [{ path: '/c/a.bin', willDelete: false, code: 'ITEM_GONE', reason: GONE }, { path: '/c/big.iso', willDelete: false, code: 'CAPSULE_FULL', reason: 'Too big.' }] }),
-    cartManifestHtml: () => 'manifest', cartExecuteCommit: async () => assert.fail('nothing to commit'),
-    saveCart: () => { saves++; }, renderCart: () => {}, refreshCartButtons: () => {},
+    icon: () => '', REDUCED: true, formatCount: String, toast: (m: string) => { seen.toasts.push(m); }, resetOpenHandleWarning: () => {},
+    cartDryRun: async (roots: string[]) => { seen.dryRuns++; return { items: answer(roots) }; },
+    cartManifestHtml: () => 'manifest', cartExecuteCommit: async () => {},
+    saveCart: () => { seen.saves++; },
+    renderCart: () => { if (cart.size) $('cartDock').classList.add('show'); else $('cartDock').classList.remove('show'); },
+    refreshCartButtons: () => {}, cartFocusReturn: () => { seen.focusReturns++; },
     tmIsInside: (p: string, dir: string) => p.startsWith(dir + '/'),
   }, `let confirmPaths = []; let onConfirmTrash = null; let cartCommitKey = '';\n${blockAt('function cartDropTrashed(trashed) {')}`);
-  await trashAll();
-  assert.match(els.confirmOk.innerHTML, /Close/, 'control: nothing can be moved, so the sheet only reports');
-  assert.deepEqual([...cart], ['/c/big.iso'], 'the item already gone leaves the cart; the one left in place stays');
-  assert.ok(saves > 0, 'and the cart is saved without it');
-  assert.match(text(els.confirmText.innerHTML), /The item already gone was taken out of your cart\./, 'the sheet says so');
+  $('cartDock').classList.add('show');
+  return { trashAll, els, seen };
+}
+
+test('an item already gone leaves the cart when the sheet says so: a cart of nothing else is emptied, so the next press finds nothing to report, and focus goes to a control on screen before the dock hides (review F1.22, HC-L4, HC-L6)', async () => {
+  const GONE = 'It is no longer there — nothing to delete.';
+  // A mixed cart: the item already gone leaves, the one left in place stays, and so does the dock.
+  const mixedCart = new Set(['/c/a.bin', '/c/big.iso']);
+  const mixed = cartPress(mixedCart, () => [{ path: '/c/a.bin', willDelete: false, code: 'ITEM_GONE', reason: GONE }, { path: '/c/big.iso', willDelete: false, code: 'CAPSULE_FULL', reason: 'Too big.' }]);
+  await mixed.trashAll();
+  assert.match(mixed.els.confirmOk.innerHTML, /Close/, 'control: nothing can be moved, so the sheet only reports');
+  assert.deepEqual([...mixedCart], ['/c/big.iso'], 'the item already gone leaves the cart; the one left in place stays');
+  assert.ok(mixed.seen.saves > 0, 'and the cart is saved without it');
+  assert.match(text(mixed.els.confirmText.innerHTML), /The item already gone was taken out of your cart\./, 'the sheet says so');
+  assert.equal(mixed.seen.focusReturns, 0, 'control: the dock still shows, and the button the sheet gives focus back to with it');
+
+  // A cart of nothing but items already gone (HC-L4): emptied, saved, and the next press has nothing to say of them.
+  const goneCart = new Set(['/c/a.bin', '/c/b.bin']);
+  const allGone = cartPress(goneCart, (roots) => roots.map((p) => ({ path: p, willDelete: false, code: 'ITEM_GONE', reason: GONE })));
+  await allGone.trashAll();
+  assert.deepEqual([...goneCart], [], 'every item already gone leaves the cart');
+  assert.ok(allGone.seen.saves > 0, 'and the emptied cart is saved');
+  assert.match(text(allGone.els.confirmText.innerHTML), /The 2 items already gone were taken out of your cart\./, 'the sheet says so');
+  // The emptied cart hides the dock, and the button the sheet would give focus back to (HC-L6).
+  assert.equal(allGone.seen.focusReturns, 1, 'focus goes to a control on screen as the dock hides, so the sheet gives it back there, never to <body>');
+  const said = allGone.els.confirmText.innerHTML;
+  await allGone.trashAll();
+  assert.equal(allGone.seen.dryRuns, 1, 'the next press asks nothing of the server');
+  assert.equal(allGone.els.confirmText.innerHTML, said, 'and opens no second sheet of the same items');
+  assert.deepEqual(allGone.seen.toasts, ['Your cart is empty.'], 'it says the cart is empty');
 });
 
 /* ═════════ C75 — an undo that stops part-way says what it put back, and the map catches up ═════════ */
