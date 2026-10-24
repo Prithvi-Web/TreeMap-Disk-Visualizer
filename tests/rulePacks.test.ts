@@ -302,7 +302,10 @@ test('every suggestion can explain itself, from what the rule actually matches',
   const rust = catalog.projectDirectory.find((r) => r.id === 'regen-rust-target');
   assert.equal(matchReasonFor(rust!), 'A folder named target sitting next to Cargo.toml.', 'in the spelling the pack writes, not the lowercased match key (QA D06)');
   const stale = catalog.staleFiles.find((r) => r.id === 'old-downloads');
-  assert.match(matchReasonFor(stale!), /at least 1 MB, untouched for 90\+ days\.$/);
+  // The matcher reads the modified time only, so "untouched" (never opened) was untrue; the title is sentence case (the hunt, C65).
+  assert.match(matchReasonFor(stale!), /at least 1 MB, not changed in 90\+ days\.$/);
+  assert.equal(stale!.title, 'Old downloads');
+  assert.equal(stale!.description, 'Files in Downloads not changed in 90+ days');
   // The "1 MB" it says is the decimal megabyte every size is printed in (QA D09).
   assert.equal(stale!.minSizeBytes, 1_000_000, 'the rule matches from 1,000,000 bytes, the 1 MB its sentence names');
   assert.match(matchReasonFor({ ...stale!, minSizeBytes: 250_000_000 }), /at least 250 MB,/, 'and the sentence counts in the same megabytes');

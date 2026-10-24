@@ -317,8 +317,8 @@
     {
       "id": "old-downloads",
       "kind": "stale-files",
-      "title": "Old Downloads",
-      "description": "Files in Downloads untouched for 90+ days",
+      "title": "Old downloads",
+      "description": "Files in Downloads not changed in 90+ days",
       "category": "junk",
       "confidence": "medium",
       "withinPath": "{home}/Downloads",
