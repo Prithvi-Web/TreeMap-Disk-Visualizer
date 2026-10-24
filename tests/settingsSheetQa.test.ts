@@ -145,6 +145,7 @@ function openSettingsRuntime(api: (url: string, options?: ApiCall['options']) =>
      ${stubs.map((name) => `function ${name}() {}`).join('\n')}
      ${liftedSrc}
      ${INDEX.includes('function settingsSaveOn(') ? braced('function settingsSaveOn(') : ''}
+     ${INDEX.includes('function setSettingsStatus(') ? braced('function setSettingsStatus(') : ''}
      ${opener});`,
   )(dom.$, api, (msg: string) => { toasts.push(msg); }, dom.document, topModal, modalFocusInto);
   const open = dom.$('settingsBtn').listeners.click;
@@ -573,7 +574,7 @@ test('"Clear target" is an edit like the others: the live target and its meter s
   const adopted: unknown[] = [];
   const handler = braced("$('cleanupGoalClear').addEventListener('click', () => {");
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  new Function('$', 'adoptCartGoal', `'use strict'; ${handler});`)(dom.$, (bytes: unknown) => { adopted.push(bytes); return null; });
+  new Function('$', 'adoptCartGoal', `'use strict'; ${braced('function setSettingsStatus(')} ${handler});`)(dom.$, (bytes: unknown) => { adopted.push(bytes); return null; });
   const clear = dom.$('cleanupGoalClear').listeners.click;
   assert.ok(clear, 'Clear target has a click handler');
   clear();
@@ -668,7 +669,7 @@ test('Save waits for the settings to load, and stays off when they could not be 
   const failure = opener.slice(get, opener.indexOf('rememberStoredSchedules();'));
   assert.doesNotMatch(failure, /settingsData = \{ ignore: \[\], schedules: \[\] \}/, 'a failed load never stands placeholder lists in for the stored ones');
   assert.match(failure, /return;/, 'a failed load renders nothing and saves nothing');
-  assert.match(failure, /settingsStatus/, 'and the sheet says why Save is off');
+  assert.match(failure, /setSettingsStatus\('Your settings could not be read, so Save is off/, 'and the sheet says why Save is off, aloud too (review F1.17)');
   assert.match(failure, /settingsSaveOn\(true\);/, 'Save comes back once the settings have loaded');
   const ok = failure.indexOf('settingsSaveOn(true);');
   assert.ok(ok > failure.indexOf('return;'), 'only after the failure path has returned');

@@ -106,6 +106,9 @@ const SAID: ReadonlyArray<{ box: string; region: string; parts?: string[]; sayer
   // sheet the answer went unheard and the card came back already filled, and heard, a receipt was every line of it
   // (review F1.3, F1.4, F1.10).
   { box: 'missingBody', region: 'missingSaid' },
+  // Settings' status line, which explains a Save switched off after a failed load and a cleared target, was plain text
+  // no one heard (review F1.17).
+  { box: 'settingsStatus', region: 'settingsStatusSaid', sayer: 'function setSettingsStatus(' },
 ];
 
 /** The boxes that were never a status a person needs to hear as it changes, with why. */

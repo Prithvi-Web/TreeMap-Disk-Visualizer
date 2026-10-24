@@ -250,6 +250,8 @@
       <div class="settings-foot-text">
         <span class="muted settings-save-note" id="settingsSaveNote">Theme, scanning budget, scan engine and drives are saved the moment you pick one, and Reclaim Score’s Reset to defaults the moment you press it. Save keeps your other edits on this sheet.</span>
         <span class="muted" id="settingsStatus"></span>
+        <!-- What #settingsStatus says, said aloud (review F1.17): it is plain text. -->
+        <div id="settingsStatusSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
       </div>
       <!-- Not "Cancel" (QA D73): the budget, engine and drive choices save the
            moment they are picked, and closing cannot undo them. What closing

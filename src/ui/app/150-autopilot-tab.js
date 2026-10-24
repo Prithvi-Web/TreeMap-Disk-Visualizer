@@ -34,11 +34,15 @@ async function loadAutopilot() {
     // rule packs, and then no named id is judged (BQL-b1 review F3.1, F3.5).
     state.autopilot.knownGroupIds = Array.isArray(policies.knownGroupIds) ? policies.knownGroupIds : null;
   } catch (e) {
+    // A failed reload after Remove, Approve or Save replaces the control that had focus (review F1.16):
+    // focus goes to Try again, never to <body>.
+    const hadFocus = apFocusMark(host) || apFocusMark($('apRuns'));
     host.innerHTML =
       `<div class="muted">Couldn’t load Autopilot: ${escapeHtml(e.message)}</div>` +
       `<button class="pill" id="apRetry" style="margin-top:8px;">Try again</button>`;
     $('apRetry').addEventListener('click', () => loadAutopilot());
     $('apRuns').innerHTML = '';
+    if (hadFocus) $('apRetry').focus({ preventScroll: true });
     // FX: a failed load can honestly claim nothing about armed policies.
     fxApBreatheSync(false);
     return;
@@ -654,7 +658,8 @@ $('apBrowseBtn').addEventListener('click', () =>
 $('apPreviewBtn').addEventListener('click', async () => {
   const host = $('apPreview');
   const refused = apEditorRefusal();
-  if (refused) { host.innerHTML = `<div class="ap-reason">${escapeHtml(refused)}</div>`; return; }
+  // Toasted, as Save's refusal is, so it is said aloud (review F1.17); the box keeps nothing of an earlier draft.
+  if (refused) { host.innerHTML = ''; toast(refused, 'error'); return; }
   // The draft as the editor holds it now — previewed, never saved.
   const draft = { policy: policyFromEditor() };
   // The editor this preview was asked in: closing it (apEditorClosed) or a

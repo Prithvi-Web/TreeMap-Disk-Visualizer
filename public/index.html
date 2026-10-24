@@ -5673,6 +5673,8 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div class="settings-foot-text">
         <span class="muted settings-save-note" id="settingsSaveNote">Theme, scanning budget, scan engine and drives are saved the moment you pick one, and Reclaim Score’s Reset to defaults the moment you press it. Save keeps your other edits on this sheet.</span>
         <span class="muted" id="settingsStatus"></span>
+        <!-- What #settingsStatus says, said aloud (review F1.17): it is plain text. -->
+        <div id="settingsStatusSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
       </div>
       <!-- Not "Cancel" (QA D73): the budget, engine and drive choices save the
            moment they are picked, and closing cannot undo them. What closing
@@ -33389,11 +33391,15 @@ async function loadAutopilot() {
     // rule packs, and then no named id is judged (BQL-b1 review F3.1, F3.5).
     state.autopilot.knownGroupIds = Array.isArray(policies.knownGroupIds) ? policies.knownGroupIds : null;
   } catch (e) {
+    // A failed reload after Remove, Approve or Save replaces the control that had focus (review F1.16):
+    // focus goes to Try again, never to <body>.
+    const hadFocus = apFocusMark(host) || apFocusMark($('apRuns'));
     host.innerHTML =
       `<div class="muted">Couldn’t load Autopilot: ${escapeHtml(e.message)}</div>` +
       `<button class="pill" id="apRetry" style="margin-top:8px;">Try again</button>`;
     $('apRetry').addEventListener('click', () => loadAutopilot());
     $('apRuns').innerHTML = '';
+    if (hadFocus) $('apRetry').focus({ preventScroll: true });
     // FX: a failed load can honestly claim nothing about armed policies.
     fxApBreatheSync(false);
     return;
@@ -34009,7 +34015,8 @@ $('apBrowseBtn').addEventListener('click', () =>
 $('apPreviewBtn').addEventListener('click', async () => {
   const host = $('apPreview');
   const refused = apEditorRefusal();
-  if (refused) { host.innerHTML = `<div class="ap-reason">${escapeHtml(refused)}</div>`; return; }
+  // Toasted, as Save's refusal is, so it is said aloud (review F1.17); the box keeps nothing of an earlier draft.
+  if (refused) { host.innerHTML = ''; toast(refused, 'error'); return; }
   // The draft as the editor holds it now — previewed, never saved.
   const draft = { policy: policyFromEditor() };
   // The editor this preview was asked in: closing it (apEditorClosed) or a
@@ -43957,11 +43964,20 @@ async function renderShellIntegration(carryStatus = '') {
 
 /* ───────────────────────────── Settings modal ───────────────────────────── */
 let settingsData = { ignore: [], schedules: [] };
+
+/**
+ * The sheet's status line, said in #settingsStatusSaid too (review F1.17): why Save is off after a failed
+ * load, and a cleared target, were plain text no screen reader heard.
+ */
+function setSettingsStatus(words) {
+  $('settingsStatus').textContent = words;
+  if (typeof sayAloud === 'function') sayAloud('settingsStatusSaid', words); // guarded: a page reader may lift this without it
+}
 void loadPortableMode(); // D3 — decided before the user scans anything
 $('settingsBtn').innerHTML = icon('settings', 16);
 $('settingsBtn').addEventListener('click', async () => {
   $('settingsModal').classList.add('open');
-  $('settingsStatus').textContent = '';
+  setSettingsStatus('');
   void renderAllocationDiagnostic(); // A2 — independent of settings loading
   renderEngineBudgetHelp();          // Automatic's sentence, in this platform's words
   void loadEngineBudget();           // Phase 2 — its own endpoint, its own failure mode
@@ -43976,7 +43992,7 @@ $('settingsBtn').addEventListener('click', async () => {
     settingsData = await api('/api/settings');
   } catch (e) {
     toast('Could not load settings: ' + e.message, 'error');
-    $('settingsStatus').textContent = 'Your settings could not be read, so Save is off — nothing here can overwrite them. Close this sheet and open Settings again to try again.';
+    setSettingsStatus('Your settings could not be read, so Save is off — nothing here can overwrite them. Close this sheet and open Settings again to try again.');
     return;
   }
   settingsSaveOn(true);
@@ -44202,7 +44218,7 @@ function collectCleanupGoal() {
 // the meter as they were (review F1.10).
 $('cleanupGoalClear').addEventListener('click', () => {
   $('cleanupGoalValue').value = '';
-  $('settingsStatus').textContent = 'Target cleared — press Save to keep it';
+  setSettingsStatus('Target cleared — press Save to keep it');
 });
 
 /* ── Reclaim Score weights (v4 §3.2) ──

@@ -991,6 +991,70 @@ test('removing a policy, approving a run or saving an edit keeps focus on a cont
   assert.notEqual(doc.activeElement, doc.body);
 });
 
+test('a failed reload after Remove, Approve or Save moves focus to Try again — never to <body> (review F1.16)', async () => {
+  const doc = { body: { isConnected: true } as Record<string, unknown>, activeElement: null as unknown };
+  doc.activeElement = doc.body;
+  const mk = (attrs: Record<string, string>) => {
+    const el = {
+      attrs, isConnected: true,
+      hasAttribute: (a: string) => a in attrs, getAttribute: (a: string) => (a in attrs ? attrs[a] : null),
+      closest: () => null, addEventListener: () => undefined, focus: () => { doc.activeElement = el; },
+    };
+    return el;
+  };
+  let retry: ReturnType<typeof mk> | null = null;
+  const list = () => {
+    const el = {
+      rows: [] as ReturnType<typeof mk>[],
+      contains: (e: unknown) => el.rows.includes(e as ReturnType<typeof mk>),
+      querySelectorAll: (sel: string) => el.rows.filter((r) => sel.replace(/^\[|\]$/g, '') in r.attrs),
+      /** innerHTML = …: every old row is detached, focus on one falls to <body>, as a browser does. */
+      set innerHTML(v: string) {
+        for (const r of el.rows) r.isConnected = false;
+        if (el.rows.includes(doc.activeElement as ReturnType<typeof mk>)) doc.activeElement = doc.body;
+        el.rows = [];
+        if (v.includes('id="apRetry"')) { retry = mk({ id: 'apRetry' }); el.rows = [retry]; }
+      },
+    };
+    return el;
+  };
+  const policies = list();
+  const runs = list();
+  for (const [host, attr] of [[policies, 'data-ap-delete'], [runs, 'data-ap-approve']] as const) {
+    retry = null;
+    const control = mk({ [attr]: 'x' });
+    host.rows = [control];
+    control.focus();
+    const $ = (id: string) => ({ apPolicies: policies, apRuns: runs, apRetry: retry }[id] ?? null);
+    const load = new Function('document', '$', 'api', 'state', 'escapeHtml', 'fxApBreatheSync', 'renderAutopilot',
+      `${pageSource('apFocusMark')} ${pageSource('loadAutopilot')}; return loadAutopilot;`,
+    )(doc, $, async () => { throw new Error('the server stopped answering'); }, { autopilot: { policies: [] } }, (x: string) => x, () => undefined,
+      () => assert.fail('nothing is rendered after a failed load')) as () => Promise<void>;
+    await load();
+    assert.ok(retry, 'control: the failure painted Try again');
+    assert.equal(doc.activeElement, retry, `focus on ${attr} goes to Try again, not <body>`);
+  }
+});
+
+test('Preview\'s refusal is toasted — said aloud as every refusal of the editor is — and the preview box keeps nothing of an earlier draft (review F1.17)', async () => {
+  const at = INDEX.indexOf("$('apPreviewBtn').addEventListener('click', async () => {");
+  assert.notEqual(at, -1, 'the Preview handler is in the page');
+  const open = INDEX.indexOf('{', INDEX.indexOf('=>', at));
+  let depth = 0;
+  let end = open;
+  for (let i = open; i < INDEX.length; i++) { if (INDEX[i] === '{') depth++; else if (INDEX[i] === '}' && --depth === 0) { end = i; break; } }
+  const host = { innerHTML: '<div>the preview of an earlier draft</div>' };
+  const toasts: Array<[string, string]> = [];
+  const click = new Function('$', 'apEditorRefusal', 'toast', 'escapeHtml', `return async () => ${INDEX.slice(open, end + 1)};`)(
+    (id: string) => (id === 'apPreview' ? host : assert.fail(`nothing else is touched: ${id}`)),
+    () => 'Enter an amount above 0 in “Ask me first above”, or leave it empty.',
+    (m: string, k: string) => toasts.push([m, k]), (x: string) => x,
+  ) as () => Promise<void>;
+  await click();
+  assert.deepEqual(toasts, [['Enter an amount above 0 in “Ask me first above”, or leave it empty.', 'error']]);
+  assert.equal(host.innerHTML, '', 'the box shows nothing of a draft that is not the one refused');
+});
+
 test('both Autopilot lists repaint through the focus keeper (hunt C38)', () => {
   for (const name of ['renderAutopilot', 'renderAutopilotRuns']) {
     const body = pageSource(name);

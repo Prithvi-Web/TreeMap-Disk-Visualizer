@@ -1,10 +1,19 @@
 /* ───────────────────────────── Settings modal ───────────────────────────── */
 let settingsData = { ignore: [], schedules: [] };
+
+/**
+ * The sheet's status line, said in #settingsStatusSaid too (review F1.17): why Save is off after a failed
+ * load, and a cleared target, were plain text no screen reader heard.
+ */
+function setSettingsStatus(words) {
+  $('settingsStatus').textContent = words;
+  if (typeof sayAloud === 'function') sayAloud('settingsStatusSaid', words); // guarded: a page reader may lift this without it
+}
 void loadPortableMode(); // D3 — decided before the user scans anything
 $('settingsBtn').innerHTML = icon('settings', 16);
 $('settingsBtn').addEventListener('click', async () => {
   $('settingsModal').classList.add('open');
-  $('settingsStatus').textContent = '';
+  setSettingsStatus('');
   void renderAllocationDiagnostic(); // A2 — independent of settings loading
   renderEngineBudgetHelp();          // Automatic's sentence, in this platform's words
   void loadEngineBudget();           // Phase 2 — its own endpoint, its own failure mode
@@ -19,7 +28,7 @@ $('settingsBtn').addEventListener('click', async () => {
     settingsData = await api('/api/settings');
   } catch (e) {
     toast('Could not load settings: ' + e.message, 'error');
-    $('settingsStatus').textContent = 'Your settings could not be read, so Save is off — nothing here can overwrite them. Close this sheet and open Settings again to try again.';
+    setSettingsStatus('Your settings could not be read, so Save is off — nothing here can overwrite them. Close this sheet and open Settings again to try again.');
     return;
   }
   settingsSaveOn(true);
@@ -245,7 +254,7 @@ function collectCleanupGoal() {
 // the meter as they were (review F1.10).
 $('cleanupGoalClear').addEventListener('click', () => {
   $('cleanupGoalValue').value = '';
-  $('settingsStatus').textContent = 'Target cleared — press Save to keep it';
+  setSettingsStatus('Target cleared — press Save to keep it');
 });
 
 /* ── Reclaim Score weights (v4 §3.2) ──
