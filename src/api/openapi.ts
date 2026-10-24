@@ -845,8 +845,10 @@ const schemas: Json = {
       ),
       cleanup: obj(
         {
-          reclaimableBytes: int('Exact total across every suggestion group'),
+          reclaimableBytes: int('Exact total across every suggestion group but the advice-only ones (advisory: true), which are never trashed'),
           reclaimableFormatted: str(),
+          advisoryBytes: int('Exact total of the advice-only groups: space to reclaim with each group\'s adviceCommand, never by trashing it'),
+          advisoryFormatted: str(),
           byCategory: arr(
             obj(
               {
@@ -867,8 +869,10 @@ const schemas: Json = {
                 category: { type: 'string', enum: ['regenerable', 'cache', 'junk'] },
                 totalSize: int(),
                 totalSizeFormatted: str(),
-                itemCount: int(),
+                itemCount: int('Every match, though topItems lists three'),
                 regenerateCmd: str('Regenerable groups only; as CleanupSuggestionGroup.regenerateCmd, a `<folder>` stands for each item\'s own folder name'),
+                advisory: bool('True for an advice-only group: never trash its items; it is left out of reclaimableBytes and byCategory'),
+                adviceCommand: str('For an advice-only group: the supported way to reclaim the space'),
                 topItems: arr({ allOf: [ref('CleanupSuggestionItem'), obj({ sizeFormatted: str() }, ['sizeFormatted'])] }, 'Top 3'),
               },
               ['id', 'title', 'category', 'totalSize', 'totalSizeFormatted', 'itemCount', 'topItems'],
@@ -876,7 +880,7 @@ const schemas: Json = {
             'Top 10 groups, size desc',
           ),
         },
-        ['reclaimableBytes', 'reclaimableFormatted', 'byCategory', 'groups'],
+        ['reclaimableBytes', 'reclaimableFormatted', 'advisoryBytes', 'advisoryFormatted', 'byCategory', 'groups'],
       ),
       forecast: {
         allOf: [ref('ForecastResult'), obj({ bytesPerDayFormatted: str(), freeFormatted: str() }, ['bytesPerDayFormatted', 'freeFormatted'])],

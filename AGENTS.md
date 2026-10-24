@@ -66,7 +66,10 @@ OpenAPI 3 spec).
    open fails as a scan of that folder would.
    For the whole picture in one call afterwards:
    `GET /api/agent/summary?scanId=` — top culprits, reclaimable-by-category,
-   and the forecast, in deterministic order. Every size in it is raw bytes
+   and the forecast, in deterministic order. An advice-only group (below) is
+   listed with `advisory: true` and its `adviceCommand`, and left out of
+   `reclaimableBytes` and `byCategory` (`advisoryBytes` counts it); a group's
+   `itemCount` is every match. Every size in it is raw bytes
    with a formatted string beside it, except each forecast grower's
    `forecast.topGrowers[].bytesPerDay`, which is raw bytes only.
    The tree itself (`GET /api/scan/{scanId}/result`, or the stream's

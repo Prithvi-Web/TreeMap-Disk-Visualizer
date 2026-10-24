@@ -6,7 +6,7 @@ import { readAudit } from '../services/audit';
 import { assertScanAllowed, getPolicy, POLICY_FILE } from '../services/policy';
 import { appDataDir } from '../services/storage';
 import { collectLargestFiles, collectLargestFolders, scanRootRefusal } from '../services/diskScanner';
-import { cleanupSuggestionsFor } from '../services/cleanupMemo';
+import { cleanupSuggestionsCountedFor } from '../services/cleanupMemo';
 import { loadRuleCatalog } from '../services/rulePacks';
 import { suppressedNoteRoots } from '../services/notes';
 import { getIgnoreMatchers } from '../services/settings';
@@ -149,10 +149,14 @@ metaRouter.get('/agent/summary', storageModeGate, async (req: Request, res: Resp
   const noted = await suppressedNoteRoots();
   // loadRuleCatalog() throws on a malformed pack, as the matcher's default did.
   // Through the memo (U-16): the same walk the suggestions route answers from.
-  const groups = await cleanupSuggestionsFor(store, ignore, loadRuleCatalog(), noted); // already sorted largest first
-  const reclaimableBytes = groups.reduce((sum, g) => sum + g.totalSize, 0);
+  const { groups, matchCounts } = await cleanupSuggestionsCountedFor(store, ignore, loadRuleCatalog(), noted); // already sorted largest first
+  // An advice-only group is never trashed (AGENTS.md), so it is not reclaimable: left out of the
+  // total and the categories, as the page leaves it out of every total, and reported apart (hunt C14).
+  const reclaimableBytes = groups.reduce((sum, g) => sum + (g.advisory ? 0 : g.totalSize), 0);
+  const advisoryBytes = groups.reduce((sum, g) => sum + (g.advisory ? g.totalSize : 0), 0);
   const byCategoryMap = new Map<SuggestionCategory, { bytes: number; groupCount: number }>();
   for (const g of groups) {
+    if (g.advisory) continue;
     const agg = byCategoryMap.get(g.category) ?? { bytes: 0, groupCount: 0 };
     agg.bytes += g.totalSize;
     agg.groupCount += 1;
@@ -178,6 +182,8 @@ metaRouter.get('/agent/summary', storageModeGate, async (req: Request, res: Resp
     cleanup: {
       reclaimableBytes,
       reclaimableFormatted: formatBytes(reclaimableBytes),
+      advisoryBytes,
+      advisoryFormatted: formatBytes(advisoryBytes),
       byCategory,
       groups: groups.slice(0, 10).map((g) => ({
         id: g.id,
@@ -185,8 +191,9 @@ metaRouter.get('/agent/summary', storageModeGate, async (req: Request, res: Resp
         category: g.category,
         totalSize: g.totalSize,
         totalSizeFormatted: formatBytes(g.totalSize),
-        itemCount: g.items.length,
+        itemCount: matchCounts.get(g.id) ?? g.items.length,
         ...(g.regenerateCmd !== undefined ? { regenerateCmd: g.regenerateCmd } : {}),
+        ...(g.advisory ? { advisory: true, adviceCommand: g.adviceCommand } : {}),
         topItems: g.items.slice(0, 3).map((i) => ({ ...i, sizeFormatted: formatBytes(i.size) })),
       })),
     },
