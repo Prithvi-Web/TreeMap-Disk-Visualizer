@@ -979,3 +979,33 @@ test('both Autopilot lists repaint through the focus keeper (hunt C38)', () => {
     assert.match(body, /apFocusRestore\(host, /, `${name} puts focus back after it repaints`);
   }
 });
+
+test('a 0 or less typed in a limit box, or a cooldown outside 1 to 365 days, is refused with a sentence naming the box — never saved as "no limit" or "never ask" (hunt S2)', () => {
+  const boxes: Record<string, { value: string }> = {};
+  const refusal = new Function('$', `${pageSource('apEditorRefusal')}; return apEditorRefusal;`)((id: string) => boxes[id]) as () => string | null;
+  const set = (v: Record<string, string>): void => {
+    for (const id of ['apMaxRun', 'apMaxWeek', 'apConfirmAbove']) boxes[id] = { value: '' };
+    boxes.apCooldown = { value: '7' };
+    for (const [k, x] of Object.entries(v)) boxes[k] = { value: x };
+  };
+  set({});
+  assert.equal(refusal(), null, 'empty boxes are no limit, as their placeholders say');
+  set({ apMaxRun: '1.5', apConfirmAbove: '20' });
+  assert.equal(refusal(), null);
+  set({ apConfirmAbove: '0' });
+  assert.match(String(refusal()), /Ask me first above/, String(refusal()));
+  assert.match(String(refusal()), /above 0/, String(refusal()));
+  set({ apMaxWeek: '-5' });
+  assert.match(String(refusal()), /and at most/, String(refusal()));
+  set({ apMaxRun: '0' });
+  assert.match(String(refusal()), /Delete at most/, String(refusal()));
+  set({ apCooldown: '0' });
+  assert.match(String(refusal()), /1 to 365/, String(refusal()));
+  set({ apCooldown: '400' });
+  assert.match(String(refusal()), /1 to 365/, String(refusal()));
+  for (const anchor of ["$('apSaveBtn').addEventListener", "$('apPreviewBtn').addEventListener"]) {
+    const at = INDEX.indexOf(anchor);
+    const body = INDEX.slice(at, at + 400);
+    assert.match(body, /apEditorRefusal\(\)/, `${anchor} refuses first`);
+  }
+});

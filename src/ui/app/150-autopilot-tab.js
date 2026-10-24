@@ -653,6 +653,8 @@ $('apBrowseBtn').addEventListener('click', () =>
 
 $('apPreviewBtn').addEventListener('click', async () => {
   const host = $('apPreview');
+  const refused = apEditorRefusal();
+  if (refused) { host.innerHTML = `<div class="ap-reason">${escapeHtml(refused)}</div>`; return; }
   // The draft as the editor holds it now — previewed, never saved.
   const draft = { policy: policyFromEditor() };
   // The editor this preview was asked in: closing it (apEditorClosed) or a
@@ -708,6 +710,22 @@ function apSavedToast(p) {
   return 'Policy saved — its first run will show you what it matched before deleting anything';
 }
 
+/**
+ * Why the editor's figures cannot be saved as typed, or null (the hunt, S2). A 0 or less typed in a limit
+ * box was sent as no limit — "Ask me first above 0 GB", meant as "ask every time", saved "never ask" and
+ * every run after the first approval deleted unasked — and a cooldown of 0 became 7 days, with nothing
+ * said. An empty box is still no limit, as its placeholder says.
+ */
+function apEditorRefusal() {
+  for (const [id, label, empty] of [['apMaxRun', 'Delete at most', 'no limit'], ['apMaxWeek', 'and at most', 'no limit'], ['apConfirmAbove', 'Ask me first above', 'never asking']]) {
+    const raw = String($(id).value ?? '').trim();
+    if (raw !== '' && !(Number(raw) > 0)) return `Enter an amount above 0 in “${label}”, or leave it empty for ${empty}.`;
+  }
+  const days = String($('apCooldown').value ?? '').trim();
+  if (days !== '' && !(Number(days) >= 1 && Number(days) <= 365)) return 'Enter a number of days from 1 to 365 in “Run at most once every”.';
+  return null;
+}
+
 /** Each press of Save takes the next number, and the editor closing retires
     every press still looking up its folder (apEditorClosed). */
 let apSaveSeq = 0;
@@ -720,6 +738,8 @@ function apEditorClosed() {
   $('apSaveBtn').removeAttribute('aria-busy');
 }
 $('apSaveBtn').addEventListener('click', async () => {
+  const refused = apEditorRefusal();
+  if (refused) { toast(refused, 'error', 8000); return; }
   // Every field is read now, as the person pressed Save: what is saved is
   // what Save was pressed on (QA4a R4-3).
   const edited = policyFromEditor();
