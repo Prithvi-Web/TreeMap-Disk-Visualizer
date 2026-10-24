@@ -492,7 +492,7 @@ function cityTable(blocks: { n: Record<string, unknown> }[], height = 'files') {
   const drilled: unknown[] = [];
   const state = { city: { blocks, counts: new Map(), height } };
   const page = load<{ render: () => void; click: (e: unknown) => void }>(['escapeHtml', 'cityAgeDays', 'renderCityTable', 'cityTableClick'], {
-    state, $: (id: string) => (id === 'cityTable' ? host : null),
+    state, $: (id: string) => (id === 'cityTable' ? host : null), document: { activeElement: null }, // nothing in the list holds focus here
     formatCount: (k: number) => String(k), formatBytes: (b: number) => `${b} B`,
     cityDrillInto: (n: unknown) => { drilled.push(n); },
   }, '{ render: renderCityTable, click: cityTableClick }');
@@ -936,4 +936,60 @@ test('C72: a map load still out when the Treemap is left never lands under the v
   await out;
   assert.equal(state.treemap.rootPath, '/r', 'the shared root the city stands on is not rewritten to A');
   assert.deepEqual(state.treemap.nodes, [], 'nor its nodes');
+});
+
+/* ══════════════ The last round (HB2, 24 Oct 2026) ══════════════ */
+
+/**
+ * The real list of buildings, rebuilt as the page rebuilds it, over a host that behaves as a browser's does for focus:
+ * the rebuild replaces every row button, and focus on one of them falls to <body> unless something hands it on.
+ */
+function cityTableFocus(blocks: { n: Record<string, unknown> }[]) {
+  const body = { tag: 'body', focus() { doc.activeElement = body; } };
+  const doc: { activeElement: unknown } = { activeElement: body };
+  const canvas = { tag: 'cityCanvas', focus() { doc.activeElement = canvas; } };
+  type Btn = { tag: string; dataset: { cityRow: string }; focus: () => void };
+  const host = {
+    buttons: [] as Btn[],
+    set innerHTML(html: string) {
+      const held = this.buttons.includes(doc.activeElement as Btn);
+      this.buttons = [...html.matchAll(/data-city-row="(\d+)">([^<]*)</g)].map(([, i, label]) => {
+        const b: Btn = { tag: label, dataset: { cityRow: i }, focus() { doc.activeElement = b; } };
+        return b;
+      });
+      if (held) doc.activeElement = body; // a removed element's focus goes to <body>
+    },
+    contains(el: unknown) { return this.buttons.includes(el as Btn); },
+    querySelector(sel: string) { const m = /^\[data-city-row="(\d+)"\]$/.exec(sel); return (m && this.buttons.find((b) => b.dataset.cityRow === m[1])) || null; },
+  };
+  const state = { city: { blocks, counts: new Map(), height: 'files' } };
+  const render = load<() => void>(['escapeHtml', 'cityAgeDays', 'renderCityTable'], {
+    state, document: doc, $: (id: string) => (id === 'cityTable' ? host : id === 'cityCanvas' ? canvas : null),
+    formatCount: (k: number) => String(k), formatBytes: (b: number) => `${b} B`,
+  }, 'renderCityTable');
+  render();
+  return { state, doc, host, body, canvas, render };
+}
+
+test('HB2 (L11): a rebuild of Disk City\'s list keeps focus on the building\'s row — and after a drill, on the city — never <body>', () => {
+  const movies = { n: { name: 'Movies', path: '/home/u/Movies', size: 6e9, type: 'dir', depth: 1 } };
+  const music = { n: { name: 'Music', path: '/home/u/Music', size: 2e9, type: 'dir', depth: 1 } };
+  const t = cityTableFocus([movies, music]);
+  t.host.buttons[1].focus(); // tabbed to Music
+  t.state.city.counts.set('/home/u/Music', { files: 12 }); // Files height: a batch of counts lands
+  t.render();
+  assert.equal((t.doc.activeElement as { tag: string }).tag, 'Music', 'the rebuilt Music row holds focus, as the old one did');
+  assert.ok(t.host.contains(t.doc.activeElement), 'and it is a row of the list now on screen');
+  // A zoom that reorders the list keeps focus with the building, not the place.
+  t.state.city.blocks = [music, movies];
+  t.render();
+  assert.equal((t.doc.activeElement as { tag: string }).tag, 'Music', 'the building\'s row, wherever it now stands');
+  // A drill from the list: the new city lists other buildings, and focus goes to the city, as a crumb's does.
+  t.state.city.blocks = [{ n: { name: 'Trailers', path: '/home/u/Music/Trailers', size: 1e9, type: 'dir', depth: 1 } }];
+  t.render();
+  assert.equal(t.doc.activeElement, t.canvas, 'the building pressed is not in the new list: focus goes to the city, never <body>');
+  // Focus anywhere else is left where it is.
+  t.body.focus();
+  t.render();
+  assert.equal(t.doc.activeElement, t.body, 'control: a rebuild takes no focus it did not hold');
 });

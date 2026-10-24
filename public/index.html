@@ -32764,6 +32764,15 @@ function renderCityTable() {
   if (!host) return;
   const c = state.city;
   const rows = c.blocks.slice(0, 500);
+  // A row holding focus — tabbed to, or pressed — is replaced by the rebuild
+  // below, and focus fell to <body>: counts landing, a zoom settling, a height
+  // switch and a drill from the list all rebuild it (review L11). The
+  // building's row takes it back wherever it now stands; one the new list
+  // does not hold — the city a drill opened — hands it to the city, as a
+  // crumb does. Focus anywhere else is left where it is.
+  const active = document.activeElement;
+  const heldRow = active && host.contains(active) && active.dataset && active.dataset.cityRow !== undefined
+    ? (c.tableRows || [])[Number(active.dataset.cityRow)] : null;
   // What each row's button names is its place in this list, never the path:
   // the Trash cell's path is "\0trash", and the HTML parser stores a NUL in an
   // attribute as U+FFFD, so the Trash row's button named no building and did
@@ -32789,6 +32798,11 @@ function renderCityTable() {
     (c.blocks.length > rows.length
       ? `<p class="muted" style="margin-top:8px;font-size:11.5px">Listing the first ${formatCount(rows.length)} of ${formatCount(c.blocks.length)} drawn buildings.</p>`
       : '');
+  if (heldRow) {
+    const at = rows.findIndex((b) => b.n.path === heldRow.n.path);
+    const to = (at >= 0 && host.querySelector(`[data-city-row="${at}"]`)) || $('cityCanvas');
+    if (to) to.focus({ preventScroll: true });
+  }
 }
 
 /* ── Loading ──────────────────────────────────────────────────────────────
