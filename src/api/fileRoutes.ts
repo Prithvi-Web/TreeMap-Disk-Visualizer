@@ -336,22 +336,13 @@ fileRouter.get('/files/preview', guardQueryPath('path'), async (req: Request, re
       res.json({ type: 'meta', size: st.size, mtime: st.mtimeMs, ext, reason: 'Image larger than 10 MB' });
       return;
     }
-    // Opened before anything is sent (hunt C87): a file TreeMap may not read reaches the error handler
-    // as the text branch's does — 403 PERMISSION_DENIED, { error, code } — not a bare 500 typed as an image.
-    const handle = await fs.promises.open(target, 'r');
-    res.setHeader('Content-Type', PREVIEW_IMAGE_MIME[ext]);
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    const stream = fs.createReadStream(target, { fd: handle }); // closes the handle when it ends or is destroyed
-    stream.on('error', (err) => {
-      if (!res.headersSent) {
-        res.removeHeader('Content-Type');
-        res.status(500).json({ error: `The image could not be read: ${err.message}`, code: 'READ_FAILED' });
-      } else {
-        // Cut off part-way: end the connection, so the image never reads as complete (as errorHandler does, QA D35).
-        res.destroy(err);
-      }
-    });
+    // The response may end while the file is being opened: the near-duplicate strip cancels most of
+    // its requests as rows scroll away. Its 'close' has then already fired, so it is watched from
+    // before the open, and a file opened for a response already gone is closed at once rather than
+    // streamed into nothing and left to the garbage collector (review F1.9).
+    let over = false;
+    let stream: fs.ReadStream | null = null;
+    let handle: fs.promises.FileHandle | null = null;
     // Destroy the source when the response is over, whichever way it ended.
     //
     // `Readable.pipe` unpipes on the destination's 'close'/'error' but never
@@ -369,11 +360,32 @@ fileRouter.get('/files/preview', guardQueryPath('path'), async (req: Request, re
     // a no-op there; it changes nothing about the bytes, headers or status of a
     // completed response. Destroying rather than piping through
     // `stream.pipeline` is deliberate: pipeline destroys `res` on a source
-    // error, which would replace the 500 the handler above sends with a bare
-    // socket hang-up.
+    // error, which would replace the 500 the stream's error handler below
+    // sends with a bare socket hang-up.
     res.on('close', () => {
-      stream.destroy();
-      handle.close().catch(() => undefined); // already closed by the stream, or by this
+      over = true;
+      stream?.destroy();
+      handle?.close().catch(() => undefined); // already closed by the stream, or by this
+    });
+    // Opened before anything is sent (hunt C87): a file TreeMap may not read reaches the error handler
+    // as the text branch's does — 403 PERMISSION_DENIED, { error, code } — not a bare 500 typed as an image.
+    handle = await fs.promises.open(target, 'r');
+    if (over) {
+      await handle.close().catch(() => undefined);
+      return;
+    }
+    res.setHeader('Content-Type', PREVIEW_IMAGE_MIME[ext]);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    stream = fs.createReadStream(target, { fd: handle }); // closes the handle when it ends or is destroyed
+    stream.on('error', (err) => {
+      if (!res.headersSent) {
+        res.removeHeader('Content-Type');
+        res.status(500).json({ error: `The image could not be read: ${err.message}`, code: 'READ_FAILED' });
+      } else {
+        // Cut off part-way: end the connection, so the image never reads as complete (as errorHandler does, QA D35).
+        res.destroy(err);
+      }
     });
     stream.pipe(res);
     return;

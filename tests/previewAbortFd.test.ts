@@ -76,6 +76,7 @@ async function listen() {
   scan.root = tree();
   return {
     port: (server.address() as { port: number }).port,
+    connections: () => new Promise<number>((r) => server.getConnections((_err, n) => r(n))),
     close: () => new Promise<void>((r) => server.close(() => r())),
   };
 }
@@ -136,6 +137,30 @@ function trackReadStreams() {
     return s;
   }) as typeof fs.createReadStream;
   return { opened, restore: () => { mutable.createReadStream = real; } };
+}
+
+/**
+ * Record every FileHandle the route opens on the fixture, through `fs.promises.open` on the shared
+ * `node:fs` module object; a test may hold the open at a gate. A handle's `fd` is -1 once it is closed.
+ */
+function trackOpens() {
+  const promises = fs.promises as unknown as { open: typeof fs.promises.open };
+  const real = promises.open;
+  const tracker = {
+    opened: [] as fs.promises.FileHandle[],
+    gate: null as Promise<void> | null,
+    onEnter: null as (() => void) | null,
+    restore: () => { promises.open = real; },
+  };
+  promises.open = (async (...args: Parameters<typeof fs.promises.open>) => {
+    if (args[0] !== IMG) return real(...args);
+    tracker.onEnter?.();
+    if (tracker.gate) await tracker.gate;
+    const handle = await real(...args);
+    tracker.opened.push(handle);
+    return handle;
+  }) as typeof fs.promises.open;
+  return tracker;
 }
 
 /**
@@ -207,14 +232,16 @@ test('a completed image preview still sends the same bytes, headers and status',
   }
 });
 
-test('a read error on the source still answers 500', async () => {
+test('a read error on the source before any byte is sent answers 500 READ_FAILED as { error, code }, and closes the file', async () => {
   const srv = await listen();
   const real = fs.createReadStream;
   const mutable = fs as unknown as { createReadStream: typeof fs.createReadStream };
+  const handles = trackOpens();
   // A source that fails on first read, standing in for the mid-flight EIO /
   // unlink that the route's own 'error' handler exists to answer. The response
   // it produces must not change: destroying the socket instead of replying
-  // would turn a diagnosable 500 into a bare socket hang-up.
+  // would turn a diagnosable 500 into a bare socket hang-up. It ignores the
+  // descriptor it is handed, so only the route's own close can close that.
   mutable.createReadStream = (() => {
     const s = new Readable({ read() { this.destroy(new Error('simulated read failure')); } });
     return s as unknown as fs.ReadStream;
@@ -222,8 +249,78 @@ test('a read error on the source still answers 500', async () => {
   try {
     const res = await get(srv.port, previewUrl(IMG));
     assert.equal(res.status, 500);
+    assert.match(String(res.headers['content-type']), /^application\/json/, 'the answer is typed as JSON, not as the image');
+    const body = JSON.parse(res.body.toString('utf8'));
+    assert.equal(body.code, 'READ_FAILED');
+    assert.match(body.error, /^The image could not be read: simulated read failure/);
+    await waitFor(() => handles.opened.length === 1 && handles.opened[0].fd === -1, 'the file the route opened closing', 25);
   } finally {
     mutable.createReadStream = real;
+    handles.restore();
+    await srv.close();
+  }
+});
+
+test('a read error part-way through an image ends the connection, so the image never reads as complete (hunt C87)', async () => {
+  const srv = await listen();
+  const real = fs.createReadStream;
+  const mutable = fs as unknown as { createReadStream: typeof fs.createReadStream };
+  // One chunk goes out (the headers with it), then the source fails.
+  mutable.createReadStream = (() => {
+    let sent = false;
+    const s = new Readable({
+      read() {
+        if (!sent) { sent = true; this.push(Buffer.alloc(1_024, 9)); return; }
+        setImmediate(() => this.destroy(new Error('simulated failure part-way')));
+      },
+    });
+    return s as unknown as fs.ReadStream;
+  }) as typeof fs.createReadStream;
+  try {
+    const seen = await new Promise<{ status: number; bytes: number; complete: boolean }>((resolve, reject) => {
+      const r = http.request({ host: '127.0.0.1', port: srv.port, path: previewUrl(IMG), method: 'GET' }, (res) => {
+        let bytes = 0;
+        res.on('data', (c: Buffer) => { bytes += c.length; });
+        res.on('error', () => undefined); // the cut connection surfaces here; 'close' says how it ended
+        res.on('close', () => resolve({ status: res.statusCode ?? 0, bytes, complete: res.complete }));
+      });
+      r.on('error', reject);
+      r.end();
+    });
+    assert.deepEqual([seen.status, seen.bytes > 0], [200, true], 'the image had begun: its headers and a first chunk were sent');
+    assert.equal(seen.complete, false, 'the response was cut off, not ended as if the image were whole');
+  } finally {
+    mutable.createReadStream = real;
+    await srv.close();
+  }
+});
+
+test('a preview aborted while its file is still being opened closes that file once the open lands (review F1.9)', async () => {
+  const srv = await listen();
+  const track = trackReadStreams();
+  const handles = trackOpens();
+  let arrive!: () => void;
+  const entered = new Promise<void>((resolve) => { arrive = resolve; });
+  let release!: () => void;
+  handles.gate = new Promise<void>((resolve) => { release = resolve; });
+  handles.onEnter = arrive;
+  try {
+    const r = http.request({ host: '127.0.0.1', port: srv.port, path: previewUrl(IMG), method: 'GET' });
+    r.on('error', () => undefined); // the abort is the point
+    r.end();
+    await entered; // the route is waiting on the open
+    r.destroy();
+    await waitFor(async () => (await srv.connections()) === 0, 'the server seeing the client go', 5);
+    release();
+    // Either the route closed the file it opened, or it went on to stream it to a response already gone.
+    await waitFor(() => handles.opened.length === 1 && (handles.opened[0].fd === -1 || track.opened.length > 0), 'the route going on past the open', 5);
+    for (let turn = 0; turn < 20; turn++) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(handles.opened[0].fd, -1, 'the file opened for a response already gone is closed, not left to the garbage collector');
+    assert.ok(track.opened.every((s) => s.closed), 'and no read stream is left holding it');
+  } finally {
+    release();
+    track.restore();
+    handles.restore();
     await srv.close();
   }
 });
