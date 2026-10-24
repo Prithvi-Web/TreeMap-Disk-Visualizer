@@ -96,6 +96,11 @@ export function createApp(publicDir: string, opts: AppOptions = {}): express.Exp
   // (DNS rebinding) gets nothing — no page, no cookie, no API.
   app.use(hostGuard(opts.host ?? '127.0.0.1'));
 
+  // CORS before the body parser: a 413, 415 or malformed body goes straight to the error handler,
+  // past every middleware after the parser, and without its allowed origin a page on that origin
+  // could not read the { error, code } it was given (review F1.3). A no-op until
+  // TREEMAP_ALLOWED_ORIGINS is set — with it unset the app behaves exactly as before.
+  app.use('/api', corsMiddleware);
   app.use(express.json({ limit: '1mb' }));
   // Restore the express-4 body invariant: `req.body` is always an object.
   //
@@ -120,10 +125,8 @@ export function createApp(publicDir: string, opts: AppOptions = {}): express.Exp
     if (req.body === undefined) req.body = {};
     next();
   });
-  // Both are no-ops until their env vars are set (TREEMAP_ALLOWED_ORIGINS /
-  // TREEMAP_TOKEN) — with them unset the app behaves exactly as before.
-  app.use('/api', corsMiddleware);
   app.use('/api', rateLimiter);
+  // A no-op until TREEMAP_TOKEN is set — with it unset the app behaves exactly as before.
   app.use('/api', requireToken);
 
   app.use('/api', scanRouter);

@@ -80,3 +80,25 @@ test('a body over the parser\'s 1 MB limit is 413 BODY_TOO_LARGE and an unsuppor
     await srv.close();
   }
 });
+
+test('with CORS on, the body parser\'s 413 and 415 carry the allowed origin, so a page on it can read them (review F1.3)', async () => {
+  process.env.TREEMAP_ALLOWED_ORIGINS = 'https://tools.example.com';
+  const srv = await listen();
+  try {
+    const origin = { Origin: 'https://tools.example.com' };
+    const big = JSON.stringify({ scanId: 'x', paths: [Array.from({ length: 1_100_000 }, () => 'a').join('')], providers: ['size'] });
+    const tooBig = await send(srv.port, 'POST', '/api/facts', { ...origin, 'Content-Type': 'application/json' }, big);
+    const latin = await send(srv.port, 'POST', '/api/facts', { ...origin, 'Content-Type': 'application/json; charset=latin1' }, '{}');
+    const bad = await send(srv.port, 'POST', '/api/facts', { ...origin, 'Content-Type': 'application/json' }, '{ not json');
+    for (const [r, status, code] of [[tooBig, 413, 'BODY_TOO_LARGE'], [latin, 415, 'UNSUPPORTED_MEDIA_TYPE'], [bad, 400, 'BAD_JSON']] as const) {
+      assert.deepEqual([r.status, JSON.parse(r.text).code], [status, code], r.text);
+      assert.equal(r.headers['access-control-allow-origin'], 'https://tools.example.com', `${code} carries the allowed origin`);
+      assert.equal(r.headers.vary, 'Origin');
+    }
+    const elsewhere = await send(srv.port, 'POST', '/api/facts', { Origin: 'https://evil.example', 'Content-Type': 'application/json; charset=latin1' }, '{}');
+    assert.equal(elsewhere.status, 415);
+    assert.equal(elsewhere.headers['access-control-allow-origin'], undefined, 'an origin not on the list gets none');
+  } finally {
+    await srv.close();
+  }
+});
