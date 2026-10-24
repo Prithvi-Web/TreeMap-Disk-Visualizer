@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
+import fs, { readFileSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 
@@ -10,7 +10,7 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { compareTrees, createScanRecord, getScan, peekScan, sameIgnoreRules, startScan } from '../src/services/diskScanner';
+import { compareTrees, createScanRecord, getScan, peekScan, sameIgnoreRules, startScan, unlistedFoldersNote } from '../src/services/diskScanner';
 import { buildStoreFromTree, Flag, storeOf } from '../src/services/scanStore';
 import { markLeftOutByRule, markUnlisted } from '../src/services/scanRefusals';
 import { updateSettings } from '../src/services/settings';
@@ -242,4 +242,20 @@ test('a folder the system refused on the second scan: /api/compare and compare_s
   assert.deepEqual(s.entries, []);
   assert.equal(s.unlistedFolders, 1);
   assert.match(String(s.unlistedNote), /1 folder one of these scans could not list in full/, String(s.unlistedNote));
+});
+
+test('what a comparison says of folders a scan could not list names the causes true of them, and only those: the MCP note, the tool description and the OpenAPI document (leftover HE-L10)', () => {
+  const causes = '(refused, unreadable, not entered, or holding an entry it could not look at)';
+  assert.equal(unlistedFoldersNote(0), null);
+  assert.equal(unlistedFoldersNote(1), `1 folder one of these scans could not list in full ${causes}, so what is in it that only one scan listed is not compared — neither removed nor added.`);
+  assert.equal(unlistedFoldersNote(2), `2 folders one of these scans could not list in full ${causes}, so what is in them that only one scan listed is not compared — neither removed nor added.`);
+  // A folder a rule alone left entries out of is no such folder (review F1.3): none of these says it is.
+  const read = (rel: string): string => readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  const tool = read('src/mcp/server.ts').replace(/'\s*\+\s*\n\s*'/g, '');
+  assert.ok(tool.includes(`What only one scan listed in a folder the other could not list in full ${causes} is not compared, never called vanished or appeared`), 'the compare_scans description names the causes');
+  const openapi = read('src/api/openapi.ts');
+  assert.ok(openapi.includes('did not list a folder in full (refused, unreadable, not entered, or holding an entry it could not look at — not one that left out only what a “Don’t scan” rule matched, which ruleFolders counts)'), 'the OpenAPI unlistedFolders names the causes');
+  for (const [where, text] of [['the note', unlistedFoldersNote(1) ?? ''], ['the tool', tool], ['the OpenAPI document', openapi]] as const) {
+    assert.doesNotMatch(text, /or with entries left out\)/, `${where} never counts a rule-only folder as one a scan could not list`);
+  }
 });

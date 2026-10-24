@@ -2251,7 +2251,7 @@ export function compareTrees(sourceA: TreeSource, sourceB: TreeSource, opts: { s
 export function unlistedFoldersNote(count: number): string | null {
   if (count === 0) return null;
   return `${formatCount(count)} folder${count === 1 ? '' : 's'} one of these scans could not list in full (refused, unreadable, not entered, ` +
-    'or holding an entry it could not look at), so what is in them that only one scan listed is not compared — neither removed nor added.';
+    `or holding an entry it could not look at), so what is in ${count === 1 ? 'it' : 'them'} that only one scan listed is not compared — neither removed nor added.`;
 }
 
 /** What a comparison says of the folders a "Don't scan" rule left entries out of under rules not the same for both scans (leftover HE-L6), or null. */
