@@ -1294,3 +1294,31 @@ test('HB2 (L9): j/k never move through what an earlier renderer drew — a rende
   unmount.unmount();
   assert.deepEqual([state.treemap.pxRects, state.treemap.arcs], [[], []], 'the unmount drops the rectangles and arcs, as it drops the shapes');
 });
+
+test('HB2 (L3): the keyboard\'s selection goes when a repaint stops drawing it — Hide cloud, or a map landing after the key', () => {
+  const cloud = { path: '/r/icloud-only.mov', name: 'icloud-only.mov', size: 9, type: 'file', depth: 1, cloudPlaceholder: true };
+  const local = { path: '/r/local.bin', name: 'local.bin', size: 5, type: 'file', depth: 1 };
+  let tips = 0;
+  const state = { treemap: { colorMode: 'size', mode: 'treemap', kbSel: cloud as unknown, hideCloud: false, pxRects: [{ n: cloud }, { n: local }] as unknown[], arcs: [] as unknown[], cells: [] as unknown[] } };
+  const drawView = load<() => void>(['drawView', 'drawnCells', ...['kbDropUndrawn'].filter((n) => INDEX.includes(`function ${n}(`))], {
+    state, isSun: () => state.treemap.mode === 'sunburst', isCells: () => false, drawSunburst() {}, drawCells() {}, fetchScoresForTreemap() {},
+    // Hide cloud on: the rectangle map paints the local file alone.
+    drawTreemap() { state.treemap.pxRects = state.treemap.hideCloud ? [{ n: local }] : [{ n: cloud }, { n: local }]; },
+    hideTooltip() { tips++; },
+  }, 'drawView');
+  drawView();
+  assert.equal(state.treemap.kbSel, cloud, 'control: still drawn, still selected');
+  state.treemap.hideCloud = true; // the Hide cloud pill
+  drawView();
+  assert.equal(state.treemap.kbSel, null, 'nothing on screen is selected: c, Delete, p and Enter have nothing to act on');
+  assert.equal(tips, 1, 'and its card goes with it');
+  state.treemap.kbSel = local;
+  drawView();
+  assert.equal(state.treemap.kbSel, local, 'control: a selection still drawn stays');
+  state.treemap.mode = 'sunburst'; state.treemap.arcs = [{ n: local, depth: 1 }];
+  drawView();
+  assert.equal(state.treemap.kbSel, local, 'over the sunburst, judged by its arcs');
+  state.treemap.arcs = [];
+  drawView();
+  assert.equal(state.treemap.kbSel, null);
+});

@@ -13,6 +13,8 @@ function drawView() {
   // renderer, the matches drawn (review L6, L12). Guarded: a page reader
   // may lift this function without it.
   if (typeof tmRewordQuery === 'function') tmRewordQuery();
+  // A keyboard selection the map no longer draws goes (review L3). Guarded likewise.
+  if (typeof kbDropUndrawn === 'function') kbDropUndrawn();
 }
 function presentView(opts) {
   if (isSun()) presentSunburst();

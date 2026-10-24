@@ -452,6 +452,18 @@ function kbSelect(node) {
   live.textContent = `${node.name}, ${node.type === 'dir' ? 'folder' : 'file'}, ${formatBytes(node.size)}, ` +
     `${pct.toFixed(1)} percent of this view${cartHas(node.path) ? ', in cart' : ''}`;
 }
+/**
+ * The keyboard's selection, dropped when the map now drawn no longer draws it
+ * (review L3): Hide cloud hid it, or a key pressed between a click and its map
+ * landing picked it from the folder before. c, Delete, p, n and Enter still
+ * acted on it, with nothing on screen. Called after every draw (drawView).
+ */
+function kbDropUndrawn() {
+  const ks = state.treemap.kbSel;
+  if (!ks || drawnCells().some((s) => s.n.path === ks.path)) return;
+  state.treemap.kbSel = null;
+  hideTooltip(); // its card goes with it (QA D63)
+}
 /** After a drill or a climb: say where we are, ahead of what is selected there. */
 function kbAnnounceRoot() {
   const live = $('tmKbAnnounce');
