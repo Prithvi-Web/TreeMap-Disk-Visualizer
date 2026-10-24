@@ -32,7 +32,7 @@ import { JUNK_FILES } from './emptyFolderCheck';
 import { AppError, permissionDeniedMessage } from '../middleware/errorHandler';
 import { PackedScanStore, ScanStore, Flag, fileNodeToInput, buildStoreFromTree, asStore, TreeSource } from './scanStore';
 import { platform } from '../platform';
-import { beginScanBudget, forgetScanBudget, isScanPaused, noteNativeGovernorLevel, scanBudget, throttleBatch, whenResumed, workerCap } from './engineBudget';
+import { beginScanBudget, forgetScanBudget, isScanPaused, noteForcedLevelAgain, noteNativeGovernorLevel, scanBudget, throttleBatch, whenResumed, workerCap } from './engineBudget';
 import { statToInput } from './scan/nodeInput';
 import { FAST_PATH_UNAVAILABLE, MFT_NOT_VERIFIED, decideNative, ignorePatternClause, mftOfferedOn, nativeRuleCause, rootName, runMftWalk, nativeStorageFor, runNativeWalk, type RuleCause } from './scan/nativeEngine';
 import { nativeProjection } from './scan/projection';
@@ -1109,6 +1109,8 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
         console.warn(`[treemap] ${reason}; using the legacy engines`);
         resetCounters(scan);
         noteFallback(scan, reason);
+        // The built-in engines hold a forced preset again, and the record says so (review F1.4).
+        noteForcedLevelAgain(scan.scanId);
         why.push(said(reason));
         if (fastRescanSkipped) why.push(said(FAST_RESCAN_NOT_USED_AFTER_FAILURE));
         scan.engine = WALKER_ENGINE;

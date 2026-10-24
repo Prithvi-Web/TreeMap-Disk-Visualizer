@@ -600,6 +600,23 @@ export function noteNativeGovernorLevel(scanId: string): void {
   noteBudgetChange(s.record, governs, NATIVE_RUNS_GOVERNOR_LEVEL);
 }
 
+/** Why the record of a scan whose native walk failed says its forced level again (review F1.4). */
+const LEGACY_HOLDS_FORCED_LEVEL = 'The native engine stopped part-way; the built-in engines walk the folder again at the level this scan asked for.';
+
+/**
+ * The counterpart of noteNativeGovernorLevel (review F1.4): a native walk under a forced preset that
+ * fails part-way falls back to the built-in walker or gdu, which hold the forced preset (dutyFor,
+ * workerCap), while the record still said the governor's level. It says the forced level again, and why.
+ */
+export function noteForcedLevelAgain(scanId: string): void {
+  const s = states.get(scanId);
+  if (!s || !s.override || !s.record) return;
+  const holds = scanBudget(s.override, autoBase).effective;
+  if (holds === lastEffective(s.record)) return;
+  s.record.effective = holds;
+  noteBudgetChange(s.record, holds, LEGACY_HOLDS_FORCED_LEVEL);
+}
+
 /**
  * Drop everything held for a scan: throttle timing, the forced preset, a
  * pause, its say in the auto base. A paused scan is released so a walker parked

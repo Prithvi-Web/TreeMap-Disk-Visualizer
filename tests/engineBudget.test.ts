@@ -25,6 +25,7 @@ import {
   CONFIGURE_RETRY_MS,
   applyEngineBudgetSetting,
   noteNativeGovernorLevel,
+  noteForcedLevelAgain,
   applyChildBudget,
   beginScanBudget,
   budgetSnapshot,
@@ -449,6 +450,31 @@ test('the native branch of a scan notes the governor’s level on its budget rec
   const at = src.indexOf('if (nativeWalk) {\n      scan.engine = \'native\';');
   assert.ok(at > 0, 'the native branch is found');
   assert.match(src.slice(at, at + 600), /noteNativeGovernorLevel\(scan\.scanId\)/);
+});
+
+test('a scheduled scan whose native walk fails part-way records the Eco the built-in walker then holds again, and says why (review F1.4)', () => {
+  const native = useFakeNative(fakeSnapshot(ON_MAINS));
+  applyEngineBudgetSetting({ preset: 'turbo', cpuPercent: null });
+  const scheduled = beginScanBudget('sched-fallback', 'eco');
+  noteNativeGovernorLevel('sched-fallback');
+  assert.equal(scheduled.effective, 'turbo', 'control: the native walk ran at the governor’s level');
+  noteForcedLevelAgain('sched-fallback');
+  assert.equal(scheduled.effective, 'eco', 'the walker that takes over runs at the Eco it asked for, and the record says so');
+  assert.equal((scheduled.changes ?? []).at(-1)?.effective, 'eco', JSON.stringify(scheduled.changes));
+  assert.match(String((scheduled.changes ?? []).at(-1)?.reason), /built-in/, JSON.stringify(scheduled.changes));
+  const count = (scheduled.changes ?? []).length;
+  noteForcedLevelAgain('sched-fallback');
+  assert.equal((scheduled.changes ?? []).length, count, 'nothing more is noted while the record already says it');
+  forgetScanBudget('sched-fallback');
+  void native;
+  useShim();
+});
+
+test('the native branch notes the forced level again when its walk fails and the built-in engines take over (review F1.4)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'diskScanner.ts'), 'utf8');
+  const at = src.indexOf('const reason = `the native engine failed part-way:');
+  assert.ok(at > 0, 'the fallback is found');
+  assert.match(src.slice(at, at + 500), /noteForcedLevelAgain\(scan\.scanId\)/);
 });
 
 test('under an explicit preset the auto base changes nothing a scan runs at, so no change is recorded', () => {
