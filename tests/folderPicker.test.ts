@@ -1346,13 +1346,67 @@ function between(from: string, to: string): string {
 
 type BoxEl = FakeEl & { checked?: boolean; hidden?: boolean; querySelector(sel: string): null; click(): void };
 
+/** The page's scan voice in a boxesRuntime: whether the page is heard yet, what the region says or holds back, and every write of it. */
+type Voice = { heard: boolean; hear(): void; says(): string; writes: string[] };
+
+/**
+ * #scanAnnounce as a browser holds it, as far as the scan's voice reaches (review F1.7): its child nodes — the text
+ * node a write leaves, a node appended — and, for each write that adds or removes one, a record for the page's watch.
+ * Emptying it while it holds nothing changes nothing, and queues no record (DOM "replace all").
+ */
+function voiceRegion(el: BoxEl, record: () => void, writes: string[]): void {
+  let nodes: unknown[] = [];
+  let text = '';
+  const changed = (added: unknown[], removed: unknown[]) => { if (added.length || removed.length) record(); };
+  Object.defineProperty(el, 'textContent', {
+    get: () => text,
+    set: (v: unknown) => {
+      text = String(v ?? '');
+      writes.push(text);
+      const removed = nodes;
+      nodes = text ? [{ nodeType: 3, data: text }] : [];
+      changed(nodes, removed);
+    },
+  });
+  Object.defineProperty(el, 'childNodes', { get: () => nodes });
+  Object.defineProperty(el, 'firstChild', { get: () => nodes[0] ?? null });
+  Object.assign(el, { appendChild: (node: { data?: string }) => { nodes = [...nodes, node]; text += node.data ?? ''; changed([node], []); return node; } });
+}
+
 /**
  * The picker, the Scan card (its Scan button, path box and Fast rescan box)
  * and the Autopilot policy editor, evaluated together from the built page:
  * the picker fills a box, and the box is read again by everything else.
+ * `voice`: the page's scan voice too (040) — its watch of #scanAnnounce, told
+ * of each write a microtask later as a browser tells it, and the page not
+ * heard (a sheet just closed, the net yet to lift inert) until voice.hear().
  */
-function boxesRuntime(listing: (p: string) => unknown, saveRefusal: Error | null = null) {
+function boxesRuntime(listing: (p: string) => unknown, saveRefusal: Error | null = null, voice: { heard: boolean } | null = null) {
   const els = new Map<string, BoxEl>();
+  const frames: Array<() => void> = [];
+  let waiting: (() => void) | null = null;
+  const writes: string[] = [];
+  /** The page's MutationObserver, as far as the scan's voice reaches: records queued, handed on a microtask later, or taken back. */
+  class VoiceObserver {
+    private readonly queued: unknown[] = [];
+    constructor(private readonly cb: (records: unknown[]) => void) {}
+    observe(target: BoxEl): void { voiceRegion(target, () => this.queue(target), writes); }
+    private queue(target: BoxEl): void {
+      if (!this.queued.length) queueMicrotask(() => { const r = this.queued.splice(0); if (r.length) this.cb(r); });
+      this.queued.push({ type: 'childList', target });
+    }
+    takeRecords(): unknown[] { return this.queued.splice(0); }
+  }
+  const aloudWait = (_live: unknown, then: () => void) => { if (voice!.heard) return false; waiting = then; return true; };
+  const v: Voice | null = voice && {
+    get heard() { return voice.heard; },
+    set heard(on: boolean) { voice.heard = on; },
+    /** The page heard again: what waited for it runs, and two frames pass. */
+    hear() { voice.heard = true; const w = waiting; waiting = null; w?.(); for (let i = 0; i < 2; i++) for (const f of frames.splice(0)) f(); },
+    says: () => rtVoice.says(),
+    writes,
+  };
+  let rtVoice: { says: () => string } = { says: () => '' };
   /**
    * Where focus is, as a browser keeps it: a control focused holds it until another takes it — or until it
    * is disabled, when the browser's focus fixup hands it to <body> as it next reads where focus is, and
@@ -1411,6 +1465,7 @@ function boxesRuntime(listing: (p: string) => unknown, saveRefusal: Error | null
     querySelector: (sel: string) => (sel === '#apMatchSeg button[aria-selected="true"]' ? { dataset: { apmatch: 'custom' } } : null),
     querySelectorAll: () => [],
     body,
+    createTextNode: (data: string) => ({ nodeType: 3, data: String(data) }),
     get activeElement(): BoxEl {
       if (focus.active && focus.active.disabled) focus.active = null; // the focus fixup
       return focus.active ?? body;
@@ -1418,7 +1473,13 @@ function boxesRuntime(listing: (p: string) => unknown, saveRefusal: Error | null
   };
   const browse = between('/* ───────────────────────────── Browse modal ───────────────────────────── */',
     "$('browseUseBtn').addEventListener('click'") + between("$('browseUseBtn').addEventListener('click'", '\n});\n') + '\n});\n';
+  const voiceSrc = voice ? [
+    'const scanVoiceSheet = new Map();', 'const scanVoiceHeld = new Map();', 'let scanVoiceWatch = null;',
+    braced('function scanVoiceHolding('), braced('function scanVoiceSays('), braced('function scanVoiceChanged('),
+    between("if (typeof MutationObserver !== 'undefined') {\n  const voice = ['scanAnnounce', 'stopAnnounce'].map($);", '\n}\n') + '\n}\n',
+  ] : [];
   const src = [
+    ...voiceSrc,
     browse,
     braced('function closeModal('),
     between('function scannedRoots()', 'async function showFastRescanStat'),
@@ -1433,7 +1494,7 @@ function boxesRuntime(listing: (p: string) => unknown, saveRefusal: Error | null
   const rt = new Function(
     '$', 'api', 'toast', 'toastAction', 'escapeHtml', 'startScan', 'stopScan', 'localStorage', 'document',
     'fxOrbShow', 'fxOrbHide', 'formatBytes', 'formatCount', 'loadAutopilot', 'setApMatchKind', 'renderApGroupList', 'validateApQuery',
-    'setTimeout', 'clearTimeout',
+    'setTimeout', 'clearTimeout', 'MutationObserver', 'aloudWait', 'topModal', 'requestAnimationFrame',
     `'use strict';
      const state = { scanning: false, system: { homeDir: '/home/u', commonDirs: [] }, autopilot: { policies: [] } };
      const KB = 1e3, MB = 1e6, GB = 1e9, TB = 1e12; // the page's decimal units (000-prelude, QA D09)
@@ -1441,10 +1502,12 @@ function boxesRuntime(listing: (p: string) => unknown, saveRefusal: Error | null
      function icon() { return ''; }
      ${src}
      return { openBrowse, browseTo, path: () => browsePath, rememberScannedRoot, openPolicyEditor,
-       close: (id) => closeModal(id), scanning: (on) => { state.scanning = on; } };`,
+       close: (id) => closeModal(id), scanning: (on) => { state.scanning = on; },
+       ${voice ? "says: () => scanVoiceSays($('scanAnnounce'))" : ''} };`,
   )($, api, (m: string) => { toasts.push(m); }, offerRecorder(offers), escapeHtml,
     (p: string, o: { incremental?: boolean }) => { scanned.push([p, o]); }, noop,
-    localStorage, document, noop, noop, String, String, noop, noop, noop, noop, setTimeout, clearTimeout) as {
+    localStorage, document, noop, noop, String, String, noop, noop, noop, noop, setTimeout, clearTimeout,
+    voice ? VoiceObserver : undefined, aloudWait, () => null, (f: () => void) => { frames.push(f); }) as {
     openBrowse: (start: string | null, onPick?: (p: string) => void) => Promise<void>;
     browseTo: (p: string) => Promise<boolean>;
     path: () => string | null;
@@ -1455,7 +1518,10 @@ function boxesRuntime(listing: (p: string) => unknown, saveRefusal: Error | null
     close: (id: string) => void;
     /** A scan starting (or ending) some other way: Recent, the dock, the queue. */
     scanning: (on: boolean) => void;
+    /** What #scanAnnounce says, or holds back (the page's scanVoiceSays), with `voice`. */
+    says?: () => string;
   };
+  if (rt.says) rtVoice = { says: rt.says };
   /** A click on a button whose handler may be async; resolves when it has run. */
   const click = (id: string) => Promise.resolve($(id).listeners.click());
   /** A person typing or pasting into a box: its value, then its input event. */
@@ -1465,7 +1531,7 @@ function boxesRuntime(listing: (p: string) => unknown, saveRefusal: Error | null
   const saved = () => sent.filter((s) => s.url === '/api/autopilot/policies').map((s) => s.body.policies!.map((p) => p.path));
   /** How many times the policy list was saved. */
   const saves = () => saved().length;
-  return { rt, $, asked, scanned, toasts, offers, click, type, policy, saved, saves, timers, fire, document };
+  return { rt, $, asked, scanned, toasts, offers, click, type, policy, saved, saves, timers, fire, document, voice: v };
 }
 
 test('a folder picked into the Scan card keeps its trailing space when Scan and Browse… read the box again, and Fast rescan knows it (review F2.4, F2.8)', async () => {
@@ -1935,6 +2001,25 @@ test('"Checking that the folder exists…" leaves the scan\'s live region when t
     assert.equal(toasts.at(-1), 'A scan is already running', 'control: the press is dropped');
     assert.equal($('scanAnnounce').textContent, 'Scanning…', 'and the running scan\'s sentence stays');
   }
+});
+
+test('"Checking that the folder exists…" held back by the scan\'s voice — Scan pressed in the task a sheet closes in, the page not yet heard — is taken back as the check ends, and never said after it (review F1.7)', async () => {
+  const g = gate();
+  const { $, offers, click, type, voice } = boxesRuntime((p) => g.opened.then(() => strictListing(p)), null, { heard: false });
+  type('pathInput', DOCS + ' ');
+  const pending = click('scanBtn');
+  await settle(); // the page's watch hears the write in the microtasks after it
+  assert.equal(voice!.says(), 'Checking that the folder exists…', 'control: the check\'s words are held back while the page is not heard');
+  assert.equal($('scanAnnounce').textContent, '', 'control: the region empty meanwhile');
+  g.open();
+  await pending;
+  await settle();
+  assert.equal(offers.length, 1, 'control: the check ends with an offer of the folder without the space');
+  assert.equal(voice!.says(), '', 'the check over, the region neither says nor holds back that it is running');
+  voice!.writes.length = 0;
+  voice!.hear();
+  assert.deepEqual(voice!.writes.filter(Boolean), [], 'and once the page is heard, "Checking…" is never said: the check it spoke of is over');
+  assert.equal($('scanAnnounce').textContent, '', 'the region is left empty');
 });
 
 test('"Checking that the folder exists…" is taken back only by the press that holds Scan: an overtaken press whose own lookup lands first leaves it while the newer press is still checking (final review F3.1)', async () => {

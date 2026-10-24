@@ -383,16 +383,47 @@ class El {
     toggle: (c: string, on?: boolean) => { if (on ?? !this.classes.has(c)) this.classes.add(c); else this.classes.delete(c); },
     contains: (c: string) => this.classes.has(c),
   };
+  /** Its child nodes, as far as the writers reach: the text node a write of its text or markup leaves, and what is appended. */
+  private nodes: unknown[] = [];
+  get childNodes(): readonly unknown[] { return this.nodes; }
+  get firstChild(): unknown { return this.nodes[0] ?? null; }
+  /** Each MutationObserver watch of its children: of it, or of an element holding it where the watch asks for its subtree (review F1.1). */
+  readonly childWatches: Array<{ opts: WatchOpts; hear: (target: El, added: unknown[], removed: unknown[]) => void }> = [];
+  /**
+   * Its children replaced, as the DOM's "replace all" does for a write of textContent or innerHTML: a record is queued
+   * only where a node went or came — emptying an element that holds nothing queues none (review F1.1, F1.3, F1.10).
+   */
+  private replaceNodes(added: unknown[]): void {
+    const removed = this.nodes.splice(0, this.nodes.length, ...added);
+    this.told(added, removed);
+  }
+  private told(added: unknown[], removed: unknown[]): void {
+    if (!added.length && !removed.length) return;
+    for (let e: El | null = this; e; e = e.parent) for (const w of e.childWatches) if (e === this || w.opts.subtree) w.hear(this, added, removed);
+  }
   get textContent(): string { return this.text; }
-  set textContent(v: string) { this.text = String(v ?? ''); this.html = escapeHtml(this.text); this.said.push(this.text); }
+  set textContent(v: string) {
+    this.text = String(v ?? ''); this.html = escapeHtml(this.text); this.said.push(this.text);
+    this.replaceNodes(this.text ? [{ nodeType: 3, data: this.text }] : []);
+  }
   get innerHTML(): string { return this.html; }
-  set innerHTML(v: string) { this.html = String(v); this.text = decode(this.html.replace(/<[^>]+>/g, '')); }
+  set innerHTML(v: string) {
+    this.html = String(v); this.text = decode(this.html.replace(/<[^>]+>/g, ''));
+    this.replaceNodes(this.html ? [{ nodeType: 3, data: this.text }] : []);
+  }
   /** As a browser reads it: what is rendered, one block a line; an element not rendered — hidden, or held by one that is — reads as its text. */
   get innerText(): string { this.innerTextReads++; return this.rendered() ? rendered(this.unrendered(this.html)) : this.text; }
   setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
   getAttribute(k: string): string | null { return this.attrs.get(k) ?? null; }
   querySelector(): El { return new El(); }
-  appendChild(child: El): El { this.children.push(child); return child; }
+  /** An element, or a text node ({ nodeType: 3, data }), appended: a text node's words join its text. */
+  appendChild<T>(child: T): T {
+    if (child instanceof El) this.children.push(child);
+    else { const data = String((child as { data?: unknown }).data ?? ''); this.text += data; this.html += escapeHtml(data); }
+    this.nodes.push(child);
+    this.told([child], []);
+    return child;
+  }
   addEventListener(): void {}
   remove(): void { this.removed = true; }
   removed = false;
@@ -416,9 +447,10 @@ function aloudMapDecl(): string {
 
 /**
  * Page declarations lifted and run over Els, with sayAloud — and frames run by hand. `given` is what they reach
- * beyond the lifted ones; `none` are ids the page finds no element for.
+ * beyond the lifted ones; `none` are ids the page finds no element for; `run` is page code run after the
+ * declarations, as the page runs it as it loads. A frame runs each callback, then `after` (the microtasks).
  */
-function page(decls: string[], given: Record<string, unknown> = {}, none: string[] = []) {
+function page(decls: string[], given: Record<string, unknown> = {}, none: string[] = [], run: string[] = []) {
   const els = new Map<string, El>();
   const $ = (id: string) => {
     if (none.includes(id)) return null;
@@ -437,9 +469,9 @@ function page(decls: string[], given: Record<string, unknown> = {}, none: string
     get: (t, k) => (k === Symbol.unscopables ? undefined : t[k as string]),
     set: (t, k, v) => { t[k as string] = v; return true; },
   });
-  const fns = new Function('scope', `with (scope) { ${aloudMapDecl()}\n${all.map(srcOf).join('\n')}\n return { ${[...own].join(', ')} }; }`)(proxy) as
+  const fns = new Function('scope', `with (scope) { ${aloudMapDecl()}\n${all.map(srcOf).join('\n')}\n${run.join('\n')}\n return { ${[...own].join(', ')} }; }`)(proxy) as
     Record<string, (...a: unknown[]) => unknown>;
-  const frame = () => { for (const fn of frames.splice(0)) fn(); };
+  const frame = (after: () => void = () => {}) => { for (const fn of frames.splice(0)) { fn(); after(); } };
   return { $: (id: string) => $(id) as El, fns, frame, scope };
 }
 
@@ -1106,16 +1138,29 @@ function hearsAttribute(w: { target: El; opts: WatchOpts }, el: El, name: string
  * or no longer, told to each observer whose watch hears it, as a browser tells it (hearsAttribute), with the old value
  * only where that watch asks for it, a microtask later (the test calls it where the microtask would run). Taking away
  * an attribute that is not there changes nothing, and tells no one.
+ * An element's children replaced or appended to (El) queue a record for each childList watch that hears it, which
+ * `microtasks` hands on — each observer in the order it was made, as a browser notifies them — and takeRecords takes
+ * back unheard (review F1.1).
  */
 function mutationObservers() {
-  const made: Array<{ cb: (records: unknown[]) => void; watches: Array<{ target: El; opts: WatchOpts }> }> = [];
+  const made: FakeMutationObserver[] = [];
   class FakeMutationObserver {
     readonly watches: Array<{ target: El; opts: WatchOpts }> = [];
+    readonly queued: unknown[] = [];
     constructor(readonly cb: (records: unknown[]) => void) { made.push(this); }
-    observe(target: El, opts: WatchOpts): void { this.watches.push({ target, opts }); }
-    takeRecords(): unknown[] { return []; }
-    disconnect(): void { this.watches.length = 0; }
+    observe(target: El, opts: WatchOpts): void {
+      this.watches.push({ target, opts });
+      if (opts.childList && target instanceof El) { // a part's host, a plain object in these tests, is watched by sayWorking alone
+        target.childWatches.push({ opts, hear: (t, addedNodes, removedNodes) => { if (this.watches.length) this.queued.push({ type: 'childList', target: t, addedNodes, removedNodes }); } });
+      }
+    }
+    takeRecords(): unknown[] { return this.queued.splice(0); }
+    disconnect(): void { this.watches.length = 0; this.queued.length = 0; }
   }
+  /** The microtasks after a task: every record queued handed on, until none is left. */
+  const microtasks = () => {
+    for (let o = made.find((x) => x.queued.length); o; o = made.find((x) => x.queued.length)) o.cb(o.queued.splice(0));
+  };
   const inert = (el: El, on: boolean) => {
     const oldValue = el.inert ? '' : null;
     el.inert = on;
@@ -1125,7 +1170,7 @@ function mutationObservers() {
       if (w) o.cb([{ type: 'attributes', target: el, attributeName: 'inert', oldValue: w.opts.attributeOldValue ? oldValue : null }]);
     }
   };
-  return { MutationObserver: FakeMutationObserver, inert, made };
+  return { MutationObserver: FakeMutationObserver, inert, made, microtasks };
 }
 
 test('the fake MutationObserver tells of the inert attribute as a browser does: only a watch of attributes — asked for or implied — whose filter names it, on the element itself or one it holds under a subtree watch, with the old value only where asked for (review F1.4)', () => {
@@ -1154,15 +1199,19 @@ test('the fake MutationObserver tells of the inert attribute as a browser does: 
 });
 const WAIT = ['const aloudWaiting', 'const aloudShown', 'let aloudWatch', 'let aloudInertWatch', 'function aloudReachable(', 'function aloudKnow(', 'function aloudWait('];
 
-/** A page over Els with aloudWait, and a frame run as a browser runs one: the frame callbacks, then layout, which tells the ResizeObservers. */
-function waitingPage(decls: string[], given: Record<string, unknown> = {}) {
+/**
+ * A page over Els with aloudWait, and a frame run as a browser runs one: the microtasks of the task before it, the
+ * frame callbacks — the microtasks after each — then layout, which tells the ResizeObservers, and their microtasks.
+ * `run` as page() takes it.
+ */
+function waitingPage(decls: string[], given: Record<string, unknown> = {}, run: string[] = []) {
   const ro = resizeObservers();
   const mo = mutationObservers();
   const body = new El();
   const main = new El();
   main.parent = body;
-  const p = page([...WAIT, ...decls], { ResizeObserver: ro.ResizeObserver, MutationObserver: mo.MutationObserver, document: { body, activeElement: null }, ...given });
-  const frame = () => { p.frame(); ro.layout(); };
+  const p = page([...WAIT, ...decls], { ResizeObserver: ro.ResizeObserver, MutationObserver: mo.MutationObserver, document: { body, activeElement: null }, ...given }, [], run);
+  const frame = () => { mo.microtasks(); p.frame(mo.microtasks); ro.layout(); mo.microtasks(); };
   return { ...p, ro, mo, body, main, frame };
 }
 
@@ -1347,15 +1396,31 @@ test('a region in the page under an open sheet — inert, so not heard wherever 
   assert.equal(working.textContent, 'Reading disk layout…', 'but a frame after');
 });
 
-/** The scan's voice and the sheets' lifted from the page, over Els: the page under its main part, the sheet on top the test's. */
+/** The page's watch of the scan's two regions, as it sets it up as it loads (040), brace-matched. */
+function scanVoiceWatchSrc(): string {
+  const head = "if (typeof MutationObserver !== 'undefined') {\n  const voice = ['scanAnnounce', 'stopAnnounce'].map($);";
+  const at = INDEX.indexOf(head);
+  assert.notEqual(at, -1, 'control: the watch is set up as the page loads');
+  let depth = 0;
+  for (let i = INDEX.indexOf('{', at); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(at, i + 1);
+  }
+  return assert.fail('the watch never closes');
+}
+
+/**
+ * The scan's voice and the sheets' lifted from the page, over Els: the page under its main part, the sheet on top the
+ * test's, and the page's own watch of the two regions (scanVoiceWatchSrc), told of each write as a browser tells it.
+ */
 function scanVoice() {
   let top: El | null = null;
   const timers: Array<{ fn: () => void; ms: number }> = [];
-  const doc = { body: null as unknown as El, activeElement: null as El | null };
-  const p = waitingPage(['const TOAST_MIN_MS', 'const TOAST_MS_PER_CHAR', ...SHEET, 'const scanVoiceSheet', 'const scanVoiceHeld', 'function scanVoiceSays(', 'function scanVoiceChanged('], {
-    topModal: () => top, document: doc, scanVoiceWatch: { takeRecords: () => [] },
+  const doc = { body: null as unknown as El, activeElement: null as El | null, createTextNode: (data: string) => ({ nodeType: 3, data: String(data) }) };
+  const p = waitingPage(['const TOAST_MIN_MS', 'const TOAST_MS_PER_CHAR', ...SHEET, 'const scanVoiceSheet', 'const scanVoiceHeld', 'let scanVoiceWatch', 'function scanVoiceHolding(', 'function scanVoiceSays(', 'function scanVoiceChanged('], {
+    topModal: () => top, document: doc,
     setTimeout: (fn: () => void, ms: number) => { timers.push({ fn, ms }); return timers.length; },
-  });
+  }, [scanVoiceWatchSrc()]);
   doc.body = p.body;
   const scan = p.$('scanAnnounce');
   scan.parent = p.main;
@@ -1370,12 +1435,12 @@ function scanVoice() {
   sheetLive.parent = sheet;
   for (const r of [scan, stop, sheetLive]) p.fns.aloudKnow(r);
   p.frame();
-  /** The scan's code writes the region straight; the page's watch hands the change on a microtask later. */
-  const write = (live: El, words: string) => { live.textContent = words; p.fns.scanVoiceChanged(live); };
+  /** The scan's code writes the region straight, in a task of its own; the page's watch hears it in the microtasks after. */
+  const write = (live: El, words: string) => { live.textContent = words; p.mo.microtasks(); };
   /** A sheet opens over the page, focus moved into it; or it goes. */
   const open = () => { sheet.classList.add('open'); top = sheet; p.mo.inert(p.main, true); const f = new El(); f.parent = sheet; doc.activeElement = f; };
   const close = () => { sheet.classList.remove('open'); top = null; doc.activeElement = null; };
-  return { ...p, scan, stop, sheet, sheetLive, write, open, close, doc, timers };
+  return { ...p, scan, stop, sheet, sheetLive, write, open, close, doc, timers, microtasks: p.mo.microtasks };
 }
 
 test('the scan\'s voice is heard whatever is open: what #scanAnnounce or #stopAnnounce is given while a sheet is open is said in the sheet on top a frame later, wherever focus is in the page, and taken back there as the scan\'s words change or as a toast of them would go; with no sheet open nothing touches it (BQU item 33)', () => {
@@ -1435,6 +1500,51 @@ test('what the scan\'s voice is given as a sheet goes, while the page is still i
   assert.equal(v.scan.textContent, '1 item scanned so far', 'heard again, the region stands as written');
 });
 
+test('the fake element tells of its children as a browser does: emptying one that holds nothing tells no one, a write that replaces a node or appends one does (review F1.1)', () => {
+  const el = new El();
+  const told: Array<[number, number]> = [];
+  el.childWatches.push({ opts: { childList: true }, hear: (_t, added, removed) => { told.push([added.length, removed.length]); } });
+  el.textContent = '';
+  assert.deepEqual(told, [], 'an element holding nothing, emptied: no node went or came, so no record (DOM "replace all")');
+  el.textContent = 'Scanning…';
+  el.textContent = '';
+  el.textContent = '';
+  el.appendChild({ nodeType: 3, data: '' });
+  el.textContent = '';
+  assert.deepEqual(told, [[1, 0], [0, 1], [1, 0], [0, 1]], 'words put in, taken out (once: then it holds nothing), a text node appended, and taken out');
+});
+
+test('words the scan\'s voice holds back as a sheet goes are taken back by whatever empties the region before they are said — a scan refused at once, a scan that finished — though a browser tells of no write that changes nothing: the region holds back with a node in it, which the emptying takes away (review F1.1, F1.3, F1.10)', () => {
+  for (const when of ['before the page is heard again', 'after the page is heard again, before the frame that would say them']) {
+    const v = scanVoice();
+    v.open();
+    v.frame();
+    // "Scan this folder" in the folder picker, or "Scan again" in the command palette: the sheet goes and the scan
+    // starts in one task — "Starting scan…", then "Scanning…" as the request goes — and the page's watch hears it in
+    // the microtasks after, before the net lifts inert.
+    v.close();
+    v.scan.textContent = 'Starting scan…';
+    v.scan.textContent = 'Scanning…';
+    v.microtasks();
+    assert.equal(v.fns.scanVoiceSays(v.scan), 'Scanning…', `${when}: control: the words are held back while the page is inert`);
+    assert.equal(v.scan.textContent, '', `${when}: control: the region empty meanwhile`);
+    v.scan.said.length = 0;
+    if (when.startsWith('after')) v.mo.inert(v.main, false);
+    v.scan.textContent = ''; // the request refused at once: failScan takes the scan's words back (finishScan's toasted finish the same)
+    const saysAtOnce = v.fns.scanVoiceSays(v.scan); // in that task, before the watch hears of it
+    v.microtasks();
+    if (when.startsWith('before')) v.mo.inert(v.main, false);
+    for (let i = 0; i < 3; i++) v.frame();
+    assert.deepEqual(v.scan.said.filter(Boolean), [], `${when}: the words taken back are never said — "Scanning…" after the scan failed would be untrue`);
+    assert.equal(v.scan.textContent, '', `${when}: and the region is left empty`);
+    assert.equal(v.fns.scanVoiceSays(v.scan), '', `${when}: holding nothing back`);
+    assert.equal(saysAtOnce, '', `${when}: and what the region says, or holds back, is nothing from the write on — in its own task too, before the watch hears of it (scanTheBox asks then)`);
+    v.write(v.scan, 'Scanning…');
+    v.frame();
+    assert.equal(v.scan.textContent, 'Scanning…', `${when}: control: the next scan's words, the page heard, stand as written`);
+  }
+});
+
 test('a sheet opened in the task its words come in says them a frame after its first, never in the frame it comes on screen in — the scan\'s words, and a toast raised as it opens (BQU item 36)', () => {
   const v = scanVoice();
   /** Each frame's rendering of the sheet's region: on screen or not, and its words. */
@@ -1449,21 +1559,12 @@ test('a sheet opened in the task its words come in says them a frame after its f
 });
 
 test('the scan\'s voice is watched as it is written: a change to #scanAnnounce or #stopAnnounce — its text replaced, or its text node\'s words — reaches scanVoiceChanged once for that region, and nothing else does (BQU item 33)', () => {
-  const head = "if (typeof MutationObserver !== 'undefined') {\n  const voice = ['scanAnnounce', 'stopAnnounce'].map($);";
-  const at = INDEX.indexOf(head);
-  assert.notEqual(at, -1, 'control: the watch is set up as the page loads');
-  let depth = 0;
-  let end = at;
-  for (let i = INDEX.indexOf('{', at); i < INDEX.length; i++) {
-    if (INDEX[i] === '{') depth++;
-    else if (INDEX[i] === '}' && --depth === 0) { end = i + 1; break; }
-  }
   const els = new Map<string, El>();
   const $ = (id: string) => { let e = els.get(id); if (!e) { e = new El(); els.set(id, e); } return e; };
   const watched: Array<{ target: El; opts: Record<string, boolean> }> = [];
   let deliver: (records: Array<{ target: El }>) => void = () => {};
   const changed: El[] = [];
-  new Function('$', 'MutationObserver', 'scanVoiceChanged', `let scanVoiceWatch = null;\n${INDEX.slice(at, end)}`)(
+  new Function('$', 'MutationObserver', 'scanVoiceChanged', `let scanVoiceWatch = null;\n${scanVoiceWatchSrc()}`)(
     $, class { constructor(cb: (records: Array<{ target: El }>) => void) { deliver = cb; } observe(target: El, opts: Record<string, boolean>) { watched.push({ target, opts }); } },
     (live: El) => { changed.push(live); });
   assert.deepEqual(watched.map((w) => [w.target, w.opts]), [[$('scanAnnounce'), { childList: true, characterData: true, subtree: true }], [$('stopAnnounce'), { childList: true, characterData: true, subtree: true }]],

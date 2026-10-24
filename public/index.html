@@ -10562,13 +10562,26 @@ document.querySelectorAll('[aria-live]').forEach(aloudKnow);
    there, and the region comes back from under the sheet holding the words it
    holds, which is no change. What either is given as a sheet goes, before the
    page is heard again, is held and put back a frame after it is (aloudWait).
+   It is held with an empty text node in the region, not with the region
+   merely emptied: emptying a region that holds nothing changes nothing, and a
+   browser tells no watch of it, so the scan's own code taking its words back
+   — a scan refused at once (failScan), a finish its toast says (finishScan),
+   the folder check over (scanTheBox) — would never reach scanVoiceChanged, and
+   the words would be said after the scan they spoke of had ended (review
+   F1.1). Any write takes the node away, which is a change, heard; and the
+   words are held only while the node is all the region holds.
    With no sheet open, nothing here touches either. scanVoiceSays answers the
    words a region holds, or holds back. */
 const scanVoiceSheet = new Map(); // a scan region → what takes back its words from the sheet that says them
-const scanVoiceHeld = new Map(); // a scan region → { words } it holds back until the page is heard again
+const scanVoiceHeld = new Map(); // a scan region → { words, node } it holds back until the page is heard again
 let scanVoiceWatch = null;
-function scanVoiceSays(live) {
+/** What a region holds back, while it still does: the node it holds back with is all it holds — any write since took it away. */
+function scanVoiceHolding(live) {
   const held = scanVoiceHeld.get(live);
+  return held && live.childNodes.length === 1 && live.firstChild === held.node ? held : null;
+}
+function scanVoiceSays(live) {
+  const held = scanVoiceHolding(live);
   return held ? held.words : live.textContent;
 }
 function scanVoiceChanged(live) {
@@ -10587,16 +10600,17 @@ function scanVoiceChanged(live) {
     return;
   }
   const fill = () => {
-    if (scanVoiceHeld.get(live) !== held) return;
+    if (scanVoiceHeld.get(live) !== held) return; // taken back by a write since: its record reached here
     if (aloudWait(live, () => requestAnimationFrame(fill))) return;
     scanVoiceHeld.delete(live);
     live.textContent = words;
     scanVoiceWatch.takeRecords(); // its own write: nothing for it to route
   };
-  const held = { words };
+  const held = { words, node: document.createTextNode('') };
   if (!aloudWait(live, () => requestAnimationFrame(fill))) return; // heard now: the words stand as written
   scanVoiceHeld.set(live, held);
   live.textContent = '';
+  live.appendChild(held.node); // held with a node in it, which a write that takes the words back takes away (above)
   scanVoiceWatch.takeRecords();
 }
 if (typeof MutationObserver !== 'undefined') {
