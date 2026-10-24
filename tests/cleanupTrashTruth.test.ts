@@ -185,6 +185,8 @@ test('Smart suggestions count and send a folder once, never again for paths insi
       { checked: true, dataset: { path: '/h/Library/Caches/Google/Chrome/Default/Cache', bytes: '2000' } },
       { checked: true, dataset: { path: '/h/Library/Caches/Google/Chrome/Default/Code Cache', bytes: '900' } },
       { checked: true, dataset: { path: '/h/Library/Caches/Google/Chromium/Cache', bytes: '50' } },
+      // A sibling whose name begins with the chosen folder's whole name (review F1.17): "Chrome Beta" is not inside "Chrome".
+      { checked: true, dataset: { path: '/h/Library/Caches/Google/Chrome Beta/Cache', bytes: '70' } },
     ],
   };
   const select = declared<() => { paths: string[]; bytes: number; sizes: Map<string, number> }>('function activeCleanSelection() {', {
@@ -193,9 +195,9 @@ test('Smart suggestions count and send a folder once, never again for paths insi
     smartGroups: [{ items: [{ path: '/h/Library/Caches/Google/Chrome', size: 2900 }] }],
   }, "let cleanPane = 'smart';");
   const sel = select();
-  assert.deepEqual(sel.paths, ['/h/Library/Caches/Google/Chrome', '/h/Library/Caches/Google/Chromium/Cache'],
+  assert.deepEqual(sel.paths, ['/h/Library/Caches/Google/Chrome', '/h/Library/Caches/Google/Chromium/Cache', '/h/Library/Caches/Google/Chrome Beta/Cache'],
     'the folder goes whole, with what is inside it; a sibling whose name only begins the same is its own item');
-  assert.equal(sel.bytes, 2950, 'and its bytes are counted once');
+  assert.equal(sel.bytes, 3020, 'and its bytes are counted once, the sibling\'s too');
   assert.deepEqual([...sel.sizes.keys()], sel.paths, 'the sizes the completion toast adds up are the same items');
   const win = declared<() => { paths: string[] }>('function activeCleanSelection() {', {
     document: { querySelectorAll: (q: string) => ({ ...rows, '#browserProfiles .bp-ck': [{ checked: true, dataset: { path: 'C:\\U\\AppData\\Mozilla\\Firefox\\Profiles\\x\\cache2', bytes: '5' } }] } as Record<string, unknown[]>)[q] || [] },
@@ -552,8 +554,9 @@ test('the shared Trash toast adds up what moved, not what was asked, and a file 
   }, sizes);
   assert.ok(blocked.includes('Moved 2 items to Trash — 2000 B'), `a refused chunk is not counted: ${blocked.join(' | ')}`);
 
-  const nested = await trashToast(['/s/f', '/s/f/x.bin'], async (chunk) => ({ deleted: chunk, failed: [] }), { '/s/f': 5000, '/s/f/x.bin': 3000 });
-  assert.ok(nested.includes('Moved 2 items to Trash — 5000 B'), `a file inside a folder that moved is in its size already: ${nested.join(' | ')}`);
+  const nested = await trashToast(['/s/f', '/s/f/x.bin', '/s/fx'], async (chunk) => ({ deleted: chunk, failed: [] }), { '/s/f': 5000, '/s/f/x.bin': 3000, '/s/fx': 700 });
+  assert.ok(nested.includes('Moved 3 items to Trash — 5700 B'),
+    `a file inside a folder that moved is in its size already; a sibling whose name only begins the same is not (review F1.17): ${nested.join(' | ')}`);
 });
 
 /* ═════════ C77 — the Trash sheet says when its list is cut ═════════ */
