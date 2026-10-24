@@ -8458,9 +8458,11 @@ const VIEWS = [
       // nobody is looking at. `keepWanted` preserves the user's intent so the
       // toggle is still on when they come back.
       if (state.live.on) disableLive({ keepWanted: true });
-      // tmAnimFrame is declared further down with `let`; unmount only ever runs
-      // after the whole script has evaluated, so it is in scope by then.
-      if (tmAnimFrame) { cancelAnimationFrame(tmAnimFrame); tmAnimFrame = 0; }
+      // A morph or a sweep still running stops, and no morph is left set for
+      // the next visit's box to wait on (review F1.11). tmStopMorph is
+      // declared further down; unmount only ever runs after the whole script
+      // has evaluated, so it is in scope by then.
+      tmStopMorph();
       // §6.2's level transition, §6.3's lasso and §6.4's lens are all state
       // that would otherwise survive into the next view: a rAF loop repainting
       // a hidden canvas, a half-drawn selection, and a magnifier still held.
@@ -23735,8 +23737,13 @@ function lapseStart() {
   exitCartPreview(true); // playback draws the past, never under the preview's banner (C24)
   if (state.live.on) { disableLive(); toast('Live mode paused while playing history'); }
   const seq = ++L.seq;
-  // A scrub's 260 ms morph must not fight the transport for the node set.
-  cancelAnimationFrame(tmAnimFrame);
+  // A scrub's or a Live re-layout's 260 ms morph must not fight the
+  // transport for the node set: it lands at once on the layout it was going
+  // to — a Stop before the first snapshot left a blend of two up — and no
+  // morph is left set for the box's words to wait on (review F1.11). Then
+  // the sunburst's sweep, which sets none, is stopped too.
+  tmSettleMorph();
+  tmStopMorph();
   // Start from the slider; from Live or the end, start over at the oldest.
   const cur = Number($('tmTimeSlider').value);
   L.pos = cur >= h.snaps.length - 1 ? 0 : cur;
@@ -24394,7 +24401,9 @@ function drawSunburst() {
 
 /** Time-slider canvas interpolation: sweep the arcs into `newRoot`'s layout. */
 function animateSunburstTo(newRoot) {
-  cancelAnimationFrame(tmAnimFrame);
+  // An earlier sweep, or a rectangle map's morph, stopped — and no morph left
+  // set for the box's words to wait on (review F1.11).
+  tmStopMorph();
   const geo = sunburstGeometry();
   const target = layoutSunburstArcs(newRoot, geo);
   if (REDUCED || document.hidden || !state.treemap.arcs.length) { renderSunburstFrame(newRoot, target, geo); return; }

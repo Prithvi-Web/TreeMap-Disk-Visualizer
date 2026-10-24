@@ -224,7 +224,8 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; r
   // The time-lapse's own transport, animated as it plays by default (motion
   // not reduced, rectangle map), over a frame queue the test pumps by hand.
   const frames = { queue: [] as Array<[number, (t: number) => unknown]>, next: 0, clock: 0 };
-  const lapseNames = ['LAPSE_SEG_MS', 'LAPSE_HOLD_MAX_MS', 'lapseFetching', 'lapseStart', 'lapseStop', 'lapseApplySnap', 'lapseSeekTo', 'lapsePrefetch', 'lapseLerpNodes'];
+  const lapseNames = ['LAPSE_SEG_MS', 'LAPSE_HOLD_MAX_MS', 'lapseFetching', 'lapseStart', 'lapseStop', 'lapseApplySnap', 'lapseSeekTo', 'lapsePrefetch', 'lapseLerpNodes',
+    'tmSettleMorph', 'tmStopMorph'];
   if (opts.lapse) {
     Object.assign(deps, {
       REDUCED: false, isRectMap: () => true, lapseReflect: noop, drawTreemap: noop,
@@ -254,7 +255,7 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; r
       ? ', card: { show: cityShowCard, up: cityUp, setColour: citySetColour, setHeight: citySetHeight, jitter: cityJitter }'
       : ''}${opts.lapse ? ', lapse: { start: lapseStart, stop: lapseStop }' : ''}${opts.realBuild ? ', afterZoom: cityAfterZoom' : ''}${
       opts.realChrome ? ', chrome: renderCityChrome' : ''} }`,
-    'let tmLoadSeq = 0; let cityLoadSeq = 0; let tmAnimFrame = 0; let lapseExporting = false; let lapseInternalStart = false;',
+    'let tmLoadSeq = 0; let cityLoadSeq = 0; let tmAnimFrame = 0; let tmMorph = null; let lapseExporting = false; let lapseInternalStart = false;',
     // The view itself registers where the page's onScanChange and mount can reach the city's own functions.
     opts.realCard && opts.facts ? cityViewSource() : '');
   /** Run `count` animation frames, 100 ms apart, letting each frame's awaits settle. */

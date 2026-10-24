@@ -1293,8 +1293,13 @@ function lapseStart() {
   exitCartPreview(true); // playback draws the past, never under the preview's banner (C24)
   if (state.live.on) { disableLive(); toast('Live mode paused while playing history'); }
   const seq = ++L.seq;
-  // A scrub's 260 ms morph must not fight the transport for the node set.
-  cancelAnimationFrame(tmAnimFrame);
+  // A scrub's or a Live re-layout's 260 ms morph must not fight the
+  // transport for the node set: it lands at once on the layout it was going
+  // to — a Stop before the first snapshot left a blend of two up — and no
+  // morph is left set for the box's words to wait on (review F1.11). Then
+  // the sunburst's sweep, which sets none, is stopped too.
+  tmSettleMorph();
+  tmStopMorph();
   // Start from the slider; from Live or the end, start over at the oldest.
   const cur = Number($('tmTimeSlider').value);
   L.pos = cur >= h.snaps.length - 1 ? 0 : cur;

@@ -376,8 +376,8 @@ test('C21 (review F1.6): left and entered again while a rescan of the folder run
     tmCancelQueries: noop, tmCloseHints: noop, nlClose: noop, exitCartPreview: noop, tmSetQueryMessage: noop, disableLive: noop,
     cancelAnimationFrame: noop, altRefineCancel: noop, lapseStop: noop, clearTimeout: noop, tmResizeDeb: 0, lassoCancel: noop,
   };
-  page = load<Page>(['treeScanId', 'tmClearHits', 'tmRejudgeQuery'], deps, `{ view: (${viewSource('treemap')}), treeScanId }`,
-    'let tmLoadSeq = 0; let tmAnimFrame = 0; let tmLastHits = { q: "size>1gb", paths: ["/r/a"], total: 9, truncated: false, stage: null };');
+  page = load<Page>(['treeScanId', 'tmClearHits', 'tmRejudgeQuery', 'tmStopMorph'], deps, `{ view: (${viewSource('treemap')}), treeScanId }`,
+    'let tmLoadSeq = 0; let tmAnimFrame = 0; let tmMorph = null; let tmLastHits = { q: "size>1gb", paths: ["/r/a"], total: 9, truncated: false, stage: null };');
   const view = page.view;
   view.mount(); // the view re-entered as the scan chrome began
   assert.deepEqual(applied, [], 'control: an answer of the tree\'s own scan, still whole, is not asked again');
@@ -777,7 +777,8 @@ test('C24: a point on the time slider, and Play, leave the cart preview first �
     cancelAnimationFrame() {}, $: () => ({ value: '0' }), lapseReflect() {}, lapsePrefetch() {}, performance: { now: () => 0 },
     requestAnimationFrame: () => 0, lapseExporting: false, lapseInternalStart: false, tmAnimFrame: 0,
   };
-  const page = load<{ seek: (i: number) => Promise<void>; play: () => void }>(['setHistoryIndex', 'lapseStart'], deps, '{ seek: setHistoryIndex, play: lapseStart }');
+  const page = load<{ seek: (i: number) => Promise<void>; play: () => void }>(['setHistoryIndex', 'lapseStart', 'tmSettleMorph', 'tmStopMorph'], deps,
+    '{ seek: setHistoryIndex, play: lapseStart }', 'let tmMorph = null;');
   await page.seek(0);
   assert.deepEqual(calls, ['exit:true', 'draw'], 'the preview is left before the snapshot is drawn');
   calls.length = 0;
@@ -930,7 +931,7 @@ test('C72: a map load still out when the Treemap is left never lands under the v
     cancelAnimationFrame: noop, altRefineCancel: noop, lapseStop: noop, clearTimeout: noop, tmResizeDeb: 0, lassoCancel: noop, fxTmPillBeamsSync: noop,
   };
   const page = load<{ loadTreemap: (p: string) => Promise<void>; view: { unmount: () => void } }>(
-    ['treeScanId', 'TM_MIN_SIZE', 'loadTreemap'], deps, `{ loadTreemap, view: (${viewSource('treemap')}) }`, 'let tmLoadSeq = 0; let tmAnimFrame = 0;');
+    ['treeScanId', 'TM_MIN_SIZE', 'loadTreemap', 'tmStopMorph'], deps, `{ loadTreemap, view: (${viewSource('treemap')}) }`, 'let tmLoadSeq = 0; let tmAnimFrame = 0; let tmMorph = null;');
   const out = page.loadTreemap('/r/A'); // a click on folder A
   page.view.unmount(); // Disk City opened before the answer landed
   state.view = 'city';
@@ -1214,7 +1215,7 @@ test('HB2 (L2, L7, L10): a plain word over the sunburst is told again on the way
     tmCancelQueries: noop, tmCloseHints: noop, nlClose: noop, exitCartPreview: noop, disableLive: noop,
     cancelAnimationFrame: noop, altRefineCancel: noop, lapseStop: noop, clearTimeout: noop, tmResizeDeb: 0, lassoCancel: noop,
   };
-  const view = load<{ mount: () => void; unmount: () => void }>([...REWORD_NAMES, 'drawView', 'treeScanId', 'tmClearHits', 'tmRejudgeQuery'], deps,
+  const view = load<{ mount: () => void; unmount: () => void }>([...REWORD_NAMES, 'drawView', 'treeScanId', 'tmClearHits', 'tmRejudgeQuery', 'tmStopMorph'], deps,
     `(${viewSource('treemap')})`,
     // The sunburst's load, as loadTreemap's sunburst branch ends: through drawView.
     'let tmLoadSeq = 0; let tmAnimFrame = 0; let tmMorph = null; let tmLastHits = { q: "", paths: [], total: 0, truncated: false, stage: null }; function loadTreemap() { drawView(); }');
@@ -1314,6 +1315,91 @@ test('HB2 (L4, L13): a map that lands during a morph stays — the morph\'s last
   assert.deepEqual(s.sunDrawn, [], 'no frame of /r is drawn over B\'s sunburst');
 });
 
+/** The real animateTreemapTo with `names`, over frames run by hand: a live re-layout's morph, one frame in, then a door out of it. */
+function morphDoorHarness<T>(names: string[], deps: Record<string, unknown>, returns: string, prelude = '') {
+  const rect = (path: string, x: number, w: number) => ({ name: path.slice(3), path, size: w, type: 'dir', depth: 1, expanded: false, x, y: 0, w, h: 100 });
+  const frames = new Map<number, (t: number) => void>();
+  let lastFrame = 0;
+  let clock = 1000;
+  const state = deps.state as { treemap: { nodes: unknown[] } };
+  state.treemap.nodes = [rect('/r/a', 0, 50), rect('/r/b', 50, 50)];
+  const page = load<T & { animateTreemapTo: (n: unknown[]) => void; morph: () => unknown }>(['tmAnimFrame', 'tmMorph', 'animateTreemapTo', 'tmStopMorph', ...names], {
+    REDUCED: false, document: { hidden: false }, performance: { now: () => clock },
+    requestAnimationFrame: (f: (t: number) => void) => { frames.set(++lastFrame, f); return lastFrame; },
+    cancelAnimationFrame: (id: number) => { frames.delete(id); },
+    drawTreemap() {}, ...deps,
+  }, `{ animateTreemapTo, morph: () => tmMorph, ${returns} }`, prelude);
+  const to = [rect('/r/a', 0, 70), rect('/r/b', 70, 30)];
+  page.animateTreemapTo(to);
+  clock += 100; for (const [id, f] of [...frames]) { frames.delete(id); f(clock); } // one frame of its 260 ms
+  assert.ok(page.morph(), 'control: the morph is running');
+  return { page, frames, to, state };
+}
+
+test('HB2 review (F1.11): every door that cancels a morph\'s frames leaves no morph running behind — the box is never held waiting on a last frame that will not come', () => {
+  // Play pressed inside a Live re-layout's morph, and Stop before a snapshot was drawn.
+  const said: string[] = [];
+  const live = { _t: '', set textContent(v: string) { this._t = v; if (v) said.push(v); }, get textContent() { return this._t; } };
+  const els: Record<string, unknown> = { tmQueryErr: { textContent: '', hidden: true, classList: { toggle() {} } }, tmQuerySaid: live,
+    tmSearch: { classList: { toggle() {} }, setAttribute() {} }, tmTimeSlider: { value: '2' } };
+  const lapseState = {
+    view: 'treemap', live: { on: false }, pathIndex: new Map(),
+    treemap: { mode: 'treemap', rootPath: '/r', query: 'size>1gb', queryMode: 'grammar', matchTotal: 9, matchedPaths: new Set(NINE), matches: 3, hideCloud: false,
+      nodes: [] as unknown[], cells: [], altNote: '', history: { active: false, snaps: [{ id: 1, takenAt: 1 }, { id: 2, takenAt: 2 }], index: 2, cache: new Map() },
+      lapse: { playing: false, seq: 0, raf: 0, pos: 0, speed: 1, loop: false, completed: false, onDone: null } },
+  };
+  const a = morphDoorHarness<{ play: () => void; stop: () => void; reword: () => void }>(
+    [...REWORD_NAMES, 'asSentences', 'sayAloud', 'tmSetQueryMessage', 'lapseStart', 'lapseStop', ...['tmSettleMorph'].filter((n) => INDEX.includes(`function ${n}(`))], {
+      state: lapseState, tmPreview: { on: false }, $: (id: string) => els[id], tmSyncQueryBar() {}, formatCount: (n: number) => n.toLocaleString('en-US'),
+      isSun: () => false, isCells: () => false, isRectMap: () => true, exitCartPreview() {}, disableLive() {}, toast() {}, lapseReflect() {}, lapsePrefetch() {},
+      lapseExporting: false, lapseInternalStart: false,
+    }, 'play: lapseStart, stop: lapseStop, reword: tmRewordQuery',
+    'const aloudSaid = new Map(); let tmLastHits = { q: "size>1gb", paths: ' + JSON.stringify(NINE) + ', total: 9, truncated: false, stage: null, degraded: [] };');
+  a.page.play();
+  a.page.stop();
+  a.frames.clear(); // the box's words land a frame after
+  assert.equal(a.page.morph(), null, 'Play: the morph its transport cancelled is not left running');
+  assert.equal(a.state.treemap.nodes, a.to, 'and the map stands on the layout the morph was going to — never a blend of two, left up');
+  lapseState.treemap.matches = 8; // Hide cloud turned off: drawView words the box
+  a.page.reword();
+  assert.equal((els.tmQueryErr as { textContent: string }).textContent, '9 matches — 8 shown here. One is this folder itself, which has no rectangle of its own.',
+    'the box follows the map again — a morph left set held its words until the next map landed');
+  // The sunburst's sweep starts on the frame the rectangle map's morph was using.
+  const b = morphDoorHarness<{ sweep: (r: unknown) => void }>(['animateSunburstTo'], {
+    state: { treemap: { arcs: [] } }, sunburstGeometry: () => ({}), layoutSunburstArcs: () => [], renderSunburstFrame() {},
+  }, 'sweep: animateSunburstTo');
+  b.page.sweep({ path: '/r' });
+  assert.equal(b.page.morph(), null, 'the sunburst\'s sweep: the rectangle map\'s morph it cancelled is not left running');
+  // A scrub's sweep of the sunburst sets no morph, and Play still stops it: the transport steps the sunburst itself.
+  const sweepFrames = new Map<number, (t: number) => void>();
+  let sweepFrame = 0;
+  const sunState = { ...lapseState, treemap: { ...lapseState.treemap, mode: 'sunburst', arcs: [{ n: { path: '/r/a' }, a0: 0, a1: 1, rInner: 1, rOuter: 2 }],
+    lapse: { ...lapseState.treemap.lapse, playing: false } } };
+  const sun = load<{ sweep: (r: unknown) => void; play: () => void }>(['tmAnimFrame', 'tmMorph', 'tmStopMorph', 'animateSunburstTo', 'lapseStart',
+    ...['tmSettleMorph'].filter((n) => INDEX.includes(`function ${n}(`))], {
+    state: sunState, REDUCED: false, document: { hidden: false }, performance: { now: () => 0 }, $: (id: string) => els[id],
+    requestAnimationFrame: (f: (t: number) => void) => { sweepFrames.set(++sweepFrame, f); return sweepFrame; },
+    cancelAnimationFrame: (id: number) => { sweepFrames.delete(id); }, drawTreemap() {},
+    sunburstGeometry: () => ({}), layoutSunburstArcs: () => [{ n: { path: '/r/a' }, a0: 0, a1: 2, rInner: 1, rOuter: 2 }], renderSunburstFrame() {},
+    isRectMap: () => false, exitCartPreview() {}, disableLive() {}, toast() {}, lapseReflect() {}, lapsePrefetch() {}, lapseExporting: false, lapseInternalStart: false,
+  }, '{ sweep: animateSunburstTo, play: lapseStart }');
+  sun.sweep({ path: '/r' });
+  const sweepTick = [...sweepFrames.keys()];
+  sun.play();
+  assert.ok(sweepTick.length === 1 && !sweepFrames.has(sweepTick[0]), 'Play stops the sunburst\'s sweep, as it always did');
+  // Leaving the Treemap mid-morph.
+  const noop = () => {};
+  const c = morphDoorHarness<{ view: { unmount: () => void } }>([], {
+    state: { view: 'treemap', live: { on: false }, lens: { held: false, at: null }, treemap: { altZoomRaf: 0, altZoom: null, cells: [], pxRects: [], arcs: [] } },
+    $: () => ({ hidden: false, textContent: '', classList: { toggle() {}, add() {}, remove() {} } }),
+    tmCancelQueries: noop, tmCloseHints: noop, tmClearHits: noop, nlClose: noop, exitCartPreview: noop, tmSetQueryMessage: noop, disableLive: noop,
+    altRefineCancel: noop, lapseStop: noop, clearTimeout: noop, tmResizeDeb: 0, lassoCancel: noop, fxTmPillBeamsSync: noop,
+  }, `view: (${viewSource('treemap')})`, 'let tmLoadSeq = 0;');
+  c.page.view.unmount();
+  assert.equal(c.frames.size, 0, 'control: its frames are stopped');
+  assert.equal(c.page.morph(), null, 'the unmount: no morph is left running for the next visit\'s box to wait on');
+});
+
 test('HB2 (L9): j/k never move through what an earlier renderer drew — a renderer switch, and leaving the Treemap, take the drawn set with them', async () => {
   const oldChild = { path: '/home/u/A/old-child', name: 'old-child', size: 5, type: 'dir', depth: 1 };
   const bKid = { path: '/home/u/B/c', name: 'c', size: 3, type: 'dir' };
@@ -1344,11 +1430,11 @@ test('HB2 (L9): j/k never move through what an earlier renderer drew — a rende
   // And leaving the Treemap: what it drew is no map on the way back in, until the map lands again.
   state.treemap.pxRects = [{ n: oldChild }]; state.treemap.arcs = [{ n: bKid, depth: 1 }];
   const noop = () => {};
-  const unmount = load<{ unmount: () => void }>([], {
+  const unmount = load<{ unmount: () => void }>(['tmStopMorph'], {
     state: { ...state, live: { on: false }, lens: { held: false, at: null } }, $: (id: string) => (els[id] ||= el()),
     tmCancelQueries: noop, tmCloseHints: noop, tmClearHits: noop, nlClose: noop, exitCartPreview: noop, tmSetQueryMessage: noop, disableLive: noop,
     cancelAnimationFrame: noop, altRefineCancel: noop, lapseStop: noop, clearTimeout: noop, tmResizeDeb: 0, lassoCancel: noop, fxTmPillBeamsSync: noop,
-  }, `(${viewSource('treemap')})`, 'let tmLoadSeq = 0; let tmAnimFrame = 0;');
+  }, `(${viewSource('treemap')})`, 'let tmLoadSeq = 0; let tmAnimFrame = 0; let tmMorph = null;');
   unmount.unmount();
   assert.deepEqual([state.treemap.pxRects, state.treemap.arcs], [[], []], 'the unmount drops the rectangles and arcs, as it drops the shapes');
 });

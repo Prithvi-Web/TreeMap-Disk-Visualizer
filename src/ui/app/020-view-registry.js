@@ -120,9 +120,11 @@ const VIEWS = [
       // nobody is looking at. `keepWanted` preserves the user's intent so the
       // toggle is still on when they come back.
       if (state.live.on) disableLive({ keepWanted: true });
-      // tmAnimFrame is declared further down with `let`; unmount only ever runs
-      // after the whole script has evaluated, so it is in scope by then.
-      if (tmAnimFrame) { cancelAnimationFrame(tmAnimFrame); tmAnimFrame = 0; }
+      // A morph or a sweep still running stops, and no morph is left set for
+      // the next visit's box to wait on (review F1.11). tmStopMorph is
+      // declared further down; unmount only ever runs after the whole script
+      // has evaluated, so it is in scope by then.
+      tmStopMorph();
       // §6.2's level transition, §6.3's lasso and §6.4's lens are all state
       // that would otherwise survive into the next view: a rAF loop repainting
       // a hidden canvas, a half-drawn selection, and a magnifier still held.

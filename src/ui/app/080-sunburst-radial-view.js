@@ -213,7 +213,9 @@ function drawSunburst() {
 
 /** Time-slider canvas interpolation: sweep the arcs into `newRoot`'s layout. */
 function animateSunburstTo(newRoot) {
-  cancelAnimationFrame(tmAnimFrame);
+  // An earlier sweep, or a rectangle map's morph, stopped — and no morph left
+  // set for the box's words to wait on (review F1.11).
+  tmStopMorph();
   const geo = sunburstGeometry();
   const target = layoutSunburstArcs(newRoot, geo);
   if (REDUCED || document.hidden || !state.treemap.arcs.length) { renderSunburstFrame(newRoot, target, geo); return; }
