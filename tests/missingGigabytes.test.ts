@@ -373,6 +373,11 @@ test('no snapshots is a zero; snapshots that cannot be sized is an unknown', asy
   assert.equal(someLine.count, 2, 'what IS known — how many — is still reported');
   assert.match(someLine.reason ?? '', /without sizing them/);
   assert.ok(someLine.remedy, 'and the remedy is still offered, since the snapshots are real');
+  // The purge is for good (hunt C15; review F1.8/F1.15): the receipt beside its button says what the Dashboard says.
+  const caveat = someLine.remedy?.caveat ?? '';
+  assert.doesNotMatch(caveat, /recreat|rather than permanently/, 'no promise that the deleted snapshots come back');
+  assert.match(caveat, /for good, and with them any older or deleted files only they still hold/, 'what a purge deletes');
+  assert.match(caveat, /This cannot be undone\./, 'and that it cannot be taken back');
   assertBalances(some);
 });
 

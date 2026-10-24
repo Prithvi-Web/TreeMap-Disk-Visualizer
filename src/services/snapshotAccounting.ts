@@ -273,7 +273,7 @@ export function setSnapshotPurgeStepForTests(step: (() => Promise<PurgeResult>) 
   purgeStep = step ?? purgeLocalSnapshots;
 }
 
-/** Delete local Time Machine snapshots (macOS only). Time Machine recreates them on the next backup. */
+/** Delete local Time Machine snapshots (macOS only), for good: Time Machine makes new ones from then on, never these. */
 export function purgeSnapshots(): Promise<PurgeResult> {
   return purgeStep();
 }

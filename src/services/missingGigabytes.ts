@@ -547,8 +547,10 @@ async function snapshotLine(sources: StatementSources, mountPoint: string): Prom
   const remedy: StatementRemedy = {
     action: 'purge-snapshots',
     label: 'Delete local snapshots',
+    // A purge is for good (hunt C15; review F1.8/F1.15): Time Machine makes new snapshots of the disk as it is
+    // from then on, never these, so what only they held goes with them. Said as the Dashboard's row says it.
     caveat:
-      'Needs an explicit confirmation. Time Machine recreates local snapshots on its next backup, so this frees space now rather than permanently.',
+      'Needs an explicit confirmation. Deletes local snapshots for good, and with them any older or deleted files only they still hold; Time Machine makes new ones from now on. This cannot be undone.',
   };
   try {
     const acc = await sources.snapshots(mountPoint);
