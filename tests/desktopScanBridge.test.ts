@@ -299,15 +299,36 @@ test('C18: Rescan while a scan runs, or with nothing scanned yet, says why it do
 /** Every promise already started gets its turns — counted, never a clock. */
 const turns = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
 
+/**
+ * The page's own bootRestore: its two definition lines, lifted out of the built page and run as they stand — the
+ * object desktopCommand waits on and restoreLastSession settles (review F1.4: a hand-built copy was the oracle).
+ */
+function pageBootRestore(): { settled: boolean; done: Promise<void>; settle: () => void } {
+  const at = INDEX.indexOf('const bootRestore = ');
+  assert.notEqual(at, -1, 'the page defines bootRestore');
+  const doneAt = INDEX.indexOf('bootRestore.done = ', at);
+  const src = INDEX.slice(at, INDEX.indexOf('\n', doneAt));
+  assert.equal(src.split('\n').length, 2, `two lines, the object and its promise: ${src}`);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function(`'use strict'; ${src}\n return bootRestore;`)();
+}
+
+test('review F1.4: the page\'s bootRestore has not settled until restoreLastSession settles it; then it has, and what waits on it goes on', async () => {
+  const r = pageBootRestore();
+  let went = 0;
+  void r.done.then(() => { went++; });
+  await turns();
+  assert.deepEqual([r.settled, went], [false, 0], 'unsettled, nothing waiting on it goes on');
+  r.settle();
+  assert.equal(r.settled, true, 'settled at once');
+  await turns();
+  assert.equal(went, 1, 'and its promise answers');
+});
+
 test('review HA-L5/HA-L13: File › Rescan chosen with the window closed reaches the page as it loads, before the boot restore has reopened the last scan — it waits for the restore, then rescans what it reopened, and never says "Scan a folder first" over a scan about to reopen', async () => {
-  const restoring = () => {
-    let settle!: () => void;
-    const bootRestore = { settled: false, done: new Promise<void>((r) => { settle = r; }) };
-    return { bootRestore, settle: () => { bootRestore.settled = true; settle(); } };
-  };
   {
-    const r = restoring();
-    const c = commands({ bootRestore: r.bootRestore });
+    const r = pageBootRestore();
+    const c = commands({ bootRestore: r });
     c.run('rescan');
     await turns();
     assert.deepEqual([c.did, c.toasts], [[], []], 'nothing is done or said while the last scan is still being reopened');
@@ -317,8 +338,8 @@ test('review HA-L5/HA-L13: File › Rescan chosen with the window closed reaches
     assert.deepEqual([c.did, c.toasts], [['rescan'], []], 'once it has, the Rescan asked for is done');
   }
   {
-    const r = restoring();
-    const c = commands({ bootRestore: r.bootRestore });
+    const r = pageBootRestore();
+    const c = commands({ bootRestore: r });
     c.run('rescan');
     r.settle(); // the scan had expired: the start screen names the folder, and no tree is open
     await turns();
