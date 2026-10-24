@@ -42300,7 +42300,12 @@ function fillFolder(command, names) {
 function smartListedNote(g) {
   const listed = (g.items || []).length;
   if (!(g.count > listed)) return '';
-  return `<div class="smart-desc muted">${formatCount(listed)} of ${formatCount(g.count)} listed, the first the scan found, largest first. Select all picks only these.</div>`;
+  // The rows follow the sort pill (review F1.3): the server lists the first it found, largest first,
+  // and "Safest to reclaim first" orders the same rows by score.
+  const order = smartSort === 'reclaim' ? 'safest to reclaim first' : 'largest first';
+  // An advice-only group has no Select all to name (review F1.18).
+  const pick = g.advisory ? '' : ' Select all picks only these.';
+  return `<div class="smart-desc muted">${formatCount(listed)} of ${formatCount(g.count)} listed, the first the scan found, ${order}.${pick}</div>`;
 }
 
 function renderSmartGroups(catalog) {

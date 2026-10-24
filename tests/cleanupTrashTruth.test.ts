@@ -258,11 +258,24 @@ test('a Smart suggestions badge counts every match, not the 200 listed, and says
   const items = Array.from({ length: 200 }, (_, i) => ({ path: `/p${i}/node_modules`, size: 1 }));
   assert.equal(render({ items, count: 1800, totalSize: 61 }, String, (n: number) => `${n} B`), '1800 · 61 B', 'every match');
   assert.equal(render({ items: items.slice(0, 3), totalSize: 3 }, String, (n: number) => `${n} B`), '3 · 3 B', 'an answer with no count is its list');
-  const note = declared<(g: unknown) => string>('function smartListedNote(g) {', { formatCount: String });
+  const note = declared<(g: unknown) => string>('function smartListedNote(g) {', { formatCount: String }, "let smartSort = 'size';");
   assert.match(text(note({ items, count: 1800 })), /^200 of 1800 listed/, 'a cut list says it is cut');
   assert.match(text(note({ items, count: 1800 })), /Select all picks only these/, 'and what Select all picks');
   assert.equal(note({ items: items.slice(0, 3), count: 3 }), '', 'a whole list says nothing');
   assert.match(block, /\$\{smartListedNote\(g\)\}/, 'and the group shows the note');
+});
+
+test('the cut-list note says the order the rows are in, and names Select all only where there is one (review F1.3/F1.18)', () => {
+  const items = Array.from({ length: 200 }, (_, i) => ({ path: `/p${i}/node_modules`, size: 1 }));
+  const noteIn = (sort: string) => declared<(g: unknown) => string>('function smartListedNote(g) {', { formatCount: String }, `let smartSort = '${sort}';`);
+  const bySize = text(noteIn('size')({ items, count: 1800 }));
+  assert.match(bySize, /listed, the first the scan found, largest first\./, `control: under Biggest first the rows are largest first: ${bySize}`);
+  const byScore = text(noteIn('reclaim')({ items, count: 1800 }));
+  assert.doesNotMatch(byScore, /largest first/, `under Safest to reclaim first they are not: ${byScore}`);
+  assert.match(byScore, /listed, the first the scan found, safest to reclaim first\./, 'and the note says the order they are in');
+  const advisory = text(noteIn('size')({ items, count: 1800, advisory: true }));
+  assert.match(advisory, /^200 of 1800 listed/, `control: an advice-only group's list is cut too: ${advisory}`);
+  assert.doesNotMatch(advisory, /Select all/, 'it has no Select all to name');
 });
 
 /* ═════════ C73 — "could not be trashed" says why ═════════ */
