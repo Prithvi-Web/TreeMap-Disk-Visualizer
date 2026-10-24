@@ -21,6 +21,7 @@ import {
   getSnapshot,
   getSnapshotTreeAt,
   inflateSnapshotTree,
+  prevSizeLookup,
   diffSnapshots,
 } from '../services/snapshots';
 import { buildTreemap } from '../utils/treemap';
@@ -760,8 +761,8 @@ insightRouter.get('/snapshots', guardQueryPath('path'), async (req: Request, res
  * GET /api/snapshots/tree?path=&at= — historical treemap (time slider).
  * Serves the stored snapshot tree closest to `at` in exactly the shape of
  * /api/scan/:id/treemap, so the live renderer draws it unmodified. Each node
- * carries prevSize (size in the previous snapshot; null = didn't exist) for
- * the diff overlay.
+ * carries prevSize (size in the previous snapshot; null = didn't exist; left
+ * out where that is not known, past a cut list) for the diff overlay.
  */
 insightRouter.get('/snapshots/tree', guardQueryPath('path'), async (req: Request, res: Response) => {
   const rootPath = req.query.path as string | undefined;
@@ -777,16 +778,19 @@ insightRouter.get('/snapshots/tree', guardQueryPath('path'), async (req: Request
 
   // Diff data for both renderers: prevSize on the flat treemap nodes and on
   // the tree itself (the sunburst lays out client-side from the tree).
+  // An item the previous tree did not store is new (null) only where the folder holding it listed every
+  // child; past a cut list it is left out — unknown, drawn as unchanged — never read as "did not exist"
+  // (leftover HE-L4, the time slider's sibling of hunt C46).
   if (found.prev) {
-    const prevSizes = new Map<string, number>();
-    const walk = (n: FileNode): void => {
-      prevSizes.set(n.path, n.size);
-      if (n.children) for (const c of n.children) walk(c);
+    const prevOf = prevSizeLookup(found.prev.tree, rootPath);
+    const mark = (n: { path: string; prevSize?: number | null }): void => {
+      const was = prevOf(n.path);
+      if (was === undefined) delete n.prevSize;
+      else n.prevSize = was;
     };
-    walk(inflateSnapshotTree(found.prev.tree, rootPath, found.prev.snapshot.takenAt));
-    for (const n of nodes) n.prevSize = prevSizes.get(n.path) ?? null;
+    for (const n of nodes) mark(n);
     const annotate = (n: FileNode & { prevSize?: number | null }): void => {
-      n.prevSize = prevSizes.get(n.path) ?? null;
+      mark(n);
       if (n.children) for (const c of n.children) annotate(c);
     };
     annotate(root);

@@ -4,8 +4,14 @@ import assert from 'node:assert/strict';
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-snapshotTrees-data-');
 
-import { FileNode } from '../src/models/types';
-import { buildSnapshotTree, inflateSnapshotTree, closestSnapshot } from '../src/services/snapshots';
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+import { fileTempDir } from './fixtures/dataDir';
+import { FileNode, ScanResult, SnapshotTreeNode } from '../src/models/types';
+import { buildSnapshotTree, inflateSnapshotTree, closestSnapshot, prevSizeLookup, saveSnapshot } from '../src/services/snapshots';
+import { createApp } from '../src/server';
+import { resetRateLimiter } from '../src/middleware/rateLimiter';
 
 /** Unit tests for the time-slider snapshot-tree logic (pure functions). */
 
@@ -92,4 +98,82 @@ test('closestSnapshot picks the nearest takenAt in either direction', () => {
   assert.equal(closestSnapshot(snaps, 320)!.takenAt, 400);
   assert.equal(closestSnapshot(snaps, 9999)!.takenAt, 400);
   assert.equal(closestSnapshot([], 5), null);
+});
+
+/* ---------- the time slider's diff overlay reads a cut list as a cut list (leftover HE-L4) ---------- */
+
+/** 40 files in `root`, f01 the largest; `sizeOf` may change one. */
+function forty(root: string, sizeOf: (name: string, size: number) => number = (_n, s) => s): FileNode[] {
+  return Array.from({ length: 40 }, (_, i) => {
+    const name = `f${String(i + 1).padStart(2, '0')}`;
+    return file(`${root}/${name}`, name, sizeOf(name, 1000 - i * 10));
+  });
+}
+
+test('a stored tree marks a folder whose children it cut, and the overlay\'s lookup reads an item missing from it as unknown, never as new (leftover HE-L4)', () => {
+  const prev = buildSnapshotTree(dir('/data', 'data', [
+    ...forty('/data'),
+    dir('/data/sub', 'sub', [file('/data/sub/a', 'a', 5000), file('/data/sub/b', 'b', 4000)]),
+  ]));
+  assert.equal(prev.m, 1, 'the tree says it marks its cut folders');
+  assert.equal(prev.k, 1, 'the folder of 41 children kept 30: cut');
+  assert.equal(prev.c?.find((c) => c.n === 'sub')?.k, undefined, 'a folder whose every child was kept is not');
+  const prevOf = prevSizeLookup(prev, '/data');
+  assert.equal(prevOf('/data/f01'), 1000, 'a stored item has its size');
+  assert.equal(prevOf('/data/f31'), undefined, 'one past the cut is not known to have been absent');
+  assert.equal(prevOf('/data/sub/new'), null, 'one missing from a whole list did not exist');
+  assert.equal(prevOf('/data/sub/new/deeper'), null, 'nor did anything inside it');
+  // At the depth limit no children are stored at all: what was in that folder is not known.
+  const deep = buildSnapshotTree(dir('/r', 'r', [dir('/r/a', 'a', [dir('/r/a/b', 'b', [dir('/r/a/b/c', 'c', [file('/r/a/b/c/x', 'x', 10)])])])]));
+  assert.equal(prevSizeLookup(deep, '/r')('/r/a/b/c/y'), undefined);
+  assert.equal(prevSizeLookup(deep, '/r')('/r/a/b/c'), 10);
+});
+
+test('a tree an earlier build stored, with no marks, is read as cut wherever it kept as many children as the narrowest shape keeps (leftover HE-L4)', () => {
+  const kids = (n: number): SnapshotTreeNode[] => Array.from({ length: n }, (_, i) => ({ n: `k${i}`, s: 100 - i }));
+  const wide: SnapshotTreeNode = { n: 'data', s: 999, t: 1, c: kids(10) };
+  const narrow: SnapshotTreeNode = { n: 'data', s: 999, t: 1, c: kids(3) };
+  assert.equal(prevSizeLookup(wide, '/data')('/data/other'), undefined, 'ten kept: there may have been more');
+  assert.equal(prevSizeLookup(narrow, '/data')('/data/other'), null, 'three kept: that was all of them');
+});
+
+test('GET /api/snapshots/tree sends no "did not exist" for an item that only fell past the previous tree\'s cut (leftover HE-L4)', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-snapshotTrees-overlay-')); // as the route's path guard spells it
+  const tree = (files: FileNode[], subFiles: FileNode[]): FileNode => dir(root, path.basename(root), [...files, dir(path.join(root, 'sub'), 'sub', subFiles)]);
+  const at = (name: string): string => path.join(root, name);
+  const scanOf = (t: FileNode, when: number): ScanResult => ({
+    scanId: `overlay-${when}`, rootPath: root, status: 'complete', scanned: 0, fileCount: 0, dirCount: 0, currentPath: '',
+    root: t, startedAt: when, finishedAt: when, createdAt: when, cancelled: false,
+  }) as unknown as ScanResult;
+  const files = (sizeOf?: (n: string, s: number) => number): FileNode[] => forty(root, sizeOf).map((f) => ({ ...f, path: at(f.name) }));
+  await saveSnapshot(scanOf(tree(files(), [file(path.join(root, 'sub', 'a'), 'a', 5000)]), 1_000_000));
+  // sub and the largest 29 files were kept; f05 and f06 shrink to 1 byte, so f30 and f31 — unchanged —
+  // are now among the largest 30 kept; sub gains b.
+  await saveSnapshot(scanOf(tree(files((n, s) => (n === 'f05' || n === 'f06' ? 1 : s)), [file(path.join(root, 'sub', 'a'), 'a', 5000), file(path.join(root, 'sub', 'b'), 'b', 3000)]), 2_000_000));
+  resetRateLimiter();
+  const server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  let body: { nodes: (FileNode & { prevSize?: number | null })[]; tree: FileNode & { children?: (FileNode & { prevSize?: number | null })[] } };
+  try {
+    const port = (server.address() as { port: number }).port;
+    body = await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port, path: `/api/snapshots/tree?path=${encodeURIComponent(root)}&at=2000000` }, (res) => {
+        let buf = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: string) => { buf += c; });
+        res.on('end', () => resolve(JSON.parse(buf)));
+      }).on('error', reject);
+    });
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+  const node = (p: string) => body.nodes.find((n) => n.path === p);
+  for (const name of ['f30', 'f31']) {
+    assert.ok(node(at(name)), `${name} is drawn`);
+    assert.equal('prevSize' in (node(at(name)) as object), false, `${name} is not called new: ${JSON.stringify(node(at(name)))}`);
+  }
+  assert.equal(node(at('f01'))?.prevSize, 1000, 'a stored item is compared');
+  assert.equal(node(path.join(root, 'sub', 'b'))?.prevSize, null, 'an item missing from a whole list is new');
+  const treeKid = body.tree.children?.find((c) => c.path === at('f31'));
+  assert.equal(treeKid !== undefined && 'prevSize' in treeKid, false, 'the sunburst\'s tree says the same');
 });

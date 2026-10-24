@@ -204,6 +204,8 @@ function compactTree(store: ScanStore, id: number, depth: number, perDir: number
       const rest = bySize.slice(perDir).filter(unlisted);
       const extra = rest.slice(0, perDir);
       if (rest.length > extra.length) out.u = 1;
+      // Children with bytes left out of `c` (leftover HE-L4): one missing from it may still have been there.
+      if (bySize.length > perDir + extra.length) out.k = 1;
       const kids = [...bySize.slice(0, perDir), ...extra].map((c) => compactTree(store, c, depth - 1, perDir));
       if (kids.length) out.c = kids;
     }
@@ -214,12 +216,56 @@ function compactTree(store: ScanStore, id: number, depth: number, perDir: number
 /** Build the stored tree, stepping down the shape ladder until it fits the budget. */
 export function buildSnapshotTree(source: TreeSource): SnapshotTreeNode {
   const store = asStore(source);
-  let tree = compactTree(store, store.rootId, TREE_SHAPES[0].depth, TREE_SHAPES[0].perDir);
+  // The root says the tree marks its cut folders (`k`, leftover HE-L4), so a reader can tell it from one
+  // an earlier build stored.
+  const shaped = (i: number): SnapshotTreeNode => ({ ...compactTree(store, store.rootId, TREE_SHAPES[i].depth, TREE_SHAPES[i].perDir), m: 1 });
+  let tree = shaped(0);
   for (let i = 1; i < TREE_SHAPES.length; i++) {
     if (JSON.stringify(tree).length <= TREE_BYTE_BUDGET) break;
-    tree = compactTree(store, store.rootId, TREE_SHAPES[i].depth, TREE_SHAPES[i].perDir);
+    tree = shaped(i);
   }
   return tree;
+}
+
+/** The fewest children any shape keeps per folder: an unmarked folder that kept this many may have had more. */
+const NARROWEST_PER_DIR = Math.min(...TREE_SHAPES.map((shape) => shape.perDir));
+
+/**
+ * What the previous stored tree knows of each path, for the time slider's diff overlay (leftover HE-L4):
+ * its size where the tree stored it; null where it was not there — the nearest folder above it that the
+ * tree stored listed every child with bytes; undefined where that is not known, because that folder's
+ * list was cut to its largest children, or it sat at the depth limit with none stored. A tree an earlier
+ * build stored carries no marks (`m`): there a folder that kept as many children as the narrowest shape
+ * keeps is read as cut. An item that only fell past the cut is never drawn as new.
+ */
+export function prevSizeLookup(prev: SnapshotTreeNode, rootPath: string): (p: string) => number | null | undefined {
+  const sep = separatorOf(rootPath);
+  const join = (parent: string, name: string): string => parent + (parent.endsWith(sep) ? '' : sep) + name;
+  const marked = prev.m === 1;
+  const sizes = new Map<string, number>();
+  const cut = new Set<string>();
+  const walk = (t: SnapshotTreeNode, p: string): void => {
+    sizes.set(p, t.s);
+    if (t.t === 1) {
+      const atDepthLimit = t.c === undefined && t.s > 0;
+      if (atDepthLimit || (marked ? t.k === 1 : (t.c?.length ?? 0) >= NARROWEST_PER_DIR)) cut.add(p);
+    }
+    for (const c of t.c ?? []) walk(c, join(p, c.n));
+  };
+  walk(prev, rootPath);
+  return (p) => {
+    const size = sizes.get(p);
+    if (size !== undefined) return size;
+    if (p === rootPath || !p.startsWith(rootPath)) return undefined;
+    // The folders from the root down to the one holding `p`; the deepest the tree stored decides.
+    const names = p.slice(rootPath.length).split(sep).filter(Boolean);
+    let decided: number | null | undefined = undefined;
+    for (let i = 0, at = rootPath; i < names.length; at = join(at, names[i]), i++) {
+      if (!sizes.has(at)) break;
+      decided = cut.has(at) ? undefined : null;
+    }
+    return decided;
+  };
 }
 
 /**

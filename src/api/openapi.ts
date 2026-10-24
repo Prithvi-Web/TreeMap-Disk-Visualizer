@@ -393,7 +393,7 @@ const schemas: Json = {
       container: ref('ContainerKind'),
       virtual: bool(),
       logicalSize: int(),
-      prevSize: nullable(int('Historical layouts only: size in the previous snapshot; null = did not exist')),
+      prevSize: nullable(int('Historical layouts only: size in the previous snapshot; null = did not exist (the folder holding it in the previous snapshot listed every child with bytes); absent when that is not known — the previous snapshot kept only its largest children there, or none at its depth limit')),
     },
     ['name', 'path', 'size', 'type', 'modifiedAt', 'depth', 'expanded', 'x', 'y', 'w', 'h'],
   ),

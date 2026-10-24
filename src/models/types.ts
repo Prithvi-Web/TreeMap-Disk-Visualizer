@@ -709,6 +709,14 @@ export interface SnapshotTreeNode {
    * build stored.
    */
   u?: 1;
+  /**
+   * Present (1) = a folder some of whose children (with bytes) the stored tree left out, past the largest
+   * it keeps per folder (leftover HE-L4): an item missing from `c` is not known to have been absent. Set
+   * only on trees that carry `m`.
+   */
+  k?: 1;
+  /** Present (1) on the root of a tree that marks its cut folders with `k`; absent on trees an earlier build stored. */
+  m?: 1;
   c?: SnapshotTreeNode[];
 }
 
