@@ -765,7 +765,7 @@ test('the index badge says what it shows in its own region a frame after it show
 
 const REFRESH_FAILED = 'Index may be out of date — the refresh failed, so what is shown may be older.';
 
-test('a quiet rescan that fails takes "Up to date" off the index badge it turns amber: the badge says the refresh failed and what is shown may be older — and the toast is what says it: neither the badge\'s region nor the scan\'s says it again (BQT item 25, BQU item 35)', () => {
+test('a quiet rescan that fails takes "Up to date" off the index badge it turns amber: the badge says the refresh failed and what is shown may be older — and the toast is what says it, all of it, the tree shown being the saved index\'s too: neither the badge\'s region nor the scan\'s says it again (BQT item 25, BQU item 35, review F1.2, F1.9)', () => {
   const noop = () => {};
   const st = { scanning: true, view: 'dashboard', heldBehindIndex: null };
   const toasted: string[] = [];
@@ -780,10 +780,13 @@ test('a quiet rescan that fails takes "Up to date" off the index badge it turns 
   assert.equal(p.$('indexBadge').classList.contains('stale'), true, 'control: the badge turns amber');
   assert.equal(p.$('indexBadge').textContent, REFRESH_FAILED, 'and its words say what happened, never "Up to date" beside an amber dot');
   assert.doesNotMatch(p.$('indexBadge').title, /updates itself/, 'nor does its tooltip promise an index kept current');
-  assert.deepEqual(toasted, ['Couldn’t refresh this folder: That folder no longer exists.'], 'control: the toast says the refresh failed, and why');
+  assert.deepEqual(toasted, ['Couldn’t refresh this folder: That folder no longer exists. What is shown comes from its saved index and may be older.'],
+    'the toast, the one voice left, says the refresh failed, why, and that the tree on screen is the saved index\'s and may be older — which the badge and the status line show, and nothing else says (review F1.2, F1.9)');
   assert.equal(p.$('indexBadgeSaid').textContent, '', 'the badge\'s old words are taken back at once');
   p.frame();
   p.frame();
+  const spoken = [...toasted, ...p.$('indexBadgeSaid').said, ...p.$('scanAnnounce').said];
+  assert.equal(spoken.filter((s) => /saved index|may be older/.test(s)).length, 1, 'that what is shown may be older is said once, by the toast, and nowhere else');
   assert.equal(p.$('indexBadgeSaid').textContent, '', 'and its new words are not said there: the toast says the refresh failed, and on the Dashboard it was heard a third time');
   assert.deepEqual(p.$('scanAnnounce').said, [''], 'nor does the scan\'s region say it: it is emptied, its count over');
   p.fns.renderIndexBadge({ indexed: true, path: '/r', root: { path: '/r', state: 'stale', live: true, staleReason: 'A change was missed.' } });

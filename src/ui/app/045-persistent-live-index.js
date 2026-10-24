@@ -421,8 +421,9 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
  * skeletons and "Index live — always current" underneath. The tree itself is
  * still good — it came from the index — so it stays; what has to end is the
  * pretence that something is still happening, and the badge's claim that the
- * index is current, which is exactly what just failed to be confirmed. Said
- * three ways: the status line, a screen reader's announcement, and a toast.
+ * index is current, which is exactly what just failed to be confirmed. Shown
+ * in the status line and on the badge, neither of which is a live region, and
+ * said once, by the toast (BQU item 35; review F1.2, F1.9).
  *
  * (There were two of these, and the second, declared later in the one page
  * script, silently replaced this one everywhere — tests/frontendContract now
@@ -440,7 +441,9 @@ function quietRescanFailed(e) {
   // The toast is what says it (BQU item 35): the scan's own region, outside
   // every view, said it in the same words, and on the Dashboard the badge's
   // region said it a third time. The region is emptied — what it said of the
-  // refresh, "Checking for changes…" or a count, is over.
+  // refresh, "Checking for changes…" or a count, is over. So the toast says
+  // all of it, below: the tree on screen being the saved index's, and maybe
+  // older, too — the badge's region said that, and nothing else does now.
   $('scanAnnounce').textContent = '';
   // Amber, the badge kept the words it was painted with: "Up to date — updates
   // itself as files change" beside the dot that says it may not be. Its words
@@ -453,7 +456,8 @@ function quietRescanFailed(e) {
   badge.innerHTML = '<span class="dot"></span><span>' + failed + '</span>';
   badge.title = 'The refresh of this folder failed, so what is shown comes from its saved index and may be older.';
   if (typeof sayAloud === 'function') sayAloud('indexBadgeSaid', badge.hidden ? '' : failed, true);
-  toast('Couldn’t refresh this folder: ' + why, 'error');
+  // The reason, then the consequence, each its own sentence (asSentences' rule, 010: a stop where the reason has none).
+  toast('Couldn’t refresh this folder: ' + why + (/[.!?…]$/.test(why) ? ' ' : '. ') + 'What is shown comes from its saved index and may be older.', 'error');
   // The view on screen says what it will now never be drawn from: Disk City's
   // "loading this folder…" and the Reclaim legend's "scoring starts once this
   // folder's scan finishes" were of a scan that will not land, and nothing

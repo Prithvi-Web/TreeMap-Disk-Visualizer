@@ -945,7 +945,8 @@ test('a failed background rescan clears the spinner, the skeletons and the Stop 
   assert.doesNotMatch(els.indexBadge.innerHTML, /Up to date/, 'the badge no longer says it is up to date');
   assert.match(els.indexBadge.innerHTML, /<span class="dot"><\/span><span>Index may be out of date — the refresh failed, so what is shown may be older\.<\/span>/,
     'it says what happened: the refresh failed, and what is shown may be older');
-  assert.deepEqual(toasts, [['Couldn’t refresh this folder: That folder no longer exists.', 'error']]);
+  // And all of it: the scan's region and the badge's say none of it, so the toast says the tree shown is the saved index's too (review F1.2, F1.9).
+  assert.deepEqual(toasts, [['Couldn’t refresh this folder: That folder no longer exists. What is shown comes from its saved index and may be older.', 'error']]);
   // The view on screen is re-entered, as failScan re-enters it: Disk City's
   // "loading this folder…" and the Reclaim legend's wait were of a scan that
   // will not land, and nothing else redraws them (review F3.4).
@@ -954,7 +955,7 @@ test('a failed background rescan clears the spinner, the skeletons and the Stop 
   // A rejection that is not an Error still ends the chrome and says something.
   toasts.length = 0;
   assert.doesNotThrow(() => run(undefined as unknown as Error), 'an answer with no message cannot leave the spinner up');
-  assert.deepEqual(toasts, [['Couldn’t refresh this folder: the folder could not be read', 'error']]);
+  assert.deepEqual(toasts, [['Couldn’t refresh this folder: the folder could not be read. What is shown comes from its saved index and may be older.', 'error']], 'a reason with no stop of its own is given one');
 });
 
 /* ══════════════ states-errors-3 — a small folder is never a blank canvas ══════════════ */
