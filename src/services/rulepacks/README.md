@@ -26,6 +26,7 @@ typo fails loudly instead of silently doing nothing.
 | `confidence` | `high`, `medium`, `low` |
 | `action` | `trash` (default) or `advice` |
 | `os` | optional subset of `darwin`, `win32`, `linux` |
+| `adviceCovers` | optional, advice rules only: `folder` (see below) |
 
 ### Kinds
 
@@ -123,6 +124,14 @@ showing the supported way to reclaim it. Windows' Temp folder for the account
 programs write there expecting the folder itself to exist, so it is no
 "Developer cache" to move to the Recycle Bin whole; Windows' Storage settings
 clear what nothing is using.
+
+What an advice rule covers: by default the folder it claims and everything in
+it — a VM disk in Docker's data folder is the data, so MCP `trash_paths`
+refuses the folder, any file in it and any folder holding it. A rule whose
+advice is about its folder itself carries `"adviceCovers": "folder"`
+(advice rules only; `folder` is the one value): `trash_paths` then refuses
+that folder and a folder holding it, never a file or folder in it. The Temp
+rule carries it: the folder must stay, while a file in it is a file.
 
 ## Deliberately absent
 

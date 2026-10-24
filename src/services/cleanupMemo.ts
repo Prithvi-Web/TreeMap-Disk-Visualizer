@@ -189,6 +189,8 @@ export interface AdviceClaim {
   path: string;
   title: string;
   adviceCommand?: string;
+  /** The rule's advice is about this folder itself, not what it holds (`adviceCovers: "folder"`, hunt HF-L1). */
+  folderOnly?: true;
 }
 
 /**
@@ -200,7 +202,9 @@ export async function adviceClaimsFor(store: ScanStore, catalog: RuleCatalog): P
   const claims = await answer(store, 'advice', keyOf(catalog, [], []), async () => {
     const found: AdviceClaim[] = [];
     const walk = await collectCleanupSuggestionsAsync(store, [], catalog, (rule, path) => {
-      if (rule.action === 'advice') found.push({ path, title: rule.title, ...(rule.adviceCommand ? { adviceCommand: rule.adviceCommand } : {}) });
+      if (rule.action === 'advice') {
+        found.push({ path, title: rule.title, ...(rule.adviceCommand ? { adviceCommand: rule.adviceCommand } : {}), ...(rule.adviceCovers === 'folder' ? { folderOnly: true as const } : {}) });
+      }
     }, [], walkOptions);
     return { walk, value: found };
   });

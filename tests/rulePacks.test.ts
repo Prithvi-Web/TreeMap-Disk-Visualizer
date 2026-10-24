@@ -128,6 +128,9 @@ const REJECTED: Array<[string, unknown, RegExp]> = [
   ['an empty names list', pack({}, { names: [] }), /names must be a non-empty array/],
   ['an unknown platform', pack({}, { os: ['plan9'] }), /expected darwin, win32, linux/],
   ['advice with nothing to advise', pack({}, { action: 'advice' }), /no adviceCommand to offer instead/],
+  // Hunt HF-L1: what an advice rule's "never trash it" covers is said only by an advice rule, and only as `folder`.
+  ['a trash rule saying what its advice covers', pack({}, { adviceCovers: 'folder' }), /has adviceCovers but action "trash": only an advice rule says what it covers/],
+  ['an advice rule covering an unknown extent', pack({}, { action: 'advice', adviceCommand: 'x', adviceCovers: 'files' }), /rules\[0\]\.adviceCovers must be one of folder/],
   ['a project rule with no restore command', pack({}, { kind: 'project-directory', names: ['x'] }), /restoreCommand must be a non-empty string/],
   ['a project rule whose required children are none', pack({}, { kind: 'project-directory', names: ['x'], restoreCommand: 'x', requiresChild: [] }), /rules\[0\]\.requiresChild must be a non-empty array/],
   ['a project rule whose required child is not a name', pack({}, { kind: 'project-directory', names: ['x'], restoreCommand: 'x', requiresChild: [' '] }), /rules\[0\]\.requiresChild\[0\] must be a non-empty string/],

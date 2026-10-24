@@ -43,6 +43,13 @@ interface RuleBase {
   /** How the user gets the space back properly, when trashing is not the way. */
   adviceCommand?: string;
   /**
+   * What an advice rule's "never trash it" covers (hunt HF-L1): absent, the folder it claims and
+   * everything in it (a VM disk in Docker's data folder is the data); `folder`, the folder itself
+   * only — Windows' Temp folder, which programs expect to exist, while a file in it is a file.
+   * Read by MCP trash_paths' advice-only refusal; a folder holding the item is refused either way.
+   */
+  adviceCovers?: 'folder';
+  /**
    * Which package ecosystem this belongs to (§C6). Read only by the orphan
    * scanner — Smart suggestions ignores it entirely, so tagging a rule cannot
    * change what the Clean Up list shows.
@@ -179,7 +186,7 @@ const KINDS: RuleKind[] = ['project-directory', 'directory', 'file', 'location',
 const PLATFORMS = ['darwin', 'win32', 'linux'];
 
 /** Every key a rule may carry, per kind. Anything else is a typo, and rejected. */
-const COMMON_KEYS = ['id', 'kind', 'title', 'description', 'category', 'confidence', 'action', 'os', 'adviceCommand', 'ecosystem'];
+const COMMON_KEYS = ['id', 'kind', 'title', 'description', 'category', 'confidence', 'action', 'os', 'adviceCommand', 'adviceCovers', 'ecosystem'];
 const KIND_KEYS: Record<RuleKind, string[]> = {
   'project-directory': ['names', 'requiresSibling', 'requiresChild', 'forbidsChild', 'restoreCommand', 'ownerManifest', 'evidence'],
   directory: ['names'],
@@ -296,6 +303,10 @@ export function validateRulePack(packName: string, raw: unknown): { rules: Rule[
     // no `that`, it is just an unactionable warning.
     if (base.action === 'advice' && !base.adviceCommand) {
       fail(packName, `${at} has action "advice" but no adviceCommand to offer instead`);
+    }
+    if (entry.adviceCovers !== undefined) {
+      base.adviceCovers = requireEnum<'folder'>(packName, `${at}.adviceCovers`, entry.adviceCovers, ['folder']);
+      if (base.action !== 'advice') fail(packName, `${at} has adviceCovers but action "${base.action}": only an advice rule says what it covers`);
     }
 
     let rule: Rule;

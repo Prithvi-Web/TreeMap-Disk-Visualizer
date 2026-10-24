@@ -16,7 +16,9 @@ import type { Rule, RuleCatalog, ProjectDirRule } from './rulePacks';
  * first is not refused for an advice rule that also names it, as the suggestions offer it. A project
  * rule's sibling and child conditions are read from the disk; one that cannot be read is taken as
  * met by an advice rule and as unmet by a trash rule, so an unreadable folder only ever refuses more.
- * The path itself, when it is a file, is judged by the file rules instead.
+ * The path itself, when it is a file, is judged by the file rules instead. A folder above it whose
+ * deciding rule says its advice is about the folder itself (`adviceCovers: "folder"`: Windows' Temp
+ * folder) refuses nothing in it — only that folder, and a folder holding it (hunt HF-L1).
  */
 
 /** An advice-only rule's claim on a path: the folder or file it claims, and its words. */
@@ -89,7 +91,9 @@ export function adviceHitAlong(p: string, catalog: RuleCatalog): AdviceHit | nul
     if (own) return own;
   }
   for (let at = path.dirname(p); ; at = path.dirname(at)) {
-    const above = hit(folderRule(catalog, at), at);
+    // A rule whose advice is about its folder itself (`adviceCovers: "folder"`) claims nothing in it (hunt HF-L1).
+    const rule = folderRule(catalog, at);
+    const above = rule?.adviceCovers === 'folder' ? null : hit(rule, at);
     if (above) return above;
     if (path.dirname(at) === at) return null;
   }

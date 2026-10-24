@@ -41,6 +41,7 @@
       "confidence": "high",
       "action": "advice",
       "adviceCommand": "Settings ▸ System ▸ Storage ▸ Temporary files",
+      "adviceCovers": "folder",
       "paths": ["{localAppData}/Temp"]
     },
     {

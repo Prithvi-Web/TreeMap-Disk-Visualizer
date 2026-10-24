@@ -12,7 +12,7 @@ import {
 import { DEFAULT_DUPLICATE_MIN_SIZE, getDuplicateJob } from '../services/duplicateFinder';
 import { computeFacts } from '../services/facts';
 import type { ReclaimScoreFactValue } from '../services/facts';
-import { adviceClaimsFor, cleanupSuggestionsCountedFor } from '../services/cleanupMemo';
+import { adviceClaimsFor, cleanupSuggestionsCountedFor, type AdviceClaim } from '../services/cleanupMemo';
 import { suppressedNoteRoots } from '../services/notes';
 import { ruleCatalogStatus } from '../services/rulePacks';
 import { adviceHitAlong } from '../services/adviceGuard';
@@ -244,8 +244,9 @@ function advisoryRefusal(p: string, relation: 'is in' | 'holds', hit: { path: st
  * against the rules (adviceGuard), whatever folder a scan started at: the cleanup walk examines only
  * what lies below a scan's root, so a scan rooted at an advice-only folder, or inside one, claimed
  * nothing (review F1.2, F1.5). A folder holding one is refused where a completed scan's walk finds it
- * inside. Fails closed when the rule packs cannot be read: then nothing can say which paths are
- * advice only.
+ * inside. A rule whose advice is about its folder itself (`adviceCovers: "folder"`: Windows' Temp
+ * folder) refuses that folder and a folder holding it, not what is in it (hunt HF-L1). Fails closed
+ * when the rule packs cannot be read: then nothing can say which paths are advice only.
  */
 async function refuseAdvicePaths(paths: string[]): Promise<void> {
   const spellings = paths.map((p) => ({ p, as: [...new Set([p, livesAt(p)])] }));
@@ -263,12 +264,20 @@ async function refuseAdvicePaths(paths: string[]): Promise<void> {
   }
   const scans = allScans().filter((scan) => scan.status === 'complete' && (scan.store || scan.root)
     && spellings.some(({ as }) => as.some((q) => touches(scan.rootPath, q))));
+  // A claim whose advice is about its folder itself (Windows' Temp folder) refuses that folder and a
+  // folder holding it, never what is in it (hunt HF-L1).
+  const relationOf = (claim: AdviceClaim, q: string): 'is in' | 'holds' | null => {
+    if (isInside(claim.path, q) && (claim.folderOnly !== true || isInside(q, claim.path))) return 'is in';
+    return isInside(q, claim.path) ? 'holds' : null;
+  };
   for (const scan of scans) {
     const claims = await adviceClaimsFor(storeOf(scan), catalog.catalog);
     for (const { p, as } of spellings) {
-      const hit = claims.find((c) => as.some((q) => touches(c.path, q)));
-      if (hit === undefined) continue;
-      throw advisoryRefusal(p, as.some((q) => isInside(hit.path, q)) ? 'is in' : 'holds', hit);
+      for (const claim of claims) {
+        const relations = as.map((q) => relationOf(claim, q));
+        if (relations.includes('is in')) throw advisoryRefusal(p, 'is in', claim);
+        if (relations.includes('holds')) throw advisoryRefusal(p, 'holds', claim);
+      }
     }
   }
 }
@@ -710,7 +719,8 @@ export function buildMcpServer(): McpServer {
         'must never be trashed — its files are data (a VM disk) or the operating system\'s; reclaim that space with ' +
         'its adviceCommand instead, and trash_paths refuses its paths (ADVISORY_PATH). totalBytes counts only the ' +
         'other groups, and advisoryBytes the advice-only ones. Items of the other groups lie inside the scanned root ' +
-        'and can be passed to trash_paths. itemCount is every match; items lists at most itemsPerGroup of them, and ' +
+        'and can be passed to trash_paths, unless the scan was rooted inside an advice-only folder, whose contents ' +
+        'trash_paths refuses. itemCount is every match; items lists at most itemsPerGroup of them, and ' +
         'itemsTruncated says when there are more.',
       inputSchema: {
         scanId: z.string().min(1).describe('A completed scan from scan_path'),
@@ -948,7 +958,8 @@ export function buildMcpServer(): McpServer {
         'run carries the same openHandles for the check it made before moving anything (none with ' +
         'ignoreOpenHandles, which skips the check). A path of a cleanup_suggestions group with advisory: true — the ' +
         'item, anything inside it or a folder holding it — is refused (ADVISORY_PATH): its files are data or the ' +
-        'operating system\'s, and its adviceCommand is the way to reclaim them.',
+        'operating system\'s, and its adviceCommand is the way to reclaim them. Where the rule\'s advice is about ' +
+        'the folder itself (Windows\' Temp folder), only that folder and a folder holding it are refused, not what is in it.',
       inputSchema: {
         paths: z.array(z.string().min(1)).min(1).max(MAX_PATHS).describe('Files/folders to trash (inside a scanned root)'),
         dryRun: z.boolean().default(false).describe('true = report the manifest, act on nothing'),

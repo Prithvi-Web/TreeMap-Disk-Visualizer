@@ -1270,7 +1270,10 @@ read-what-you-saw) permission to act.
   judged from the path itself — it and every folder above it read against
   the rules as the walk reads a folder, so a scan rooted at the item or
   inside it refuses alike — and a folder holding one that a completed scan
-  lists inside it. While a rule pack cannot be read it trashes nothing
+  lists inside it. A rule whose advice is about its folder itself
+  (`adviceCovers: "folder"` in its pack: Windows' Temp folder, which
+  programs expect to exist) refuses only that folder and a folder holding
+  it, never a file or folder in it. While a rule pack cannot be read it trashes nothing
   (`500 RULE_PACKS_UNAVAILABLE`): nothing can say which paths are advice
   only.
 - A size field is a raw byte count. Many have a human-formatted twin beside
