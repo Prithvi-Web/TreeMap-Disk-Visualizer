@@ -91,6 +91,43 @@ test('an answer that lands after Trends was left builds nothing in the hidden vi
   assert.deepEqual(h.painted, [], 'no chart, strip or deltas drawn for a view that is not open');
 });
 
+/** renderTrendDeltas over stand-ins, its comparison answer pending until the test settles it. */
+function deltasHarness() {
+  const host = { innerHTML: 'before' };
+  let settle!: { resolve: (v: unknown) => void; reject: (e: Error) => void };
+  const pending = new Promise<unknown>((resolve, reject) => { settle = { resolve, reject }; });
+  const state = { view: 'trends', trends: { path: '/a', snapshots: [snap('a1', 1), snap('a2', 2)] as unknown[] } };
+  const deps: Record<string, unknown> = {
+    $: () => host, state, api: () => pending,
+    coverageRules: () => null, coverageFor: () => null, formatDate: (t: number) => `d${t}`, cmpWhenPair: () => ['x', 'y'],
+    formatBytes: (n: number) => `${n} B`, escapeHtml: (s: unknown) => String(s), chipFor: () => '', coverageExplains: () => null,
+    FxNum: { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } }, fxBarsIn: () => {},
+  };
+  const keys = Object.keys(deps);
+  const render = new Function(...keys, `${decl('renderTrendDeltas')}\n${decl('deltaRow')}\nreturn renderTrendDeltas;`)(...keys.map((k) => deps[k])) as () => Promise<void>;
+  return { host, state, settle, render };
+}
+
+const STALE_ANSWER = { totalDelta: 999, entries: [{ name: 'gone', path: '/a/gone', type: 'dir', sizeA: 9, sizeB: null, delta: -9 }] };
+
+test('the last-change list drops a comparison answer for the same folder once its history was read again (review F1.19)', async () => {
+  const h = deltasHarness();
+  const running = h.render();
+  h.state.trends.snapshots = [snap('a1', 1), snap('a2', 2), snap('a3', 3)]; // a newer load of /a: its own deltas follow
+  h.settle.resolve(STALE_ANSWER);
+  await running;
+  assert.equal(h.host.innerHTML, 'before', 'the comparison of an older pair is not written over the newer history');
+});
+
+test('a comparison that fails after another folder was picked writes no error under it (review F1.19)', async () => {
+  const h = deltasHarness();
+  const running = h.render();
+  h.state.trends = { path: '/b', snapshots: [snap('b1', 5)] };
+  h.settle.reject(new Error('the comparison of /a failed'));
+  await running;
+  assert.equal(h.host.innerHTML, 'before', 'folder /a\'s failure is not written under folder /b');
+});
+
 test('the last-change list drops a comparison answer for a folder no longer shown', async () => {
   const host = { innerHTML: 'before' };
   const pending = deferred<{ totalDelta: number; entries: unknown[] }>();
