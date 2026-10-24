@@ -1602,8 +1602,9 @@ async function loadCity(rootPath) {
     // it landed (review F2.3).
     cityShowCard(null);
     c.loadFailed = null;
-    renderCrumbs($('cityCrumbs'), want, (p) => loadCity(p));
+    renderCrumbs($('cityCrumbs'), want, (p) => loadCity(p), () => $('cityCanvas'));
     $('cityUpBtn').disabled = true; // no city to climb
+    if (typeof upDisabledKeepFocus === 'function') upDisabledKeepFocus($('cityUpBtn'), $('cityCanvas'));
     renderCityChrome();
     return;
   }
@@ -1620,8 +1621,9 @@ async function loadCity(rootPath) {
     // are this folder's from now, not a trail the last scan left (C03 review
     // F3.4). A city that stands keeps its own until the new one lands.
     if (!c.builtFrom) {
-      renderCrumbs($('cityCrumbs'), want, (p) => loadCity(p));
+      renderCrumbs($('cityCrumbs'), want, (p) => loadCity(p), () => $('cityCanvas'));
       $('cityUpBtn').disabled = want === state.root.path;
+      if (typeof upDisabledKeepFocus === 'function') upDisabledKeepFocus($('cityUpBtn'), $('cityCanvas'));
     }
     // The line, now: "loading", or what still stands without the last
     // failure. A scan change empties the city without drawing it.
@@ -1661,8 +1663,9 @@ async function loadCity(rootPath) {
   cityShowCard(null); // again: a pointer may have raised one over the old city while this loaded
   c.pan = { x: 0, y: 0 };
   c.zoom = 1;
-  renderCrumbs($('cityCrumbs'), state.treemap.rootPath, (p) => loadCity(p));
+  renderCrumbs($('cityCrumbs'), state.treemap.rootPath, (p) => loadCity(p), () => $('cityCanvas'));
   $('cityUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
+  if (typeof upDisabledKeepFocus === 'function') upDisabledKeepFocus($('cityUpBtn'), $('cityCanvas'));
   buildCity();
   cityEnter();
   renderCityTable();

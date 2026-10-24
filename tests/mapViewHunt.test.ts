@@ -354,3 +354,58 @@ test('C22: the Trash building is not one the city\'s line says has "no date yet"
   assert.equal((state.city.blocks as unknown[]).length, 3, 'control: all three are drawn');
   assert.equal(state.city.unknownHeight, 1, 'only Music, whose date may yet be known');
 });
+
+/* ══════════════ C23 — Up, disabled at the scan root, does not drop focus ══════════════ */
+
+test('C23: the Treemap\'s Up, disabled at the scan root while it holds focus, hands focus to the map', async () => {
+  const doc = { activeElement: null as unknown };
+  const canvas = { tagName: 'CANVAS', focus() { doc.activeElement = canvas; } };
+  const el = () => ({ classList: { add() {}, remove() {} }, disabled: false, innerHTML: '', focus() { doc.activeElement = this; } });
+  const els: Record<string, ReturnType<typeof el>> = {};
+  const $ = (id: string) => (els[id] ||= el());
+  for (const mode of ['treemap', 'sunburst']) {
+    const state = {
+      scanId: 's1', scanning: false, root: { path: '/r', name: 'r', size: 100, children: [] }, pathIndex: new Map(),
+      treemap: { mode, rootPath: '/r/a', maxDepth: 4, nodes: [], hover: null, kbSel: null, history: { scrubbing: false, active: false } },
+    };
+    const deps = {
+      state, $, document: doc, tmCanvas: canvas, REDUCED: true,
+      isSun: () => mode === 'sunburst', isCells: () => false, exitCartPreview() {},
+      ensureSubtree: async () => state.root,
+      api: async () => ({ root: { path: '/r', name: 'r', size: 100 }, nodes: [{ path: '/r/a', size: 60, depth: 1 }] }),
+      renderCrumbs() {}, exitHistoryState() {}, refreshTimebar() {}, tmSetEmpty() {}, maybeInjectTrash() {}, altBeginZoom() {}, altCircleFor: () => null,
+      reportError: (e: Error) => { throw e; }, requestAnimationFrame: (f: () => void) => f(), drawView() {},
+    };
+    const loadTreemap = load<(p: string, a?: boolean) => Promise<void>>(['treeScanId', 'TM_MIN_SIZE', 'upDisabledKeepFocus', 'loadTreemap'], deps, 'loadTreemap', 'let tmLoadSeq = 0;');
+    $('tmUpBtn').focus(); // tabbed to, and pressed with Enter
+    await loadTreemap('/r', true);
+    assert.equal($('tmUpBtn').disabled, true, `${mode}: control — Up has nowhere to go at the scan root`);
+    assert.equal(doc.activeElement, canvas, `${mode}: focus is on the map, not left on a disabled button for the browser to drop on <body>`);
+  }
+});
+
+test('C23: Up disabled while focus is elsewhere takes nothing; the Grid and Disk City hand theirs to their own map', () => {
+  const doc = { activeElement: null as unknown };
+  const mk = (tag: string) => { const e = { tagName: tag, disabled: false, focus() { doc.activeElement = e; } }; return e; };
+  const keep = load<(btn: unknown, to: unknown) => void>(['upDisabledKeepFocus'], { document: doc }, 'upDisabledKeepFocus');
+  const up = mk('BUTTON'), map = mk('CANVAS'), other = mk('INPUT');
+  other.focus();
+  up.disabled = true;
+  keep(up, map);
+  assert.equal(doc.activeElement, other, 'focus on something else stays there');
+  up.focus();
+  up.disabled = false;
+  keep(up, map);
+  assert.equal(doc.activeElement, up, 'an Up still enabled keeps its focus');
+  up.disabled = true;
+  const asked = Object.assign(() => map, { focus() { doc.activeElement = 'the function itself'; } });
+  keep(up, asked);
+  assert.equal(doc.activeElement, map, 'a target given as a function is asked at the time');
+  // Every Up button is wired to it, each to its own view's map.
+  const src = (fn: string) => declSource(fn);
+  assert.match(src('renderGrid'), /\$\('gridUpBtn'\)\.disabled = [^;]+;\s*\n\s*if \(typeof upDisabledKeepFocus === 'function'\) upDisabledKeepFocus\(\$\('gridUpBtn'\), \$\('gridSearch'\)\);/);
+  const city = src('loadCity');
+  const wired = city.match(/\$\('cityUpBtn'\)\.disabled = [^;]+;[^\n]*\n\s*if \(typeof upDisabledKeepFocus === 'function'\) upDisabledKeepFocus\(\$\('cityUpBtn'\), \$\('cityCanvas'\)\);/g) || [];
+  const sets = city.match(/\$\('cityUpBtn'\)\.disabled = /g) || [];
+  assert.ok(sets.length >= 1 && wired.length === sets.length, `every place loadCity disables Disk City's Up hands focus on (${wired.length} of ${sets.length})`);
+});

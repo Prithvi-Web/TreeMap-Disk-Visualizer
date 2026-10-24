@@ -860,7 +860,7 @@ function crumbsHarness(opts: { view?: string; selection?: string[]; kbSel?: Reco
   fakeDoc.active = fakeDoc.body;
   class FakeRO { cb: () => void; constructor(cb: () => void) { this.cb = cb; } observe(el: unknown) { observers.push({ cb: this.cb, el }); } }
   type Page = {
-    render: (host: unknown, p: string, onPick: (p: string) => void) => void; keydown: (e: KeyEv) => void;
+    render: (host: unknown, p: string, onPick: (p: string) => void, mapFocus?: () => unknown) => void; keydown: (e: KeyEv) => void;
     exportClick: (e: unknown) => void; showCtxMenu: (x: number, y: number, node: unknown) => void;
     docClick: (e: ClickEv) => void;
   };
@@ -1301,6 +1301,36 @@ test('MEDIUM-1: a crumb a pointer pressed does not hold focus in the redrawn tra
   lib.click();
   h.render(host, '/System/Library', h.onPick); // the load redraws the trail
   assert.equal(host.contains(fakeDoc.active), false, 'focus was not put back on a crumb');
+});
+
+test('C23: the trail redrawn under a pressed crumb hands focus to the view\'s map, never to <body>', () => {
+  // The load the crumb asked for redraws the trail and the pressed crumb goes
+  // with it: focus fell to <body> in the Treemap, the Grid and Disk City (hunt C23).
+  const h = crumbsHarness();
+  const host = makeHost(1400);
+  const toMap = () => h.canvas;
+  h.render(host, DEEP, h.onPick, toMap);
+  const lib = host.buttons.find((b) => b.path === '/System/Library')!;
+  lib.focus();
+  lib.click();
+  h.render(host, '/System/Library', h.onPick, toMap);
+  assert.equal(fakeDoc.active, h.canvas, 'the map the next Enter belongs to');
+  // Focus elsewhere is not taken.
+  const elsewhere = fakeEl('INPUT');
+  elsewhere.focus();
+  h.render(host, '/System', h.onPick, toMap);
+  assert.equal(fakeDoc.active, elsewhere, 'a redraw takes focus only from a crumb it removed');
+});
+
+test('C23: a crumb tabbed to keeps focus when its own trail is re-fitted to a new width', () => {
+  const h = crumbsHarness();
+  const host = makeHost(1400);
+  h.render(host, DEEP, h.onPick, () => h.canvas);
+  host.buttons.find((b) => b.path === '/System/Library')!.focus();
+  host.clientWidth = 1300; // still wide enough to draw every crumb
+  h.observers[0].cb(); // the window resized: the same trail, re-fitted
+  const again = host.buttons.find((b) => b.path === '/System/Library')!;
+  assert.equal(fakeDoc.active, again, 'the same crumb, redrawn, holds focus — not <body>, not the map');
 });
 
 test('MEDIUM-1: Enter on a link, or on anything with a button or menu-item role, is that control\'s press — not the map\'s', () => {

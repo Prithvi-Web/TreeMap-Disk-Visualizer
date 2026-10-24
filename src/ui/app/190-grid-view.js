@@ -142,6 +142,7 @@ async function renderGrid() {
   // Up has nowhere to go at the scan root: say so rather than offer a button
   // that does nothing (QA D43 — the treemap's Up already does this).
   $('gridUpBtn').disabled = !state.root || state.grid.path === state.root.path;
+  if (typeof upDisabledKeepFocus === 'function') upDisabledKeepFocus($('gridUpBtn'), $('gridSearch'));
   await ensureSubtree(state.grid.path);
   if (seq !== gridSeq) return; // a newer navigation superseded this one
 
@@ -186,7 +187,7 @@ async function renderGrid() {
   }
   state.grid.rangeStart = 0; state.grid.rangeEnd = -1;
   renderGridWindow(true);
-  renderCrumbs($('gridCrumbs'), state.grid.path, (p) => gridNavigate(p));
+  renderCrumbs($('gridCrumbs'), state.grid.path, (p) => gridNavigate(p), () => gridTileOnScreen(null) || $('gridSearch'));
   const existing = gridScroll.querySelector('.grid-empty');
   if (existing) existing.remove();
   if (!items.length) {

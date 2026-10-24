@@ -125,8 +125,9 @@ async function loadTreemap(rootPath, animate = false) {
       state.treemap.rootSize = node.size;
       state.treemap.nodes = [];
       state.treemap.hover = null;
-      renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
+      renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true), () => tmCanvas);
       $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
+      if (typeof upDisabledKeepFocus === 'function') upDisabledKeepFocus($('tmUpBtn'), tmCanvas);
       exitHistoryState();
       refreshTimebar();
       tmSetEmpty(''); // the rectangle map's note does not describe these renderers
@@ -158,8 +159,9 @@ async function loadTreemap(rootPath, animate = false) {
         state.treemap.nodesFor = { scanId, path: data.root.path, nodes: data.nodes, size: data.root.size, minSize: floor };
         state.treemap.minSize = floor; // what tmNodeCapNote may say this map leaves out
         state.treemap.hover = null;
-        renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
+        renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true), () => tmCanvas);
         $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
+        if (typeof upDisabledKeepFocus === 'function') upDisabledKeepFocus($('tmUpBtn'), tmCanvas);
         maybeInjectTrash();
         exitHistoryState();
         refreshTimebar();
@@ -226,8 +228,27 @@ async function loadTreemap(rootPath, animate = false) {
    Every ancestor is therefore always one click away, by name or by menu. */
 const CRUMB_FADE_PX = 34; // the .crumbs mask's fade width — a crumb inside it is half legible
 
-/** Shared breadcrumb renderer (treemap + grid + city). */
-function renderCrumbs(host, path, onPick) {
+/**
+ * A view's Up button, just disabled at the scan root while it held focus —
+ * tabbed to and pressed, or Escape pressed on it (hunt C23). A browser hands
+ * focus from a disabled control to <body> (the Scan button's K02), so it goes
+ * to the view's map first (`to`, an element or a function answering one),
+ * where the next key is the map's. Focus anywhere else is left where it is.
+ * Called by every place that disables an Up button: the Treemap's, the
+ * Grid's and Disk City's.
+ */
+function upDisabledKeepFocus(btn, to) {
+  if (!btn || !btn.disabled || document.activeElement !== btn) return;
+  const el = typeof to === 'function' ? to() : to;
+  if (el) el.focus({ preventScroll: true });
+}
+
+/**
+ * Shared breadcrumb renderer (treemap + grid + city). `mapFocus` answers the
+ * view's map, where focus goes when the redraw removes the crumb that held it.
+ * `refit` is a redraw of the same trail at a new width (crumbsWatch).
+ */
+function renderCrumbs(host, path, onPick, mapFocus = null, refit = false) {
   // Focus on "…" stays in the trail (QA-6 review MEDIUM-1): Escape or a
   // pick from its menu puts focus back on "…", and the buttons are rebuilt
   // when the map it opened lands — which used to hand focus to <body>. It
@@ -245,6 +266,12 @@ function renderCrumbs(host, path, onPick) {
   const inMenu = menuHere && $('ctxMenu').contains(active);
   if (menuHere) hideCtxMenu();
   const kept = inMenu || (!!active && host.contains(active) && active.hasAttribute('data-crumb-more'));
+  // A plain crumb holding focus — pressed, or tabbed to — is replaced by the
+  // redraw, and focus fell to <body> (hunt C23). A load it asked for lands
+  // on the view's map, where the next Enter is the map's (MEDIUM-1 above); a
+  // re-fit of the same trail puts it back on the same crumb.
+  const crumbHeld = !kept && !!active && host.contains(active) && !!active.dataset && typeof active.dataset.p === 'string'
+    ? active.dataset.p : null;
   const crumbs = breadcrumbsFor(path);
   // Measured as a trail always is, never as the last fit left it: the tight
   // mark packs to the start, where every trail would read as overflowing.
@@ -264,11 +291,15 @@ function renderCrumbs(host, path, onPick) {
     host.classList.add('crumbs-tight');
     host.title = crumbs[crumbs.length - 1].path;
   }
-  host._crumbs = { path, onPick, width: host.clientWidth };
+  host._crumbs = { path, onPick, width: host.clientWidth, mapFocus };
   crumbsWatch(host);
   if (kept) {
     const buttons = host.querySelectorAll('button');
     const to = host.querySelector('[data-crumb-more]') || buttons[buttons.length - 1];
+    if (to) to.focus({ preventScroll: true });
+  } else if (crumbHeld !== null) {
+    const same = refit ? [...host.querySelectorAll('button[data-p]')].find((b) => b.dataset.p === crumbHeld) : null;
+    const to = same || (typeof mapFocus === 'function' ? mapFocus() : null);
     if (to) to.focus({ preventScroll: true });
   }
 }
@@ -298,7 +329,7 @@ function crumbsWatch(host) {
   host._crumbsRo = new ResizeObserver(() => {
     const last = host._crumbs;
     // Only on a real change of width: the re-fit itself must not feed the observer.
-    if (last && host.clientWidth !== last.width) renderCrumbs(host, last.path, last.onPick);
+    if (last && host.clientWidth !== last.width) renderCrumbs(host, last.path, last.onPick, last.mapFocus, true);
   });
   host._crumbsRo.observe(host);
 }
