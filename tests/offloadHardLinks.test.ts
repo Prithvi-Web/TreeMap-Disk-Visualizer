@@ -33,11 +33,14 @@ destinationsOnAnotherDrive(); // every destination here stands for another drive
 
 const FAKE_TRASH = fileTempDir('treemap-offloadHardLinks-trash-');
 const trashedPaths: string[] = [];
+/** Run inside the stand-in Trash step, right after it took `p`; a test sets it and clears it. */
+let afterTrashStep: ((p: string) => void) | null = null;
 
 before(() => {
   setTrashStepForTests(async (p) => {
     trashedPaths.push(p);
     fs.renameSync(p, path.join(FAKE_TRASH, `${trashedPaths.length}-${path.basename(p)}`));
+    afterTrashStep?.(p);
   });
 });
 
@@ -170,6 +173,34 @@ test('two names of one file, each selected on its own, both go to the Trash with
   assert.equal(job.status, 'complete', job.error);
   assert.equal(job.error, undefined, 'nothing was left in place');
   assert.deepEqual(trashedPaths.slice(before), [a, b], 'both names went to the Trash');
+});
+
+test('a name of a file whose other name went to the Trash is still looked at: written to after that, it stays in place, named as changed (leftover HE-L11)', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-offloadHardLinks-pairWritten-'));
+  const a = path.join(root, 'a.bin');
+  const b = path.join(root, 'b.bin');
+  fs.writeFileSync(a, Buffer.alloc(2000, 8));
+  fs.linkSync(a, b);
+  const scan = createScanRecord(root);
+  scan.status = 'complete';
+  scan.root = dirNode(root, [fileNode(a, 2000), fileNode(b, 0, { hardlinkDuplicate: true })]);
+  const dest = fileTempDir('treemap-offloadHardLinks-pairWritten-dest-');
+  // Between a.bin's trash step and b.bin's own look: the file the two names share grows, through b.bin.
+  afterTrashStep = (p) => { if (p === a) fs.appendFileSync(b, 'written after its copy was made'); };
+  const before = trashedPaths.length;
+  let job: OffloadJob;
+  try {
+    job = await withOpenFileCheck('clear', async () => {
+      const prepared = await prepareOffload(scan, [a, b], dest);
+      return settled((await startOffload(scan, [a, b], dest, prepared)).jobId);
+    });
+  } finally {
+    afterTrashStep = null;
+  }
+  assert.equal(job.status, 'complete', job.error);
+  assert.deepEqual(trashedPaths.slice(before), [a], 'the name written to after its copy was made was not handed to the Trash');
+  assert.ok(fs.existsSync(b), 'it is in place');
+  assert.match(job.error ?? '', /^b\.bin was left in place: it changed after its copy was made \(the copy holds it as it was then\), so it was not moved to the Trash\./, job.error);
 });
 
 test('a name of a file selected on its own, then a folder holding its other name: both go to the Trash', async () => {
