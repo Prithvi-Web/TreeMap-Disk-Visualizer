@@ -14,7 +14,8 @@ import path from 'node:path';
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel: string): string => readFileSync(path.join(ROOT, rel), 'utf8');
-const UNQUALIFIED = /any failure rolls back/i;
+/** "any failure rolls back", "failures roll back completely", … — the promise with no line drawn (review F1.16). */
+const UNQUALIFIED = /\b(any )?failures? (all )?rolls? back/i;
 
 const PLACES: [string, string][] = [
   ['the confirm sheet', read('src/ui/app/125-offload.js')],
@@ -23,6 +24,7 @@ const PLACES: [string, string][] = [
   ['the OpenAPI document', read('src/api/openapi.ts')],
   ['AGENTS.md', read('AGENTS.md')],
   ['README.md', read('README.md')],
+  ['the capabilities manifest (GET /api/capabilities)', read('src/api/metaRoutes.ts')],
 ];
 
 for (const [where, text] of PLACES) {
@@ -42,4 +44,9 @@ test('the MCP offload tool says the same', () => {
   // Its description is written as joined string literals: read as the one sentence it is.
   const joined = read('src/mcp/server.ts').replace(/'\s*\+\s*\n\s*'/g, '');
   assert.match(joined, /A failure before every copy verifies rolls back and leaves local data untouched; after that, an original that cannot go to the Trash, or that changed since its copy was made, stays where it is beside its verified copy/);
+});
+
+test('the capabilities manifest, the agents\' machine-readable safety statement, draws the same line (review F1.10)', () => {
+  const joined = read('src/api/metaRoutes.ts').replace(/'\s*\+\s*\n\s*'/g, '');
+  assert.match(joined, /offload:\s*'Offload copies, verifies SHA-256, and only then trashes originals\. A failure before every copy verifies rolls back and leaves local data untouched; after that, an original that cannot go to the Trash, or that changed since its copy was made, stays where it is beside its verified copy'/);
 });

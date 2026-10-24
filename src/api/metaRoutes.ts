@@ -262,7 +262,9 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
         'or an NTFS stream name such as ::$INDEX_ALLOCATION) refused: 400 PATH_BLOCKED, and never inside a scanned root',
       cloudPaths: "cloud:// paths never touch the local filesystem; their deletes go to the provider's own trash",
       virtualPaths: 'Entries inside archives are listings, not files — only the archive itself can be acted on',
-      offload: 'Offload copies, verifies SHA-256, and only then trashes originals; failures roll back completely',
+      offload:
+        'Offload copies, verifies SHA-256, and only then trashes originals. A failure before every copy verifies rolls back and leaves local data ' +
+        'untouched; after that, an original that cannot go to the Trash, or that changed since its copy was made, stays where it is beside its verified copy',
       dryRun:
         'DELETE /api/files, POST /api/offload and POST /api/offload/restore accept dryRun: true — the exact manifest, nothing acted on',
       policy:
