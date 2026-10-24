@@ -40052,16 +40052,21 @@ async function loadTrends() {
 let trendInfoSeq = 0;
 async function loadTrendData() {
   const seq = ++trendInfoSeq;
+  const path = state.trends.path;
   // FX: the bklit loading veil covers the chart only while its snapshots
   // are genuinely in flight — the finally holds on the error path too.
   const chartWrap = $('trendChart').parentElement;
   chartWrap.classList.add('fx-chart-loading');
   let snapshots;
   try {
-    ({ snapshots } = await api('/api/snapshots?path=' + encodeURIComponent(state.trends.path)));
+    ({ snapshots } = await api('/api/snapshots?path=' + encodeURIComponent(path)));
   } finally {
-    chartWrap.classList.remove('fx-chart-loading');
+    if (seq === trendInfoSeq) chartWrap.classList.remove('fx-chart-loading'); // a newer load's veil is its own
   }
+  // Only the answer for the folder shown, in the view still open (hunt C83): a slow answer for a folder
+  // picked before painted over the one picked after it, and one that landed after Trends was left built
+  // a chart handle in the hidden view after its unmount destroyed it.
+  if (seq !== trendInfoSeq || state.trends.path !== path || state.view !== 'trends') return;
   state.trends.snapshots = snapshots;
   // A new root's growth rate is unknown until the server answers, and unknown
   // never projects — the dashed tail is a claim, not a default.
@@ -40228,6 +40233,7 @@ function drawTrendNet() {
 async function renderTrendDeltas() {
   const host = $('trendDeltas');
   const snaps = state.trends.snapshots;
+  const path = state.trends.path;
   if (snaps.length < 2) {
     host.innerHTML = '<div class="muted">Scan this folder again later — what grew or shrank will show up here.</div>';
     return;
@@ -40235,6 +40241,8 @@ async function renderTrendDeltas() {
   const a = snaps[snaps.length - 2], b = snaps[snaps.length - 1];
   try {
     const diff = await api(`/api/snapshots/compare?a=${a.id}&b=${b.id}`);
+    // A folder picked meanwhile owns the list (hunt C83): its own load draws it.
+    if (state.trends.path !== path || state.trends.snapshots !== snaps) return;
     const up = diff.totalDelta > 0;
     // A change of "Don't scan" rules between the two is what was scanned (B24).
     const rules = coverageRules(coverageFor(a.rootPath, a.id), coverageFor(b.rootPath, b.id));
@@ -40257,6 +40265,7 @@ async function renderTrendDeltas() {
     FxNum.rollHtml(host, head + diff.entries.slice(0, 12).map(en => deltaRow(en, maxD, { rules })).join(''), state.trends.path);
     fxBarsIn(host); // the diverging bars ride the kit's width-in
   } catch (e) {
+    if (state.trends.path !== path || state.trends.snapshots !== snaps) return;
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   }
 }
