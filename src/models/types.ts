@@ -692,6 +692,12 @@ export interface SnapshotTreeNode {
   s: number;
   /** Present (1) = directory. */
   t?: 1;
+  /**
+   * Present (1) = a folder its scan did not list in full (`Flag.Unlisted`: refused, unreadable, not
+   * entered, or entries left out), kept however small (hunt C47): the journal does not read its change as
+   * something a process did. Absent on trees an earlier build stored.
+   */
+  u?: 1;
   c?: SnapshotTreeNode[];
 }
 

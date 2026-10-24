@@ -4,7 +4,7 @@ import path from 'path';
 import { FileNode, ScanResult, Snapshot, SnapshotBoundary, SnapshotDiff, SnapshotDeltaEntry, SnapshotTreeNode } from '../models/types';
 import { appDataDir, readJsonFile, writeJsonFile } from './storage';
 import { isEphemeral } from './portableMode';
-import { ScanStore, TreeSource, asStore, storeOf } from './scanStore';
+import { Flag, ScanStore, TreeSource, asStore, storeOf } from './scanStore';
 import { mountOutcome } from '../utils/mountBoundaries';
 import { separatorOf } from '../utils/pathSeparator';
 
@@ -182,17 +182,21 @@ export async function readSnapshotTrees(rootPath: string): Promise<Record<string
  * Compact a scan tree to one shape rung: largest `perDir` children per
  * directory, `depth` levels deep. Sizes are kept as-is (not re-summed), so a
  * directory's stored size always reflects its full recursive weight even
- * when its smaller children were dropped.
+ * when its smaller children were dropped. A folder the scan did not list in
+ * full is marked (`u`) and kept first, however small (hunt C47): left out, a
+ * refused folder's bytes read to the journal as removed by some process.
  */
 function compactTree(store: ScanStore, id: number, depth: number, perDir: number): SnapshotTreeNode {
   const out: SnapshotTreeNode = { n: store.name(id), s: store.size(id) };
   if (store.isDir(id)) {
     out.t = 1;
+    if (store.flag(id, Flag.Unlisted)) out.u = 1;
     if (depth > 0) {
+      const unlisted = (c: number): number => (store.isDir(c) && store.flag(c, Flag.Unlisted) ? 1 : 0);
       const kids = store
         .childIds(id)
-        .filter((c) => store.size(c) > 0)
-        .sort((a, b) => store.size(b) - store.size(a))
+        .filter((c) => store.size(c) > 0 || unlisted(c) === 1)
+        .sort((a, b) => unlisted(b) - unlisted(a) || store.size(b) - store.size(a))
         .slice(0, perDir)
         .map((c) => compactTree(store, c, depth - 1, perDir));
       if (kids.length) out.c = kids;

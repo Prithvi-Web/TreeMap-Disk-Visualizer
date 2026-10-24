@@ -1128,7 +1128,9 @@ read-what-you-saw) permission to act.
   recorded to `journal.jsonl` (capped and rotated) as sentences with the
   structured fields beside them — path, date, signed byte delta, and an
   attribution that is an app name, `"you"` (a deletion made through TreeMap),
-  or exactly `"an unidentified process"`, never a guess.
+  or exactly `"an unidentified process"`, never a guess. A folder one of
+  the two scans could not list in full (refused, unreadable, not entered)
+  is not read as a change at all, there or in the folder above it.
   `GET /api/journal?limit=100` reads it back, newest first; nothing writes it
   over HTTP.
 - **Folder notes (v4 §9.5).** `GET /api/notes` lists them; `PUT /api/notes`

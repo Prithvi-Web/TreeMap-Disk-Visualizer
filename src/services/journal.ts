@@ -173,15 +173,20 @@ export function significantChanges(prev: SnapshotTreeNode, curr: SnapshotTreeNod
   const sep = separatorOf(rootPath);
   const join = (p: string, n: string): string => p + (p.endsWith(sep) ? '' : sep) + n;
 
+  /** A folder one of the two scans did not list in full (hunt C47): its change is not known, so never reported. */
+  const unread = (x: { p: SnapshotTreeNode; c: SnapshotTreeNode }): boolean => x.p.u === 1 || x.c.u === 1;
   const walk = (p: SnapshotTreeNode, c: SnapshotTreeNode, nodePath: string): void => {
-    const delta = c.s - p.s;
+    if (unread({ p, c })) return;
     const prevKids = new Map((p.c ?? []).map((k) => [k.n, k]));
     const pairs: { p: SnapshotTreeNode; c: SnapshotTreeNode }[] = [];
     for (const kid of c.c ?? []) {
       const prevKid = prevKids.get(kid.n);
       if (prevKid) pairs.push({ p: prevKid, c: kid });
     }
-    const significantKids = pairs.filter((x) => Math.abs(x.c.s - x.p.s) >= SIGNIFICANT_BYTES);
+    // What a folder below that one scan could not read moved is left out of this one's change too:
+    // reported here it read as a remainder some process removed.
+    const delta = c.s - p.s - pairs.filter(unread).reduce((sum, x) => sum + (x.c.s - x.p.s), 0);
+    const significantKids = pairs.filter((x) => !unread(x) && Math.abs(x.c.s - x.p.s) >= SIGNIFICANT_BYTES);
     const explained = significantKids.reduce((sum, x) => sum + (x.c.s - x.p.s), 0);
     // Descend while the children account for the change (opposite-sign child
     // deltas cancel in `explained` exactly as they cancel in `delta`, which is
