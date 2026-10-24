@@ -143,5 +143,8 @@ export function describeConflicts(conflicts: readonly OpenHandleConflict[]): str
         : `${names.slice(0, 2).join(', ')} and ${String(names.length - 2)} other program${names.length - 2 === 1 ? '' : 's'}`;
 
   const what = fileCount === 1 ? 'a file you’re deleting' : `${String(fileCount)} of the files you’re deleting`;
-  return `${who} ${names.length === 1 ? 'has' : 'have'} ${what} open right now. Deleting it may not free the space until that program closes it.`;
+  // The ending agrees with what it counts (hunt C76): several files are "them", several programs "those programs".
+  const them = fileCount === 1 ? 'it' : 'them';
+  const closer = names.length === 1 ? 'that program closes' : 'those programs close';
+  return `${who} ${names.length === 1 ? 'has' : 'have'} ${what} open right now. Deleting ${them} may not free the space until ${closer} ${them}.`;
 }

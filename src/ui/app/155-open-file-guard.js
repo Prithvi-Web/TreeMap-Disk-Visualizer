@@ -381,7 +381,6 @@ async function apiPaced(url, options, tries = 8) {
 async function trashPaths(paths, { silent = false, ignoreOpenHandles = false, onlyEmptyFolders = false, ignoreJunk = true } = {}) {
   if (!paths.length) return { deleted: [], failed: [] };
   await ensureNodes(paths); // real sizes for the "recovered" figure
-  const recovered = paths.reduce((s, p) => s + (nodeFor(p)?.size ?? 0), 0);
 
   const deleted = [], failed = [];
   // A file can be opened between the dialog's check and this request. The
@@ -417,6 +416,18 @@ async function trashPaths(paths, { silent = false, ignoreOpenHandles = false, on
 
   if (!silent) {
     if (deleted.length) {
+      // What moved, not what was asked (hunt C33/C60): a path that failed or a
+      // chunk refused for an open file is still on the disk. A path inside
+      // another that moved is in that one's size already, so it counts once.
+      const moved = new Set(deleted);
+      const inside = (p) => {
+        for (let i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')); i > 0;
+          i = Math.max(p.lastIndexOf('/', i - 1), p.lastIndexOf('\\', i - 1))) {
+          if (moved.has(p.slice(0, i))) return true;
+        }
+        return false;
+      };
+      const recovered = deleted.reduce((s, p) => s + (inside(p) ? 0 : nodeFor(p)?.size ?? 0), 0);
       toast(`Moved ${deleted.length} ${deleted.length === 1 ? 'item' : 'items'} to Trash — ${formatBytes(recovered)}`);
     }
     if (failed.length) {

@@ -421,3 +421,54 @@ test('the progress dialog hands a stopped job\'s event to the page that asked (C
   }
   assert.deepEqual(settled, [{ type: 'error', message: 'x', entriesDone: 2, entryCount: 4 }, { type: 'cancelled', entriesDone: 1, entryCount: 4 }]);
 });
+
+/* ═════════ C33/C60 — "Moved N items to Trash — X" counts what moved, once ═════════ */
+
+async function trashToast(paths: string[], answer: (chunk: string[]) => Promise<unknown>, sizes: Record<string, number>): Promise<string[]> {
+  const toasts: string[] = [];
+  const run = declared<(p: string[], o?: unknown) => Promise<unknown>>('async function trashPaths(paths, { silent = false, ignoreOpenHandles = false, onlyEmptyFolders = false, ignoreJunk = true } = {}) {', {
+    TRASH_CHUNK: 2, ensureNodes: async () => {}, nodeFor: (p: string) => (p in sizes ? { size: sizes[p] } : null),
+    apiPaced: async (_u: string, o: { body: string }) => answer(JSON.parse(o.body).paths), toast: (m: string) => { toasts.push(m); },
+    formatBytes: (n: number) => `${n} B`, rescan: () => {}, reofferBlockedTrash: () => {},
+  });
+  await run(paths);
+  return toasts;
+}
+
+test('the shared Trash toast adds up what moved, not what was asked, and a file inside a moved folder once (C33/C60)', async () => {
+  const sizes = { '/s/a': 1000, '/s/b': 1000, '/s/c': 1000, '/s/d': 1000, '/s/e': 1000 };
+  const oneGone = await trashToast(Object.keys(sizes), async (chunk) => ({
+    deleted: chunk.filter((p) => p !== '/s/e'), failed: chunk.filter((p) => p === '/s/e').map((p) => ({ path: p, reason: 'It is no longer there.' })),
+  }), sizes);
+  assert.ok(oneGone.includes('Moved 4 items to Trash — 4000 B'), `what moved: ${oneGone.join(' | ')}`);
+
+  const blocked = await trashToast(['/s/a', '/s/b', '/s/c'], async (chunk) => {
+    if (chunk.includes('/s/c')) throw Object.assign(new Error('open'), { code: 'OPEN_HANDLE_CONFLICT' });
+    return { deleted: chunk, failed: [] };
+  }, sizes);
+  assert.ok(blocked.includes('Moved 2 items to Trash — 2000 B'), `a refused chunk is not counted: ${blocked.join(' | ')}`);
+
+  const nested = await trashToast(['/s/f', '/s/f/x.bin'], async (chunk) => ({ deleted: chunk, failed: [] }), { '/s/f': 5000, '/s/f/x.bin': 3000 });
+  assert.ok(nested.includes('Moved 2 items to Trash — 5000 B'), `a file inside a folder that moved is in its size already: ${nested.join(' | ')}`);
+});
+
+/* ═════════ C77 — the Trash sheet says when its list is cut ═════════ */
+
+test('the Trash sheet says how many items it does not list, under a header that counts them all (C77)', () => {
+  const { $, els } = makeEls();
+  const open = declared<() => void>('function openTrashModal() {', {
+    $, chipFor: () => '', escapeHtml: (s: unknown) => String(s), icon: () => '', formatBytes: (n: number) => `${n} B`, formatCount: String,
+    state: { trash: { complete: true, totalBytes: 9000, itemCount: 1200, items: Array.from({ length: 500 }, (_, i) => ({ name: `f${i}.bin`, size: 1 })) } },
+  });
+  open();
+  const body = text(els.trashModalBody.innerHTML);
+  assert.match(text(els.trashModalMeta.textContent), /1200 items/, 'control: the header counts every item');
+  assert.match(body, /f499\.bin/, 'control: the 500 listed');
+  assert.match(body, /…and 700 more items, not listed here/, `the rest are said: ${body.slice(-120)}`);
+  const whole = makeEls();
+  declared<() => void>('function openTrashModal() {', {
+    $: whole.$, chipFor: () => '', escapeHtml: (s: unknown) => String(s), icon: () => '', formatBytes: (n: number) => `${n} B`, formatCount: String,
+    state: { trash: { complete: true, totalBytes: 2, itemCount: 2, items: [{ name: 'a', size: 1 }, { name: 'b', size: 1 }] } },
+  })();
+  assert.doesNotMatch(text(whole.els.trashModalBody.innerHTML), /not listed/, 'a whole list says nothing more');
+});

@@ -116,7 +116,10 @@ function openTrashModal() {
       `<div class="trash-item">${chipFor({ type: 'file', extension: (it.name.split('.').pop() || '').toLowerCase() }, 14)}` +
       `<span class="nm" title="${escapeHtml(it.name)}">${escapeHtml(it.name)}</span>` +
       `<span class="sz num">${formatBytes(it.size)}</span></div>`
-    ).join('') + '</div>';
+    ).join('') +
+    // The server lists the largest 500 and counts every item (hunt C77): the rest are said, not dropped.
+    (t.itemCount > t.items.length ? `<div class="trash-item muted">…and ${formatCount(t.itemCount - t.items.length)} more item${t.itemCount - t.items.length === 1 ? '' : 's'}, not listed here</div>` : '') +
+    '</div>';
   }
   // About the items listed, so said only over a list (C02).
   $('trashModalNote').textContent = listed ? 'Items restore from here until the Trash is emptied.' : '';

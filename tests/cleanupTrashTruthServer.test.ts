@@ -15,6 +15,7 @@ import { FileNode } from '../src/models/types';
 import { planCartCommit, commitCart, undoCartRun } from '../src/services/cartCommit';
 import { getCapsuleJob } from '../src/services/timeCapsule';
 import { setTrashStepForTests } from '../src/services/cleaner';
+import { describeConflicts } from '../src/services/openHandleGuard';
 import { setCopyFaultForTests } from '../src/utils/copyVerify';
 import { createApp } from '../src/server';
 import { isRestoreCopyFor } from './fixtures/restoreCopy';
@@ -132,4 +133,19 @@ test('an undo that fails part-way counts the items it put back, and its progress
     await fsp.rm(dir, { recursive: true, force: true });
     await fsp.rm(trash, { recursive: true, force: true });
   }
+});
+
+/* ═════════ C76 — describeConflicts agrees with what it counts ═════════ */
+
+
+test('the open-file sentence is plural when it names several files or programs (C76)', () => {
+  const c = (processName: string, openPath: string) => ({ path: '/p', pid: processName.length, processName, openPath });
+  assert.equal(describeConflicts([c('Chrome', '/p/a'), c('Mail', '/p/b'), c('Mail', '/p/c')]),
+    'Chrome and Mail have 3 of the files you’re deleting open right now. Deleting them may not free the space until those programs close them.');
+  assert.equal(describeConflicts([c('Code', '/p/a'), c('Code', '/p/b')]),
+    'Code has 2 of the files you’re deleting open right now. Deleting them may not free the space until that program closes them.');
+  assert.equal(describeConflicts([c('TextEdit', '/p/a'), c('Preview', '/p/a')]),
+    'TextEdit and Preview have a file you’re deleting open right now. Deleting it may not free the space until those programs close it.');
+  assert.equal(describeConflicts([c('Code', '/p/a')]),
+    'Code has a file you’re deleting open right now. Deleting it may not free the space until that program closes it.', 'control: one of each, as before');
 });
