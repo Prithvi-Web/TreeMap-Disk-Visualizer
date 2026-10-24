@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { pathFold } from '../utils/osPaths';
+import { foldName } from '../utils/pathSanitizer';
 import type { Rule, RuleCatalog, ProjectDirRule } from './rulePacks';
 
 /**
@@ -16,6 +16,10 @@ import type { Rule, RuleCatalog, ProjectDirRule } from './rulePacks';
  * first is not refused for an advice rule that also names it, as the suggestions offer it. A project
  * rule's sibling and child conditions are read from the disk; one that cannot be read is taken as
  * met by an advice rule and as unmet by a trash rule, so an unreadable folder only ever refuses more.
+ * Names and locations compare as a file system may fold them (`foldName`), so another case or a
+ * folded letter (ſ for s) of an advice-only folder's name is that folder (hunt HF-L5); the caller
+ * also asks of every spelling of where the path lives. The sibling and child conditions read the
+ * names in a folder lowercased, as the walk reads them.
  * The path itself, when it is a file, is judged by the file rules instead. A folder above it whose
  * deciding rule says its advice is about the folder itself (`adviceCovers: "folder"`: Windows' Temp
  * folder) refuses nothing in it — only that folder, and a folder holding it (hunt HF-L1).
@@ -26,6 +30,50 @@ export interface AdviceHit {
   path: string;
   title: string;
   adviceCommand?: string;
+}
+
+/** A name as a file system may fold it (`foldName`, then upper and lower case once more): a fold only refuses more here. */
+function folded(name: string): string {
+  return foldName(name).toUpperCase().toLowerCase();
+}
+
+/**
+ * A path's names, its root first, each as a file system may fold it — how two spellings of one place
+ * compare (hunt HF-L3, HF-L5): `VMFOLDER` and `vmfolder` on a volume that folds case, `vmdiſk.bundle`
+ * and `vmdisk.bundle` on one that folds ſ, as the scanned-root rule and the agent policy compare names.
+ */
+export function foldedNamesOf(p: string): string[] {
+  const { root } = path.parse(p);
+  return [root, ...p.slice(root.length).split(path.sep).filter((name) => name.length > 0)].map(folded);
+}
+
+/** Whether `outer` is `inner` or a folder above it, name by name as a file system may fold names. */
+export function foldedInside(outer: string, inner: string): boolean {
+  const a = foldedNamesOf(outer);
+  const b = foldedNamesOf(inner);
+  return a.length <= b.length && a.every((name, i) => name === b[i]);
+}
+
+/** A run of folded names as one key: NUL is in no file name. */
+const KEY_JOIN = '\u0000';
+
+/** Each rule's names and paths, folded once per catalog: a batch of 500 paths judges every folder above each. */
+interface FoldedRules {
+  names: Map<Rule, string[]>;
+  paths: Map<Rule, string[]>;
+}
+const foldedRules = new WeakMap<RuleCatalog, FoldedRules>();
+
+function foldedRulesOf(catalog: RuleCatalog): FoldedRules {
+  const known = foldedRules.get(catalog);
+  if (known) return known;
+  const names = new Map<Rule, string[]>();
+  for (const rule of [...catalog.projectDirectory, ...catalog.directory, ...catalog.file]) names.set(rule, rule.names.map(folded));
+  const paths = new Map<Rule, string[]>();
+  for (const rule of catalog.location) paths.set(rule, rule.paths.map((p) => foldedNamesOf(p).join(KEY_JOIN)));
+  const made = { names, paths };
+  foldedRules.set(catalog, made);
+  return made;
 }
 
 /** Lowercased names in `dir`, or null when it cannot be listed. */
@@ -55,15 +103,17 @@ function projectMatches(rule: ProjectDirRule, at: string): boolean {
 
 /** The rule the walk would claim the folder `at` by, or undefined. */
 function folderRule(catalog: RuleCatalog, at: string): Rule | undefined {
-  const lower = path.basename(at).toLowerCase();
-  if (lower !== '') {
-    const project = catalog.projectDirectory.find((r) => r.names.includes(lower) && projectMatches(r, at));
+  const rules = foldedRulesOf(catalog);
+  const base = path.basename(at);
+  if (base !== '') {
+    const name = folded(base);
+    const project = catalog.projectDirectory.find((r) => rules.names.get(r)?.includes(name) && projectMatches(r, at));
     if (project) return project;
-    const named = catalog.directory.find((r) => r.names.includes(lower));
+    const named = catalog.directory.find((r) => rules.names.get(r)?.includes(name));
     if (named) return named;
   }
-  const folded = pathFold(at);
-  return catalog.location.find((r) => r.paths.some((p) => pathFold(p) === folded));
+  const key = foldedNamesOf(at).join(KEY_JOIN);
+  return catalog.location.find((r) => rules.paths.get(r)?.includes(key));
 }
 
 /** True when `p` is there and is not a folder: the walk judges a file by the file rules. */
@@ -84,7 +134,8 @@ export function adviceHitAlong(p: string, catalog: RuleCatalog): AdviceHit | nul
   const hit = (rule: Rule | undefined, at: string): AdviceHit | null =>
     rule?.action === 'advice' ? { path: at, title: rule.title, ...(rule.adviceCommand ? { adviceCommand: rule.adviceCommand } : {}) } : null;
   if (isFile(p)) {
-    const own = hit(catalog.file.find((r) => r.names.includes(path.basename(p).toLowerCase())), p);
+    const name = folded(path.basename(p));
+    const own = hit(catalog.file.find((r) => foldedRulesOf(catalog).names.get(r)?.includes(name)), p);
     if (own) return own;
   } else {
     const own = hit(folderRule(catalog, p), p);

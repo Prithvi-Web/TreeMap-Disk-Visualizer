@@ -191,3 +191,67 @@ test('a folder a trash rule claims first is not refused because an advice rule n
   await assertAllowed(path.join(scratch, 'junk.bin'));
   await assertAllowed(scratch);
 });
+
+/* Hunt HF-L3, HF-L5: a path is judged where it is, as the scanned-root rule judges it — not by its spelling. */
+
+/** Whether the volume answers `other`, another spelling of `p`, with `p` itself (it folds that name). */
+function volumeFolds(p: string, other: string): boolean {
+  try {
+    const [a, b] = [fs.statSync(p), fs.statSync(other)];
+    return a.ino === b.ino && a.dev === b.dev;
+  } catch {
+    return false;
+  }
+}
+
+test('a folder holding an advice-only item is refused when its last name is typed in another case', async (t) => {
+  const root = tree('treemap-mcp-advroot-holdcase-', ['vmfolder/vmdisk.bundle/disk.img']);
+  const holder = path.join(root, 'VMFOLDER');
+  if (!volumeFolds(path.join(root, 'vmfolder'), holder)) return t.skip('this volume keeps case: VMFOLDER is another folder');
+  await scanAt(root);
+  await assertRefused([holder], 'vmtool compact');
+  const r = await call('trash_paths', { paths: [holder], dryRun: true });
+  assert.match(r.content?.[0]?.text ?? '', /" holds "Test VM disk"/, 'the refusal says the folder holds the item');
+});
+
+test('a scan whose root is typed in another case still finds the folder holding an advice-only item', async (t) => {
+  const root = tree('treemap-mcp-advroot-rootcase-', ['vmfolder/vmdisk.bundle/disk.img']);
+  const typed = path.join(path.dirname(root), path.basename(root).toUpperCase());
+  if (!volumeFolds(root, typed)) return t.skip('this volume keeps case: the upper-case root is another folder');
+  await scanAt(typed);
+  await assertRefused([path.join(root, 'vmfolder')], 'vmtool compact');
+});
+
+test('an advice-only folder named with a leaf the volume folds (ſ for s) is refused', async (t) => {
+  const root = tree('treemap-mcp-advroot-leaffold-', ['vm/vmdisk.bundle/disk.img']);
+  const folded = path.join(root, 'vm', 'vmdiſk.bundle');
+  if (!volumeFolds(path.join(root, 'vm', 'vmdisk.bundle'), folded)) return t.skip('this volume does not fold ſ to s');
+  await scanAt(root);
+  await assertRefused([folded, path.join(folded, 'disk.img')], 'vmtool compact');
+  // Rooted at the folder itself, no scan's walk lists it as an item: the path alone must say so.
+  const alone = tree('treemap-mcp-advroot-leaffold-alone-', ['vm/vmdisk.bundle/disk.img']);
+  await scanAt(path.join(alone, 'vm', 'vmdisk.bundle'));
+  await assertRefused([path.join(alone, 'vm', 'vmdi\u017fk.bundle')], 'vmtool compact');
+});
+
+test('a location rule\'s folder spelled through macOS\'s Data volume is refused, and so is the disk image in it', {
+  skip: process.platform !== 'darwin',
+}, async (t) => {
+  const data = path.join(LOCAL, 'dockerish', 'data');
+  fs.mkdirSync(data, { recursive: true });
+  fs.writeFileSync(path.join(data, 'Docker.raw'), Buffer.alloc(8_192, 1));
+  const long = path.join('/System/Volumes/Data', data);
+  if (!volumeFolds(data, long)) return t.skip('the Data volume does not show this folder');
+  await scanAt(data);
+  await assertRefused([long, path.join(long, 'Docker.raw')], 'vmtool reclaim');
+});
+
+test('a scan whose root is typed through macOS\'s Data volume still finds the folder holding an advice-only item', {
+  skip: process.platform !== 'darwin',
+}, async (t) => {
+  const root = tree('treemap-mcp-advroot-datavolroot-', ['vmfolder/vmdisk.bundle/disk.img']);
+  const long = path.join('/System/Volumes/Data', root);
+  if (!volumeFolds(root, long)) return t.skip('the Data volume does not show this folder');
+  await scanAt(long);
+  await assertRefused([path.join(root, 'vmfolder')], 'vmtool compact');
+});
