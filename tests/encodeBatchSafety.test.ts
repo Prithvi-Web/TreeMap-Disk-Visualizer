@@ -145,3 +145,13 @@ test('a video open in another program keeps its original, gone ones are skipped,
     invalidateCapabilities();
   }
 });
+
+test('README names only the encoder TreeMap uses, and says where Shrink video is not offered (hunt C63)', () => {
+  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  const shrink = readme.split('\n').find((l) => l.startsWith('**Shrink video**')) ?? '';
+  assert.ok(shrink, 'the Shrink video paragraph is there');
+  assert.doesNotMatch(shrink, /NVENC|AMF|QSV/, 'no encoder TreeMap never runs is named');
+  assert.match(shrink, /VideoToolbox/);
+  assert.match(shrink, /not offered on Windows or Linux/);
+  assert.doesNotMatch(shrink, /If any step fails the original is still sitting there untouched/, 'a failed rename after the Trash step leaves the original in the Trash, which the paragraph must not deny');
+});

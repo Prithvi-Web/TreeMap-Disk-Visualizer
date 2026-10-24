@@ -239,7 +239,11 @@ function num(value: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-/** The encoder ffmpeg should use for `codec` on this platform. */
+/**
+ * The encoder ffmpeg should use for `codec` on this platform. Only reached where the platform's own
+ * probe offers the codec (`availability`): today that is macOS alone, since Windows and Linux report
+ * H.264 only until TreeMap can confirm HEVC there (hunt C63) — so README names VideoToolbox alone.
+ */
 export function encoderFor(codec: 'hevc' | 'av1', platform: NodeJS.Platform): string {
   if (platform === 'darwin') return codec === 'hevc' ? 'hevc_videotoolbox' : 'av1_videotoolbox';
   if (platform === 'win32') return codec === 'hevc' ? 'hevc_qsv' : 'av1_qsv';
