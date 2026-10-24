@@ -402,12 +402,18 @@ async function renderShellIntegration(carryStatus = '') {
           ? `Added${result.targets && result.targets.length ? ' (' + result.targets.join(', ') + ')' : ''}.`
           : `Not added.${why}`;
         if (result.installed) toast('Added — your file manager may take a moment to show it');
+        else toast(message, 'error');
       } else {
         message = result.installed ? `Not removed — the entry is still in the right-click menu.${why}` : 'Removed.';
+        if (result.installed) toast(message, 'error');
       }
     } catch (e) {
       message = 'Failed: ' + e.message;
+      toast(message, 'error');
     }
+    // A failure is said aloud by its toast, which the sheet repeats in its own
+    // live region: the status line beside the button is no live region, and
+    // focus goes back to a button whose words have not changed (review F1.7).
     // Re-read the truth rather than assuming the action landed, carrying the
     // confirmation through so it survives the refresh.
     await renderShellIntegration(message);

@@ -132,6 +132,7 @@ function openSettingsRuntime(api: (url: string, options?: ApiCall['options']) =>
   ].filter((name) => !lifted.includes(name));
   const liftedSrc = lifted.map((name) => braced(`async function ${name}(`)).join('\n');
   const toasts: string[] = [];
+  const toastKinds: Array<string | undefined> = []; // each toast's kind, beside it ('error' is said in red)
   // The focus net's two calls (235): the top open sheet, and focus put where that sheet lands it — its [autofocus],
   // Settings' "Close without saving", stood in for here by one element. Each sheet the net lands is recorded.
   const landed: string[] = [];
@@ -147,10 +148,10 @@ function openSettingsRuntime(api: (url: string, options?: ApiCall['options']) =>
      ${INDEX.includes('function settingsSaveOn(') ? braced('function settingsSaveOn(') : ''}
      ${INDEX.includes('function setSettingsStatus(') ? braced('function setSettingsStatus(') : ''}
      ${opener});`,
-  )(dom.$, api, (msg: string) => { toasts.push(msg); }, dom.document, topModal, modalFocusInto);
+  )(dom.$, api, (msg: string, kind?: string) => { toasts.push(msg); toastKinds.push(kind); }, dom.document, topModal, modalFocusInto);
   const open = dom.$('settingsBtn').listeners.click;
   assert.ok(open, 'the Settings button has a click handler');
-  return { dom, open, toasts, landed };
+  return { dom, open, toasts, toastKinds, landed };
 }
 
 /* ══════════════ D70 — opening Settings asks the OS about the right-click entry ══════════════ */
@@ -212,27 +213,33 @@ test('review F1.3/F1.16: an entry that starts another program is never called Tr
 });
 
 test('review HA-L6: the right-click button says what became of what was asked — a failed Add is "Not added." with its reason, a Remove that left the entry is "Not removed" — never "Removed." after an Add or "Added." after a Remove', async () => {
-  const pressed = async (installed: boolean, answer: Record<string, unknown>) => {
+  const pressed = async (installed: boolean, answer: Record<string, unknown> | Error) => {
     let posted = false; // the system as it is before the press, then as the action left it
     const api = async (url: string, options?: ApiCall['options']) => {
       if (url !== '/api/platform/shell-integration') return url === '/api/settings' ? { ignore: [], schedules: [] } : {};
-      if (options?.method === 'POST') { posted = true; return answer; }
-      return { supported: true, installed: posted ? answer.installed : installed };
+      if (options?.method === 'POST') { posted = true; if (answer instanceof Error) throw answer; return answer; }
+      return { supported: true, installed: posted && !(answer instanceof Error) ? answer.installed : installed };
     };
     const rt = openSettingsRuntime(api, ['renderShellIntegration']);
     await rt.open();
     await settle();
     await (rt.dom.$('shellIntegrationBtn').onclick!() as Promise<void>);
     await settle();
-    return { status: rt.dom.$('shellIntegrationStatus').textContent, toasts: rt.toasts };
+    return { status: rt.dom.$('shellIntegrationStatus').textContent, toasts: rt.toasts, kinds: rt.toastKinds };
   };
   const reason = 'The Finder Quick Action could not be created (EACCES: permission denied).';
   let r = await pressed(false, { installed: false, targets: [], reason });
-  assert.deepEqual([r.status, r.toasts], [`Not added. ${reason}`, []], 'a failed Add says so, and why');
+  assert.equal(r.status, `Not added. ${reason}`, 'a failed Add says so, and why');
+  // The row's status is no live region, and focus goes back to a button still reading "Add to right-click menu":
+  // a failure is said aloud by an error toast, which the sheet repeats in its own live region (review F1.7).
+  assert.deepEqual([r.toasts, r.kinds], [[`Not added. ${reason}`], ['error']], 'and is said aloud, once, as an error');
   r = await pressed(false, { installed: false, targets: [] });
   assert.equal(r.status, 'Not added.', 'with no reason given, still not "Removed."');
   r = await pressed(true, { installed: true, targets: [] });
-  assert.deepEqual([r.status, r.toasts], ['Not removed — the entry is still in the right-click menu.', []], 'a Remove that left the entry is not "Added."');
+  assert.equal(r.status, 'Not removed — the entry is still in the right-click menu.', 'a Remove that left the entry is not "Added."');
+  assert.deepEqual([r.toasts, r.kinds], [['Not removed — the entry is still in the right-click menu.'], ['error']], 'said aloud too');
+  r = await pressed(false, new Error('The server did not answer.'));
+  assert.deepEqual([r.status, r.toasts, r.kinds], ['Failed: The server did not answer.', ['Failed: The server did not answer.'], ['error']], 'a request that failed is said aloud as well');
   r = await pressed(true, { installed: true, targets: [], reason: 'reg.exe did not answer within 10 s.' });
   assert.equal(r.status, 'Not removed — the entry is still in the right-click menu. reg.exe did not answer within 10 s.');
   r = await pressed(true, { installed: false, targets: ['finder-quick-action'] });
