@@ -274,7 +274,7 @@ export function makeStub(opts: StubOptions) {
   };
 
   const backend = {
-    startServerCalls: [] as Array<{ opts: Record<string, unknown>; tokenAtStart: string | undefined }>,
+    startServerCalls: [] as Array<{ opts: Record<string, unknown>; tokenAtStart: string | undefined; execAtStart: string | undefined }>,
     shutdowns: 0,
     growthHandlers: [] as Array<(alert: unknown) => void>,
     port: 43210,
@@ -289,7 +289,7 @@ export function makeStub(opts: StubOptions) {
   const dist: Record<string, unknown> = {
     'dist/server.js': {
       startServer: async (o: Record<string, unknown>) => {
-        backend.startServerCalls.push({ opts: o, tokenAtStart: process.env.TREEMAP_TOKEN });
+        backend.startServerCalls.push({ opts: o, tokenAtStart: process.env.TREEMAP_TOKEN, execAtStart: process.env.TREEMAP_DESKTOP_EXEC });
         return { server: {}, port: backend.port, shutdown(): void { backend.shutdowns++; } };
       },
     },
@@ -359,6 +359,9 @@ export async function loadMain(opts: StubOptions): Promise<Harness> {
   const realPlatform = process.platform;
   Object.defineProperty(process, 'platform', { value: platform, configurable: true });
   const savedToken = process.env.TREEMAP_TOKEN;
+  // What main.js names as the program "Scan with TreeMap" starts (hunt C11): unset as each "process" starts, put back after.
+  const savedExec = process.env.TREEMAP_DESKTOP_EXEC;
+  delete process.env.TREEMAP_DESKTOP_EXEC;
   if (opts.token === undefined) delete process.env.TREEMAP_TOKEN;
   else process.env.TREEMAP_TOKEN = opts.token;
   const listenersBefore = {
@@ -390,6 +393,8 @@ export async function loadMain(opts: StubOptions): Promise<Harness> {
     Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
     if (savedToken === undefined) delete process.env.TREEMAP_TOKEN;
     else process.env.TREEMAP_TOKEN = savedToken;
+    if (savedExec === undefined) delete process.env.TREEMAP_DESKTOP_EXEC;
+    else process.env.TREEMAP_DESKTOP_EXEC = savedExec;
     for (const l of process.listeners('uncaughtException')) {
       if (!listenersBefore.uncaught.includes(l)) process.removeListener('uncaughtException', l);
     }

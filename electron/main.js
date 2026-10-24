@@ -164,17 +164,24 @@ function requestScan(rawPath) {
  * Unpackaged, Electron's own argv is `[electron, <appDir>, ...]`, and `<appDir>`
  * is a real directory — so `npm run app` would "helpfully" scan the repo. Skip
  * the extra leading argument when running from source.
+ *
+ * Each argument is read as the launch meant it (desktop.scanArgPath): a
+ * relative one against `cwd`, the directory that launch was made from (a
+ * second launch's own), and a Windows drive root as the drive.
  */
-function scanPathsFromArgv(argv) {
+function scanPathsFromArgv(argv, cwd = process.cwd()) {
   const from = app.isPackaged ? 1 : 2;
-  return argv.slice(from).filter((arg) => {
-    if (arg.startsWith('-')) return false;
+  const dirs = [];
+  for (const arg of argv.slice(from)) {
+    const dir = desktop.scanArgPath(arg, typeof cwd === 'string' && cwd ? cwd : process.cwd(), process.platform, path);
+    if (!dir) continue;
     try {
-      return fs.statSync(arg).isDirectory();
+      if (fs.statSync(dir).isDirectory()) dirs.push(dir);
     } catch {
-      return false;
+      /* not a folder this launch can name: nothing to scan */
     }
-  });
+  }
+  return dirs;
 }
 
 ipcMain.handle('treemap:resolve-scan-path', (_event, p) => {
@@ -253,6 +260,12 @@ async function boot() {
   // cookie when it serves the UI, so the page needs no change. An owner who
   // set TREEMAP_TOKEN themselves keeps theirs.
   process.env.TREEMAP_TOKEN = desktop.desktopToken(process.env);
+  // "Scan with TreeMap" starts this program and no other (hunt C11): the
+  // server registers only what is named here, and offers the entry only when
+  // something is. A build run from source is not the installed app, and names
+  // nothing; an AppImage names its own file, not the mount that is gone once
+  // TreeMap quits.
+  if (app.isPackaged) process.env.TREEMAP_DESKTOP_EXEC = desktop.desktopExec(process.env, process.execPath);
   // Before the server exists, so no scan can start ahead of the launcher.
   registerMftLauncher();
   // Port 0 → OS assigns a free port, so two machines never collide.
@@ -710,19 +723,25 @@ function buildMenu() {
 if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID);
 
 // macOS: folder dropped onto the dock icon / "Open With" — may fire pre-ready,
-// and once per item for a multi-folder drop.
+// and once per item for a multi-folder drop. With the window closed (the app
+// stays in the menu bar) it opens the window, which scans the folder once its
+// page is up: a drop sends no reopen, so the folder waited, unseen, for the
+// next click on the Dock icon (hunt C56). Before boot there is no server to
+// open a window on: the folder waits for the first window, as before.
 app.on('open-file', (event, p) => {
   event.preventDefault();
+  if (running) showMainWindow();
   requestScan(p);
 });
 
-// Single-instance lock: a second launch focuses the window and forwards its args.
+// Single-instance lock: a second launch focuses the window and forwards its
+// args, read against the directory that launch was made from (hunt C88).
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', (_event, argv) => {
+  app.on('second-instance', (_event, argv, workingDirectory) => {
     showMainWindow();
-    requestScans(scanPathsFromArgv(argv));
+    requestScans(scanPathsFromArgv(argv, workingDirectory));
   });
 
   app.whenReady().then(() => {

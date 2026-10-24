@@ -766,6 +766,110 @@ test('main: folders handed over by the OS before the window exists (dock drop, s
   } finally { h.dispose(); }
 });
 
+/**
+ * A page that keeps the preload contract, as src/ui now does (hunt C01; the
+ * page's own calls are tests/desktopScanBridge.test.ts): every folder the
+ * shell pushes starts a scan — scanProgress(2) — and ends with scanFinished.
+ */
+function contractPage(h: Awaited<ReturnType<typeof loadMain>>) {
+  const pushed = () => h.win().webContents.on_channel('treemap:scan-path') as string[];
+  return {
+    pushed,
+    start: () => h.stub.ipcMain.fire('treemap:scan-progress', 2),
+    finish: (result: Record<string, unknown>) => h.stub.ipcMain.fire('treemap:scan-finished', result),
+  };
+}
+
+test('main (C01): the queue cycle — a folder handed over while a scan runs waits for its end, a Stop ends it too, and each pushed folder is scanned in turn', async () => {
+  const dir = mkTmp();
+  const [a, b, c, d] = ['a', 'b', 'c', 'd'].map((n) => path.join(dir, n));
+  for (const x of [a, b, c, d]) fs.mkdirSync(x);
+  const h = await loadMain({ dataDir: dir });
+  try {
+    await h.loadPage();
+    const page = contractPage(h);
+    // The person started a scan in the window themselves: the shell hears it start.
+    page.start();
+    await h.stub.ipcMain.invoke('treemap:request-scans', [a, b]); // File › Scan Folder…, two folders
+    assert.deepEqual(page.pushed(), [], 'nothing is pushed over a running scan — the page would refuse it');
+    page.finish({ ok: true, path: '/Users/x/Desktop', files: 3, bytes: 10 });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.deepEqual(page.pushed(), [a], 'its end releases the queue: the first folder is pushed');
+    page.start();
+    h.stub.app.emit('second-instance', {}, ['/Applications/TreeMap.app/Contents/MacOS/TreeMap', c], dir);
+    await new Promise((r) => setTimeout(r, 400));
+    assert.deepEqual(page.pushed(), [a], '"Scan with TreeMap" waits behind it too');
+    page.finish({ ok: false, path: a, stopped: true });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.deepEqual(page.pushed(), [a, b], 'a Stop ends the scan, and the next folder is pushed');
+    page.start();
+    page.finish({ ok: false, path: b, error: 'TreeMap isn’t allowed to read it.' });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.deepEqual(page.pushed(), [a, b, c], 'so does a failure');
+    page.start();
+    page.finish({ ok: true, path: c });
+    await new Promise((r) => setTimeout(r, 400));
+    await h.stub.ipcMain.invoke('treemap:request-scans', [d]);
+    assert.deepEqual(page.pushed(), [a, b, c, d], 'with nothing running, a folder is pushed at once — the first was not the only one ever scanned');
+  } finally { h.dispose(); }
+});
+
+test('main (C56): a folder dropped on the Dock, or opened with TreeMap, while the window is closed opens the window and is scanned once its page is up', async () => {
+  const dir = mkTmp();
+  const a = path.join(dir, 'a');
+  fs.mkdirSync(a);
+  const h = await loadMain({ dataDir: dir });
+  try {
+    await h.loadPage();
+    h.win().close(); // ⌘W: the app stays in the menu bar
+    assert.equal(h.windows().length, 0);
+    h.stub.app.emit('open-file', { preventDefault() {} }, a);
+    assert.equal(h.windows().length, 1, 'the drop opens the window');
+    await h.loadPage();
+    assert.deepEqual(h.win().webContents.on_channel('treemap:scan-path'), [a], 'and the folder is scanned as its page comes up');
+  } finally { h.dispose(); }
+});
+
+test('main (C88): a second launch\'s relative folder is read against the directory it was launched from, not this process\'s', async () => {
+  const dir = mkTmp();
+  const proj = path.join(dir, 'proj');
+  fs.mkdirSync(path.join(proj, 'sub'), { recursive: true });
+  const h = await loadMain({ dataDir: dir });
+  try {
+    await h.loadPage();
+    h.stub.app.emit('second-instance', {}, ['/Applications/TreeMap.app/Contents/MacOS/TreeMap', 'sub', '--flag'], proj);
+    assert.deepEqual(h.win().webContents.on_channel('treemap:scan-path'), [path.join(proj, 'sub')], 'the folder that launch named, absolute');
+  } finally { h.dispose(); }
+});
+
+test('scanArgPath (C57, C88): a Windows drive root that arrives as C:" is the drive; a relative folder is read against the launch\'s own directory; options are not folders', () => {
+  assert.equal(desktop.scanArgPath('C:"', 'C:\\Users\\x', 'win32', path.win32), 'C:\\', '"C:\\" read by the command-line rules is C:" — the drive\'s root');
+  assert.equal(desktop.scanArgPath('d:"', 'C:\\Users\\x', 'win32', path.win32), 'd:\\');
+  assert.equal(desktop.scanArgPath('C:\\Users\\x\\Downloads', 'D:\\', 'win32', path.win32), 'C:\\Users\\x\\Downloads', 'an ordinary folder is untouched');
+  assert.equal(desktop.scanArgPath('C:"', '/Users/x', 'darwin', path.posix), '/Users/x/C:"', 'the repair is Windows\' alone: elsewhere that is a name');
+  assert.equal(desktop.scanArgPath('.', '/Users/x/proj', 'darwin', path.posix), '/Users/x/proj');
+  assert.equal(desktop.scanArgPath('sub', '/Users/x/proj', 'linux', path.posix), '/Users/x/proj/sub');
+  assert.equal(desktop.scanArgPath('/abs', '/Users/x/proj', 'darwin', path.posix), '/abs');
+  assert.equal(desktop.scanArgPath('--inspect', '/Users/x', 'darwin', path.posix), null);
+  assert.equal(desktop.scanArgPath('', '/Users/x', 'darwin', path.posix), null);
+});
+
+test('main (C11): the installed app names itself as the program "Scan with TreeMap" starts before its server starts; a build run from source names nothing; an AppImage names its file', async () => {
+  const dir = mkTmp();
+  let h = await loadMain({ dataDir: dir, isPackaged: true });
+  try {
+    assert.equal(h.stub.backend.startServerCalls[0].execAtStart, process.execPath, 'the app\'s own executable, there before the server reads it');
+  } finally { h.dispose(); }
+  assert.equal(process.env.TREEMAP_DESKTOP_EXEC, undefined, 'control: the harness puts the variable back');
+  h = await loadMain({ dataDir: dir, isPackaged: false });
+  try {
+    assert.equal(h.stub.backend.startServerCalls[0].execAtStart, undefined, 'npm run app is not the installed app: nothing to start');
+  } finally { h.dispose(); }
+  assert.equal(desktop.desktopExec({ APPIMAGE: '/home/x/Apps/TreeMap.AppImage' }, '/tmp/.mount_TreeMaXYZ/treemap'), '/home/x/Apps/TreeMap.AppImage',
+    'the AppImage file, not its temporary mount');
+  assert.equal(desktop.desktopExec({}, '/Applications/TreeMap.app/Contents/MacOS/TreeMap'), '/Applications/TreeMap.app/Contents/MacOS/TreeMap');
+});
+
 test('main: the application menu is the packaged template, and its items reach the page as commands', async () => {
   const dir = mkTmp();
   const h = await loadMain({ dataDir: dir, isPackaged: true });

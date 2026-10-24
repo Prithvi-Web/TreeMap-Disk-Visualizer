@@ -449,7 +449,11 @@ OpenAPI 3 spec).
      `GET /api/compare`, `GET /api/forecast` — further angles.
    - `GET`/`POST /api/platform/shell-integration` — the "Scan with TreeMap"
      right-click entry. Per-user, no elevation, and the installed flag is read
-     from the OS every time rather than remembered.
+     from the OS every time rather than remembered. It starts the installed
+     desktop app, which names its own program to its server, so it is offered
+     only there: under `npm start` or a build run from source it answers
+     `supported: false` with the reason, and adding it is refused
+     (`409 CAPABILITY_UNAVAILABLE`).
    - `GET /api/platform/portable` — whether this is a no-trace portable
      session, where it writes, and what it cannot do. **When `writable` is
      false nothing is persisted anywhere at all** — not on the drive, and

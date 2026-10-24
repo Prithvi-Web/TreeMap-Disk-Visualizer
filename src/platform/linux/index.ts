@@ -13,6 +13,7 @@ import { listSnapshots as btrfsSnapshots, snapshotAvailability } from './btrfs';
 import { relativeToVolume } from '../snapshotPaths';
 import { copyFailure, copyOutOfSnapshot, destinationTakenReason, newerUnread, unreadSnapshots } from '../snapshotCopy';
 import { registerShellIntegration, unregisterShellIntegration, isInstalled as linuxShellInstalled } from './shellIntegration';
+import { desktopLauncher, NOT_IN_DESKTOP_APP } from '../desktopLauncher';
 import { readLastUsedLinux, probeLastUsedLinux } from './lastUsed';
 import { readBackupMembershipLinux, probeBackupMembershipLinux } from './backup';
 import { mapSmartctl, SmartctlJson } from '../macos';
@@ -404,7 +405,11 @@ export class LinuxProvider extends BaseProvider {
   /* ---------------- Shell integration ---------------- */
 
   override async registerShellIntegration(): Promise<ShellIntegrationResult> {
-    return registerShellIntegration();
+    // The installed app's own program — the AppImage file, not its temporary
+    // mount — never whatever runs this server (hunt C11).
+    const exec = desktopLauncher();
+    if (!exec) return { installed: false, targets: [], reason: NOT_IN_DESKTOP_APP };
+    return registerShellIntegration({ exec });
   }
 
   override async unregisterShellIntegration(): Promise<ShellIntegrationResult> {

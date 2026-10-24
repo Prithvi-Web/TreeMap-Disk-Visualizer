@@ -19,6 +19,7 @@ import {
   unregisterShellIntegration as removeQuickAction,
   isInstalled as quickActionInstalled,
 } from './shellIntegration';
+import { desktopLauncher, NOT_IN_DESKTOP_APP } from '../desktopLauncher';
 import type {
   CapabilityState,
   CloneFamilyId,
@@ -301,7 +302,10 @@ export class MacOsProvider extends BaseProvider {
   /* ---------------- Shell integration (D2) ---------------- */
 
   override async registerShellIntegration(): Promise<ShellIntegrationResult> {
-    return installQuickAction();
+    // The installed app's own program, never whatever runs this server (hunt C11).
+    const exec = desktopLauncher();
+    if (!exec) return { installed: false, targets: [], reason: NOT_IN_DESKTOP_APP };
+    return installQuickAction(exec);
   }
 
   override async unregisterShellIntegration(): Promise<ShellIntegrationResult> {

@@ -13,6 +13,7 @@ import { listSnapshots as vssSnapshots, snapshotAvailability } from './vss';
 import { relativeToVolume } from '../snapshotPaths';
 import { copyFailure, copyOutOfSnapshot, destinationTakenReason, newerUnread, unreadSnapshots } from '../snapshotCopy';
 import { registerShellIntegration, unregisterShellIntegration, isInstalled as winShellInstalled } from './shellIntegration';
+import { desktopLauncher, NOT_IN_DESKTOP_APP } from '../desktopLauncher';
 import { runPowerShellJson } from './powershell';
 import { meansAbsent } from '../../utils/errno';
 import { readLastUsedWindows, probeLastUsedWindows } from './lastUsed';
@@ -324,7 +325,10 @@ export class WindowsProvider extends BaseProvider {
   /* ---------------- Shell integration (D2) ---------------- */
 
   override async registerShellIntegration(): Promise<ShellIntegrationResult> {
-    return registerShellIntegration();
+    // The installed app's own program, never whatever runs this server (hunt C11).
+    const exec = desktopLauncher();
+    if (!exec) return { installed: false, targets: [], reason: NOT_IN_DESKTOP_APP };
+    return registerShellIntegration(exec);
   }
 
   override async unregisterShellIntegration(): Promise<ShellIntegrationResult> {

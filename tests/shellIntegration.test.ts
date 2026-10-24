@@ -163,3 +163,49 @@ test('the installed flag is read from the system, never remembered', async () =>
   assert.match(src, /installed: await provider\.shellIntegrationInstalled\(\)/,
     'the POST response re-reads the real state instead of echoing the intent');
 });
+
+/* ─────────────── Only the installed app is offered (hunt C11) ─────────────── */
+
+test('C11: the entry is offered only inside the installed desktop app — under plain Node or from source it is unavailable, and says why', async () => {
+  const { DESKTOP_EXEC_ENV, NOT_IN_DESKTOP_APP, desktopLauncher } = await import('../src/platform/desktopLauncher');
+  const saved = process.env[DESKTOP_EXEC_ENV];
+  try {
+    delete process.env[DESKTOP_EXEC_ENV];
+    invalidateCapabilities();
+    const web = await capabilityState('shellIntegration');
+    assert.equal(web.available, false, 'npm start: the entry would run `node <folder>` — that folder\'s own code');
+    assert.equal(web.reason, NOT_IN_DESKTOP_APP);
+    assert.ok(web.mechanism.length > 0, 'the mechanism is still named');
+    process.env[DESKTOP_EXEC_ENV] = path.join(path.parse(process.cwd()).root, 'Applications', 'TreeMap.app', 'Contents', 'MacOS', 'TreeMap');
+    invalidateCapabilities();
+    const app = await capabilityState('shellIntegration');
+    assert.notEqual(app.reason, NOT_IN_DESKTOP_APP, 'inside the app, the platform\'s own answer stands');
+    assert.equal(desktopLauncher({ [DESKTOP_EXEC_ENV]: 'TreeMap' }), null, 'a bare name is no program to start');
+    assert.equal(desktopLauncher({}), null);
+  } finally {
+    if (saved === undefined) delete process.env[DESKTOP_EXEC_ENV];
+    else process.env[DESKTOP_EXEC_ENV] = saved;
+    invalidateCapabilities();
+  }
+});
+
+test('C11: asked to add the entry with no installed app to start, the platform refuses and writes nothing', async () => {
+  const { DESKTOP_EXEC_ENV, NOT_IN_DESKTOP_APP } = await import('../src/platform/desktopLauncher');
+  const saved = { exec: process.env[DESKTOP_EXEC_ENV], home: process.env.HOME };
+  // A throwaway HOME, so nothing could reach the real one even if the refusal broke.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-shell-c11-'));
+  try {
+    delete process.env[DESKTOP_EXEC_ENV];
+    process.env.HOME = home;
+    const r = await platform().registerShellIntegration();
+    assert.equal(r.installed, false);
+    assert.equal(r.reason, NOT_IN_DESKTOP_APP);
+    assert.deepEqual(fs.readdirSync(home), [], 'nothing was written');
+  } finally {
+    if (saved.exec === undefined) delete process.env[DESKTOP_EXEC_ENV];
+    else process.env[DESKTOP_EXEC_ENV] = saved.exec;
+    if (saved.home === undefined) delete process.env.HOME;
+    else process.env.HOME = saved.home;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

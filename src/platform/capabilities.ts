@@ -4,6 +4,7 @@ import { probeFullDiskAccess, fullDiskAccessCapability } from './macos/fullDiskA
 import { granteeFor } from '../utils/accessAdvice';
 import { rememberFdaState } from '../utils/fdaState';
 import type { Capabilities, CapabilityState, FullDiskAccessCapability } from './types';
+import { desktopLauncher, NOT_IN_DESKTOP_APP } from './desktopLauncher';
 
 /**
  * Runtime capability detection (§2.2).
@@ -91,7 +92,12 @@ async function detect(): Promise<Capabilities> {
     safeProbe('Snapshot recovery', () => p.probeSnapshotRestore(), unavailable('none')),
     safeProbe('Disk layout', () => p.probeVolumeTopology(), unavailable('none')),
     safeProbe('Download history', () => p.probeProvenance(), unavailable('none')),
-    safeProbe('File manager integration', () => p.probeShellIntegration(), unavailable('none')),
+    // Offered only inside the installed desktop app, the one program the entry
+    // can start (desktopLauncher, hunt C11): its mechanism is still named.
+    safeProbe('File manager integration', async () => {
+      const state = await p.probeShellIntegration();
+      return desktopLauncher() ? state : { ...state, available: false, reason: NOT_IN_DESKTOP_APP };
+    }, unavailable('none')),
     safeProbe('Last-opened dates', () => p.probeLastUsed(), unavailable('none')),
     safeProbe('Backup status', () => p.probeBackupMembership(), unavailable('none')),
     safeProbe('Git status', () => probeGitStatus(), unavailable('git')),

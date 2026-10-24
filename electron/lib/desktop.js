@@ -29,6 +29,35 @@ function desktopToken(env) {
   return preset.trim() ? preset : crypto.randomBytes(32).toString('hex');
 }
 
+/**
+ * The program the right-click "Scan with TreeMap" entry starts (hunt C11):
+ * the installed app's own executable — or, in a Linux AppImage, the AppImage
+ * file the runtime names in APPIMAGE, since the executable lives in a mount
+ * that is gone once TreeMap quits.
+ */
+function desktopExec(env, execPath) {
+  const appImage = env && typeof env.APPIMAGE === 'string' ? env.APPIMAGE : '';
+  return appImage || execPath;
+}
+
+/**
+ * A folder argument from a launch's command line, as the folder it names, or
+ * null for an option. `cwd` is the directory the launch was made from — a
+ * second launch's own, which Electron hands over, never this process's: a
+ * relative "." typed in ~/proj named the first launch's folder, `/` for an
+ * app started from the Dock, and the whole disk was scanned (hunt C88).
+ *
+ * On Windows, "Scan with TreeMap" on a drive passes `"C:\"`, and the command
+ * line's rules read a backslash before a quote as a quote: the argument
+ * arrives as `C:"` (electron/mft.js names the same trap). It is the drive's
+ * root, `C:\` (hunt C57).
+ */
+function scanArgPath(arg, cwd, platform, paths) {
+  if (typeof arg !== 'string' || !arg || arg.startsWith('-')) return null;
+  const repaired = platform === 'win32' && /^[A-Za-z]:"$/.test(arg) ? `${arg.slice(0, 2)}\\` : arg;
+  return paths.resolve(cwd, repaired);
+}
+
 /* ─────────────────────────── Names and numbers ─────────────────────────── */
 
 /** The last path segment, on either separator; the path itself for a root. */
@@ -264,6 +293,8 @@ module.exports = {
   LATEST_RELEASE_URL,
   ISSUES_URL,
   desktopToken,
+  desktopExec,
+  scanArgPath,
   folderName,
   growthNotification,
   scanFinishedNotice,
