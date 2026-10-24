@@ -13,6 +13,7 @@ import { shutdownWhenSettled, SHUTDOWN_GRACE_MS } from '../src/mcp/shutdown';
 import { createMcpShutdown } from '../src/mcp/mcpShutdown';
 import { buildMcpServer, trashCallsInFlight } from '../src/mcp/server';
 import { startScan, getScan, createScanRecord } from '../src/services/diskScanner';
+import { getDuplicateJob, peekDuplicateJob } from '../src/services/duplicateFinder';
 import { prepareOffload, startOffload, getOffloadJob } from '../src/services/offload';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { updateSettings } from '../src/services/settings';
@@ -191,4 +192,27 @@ test('the MCP shutdown cancels a running offload and exits once it has rolled ba
   assert.deepEqual(trashedHere, [], 'the original never went to the Trash');
   assert.ok(fs.existsSync(file), 'it is still in place');
   assert.deepEqual(fs.readdirSync(dest), [], 'nothing of the copy is left at the destination');
+});
+
+test('the MCP shutdown cancels a running scan and duplicate hashing before it exits (hunt HF-L9)', async () => {
+  const dir = fs.realpathSync(fileTempDir('treemap-mcp-shutdown-cancel-'));
+  const file = path.join(dir, 'a.bin');
+  fs.writeFileSync(file, Buffer.alloc(4_096, 6));
+  const running = createScanRecord(dir);
+  const done = createScanRecord(dir);
+  done.status = 'complete';
+  done.root = {
+    name: path.basename(dir), path: dir, size: 4_096, type: 'dir', modifiedAt: Date.now(), isHidden: false,
+    children: [{ name: 'a.bin', path: file, size: 4_096, type: 'file', modifiedAt: Date.now(), isHidden: false }],
+  };
+  const job = getDuplicateJob(done, 1);
+  assert.equal(job.cancelled, false);
+  const seen: Array<{ code: number; scanCancelled: boolean | undefined; jobCancelled: boolean }> = [];
+  const shutdown = createMcpShutdown({
+    ...neverExpires,
+    exit: (code) => { seen.push({ code, scanCancelled: running.cancelled, jobCancelled: job.cancelled }); },
+  });
+  await withinHangGuard(shutdown(), 'the shutdown settling');
+  assert.deepEqual(seen, [{ code: 0, scanCancelled: true, jobCancelled: true }], 'the scan and the hashing were cancelled before the exit');
+  assert.equal(peekDuplicateJob(done.scanId), undefined, 'and the hashing job is forgotten');
 });
