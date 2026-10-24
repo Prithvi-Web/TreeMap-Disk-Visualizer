@@ -922,9 +922,11 @@ async function capture(
     // unreadable (permissions, an I/O error) is a real refusal, and the user
     // should see it rather than wonder why that file never got cleaned up.
     // Gone has its own code and the dry run's words, never the system's ENOENT (hunt C74).
-    const alreadyGone = (err as NodeJS.ErrnoException)?.code === 'ENOENT';
-    if (alreadyGone) return { path: original, protected: false, bytes: 0, code: ITEM_GONE, detail: GONE_SENTENCE };
-    const detail = err instanceof AppError ? err.message : `It could not be read (${err instanceof Error ? err.message : String(err)}).`;
+    if (await walkFoundItemGone(err, original)) return { path: original, protected: false, bytes: 0, code: ITEM_GONE, detail: GONE_SENTENCE };
+    const nested = (err as NodeJS.ErrnoException)?.code === 'ENOENT';
+    const detail = err instanceof AppError
+      ? err.message
+      : nested ? changedWhileRead('was') : `It could not be read (${err instanceof Error ? err.message : String(err)}).`;
     const code = err instanceof AppError ? err.code : 'CAPSULE_UNREADABLE';
     recordEvent(store, { at: Date.now(), kind: 'unprotected', name, originalPath: original, sizeBytes: 0, detail });
     return { path: original, protected: false, bytes: 0, code, detail };
@@ -1322,6 +1324,27 @@ export const ITEM_GONE = 'ITEM_GONE';
 const GONE_SENTENCE = 'It is no longer there — nothing to delete.';
 
 /**
+ * Whether a walk that failed with ENOENT failed because the item itself is gone (hunt C74; review
+ * F1.1/F1.13). A folder inside it that vanished between its parent's listing and its own throws the
+ * same ENOENT — common in a cache or build folder in use — and that item is still there: not gone,
+ * but changed while it was read. Only the item's own place, looked at again, says which.
+ */
+async function walkFoundItemGone(err: unknown, item: string): Promise<boolean> {
+  if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') return false;
+  try {
+    await onItem('lstat', item, () => fsp.lstat(item));
+    return false;
+  } catch (again) {
+    return meansAbsent(again);
+  }
+}
+
+/** A folder that lost something inside it while it was read (review F1.1/F1.13), as the dry run and the commit say it. */
+function changedWhileRead(verb: 'will be' | 'was'): string {
+  return `Something inside it went away while TreeMap was reading it, so it cannot be protected whole as it stands, and it ${verb} left in place. Try again.`;
+}
+
+/**
  * What `protectAndTrash` would do, having done none of it (v4 §4.4).
  *
  * §2.3 requires every destructive endpoint to offer a dry run that returns the
@@ -1392,7 +1415,8 @@ export async function planProtection(
     try {
       walked = await walkItem(path);
     } catch (err) {
-      const alreadyGone = (err as NodeJS.ErrnoException)?.code === 'ENOENT';
+      const alreadyGone = await walkFoundItemGone(err, path);
+      const nested = !alreadyGone && (err as NodeJS.ErrnoException)?.code === 'ENOENT';
       items.push({
         path,
         bytes: 0,
@@ -1403,7 +1427,9 @@ export async function planProtection(
           ? GONE_SENTENCE
           : err instanceof AppError
             ? err.message
-            : `It could not be read (${err instanceof Error ? err.message : String(err)}).`,
+            : nested
+              ? changedWhileRead('will be')
+              : `It could not be read (${err instanceof Error ? err.message : String(err)}).`,
       });
       continue;
     }

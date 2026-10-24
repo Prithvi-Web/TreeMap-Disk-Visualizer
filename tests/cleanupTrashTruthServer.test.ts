@@ -13,7 +13,7 @@ import os from 'node:os';
 import { collectCleanupSuggestions, ITEMS_PER_RULE } from '../src/services/cleanupRules';
 import { FileNode } from '../src/models/types';
 import { planCartCommit, commitCart, undoCartRun } from '../src/services/cartCommit';
-import { getCapsuleJob } from '../src/services/timeCapsule';
+import { getCapsuleJob, setSourceCallForTests } from '../src/services/timeCapsule';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { describeConflicts } from '../src/services/openHandleGuard';
 import { readProvenance } from '../src/services/provenanceTracker';
@@ -80,6 +80,58 @@ test('an item already gone is ITEM_GONE with "no longer there", in the dry run a
     assert.equal(skipped?.code, 'ITEM_GONE', 'and so does the commit');
     assert.equal(skipped?.reason, 'It is no longer there — nothing to delete.', 'in the same words, never the system\'s ENOENT');
   } finally {
+    setTrashStepForTests(null);
+    await fsp.rm(dir, { recursive: true, force: true });
+    await fsp.rm(trash, { recursive: true, force: true });
+  }
+});
+
+test('a folder that is still there is never called gone because a folder inside it vanished while it was read: it is left in place and stays in the cart (review F1.1/F1.13)', async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tm-hc-nested-gone-'));
+  const trash = await fsp.mkdtemp(path.join(os.tmpdir(), 'tm-hc-nested-gone-trash-'));
+  setTrashStepForTests(async (p) => fsp.rename(p, path.join(trash, path.basename(p))));
+  const cache = path.join(dir, 'cache');
+  const sub = path.join(cache, 'sub');
+  await fsp.mkdir(sub, { recursive: true });
+  await fsp.writeFile(path.join(cache, 'keep.bin'), Buffer.alloc(256, 1));
+  await fsp.writeFile(path.join(sub, 'x.bin'), Buffer.alloc(256, 2));
+  // The inner folder's listing fails as one removed between its parent's listing and its own does.
+  const vanished = () => Promise.reject(Object.assign(new Error(`ENOENT: no such file or directory, scandir '${sub}'`), { code: 'ENOENT' }));
+  const restore = setSourceCallForTests((what, abs) => (what === 'readdir' && abs === sub ? vanished() : null));
+  try {
+    const plan = await planCartCommit([cache]);
+    const planned = plan.items.find((i) => i.path === cache);
+    assert.equal(planned?.willDelete, false, 'control: it cannot be protected whole as it stands');
+    assert.notEqual(planned?.code, 'ITEM_GONE', 'the dry run does not call a folder that is there gone');
+    assert.equal(planned?.code, 'CAPSULE_UNREADABLE', 'it is a folder that changed while it was read');
+    assert.match(planned?.reason ?? '', /went away while TreeMap was reading it/, 'and says so');
+
+    const committed = await commitCart([cache]);
+    assert.deepEqual(committed.trashed, [], 'control: nothing went');
+    const skipped = committed.skipped.find((s) => s.path === cache);
+    assert.notEqual(skipped?.code, 'ITEM_GONE', 'nor does the commit');
+    assert.equal(skipped?.code, 'CAPSULE_UNREADABLE');
+    assert.match(skipped?.reason ?? '', /went away while TreeMap was reading it.*left in place/, 'it says it was left in place');
+    assert.equal(fs.existsSync(path.join(cache, 'keep.bin')), true, 'control: it is still on the disk');
+
+    // The second look at the item itself gets no answer: that is no proof it is gone either.
+    restore();
+    let looks = 0;
+    const silent = () => Promise.reject(Object.assign(new Error('no answer'), { code: 'ETIMEDOUT' }));
+    const restore2 = setSourceCallForTests((what, abs) => {
+      if (what === 'readdir' && abs === sub) return vanished();
+      if (what === 'lstat' && abs === cache && ++looks === 2) return silent();
+      return null;
+    });
+    try {
+      const unsure = (await planCartCommit([cache])).items.find((i) => i.path === cache);
+      assert.equal(looks, 2, 'control: the item was looked at again');
+      assert.notEqual(unsure?.code, 'ITEM_GONE', 'a look that got no answer does not make it gone');
+    } finally {
+      restore2();
+    }
+  } finally {
+    restore();
     setTrashStepForTests(null);
     await fsp.rm(dir, { recursive: true, force: true });
     await fsp.rm(trash, { recursive: true, force: true });
