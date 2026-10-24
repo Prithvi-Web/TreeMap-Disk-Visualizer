@@ -14,6 +14,7 @@ import { getOffloadIndex, getOffloadJob, prepareOffload, setOffloadFileMetaFault
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { buildOpenApiDocument } from '../src/api/openapi';
 import { setCopyFaultForTests } from '../src/utils/copyVerify';
+import { readJsonFile, writeJsonFile } from '../src/services/storage';
 import http from 'node:http';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
@@ -247,6 +248,32 @@ test('a private file\'s copy, and its restore\'s file, are never readable by oth
   assert.deepEqual([...new Set(seen.offload)], [0o600], 'the copy is private from the moment it is made');
   assert.deepEqual([...new Set(seen.restore)], [0o600], 'and so is the restore\'s temporary file');
   assert.equal(fs.statSync(secret).mode & 0o777, 0o600);
+});
+
+test('an entry an earlier build recorded with no permissions or dates is restored as any new file is made, never left private (leftover HE-L9)', { skip: process.platform === 'win32' ? 'Windows has no POSIX permission bits' : false }, async () => {
+  const { proj, paths: [file], scan } = project('nomode', { 'old.txt': 0o644 });
+  const dest = fileTempDir('treemap-offloadKeepsMeta-nomode-dest-');
+  const job = await withOpenFileCheck('clear', async () => {
+    const prepared = await prepareOffload(scan, [proj], dest);
+    return settled((await startOffload(scan, [proj], dest, prepared)).jobId);
+  });
+  assert.equal(job.status, 'complete', job.error);
+  // As a build before hunt C45 recorded it: no permission bits and no dates.
+  const store = await readJsonFile<{ entries: Record<string, unknown>[] }>('offload-manifest.json', { entries: [] });
+  const entry = store.entries.find((e) => e.originalPath === file) as Record<string, unknown>;
+  delete entry.mode;
+  delete entry.mtimeMs;
+  delete entry.atimeMs;
+  await writeJsonFile('offload-manifest.json', store);
+  const was = process.umask(0o022); // a new file is then made 0o644
+  let restore: OffloadJob;
+  try {
+    restore = await settled((await startRestore([entry.id as string])).jobId);
+  } finally {
+    process.umask(was);
+  }
+  assert.equal(restore.status, 'complete', restore.error);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o644, 'made as a new file is, not owner-only: nothing recorded would ever set its bits');
 });
 
 /** The frames of an offload job's progress stream, read until the server ends it. */
