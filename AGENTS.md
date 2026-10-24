@@ -446,7 +446,11 @@ OpenAPI 3 spec).
      `reason` (gdu shows a folder it could not read as an empty one). To trash
      what it offers, send `onlyEmptyFolders: true` (below).
    - `GET /api/file-types`, `GET /api/apps`,
-     `GET /api/compare`, `GET /api/forecast` — further angles.
+     `GET /api/compare`, `GET /api/forecast` — further angles. Compare (and
+     MCP `compare_scans`) never calls what only one scan listed in a folder
+     the other could not list in full — refused, unreadable, not entered —
+     removed or added: it is not compared, and `unlistedFolders` counts such
+     folders.
    - `GET`/`POST /api/platform/shell-integration` — the "Scan with TreeMap"
      right-click entry. Per-user, no elevation, and the installed flag is read
      from the OS every time rather than remembered. It starts the installed

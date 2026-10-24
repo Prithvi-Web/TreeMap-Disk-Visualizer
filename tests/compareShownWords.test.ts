@@ -64,6 +64,16 @@ test('past the server\'s 1,000 it says "of more than 1,000", never "biggest 1,00
   assert.match(line, /among the biggest 1,000 differences: 1000 added/, line);
 });
 
+test('a folder one of the scans could not list in full is said, and what is in it is not called removed (hunt C47)', () => {
+  const entries = [{ path: '/r/other.txt', name: 'other.txt', type: 'file', sizeA: 1, sizeB: 5, delta: 4, change: 'grew' }];
+  html = '';
+  (ctx.renderCompare as (r: unknown) => void)({ entries, totalDelta: 4, truncated: false, unlistedFolders: 2, deep: true, whenA: 1, whenB: 2, rules: null });
+  assert.match(html.replace(/\s+/g, ' '), /2 folders one of these scans could not list in full \(refused, unreadable or not entered\), so what only one scan listed in them is not compared — not called removed or added\./, html);
+  html = '';
+  (ctx.renderCompare as (r: unknown) => void)({ entries, totalDelta: 4, truncated: false, unlistedFolders: 0, deep: true, whenA: 1, whenB: 2, rules: null });
+  assert.doesNotMatch(html, /could not list in full/, 'nothing said when every folder was listed');
+});
+
 test('a list it draws whole says nothing of a cut', () => {
   const { rows, line } = cardFor(150, false);
   assert.equal(rows, 150);

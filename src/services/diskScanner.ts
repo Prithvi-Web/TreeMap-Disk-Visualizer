@@ -2124,11 +2124,18 @@ const COMPARE_CAP = 1000;
  * one row, not ten thousand); files present in both are emitted when their
  * size changed. Directories present in both are never emitted themselves —
  * their change is fully explained by the child entries.
+ *
+ * A child absent from a folder one of the scans did not list in full (`Flag.Unlisted`: refused,
+ * unreadable, not entered, or listed with entries left out) is not known to be gone or new, so it is
+ * never emitted as removed or added (hunt C47): one scan run with Full Disk Access and one without
+ * listed everything in ~/Library/Mail as removed. Such folders are counted in `unlistedFolders`;
+ * children both scans list are compared as ever.
  */
-export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entries: CompareEntry[]; truncated: boolean } {
+export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entries: CompareEntry[]; truncated: boolean; unlistedFolders: number } {
   const a = asStore(sourceA);
   const b = asStore(sourceB);
   const entries: CompareEntry[] = [];
+  let unlistedFolders = 0;
 
   const emit = (store: ScanStore, id: number, childPath: string, sizeA: number | null, sizeB: number | null): void => {
     const delta = (sizeB ?? 0) - (sizeA ?? 0);
@@ -2149,13 +2156,19 @@ export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entrie
   const recurse = (aId: number, bId: number, dirPath: string): void => {
     const aChildren = new Map<string, number>();
     for (const c of a.childIds(aId)) aChildren.set(a.name(c), c);
+    // Whether each scan listed this folder whole: a child one of them did not list is not known to be gone or new.
+    // Counted only where that left a child out, so a folder neither scan entered (/dev in a scan of /) says nothing.
+    const aWhole = !a.flag(aId, Flag.Unlisted);
+    const bWhole = !b.flag(bId, Flag.Unlisted);
+    let leftOut = false;
 
     for (const cb of b.childIds(bId)) {
       const name = b.name(cb);
       const childPath = b.childPath(cb, dirPath);
       const ca = aChildren.get(name);
       if (ca === undefined) {
-        emit(b, cb, childPath, null, b.size(cb)); // appeared between scans
+        if (aWhole) emit(b, cb, childPath, null, b.size(cb)); // appeared between scans
+        else leftOut = true;
         continue;
       }
       aChildren.delete(name);
@@ -2165,14 +2178,26 @@ export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entrie
         emit(b, cb, childPath, a.size(ca), b.size(cb));
       }
     }
-    for (const [name, ca] of aChildren) {
-      emit(a, ca, a.childPath(ca, dirPath), a.size(ca), null); // disappeared between scans
+    if (!bWhole) {
+      if (aChildren.size > 0) leftOut = true; // what scan B did not list is not known to have gone
+    } else {
+      for (const [, ca] of aChildren) {
+        emit(a, ca, a.childPath(ca, dirPath), a.size(ca), null); // disappeared between scans
+      }
     }
+    if (leftOut) unlistedFolders++;
   };
 
   recurse(a.rootId, b.rootId, b.rootPath);
   entries.sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
-  return { entries: entries.slice(0, COMPARE_CAP), truncated: entries.length > COMPARE_CAP };
+  return { entries: entries.slice(0, COMPARE_CAP), truncated: entries.length > COMPARE_CAP, unlistedFolders };
+}
+
+/** What a comparison says of the folders one of its scans did not list in full (hunt C47), or null when there are none. */
+export function unlistedFoldersNote(count: number): string | null {
+  if (count === 0) return null;
+  return `${formatCount(count)} folder${count === 1 ? '' : 's'} one of these scans could not list in full (refused, unreadable, not entered, ` +
+    'or with entries left out), so what is in them that only one scan listed is not compared — neither removed nor added.';
 }
 
 /** collectFileTypes' per-extension tally, fed one file at a time by either walk. */

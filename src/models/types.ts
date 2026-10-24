@@ -734,6 +734,12 @@ export interface CompareResult {
   totalDelta: number;
   entries: CompareEntry[];
   truncated: boolean;
+  /**
+   * Present when one of the scans did not list a folder in full (`Flag.Unlisted`) and that left something
+   * out (hunt C47): how many such folders. What only one scan listed in them is not compared — never
+   * called removed or added.
+   */
+  unlistedFolders?: number;
 }
 
 /* ---------- Settings: ignore list + scheduled scans ---------- */

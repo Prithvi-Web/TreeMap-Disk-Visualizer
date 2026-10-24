@@ -706,7 +706,7 @@ insightRouter.get('/compare', storageModeGate, (req: Request, res: Response) => 
   assertSameBoundary(scanA, scanB);
   const storeA = storeOf(scanA);
   const storeB = storeOf(scanB);
-  const { entries, truncated } = compareTrees(storeA, storeB);
+  const { entries, truncated, unlistedFolders } = compareTrees(storeA, storeB);
   const result: CompareResult = {
     scanIdA: scanA.scanId,
     scanIdB: scanB.scanId,
@@ -714,6 +714,7 @@ insightRouter.get('/compare', storageModeGate, (req: Request, res: Response) => 
     totalDelta: storeB.size(storeB.rootId) - storeA.size(storeA.rootId),
     entries,
     truncated,
+    ...(unlistedFolders > 0 ? { unlistedFolders } : {}),
   };
   res.json(result);
 });

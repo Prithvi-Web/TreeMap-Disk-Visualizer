@@ -6,6 +6,7 @@ import {
   collectLargestFiles,
   collectLargestFolders,
   compareTrees,
+  unlistedFoldersNote,
 } from '../services/diskScanner';
 import { DEFAULT_DUPLICATE_MIN_SIZE, getDuplicateJob } from '../services/duplicateFinder';
 import { computeFacts } from '../services/facts';
@@ -737,6 +738,8 @@ export function buildMcpServer(): McpServer {
       description:
         'Structural diff between two completed scans of the same root path: what appeared, vanished, grew or ' +
         'shrank, biggest absolute change first. Subtrees present in only one scan collapse to a single entry. ' +
+        'What only one scan listed in a folder the other could not list in full (refused, unreadable, not entered) ' +
+        'is not compared, never called vanished or appeared; unlistedFolders and unlistedNote say how many such folders. ' +
         'Run scan_path on the same folder at two different times to get the two scanIds.',
       inputSchema: {
         scanIdA: z.string().min(1).describe('The earlier scan'),
@@ -756,8 +759,9 @@ export function buildMcpServer(): McpServer {
         assertSameBoundary(scanA, scanB);
         const storeA = storeOf(scanA);
         const storeB = storeOf(scanB);
-        const { entries, truncated } = compareTrees(storeA, storeB);
+        const { entries, truncated, unlistedFolders } = compareTrees(storeA, storeB);
         const totalDelta = storeB.size(storeB.rootId) - storeA.size(storeA.rootId);
+        const unlistedNote = unlistedFoldersNote(unlistedFolders); // hunt C47
         return ok({
           scanIdA,
           scanIdB,
@@ -769,6 +773,7 @@ export function buildMcpServer(): McpServer {
             deltaFormatted: `${e.delta < 0 ? '-' : '+'}${formatBytes(Math.abs(e.delta))}`,
           })),
           truncated: truncated || entries.length > limit,
+          ...(unlistedNote !== null ? { unlistedFolders, unlistedNote } : {}),
         });
       }),
   );
