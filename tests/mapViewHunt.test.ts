@@ -676,6 +676,76 @@ test('C24 (review F1.5): a preview put up while a folder of small files is asked
   assert.deepEqual([n.state.treemap.nodes.map((x) => x.path), n.state.treemap.minSize], [['/r/a'], 1], 'control: with no preview the second answer lands, with its floor');
 });
 
+/** The real liveRelayout, its morph (animateTreemapTo), and the cart preview, over animation frames run by hand. */
+function morphHarness() {
+  const rect = (path: string, size: number, x: number, w: number) => ({ name: path.slice(3), path, size, type: 'dir', depth: 1, expanded: false, x, y: 0, w, h: 100 });
+  const before = [rect('/r/a', 40, 0, 40), rect('/r/b', 60, 40, 60)];
+  const answers: Record<string, unknown>[][] = [];
+  const frames = new Map<number, (t: number) => void>();
+  let lastFrame = 0;
+  let clock = 1000;
+  const runFrames = (ms: number) => { clock += ms; const due = [...frames.values()]; frames.clear(); for (const f of due) f(clock); };
+  const state = {
+    scanId: 's1', scanning: false, view: 'treemap', root: { path: '/r' }, system: { homeDir: '/elsewhere' }, trash: { totalBytes: 0 },
+    cart: new Set(['/r/a']), live: { on: true, dirty: 1 },
+    treemap: { mode: 'treemap', rootPath: '/r', rootSize: 100, minSize: 4000, maxDepth: 4, nodes: before as Record<string, unknown>[], hover: null, kbSel: null, history: { active: false } },
+  };
+  const deps = {
+    state, TM_MIN_SIZE: 4000, REDUCED: false, document: { hidden: false }, performance: { now: () => clock },
+    requestAnimationFrame: (f: (t: number) => void) => { frames.set(++lastFrame, f); return lastFrame; },
+    cancelAnimationFrame: (id: number) => { frames.delete(id); },
+    drawTreemap() {}, isSun: () => false, isCells: () => false, isRectMap: () => true, animateSunburstTo() {}, drawCells() {}, sunburstRoot: () => null,
+    // The disk moved: b grew, a shrank, and the server lays the folder out again.
+    api: async () => { answers.push([rect('/r/b', 70, 0, 70), rect('/r/a', 30, 70, 30)]); return { root: { path: '/r', size: 100 }, nodes: answers.at(-1) }; },
+    toast: (m: string) => { throw new Error(`the preview refused: ${m}`); }, tmPreviewRefusal: () => 'refused', hideTooltip() {}, syncCartPreviewChrome() {},
+    cartNode: (p: string) => ({ size: p === '/r/a' ? 30 : 0 }),
+  };
+  const names = ['tmPreview', 'tmAnimFrame', 'tmWorstRatio', 'tmSquarify', 'tmParentPath', 'tmIsInside', 'tmDrawnTree', 'tmCartRoots', 'tmBuildPreview',
+    'maybeInjectTrash', 'liveRelayout', 'animateTreemapTo', 'enterCartPreview', 'exitCartPreview',
+    ...['tmMorph', 'tmSettleMorph'].filter((n) => INDEX.includes(`let ${n} =`) || INDEX.includes(`function ${n}(`))];
+  const page = load<{ tmPreview: { on: boolean; saved: unknown }; liveRelayout: () => Promise<void>; enterCartPreview: () => void; exitCartPreview: () => void }>(
+    names, deps, '{ tmPreview, liveRelayout, enterCartPreview, exitCartPreview }');
+  /** A Live tick: the new layout morphs in over 260 ms. */
+  const tick = async () => { state.live.dirty = 1; await page.liveRelayout(); return answers.at(-1)!; };
+  return { state, page, frames, runFrames, tick };
+}
+
+test('C24 (review F1.7): Preview pressed while a live re-layout still morphs takes the map as it will stand — the morph never replaces the preview\'s picture, and Escape puts back the new layout', async () => {
+  const h = morphHarness();
+  const answered = await h.tick();
+  h.runFrames(100); // 100 ms in
+  assert.notEqual(h.state.treemap.nodes, answered, 'control: the map shows a frame of the morph');
+  h.page.enterCartPreview(); // Preview after, pressed inside the morph
+  const preview = h.state.treemap.nodes;
+  assert.ok(h.page.tmPreview.on && preview.some((n) => n.freed), 'control: the preview is up, its staged block hatched');
+  assert.equal(h.page.tmPreview.saved, answered, 'the preview took the map as the morph will leave it, never a frame of it');
+  for (let i = 0; i < 10 && h.frames.size; i++) h.runFrames(50);
+  assert.equal(h.state.treemap.nodes, preview, 'the morph\'s frames never replace the preview\'s picture under its banner');
+  h.page.exitCartPreview(); // Escape
+  assert.equal(h.state.treemap.nodes, answered, 'Escape puts back the new layout, not the frame Preview was pressed on');
+  // Pressed before the morph's first frame: the same.
+  const next = await h.tick();
+  h.page.enterCartPreview();
+  assert.equal(h.page.tmPreview.saved, next, 'pressed before the first frame, it takes the layout the morph ends on');
+  const again = h.state.treemap.nodes;
+  for (let i = 0; i < 10 && h.frames.size; i++) h.runFrames(50);
+  assert.equal(h.state.treemap.nodes, again, 'and no frame replaces its picture');
+  h.page.exitCartPreview();
+});
+
+test('C24 (review F1.7): a morph something else has stopped and drawn over is not landed by the preview — the map as it now stands is what it takes', async () => {
+  const h = morphHarness();
+  await h.tick();
+  h.runFrames(100);
+  // The Treemap left and entered again mid-morph: its unmount stopped the frames, and the map loaded afresh.
+  h.frames.clear();
+  const landed = [{ name: 'a', path: '/r/a', size: 50, type: 'dir', depth: 1, expanded: false, x: 0, y: 0, w: 50, h: 100 },
+    { name: 'b', path: '/r/b', size: 50, type: 'dir', depth: 1, expanded: false, x: 50, y: 0, w: 50, h: 100 }];
+  h.state.treemap.nodes = landed;
+  h.page.enterCartPreview();
+  assert.equal(h.page.tmPreview.saved, landed, 'the map that stands, never the stopped morph\'s end');
+});
+
 test('C24: a live re-layout of the home folder keeps the Trash cell beside it', async () => {
   const h = liveHarness({ preview: false, home: true });
   await h.liveRelayout();

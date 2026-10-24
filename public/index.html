@@ -22727,6 +22727,10 @@ function enterCartPreview() {
     return;
   }
   if (state.treemap.history.active) { toast('Leave the time slider first — the preview works on the live map', 'error'); return; }
+  // A live re-layout still morphing lands first: the preview is of the map as
+  // it will stand, never a frame of the morph (tmSettleMorph). Guarded: a page
+  // reader may lift this function without it.
+  if (typeof tmSettleMorph === 'function') tmSettleMorph();
   if (!state.treemap.nodes.length) { toast('Nothing is drawn yet', 'error'); return; }
   if (!state.cart.size) { toast('Your cart is empty — there is nothing to take out of the map', 'error'); return; }
 
@@ -23384,8 +23388,12 @@ async function setHistoryIndex(i) {
 
 /** Canvas interpolation: morph the current rectangles into `newNodes`. */
 let tmAnimFrame = 0;
+// The morph running, if one is: the nodes it ends on, and the frame it last
+// put on the map (tmSettleMorph). Null once it lands.
+let tmMorph = null;
 function animateTreemapTo(newNodes) {
   cancelAnimationFrame(tmAnimFrame);
+  tmMorph = null;
   // Hidden tabs get no animation frames — apply the final state directly so
   // a backgrounded Live session never freezes mid-morph.
   if (REDUCED || document.hidden || !state.treemap.nodes.length) {
@@ -23410,11 +23418,32 @@ function animateTreemapTo(newNodes) {
       w: from[i].w + (n.w - from[i].w) * e,
       h: from[i].h + (n.h - from[i].h) * e,
     }));
+    tmMorph = { to: newNodes, frame: state.treemap.nodes };
     drawTreemap();
     if (p < 1) tmAnimFrame = requestAnimationFrame(tick);
-    else { state.treemap.nodes = newNodes; drawTreemap(); }
+    else { tmMorph = null; state.treemap.nodes = newNodes; drawTreemap(); }
   };
+  tmMorph = { to: newNodes, frame: state.treemap.nodes }; // until the first frame, the map still shows the old nodes
   tmAnimFrame = requestAnimationFrame(tick);
+}
+
+/**
+ * A morph still running, landed at once on the nodes it ends on (review
+ * F1.7). The cart preview takes the map as it stands: pressed inside a live
+ * re-layout's 260 ms morph, it re-tiled a frame of it, the next frame put
+ * the live layout back under its banner (C24), and Escape restored the frame
+ * it was pressed on. Only while the map still shows the morph's last frame:
+ * a map something else has redrawn since is left as it is.
+ */
+function tmSettleMorph() {
+  const m = tmMorph;
+  if (!m) return;
+  tmMorph = null;
+  cancelAnimationFrame(tmAnimFrame);
+  tmAnimFrame = 0;
+  if (state.treemap.nodes !== m.frame) return;
+  state.treemap.nodes = m.to;
+  drawTreemap();
 }
 
 /* ── v4 §7.1 — time-lapse interpolation, as pure functions ──
