@@ -2414,6 +2414,11 @@ function drawTreemap() {
     px.push({ n, x, y, w, h, frame: n.expanded, dpr });
   }
   state.treemap.pxRects = px;
+  // A keyboard selection this paint no longer draws goes, before the map is
+  // presented (review L3, F1.3): a Live re-layout, a morph's frames and the
+  // time-lapse paint here with no drawView. Guarded: a page reader may lift
+  // this function without it.
+  if (typeof kbDropUndrawn === 'function') kbDropUndrawn();
   // And the name tags it lays (below), none until then: a map with nothing
   // to draw returns before it lays any, and the lens laid the last map's
   // over "This folder is empty." (review F1.2, F1.4, F1.12).

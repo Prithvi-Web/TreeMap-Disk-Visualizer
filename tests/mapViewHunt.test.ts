@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { load as pull } from './fixtures/mapRaster';
 
 /**
  * The map views tell the truth about what is on screen — the final hunt of
@@ -1378,6 +1379,85 @@ test('HB2 (L3): the keyboard\'s selection goes when a repaint stops drawing it �
   state.treemap.arcs = [];
   drawView();
   assert.equal(state.treemap.kbSel, null);
+});
+
+/** A 2D context that does nothing but answer measureText and make gradients (as mapKeyMarkings' quietCtx). */
+function quietCtx() {
+  const props: Record<string, unknown> = {
+    measureText: (t: string) => ({ width: String(t).length * 6 }),
+    createLinearGradient: () => ({ addColorStop() {} }), createRadialGradient: () => ({ addColorStop() {} }), createPattern: () => null,
+  };
+  return new Proxy(props, { get(t, k: string) { return k in t ? t[k] : () => {}; }, set(t, k: string, v) { t[k] = v; return true; } });
+}
+
+/**
+ * The real liveRelayout over the real painter of `mode` — drawTreemap after the real animateTreemapTo, drawCells, or the
+ * real animateSunburstTo — with fixtures/mapRaster resolving the painter's helpers. big.iso is selected, then deleted on disk.
+ */
+async function liveDropHarness(mode: string) {
+  const gone = { path: '/r/big.iso', name: 'big.iso', size: 60, type: 'file' };
+  const kept = { path: '/r/small.txt', name: 'small.txt', size: 40, type: 'file' };
+  const root = { path: '/r', name: 'r', size: 100, type: 'dir', children: [gone, kept] };
+  const rect = (n: { path: string; name: string; size: number }, x: number, w: number) => ({ ...n, type: 'file', depth: 1, expanded: false, x, y: 0, w, h: 100 });
+  const frames: ((t: number) => void)[] = [];
+  let clock = 0;
+  let tips = 0;
+  const state = {
+    scanId: 's1', scanning: false, view: 'treemap', live: { on: true, dirty: 0 }, root,
+    pathIndex: new Map<string, unknown>([[root.path, root], [gone.path, gone], [kept.path, kept]]),
+    treemap: { mode, rootPath: '/r', rootName: 'r', rootSize: 100, maxDepth: 4, minSize: 1, nodes: [rect(gone, 0, 60), rect(kept, 60, 40)] as unknown[],
+      pxRects: [] as unknown[], arcs: [] as unknown[], cells: [] as unknown[], kbSel: null as { path: string } | null, hideCloud: false, hover: null,
+      history: { active: false, diff: false }, colorMode: 'size', query: '', queryMode: 'bare', matchedPaths: null, altNote: '', altRaf: 0, altZoomRaf: 0, altZoom: null },
+  };
+  const deps = {
+    state, $: () => ({ clientWidth: 420, textContent: '', style: {} }), treemapCanvasHeight: () => 400, window: { devicePixelRatio: 1 },
+    tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: quietCtx(), cssVar: () => '#888888',
+    tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
+    cellRgb: () => [48, 209, 88], tmHatchPattern: () => null, tmPreview: { on: false }, roundRect() {}, reclaimCoverageNote: () => '',
+    formatBytes: (b: number) => `${b} B`, formatCount: String, formatWhen: () => 'then',
+    tmSizeCanvas: () => ({ cssW: 400, cssH: 400, dpr: 1 }), fxShapeSync() {}, performance: { now: () => clock },
+    drawPackedCircle() {}, drawVoronoiCell() {}, altDrawLabels() {}, renderCellsStatus() {}, presentCells() {}, altNoteSettled() {},
+    presentSunburst() {}, Canvas2D: { fitText: (_c: unknown, t: string) => t }, REDUCED: false, document: { hidden: false },
+    requestAnimationFrame: (f: (t: number) => void) => frames.push(f), cancelAnimationFrame() {},
+    hideTooltip() { tips++; },
+  };
+  // The painter, its helpers resolved by painting the map as it stands, a frame of the morph and the layout it ends on.
+  const kb = ['kbDropUndrawn', 'drawnCells', 'isSun', 'isCells']; // run only once a key has selected something
+  const paintEach = (draw: () => void) => {
+    const was = state.treemap.nodes;
+    for (const nodes of [was, [rect(kept, 30, 70)], [rect(kept, 0, 100)]]) { state.treemap.nodes = nodes; draw(); }
+    state.treemap.nodes = was;
+  };
+  const painter = mode === 'treemap' ? pull<{ draw: () => void }>(['drawTreemap', ...kb], deps, '{ draw: drawTreemap }', (f) => paintEach(f.draw))
+    : mode === 'sunburst' ? pull<{ draw: (r: unknown) => void }>(['animateSunburstTo', ...kb], { ...deps, REDUCED: true }, '{ draw: animateSunburstTo }', (f) => f.draw(root))
+      : pull<{ draw: () => void }>(['drawCells', ...kb], deps, '{ draw: drawCells }', (f) => f.draw());
+  frames.length = 0;
+  const live = load<{ liveRelayout: () => Promise<void> }>(['tmAnimFrame', 'tmMorph', 'animateTreemapTo', 'TM_MIN_SIZE', 'liveRelayout'], {
+    ...deps, isSun: () => mode === 'sunburst', isCells: () => mode === 'circles', maybeInjectTrash() {},
+    drawTreemap: painter.draw, drawCells: painter.draw, animateSunburstTo: painter.draw, sunburstRoot: () => root,
+    // The server's layout of the folder now: big.iso is gone.
+    api: async () => ({ root: { path: '/r', size: 40 }, nodes: [rect(kept, 0, 100)] }),
+  }, '{ liveRelayout }');
+  const relayout = async () => {
+    state.live.dirty = 1;
+    await live.liveRelayout();
+    for (let i = 0; i < 20 && frames.length; i++) { clock += 50; const due = frames.splice(0); for (const f of due) f(clock); }
+  };
+  return { state, relayout, gone, kept, tips: () => tips };
+}
+
+test('HB2 review (F1.3, F1.5, F1.7): a Live re-layout that stops drawing the selected item takes the selection — every renderer, with no drawView', async () => {
+  for (const mode of ['treemap', 'circles', 'sunburst']) {
+    const h = await liveDropHarness(mode);
+    h.state.treemap.kbSel = h.kept;
+    await h.relayout();
+    assert.equal(h.state.treemap.kbSel, h.kept, `${mode}: control — a selection still drawn stays`);
+    h.state.treemap.kbSel = h.gone;
+    h.gone.size = 0; // another process deleted big.iso: the watcher's tree has it at 0 bytes, and the server's layout leaves it out
+    await h.relayout();
+    assert.equal(h.state.treemap.kbSel, null, `${mode}: nothing on screen is selected — c, Delete, p, n and Enter have nothing to act on`);
+    assert.ok(h.tips() >= 1, `${mode}: and its card goes with it`);
+  }
 });
 
 test('HB2 (L15): with Hide cloud on, the matches it hides are said as that — never "deeper than this view draws", whose advice cannot show them', () => {

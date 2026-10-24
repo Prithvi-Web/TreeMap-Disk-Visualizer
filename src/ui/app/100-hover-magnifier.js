@@ -454,9 +454,12 @@ function kbSelect(node) {
 }
 /**
  * The keyboard's selection, dropped when the map now drawn no longer draws it
- * (review L3): Hide cloud hid it, or a key pressed between a click and its map
- * landing picked it from the folder before. c, Delete, p, n and Enter still
- * acted on it, with nothing on screen. Called after every draw (drawView).
+ * (review L3): Hide cloud hid it, a Live re-layout left it out, or a key
+ * pressed between a click and its map landing picked it from the folder
+ * before. c, Delete, p, n and Enter still acted on it, with nothing on screen.
+ * Called by each painter as it sets what it draws — drawTreemap, drawCells,
+ * renderSunburstFrame, which a Live re-layout, a morph and the time-lapse
+ * reach with no drawView (review F1.3, F1.5, F1.7) — and after every drawView.
  */
 function kbDropUndrawn() {
   const ks = state.treemap.kbSel;

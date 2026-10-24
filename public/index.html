@@ -15985,6 +15985,11 @@ function drawTreemap() {
     px.push({ n, x, y, w, h, frame: n.expanded, dpr });
   }
   state.treemap.pxRects = px;
+  // A keyboard selection this paint no longer draws goes, before the map is
+  // presented (review L3, F1.3): a Live re-layout, a morph's frames and the
+  // time-lapse paint here with no drawView. Guarded: a page reader may lift
+  // this function without it.
+  if (typeof kbDropUndrawn === 'function') kbDropUndrawn();
   // And the name tags it lays (below), none until then: a map with nothing
   // to draw returns before it lays any, and the lens laid the last map's
   // over "This folder is empty." (review F1.2, F1.4, F1.12).
@@ -24356,6 +24361,10 @@ function renderSunburstFrame(root, arcs, geo) {
 
   state.treemap.arcs = arcs;
   state.treemap.sun = { cx: geo.cx, cy: geo.cy, innerR0: geo.innerR0, outerR: geo.outerR };
+  // A keyboard selection these arcs no longer hold goes (review F1.7): a Live
+  // re-layout sweeps here with no drawView. Guarded: a page reader may lift
+  // this function without it.
+  if (typeof kbDropUndrawn === 'function') kbDropUndrawn();
   const st = $('tmStatus');
   if (st) {
     st.textContent = state.treemap.history.active
@@ -25946,6 +25955,11 @@ function drawCells() {
   const geo = tmSizeCanvas();
   const ctx = tmBufCtx;
   buildCells(geo);
+  // A keyboard selection the new layout does not draw goes (review F1.5): a
+  // Live re-layout solves here with no drawView. Its first slice holds every
+  // shape of the first level, the only ones a key selects. Guarded: a page
+  // reader may lift this function without it.
+  if (typeof kbDropUndrawn === 'function') kbDropUndrawn();
   ctx.setTransform(geo.dpr, 0, 0, geo.dpr, 0, 0);
   ctx.clearRect(0, 0, geo.cssW, geo.cssH);
   ctx.fillStyle = cssVar('--tm-canvas-bg');
@@ -27136,9 +27150,12 @@ function kbSelect(node) {
 }
 /**
  * The keyboard's selection, dropped when the map now drawn no longer draws it
- * (review L3): Hide cloud hid it, or a key pressed between a click and its map
- * landing picked it from the folder before. c, Delete, p, n and Enter still
- * acted on it, with nothing on screen. Called after every draw (drawView).
+ * (review L3): Hide cloud hid it, a Live re-layout left it out, or a key
+ * pressed between a click and its map landing picked it from the folder
+ * before. c, Delete, p, n and Enter still acted on it, with nothing on screen.
+ * Called by each painter as it sets what it draws — drawTreemap, drawCells,
+ * renderSunburstFrame, which a Live re-layout, a morph and the time-lapse
+ * reach with no drawView (review F1.3, F1.5, F1.7) — and after every drawView.
  */
 function kbDropUndrawn() {
   const ks = state.treemap.kbSel;

@@ -180,6 +180,10 @@ function renderSunburstFrame(root, arcs, geo) {
 
   state.treemap.arcs = arcs;
   state.treemap.sun = { cx: geo.cx, cy: geo.cy, innerR0: geo.innerR0, outerR: geo.outerR };
+  // A keyboard selection these arcs no longer hold goes (review F1.7): a Live
+  // re-layout sweeps here with no drawView. Guarded: a page reader may lift
+  // this function without it.
+  if (typeof kbDropUndrawn === 'function') kbDropUndrawn();
   const st = $('tmStatus');
   if (st) {
     st.textContent = state.treemap.history.active

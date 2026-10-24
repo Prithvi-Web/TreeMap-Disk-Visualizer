@@ -652,6 +652,11 @@ function drawCells() {
   const geo = tmSizeCanvas();
   const ctx = tmBufCtx;
   buildCells(geo);
+  // A keyboard selection the new layout does not draw goes (review F1.5): a
+  // Live re-layout solves here with no drawView. Its first slice holds every
+  // shape of the first level, the only ones a key selects. Guarded: a page
+  // reader may lift this function without it.
+  if (typeof kbDropUndrawn === 'function') kbDropUndrawn();
   ctx.setTransform(geo.dpr, 0, 0, geo.dpr, 0, 0);
   ctx.clearRect(0, 0, geo.cssW, geo.cssH);
   ctx.fillStyle = cssVar('--tm-canvas-bg');
