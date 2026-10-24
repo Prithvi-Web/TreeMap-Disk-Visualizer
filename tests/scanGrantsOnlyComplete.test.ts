@@ -20,7 +20,7 @@ import { insideAnyScanRoot } from '../src/middleware/pathGuard';
 import { POLICY_FILE } from '../src/services/policy';
 import { buildMcpServer } from '../src/mcp/server';
 import { relocateSecret } from '../src/services/securityHygieneScanner';
-import { runGitGc } from '../src/services/gitScanner';
+import { runGitGc, setGitGcStepForTests } from '../src/services/gitScanner';
 import { waitFor } from './fixtures/waitFor';
 
 /**
@@ -126,6 +126,15 @@ test('a stopped scan grants nothing: a delete under its root is refused, not let
     const answer = await request('DELETE', '/api/files', { paths: [big] });
     assert.deepEqual([answer.status, answer.body.code], [403, 'OUTSIDE_SCAN_ROOT'], JSON.stringify(answer.body));
     assert.ok(fs.existsSync(big), 'nothing was moved');
+    // A stopped scan will never finish, so neither the guard nor a route's own refusal says it has not
+    // finished yet (hunt HF-L7).
+    const stopped = new RegExp(`The scan of "${dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}" did not finish`);
+    const preview = await request('GET', `/api/files/preview?path=${encodeURIComponent(big)}`);
+    for (const [route, refusal] of [['DELETE', answer], ['preview', preview]] as const) {
+      assert.deepEqual([refusal.status, refusal.body.code], [403, 'OUTSIDE_SCAN_ROOT'], `${route}: ${JSON.stringify(refusal.body)}`);
+      assert.match(refusal.body.error, stopped, `${route} says the stopped scan did not finish`);
+      assert.doesNotMatch(refusal.body.error, /has not finished yet/, `${route} does not call a stopped scan unfinished`);
+    }
   } finally {
     setCap(null);
   }
@@ -235,6 +244,30 @@ test('every route and service that refuses a path a running scan lists says that
     assert.match(String(gc.error), unfinished, 'and git gc');
     assert.ok(fs.existsSync(key), 'nothing was moved');
   } finally {
+    cancelScan(rec.scanId);
+  }
+});
+
+test('git gc on a link in a completed scan that leads into a folder still being scanned says that scan has not finished (hunt HF-L8)', {
+  skip: process.platform === 'win32', // a symbolic link needs a privilege the Windows runner's user may not hold
+}, async () => {
+  const { dir } = mkRoot('gclink-running');
+  const { dir: done } = mkRoot('gclink-done');
+  fs.mkdirSync(path.join(dir, 'repo', '.git'), { recursive: true });
+  fs.symlinkSync(path.join(dir, 'repo'), path.join(done, 'repolink'));
+  await completedScanOf(done);
+  const rec = createScanRecord(dir);
+  const ran: string[] = [];
+  // A stand-in for the real gc, which prunes for good: the refusal comes from the plan, before any step.
+  setGitGcStepForTests(async (plan) => { ran.push(plan.repo); return { stdout: '', stderr: '' }; });
+  try {
+    const gc = await runGitGc(path.join(done, 'repolink'));
+    assert.deepEqual(ran, [], 'no gc step ran');
+    assert.equal(gc.ok, false);
+    assert.match(String(gc.error), /leads to .*outside every scanned folder/, 'the link passed the first check and its real place is refused');
+    assert.match(String(gc.error), new RegExp(`The scan of "${dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}" has not finished yet`), 'and the refusal names the running scan');
+  } finally {
+    setGitGcStepForTests(null);
     cancelScan(rec.scanId);
   }
 });

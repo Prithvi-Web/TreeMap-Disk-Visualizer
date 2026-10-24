@@ -203,7 +203,10 @@ async function gitDirRefusal(repo: string): Promise<string | null> {
 async function planGitGc(asked: string): Promise<GitGcPlan | { refused: string }> {
   const repo = await fsp.realpath(asked).catch(() => null);
   if (!repo) return { refused: `${asked} could not be found.` };
-  if (!insideAnyScanRoot(repo)) return { refused: `${asked} leads to ${repo}, outside every scanned folder, so TreeMap does not run git gc there.` };
+  if (!insideAnyScanRoot(repo)) {
+    // Its real place may lie in a folder a scan is still listing, or one that was stopped: say so (hunt HF-L8).
+    return { refused: withUnfinishedScan(`${asked} leads to ${repo}, outside every scanned folder, so TreeMap does not run git gc there.`, repo) };
+  }
   const layout = await gitDirRefusal(repo).catch((err: unknown) => `${repo}/.git could not be checked (${err instanceof Error ? err.message : String(err)}).`);
   if (layout) return { refused: layout };
   const vetting = await vetRepository(repo, { insideScannedRoot: insideAnyScanRoot });
