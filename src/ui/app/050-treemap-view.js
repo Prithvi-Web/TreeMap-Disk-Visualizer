@@ -2741,6 +2741,11 @@ function renderSearchOverlay() {
   const waiting = state.treemap.queryMode === 'grammar' && !state.treemap.matchedPaths;
   const q = waiting ? '' : state.treemap.query.trim().toLowerCase();
   state.treemap.matches = 0;
+  // The sunburst draws no highlight — presentSunburst lays no overlay over its
+  // arcs — so it counts none. Run on, the loops below counted the matches
+  // among the last rectangle map's pxRects (another folder's, or none) and
+  // "0 of 9 matches" stood over the sunburst's own line (hunt C20).
+  if (state.treemap.mode === 'sunburst') return;
   updateTmStatus();
   if (!q) return;
 
@@ -2853,6 +2858,9 @@ function updateTmStatus() {
     return;
   }
   if (q) {
+    // Not over the sunburst, which counts no matches (renderSearchOverlay):
+    // its line is its own, and the box says what became of the query (C20).
+    if (state.treemap.mode === 'sunburst') return;
     // The map draws what fits at this folder and depth; a grammar query is
     // answered over the whole scan. Naming only the drawn count made "1 match
     // for size>1gb" the headline above a message saying two matched — the

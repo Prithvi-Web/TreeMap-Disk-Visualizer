@@ -128,3 +128,135 @@ test('C02: in the sunburst, circles or Voronoi, a folder the page does not hold 
     assert.deepEqual(h.kbSiblings().map((n) => n.path), ['/home/u/Library', '/home/u/big'], `${mode}: a folder the page holds still answers`);
   }
 });
+
+/* ══════════════ C20 — a grammar query over the sunburst ══════════════ */
+
+const ctxStub = () => new Proxy({}, { get: (_t, k) => (k === 'canvas' ? {} : () => {}), set: () => true });
+
+/** The real renderSearchOverlay and updateTmStatus over a map whose last rectangles are another view's. */
+function overlayHarness(mode: string) {
+  const status = { textContent: 'sunburst: 12 rings · 8.8 GB' };
+  const state = {
+    treemap: {
+      mode, query: 'size>1gb', queryMode: 'grammar', matchedPaths: new Set(['/r/a', '/r/b']), matchTotal: 9, matches: 0,
+      rootSize: 100, minSize: 4000, nodes: [], nodesFor: null, cells: [], history: { active: false },
+      // Left by the rectangle map drawn before the sunburst: two of them match.
+      pxRects: [
+        { n: { path: '/r/a', depth: 1 }, x: 0, y: 0, w: 10, h: 10 },
+        { n: { path: '/r/b', depth: 1 }, x: 10, y: 0, w: 10, h: 10 },
+      ],
+    },
+  };
+  const deps = {
+    state,
+    tmSearchBuffer: { width: 1, height: 1 }, tmBuffer: { width: 1, height: 1 }, tmSearchCtx: ctxStub(),
+    window: { devicePixelRatio: 1 }, document: { documentElement: { dataset: { theme: 'dark' } } },
+    cssVar: () => '#0A84FF', isCells: () => mode === 'circles' || mode === 'voronoi', isSun: () => mode === 'sunburst',
+    treemapMatch: () => false, tmKidsOf: () => new Map(), altCellPath() {},
+    $: (id: string) => (id === 'tmStatus' ? status : null),
+    tmPreview: { on: false }, formatCount: (n: number) => n.toLocaleString('en-US'), formatBytes: (b: number) => `${b} B`, formatWhen: () => 'then',
+  };
+  const page = load<{ renderSearchOverlay: () => void; updateTmStatus: () => void }>(
+    ['renderSearchOverlay', 'updateTmStatus'], deps, '{ renderSearchOverlay, updateTmStatus }');
+  return { state, status, ...page };
+}
+
+test('C20: over the sunburst a grammar query counts no drawn match from the last rectangle map, and leaves the sunburst\'s line', () => {
+  const h = overlayHarness('sunburst');
+  h.renderSearchOverlay();
+  assert.equal(h.state.treemap.matches, 0, 'the sunburst draws no highlight, so none is counted');
+  assert.equal(h.status.textContent, 'sunburst: 12 rings · 8.8 GB', 'never "2 of 9 matches" over arcs that outline nothing');
+  h.state.treemap.matches = 2; // whatever a caller left
+  h.updateTmStatus();
+  assert.equal(h.status.textContent, 'sunburst: 12 rings · 8.8 GB', 'the status line names no drawn count over the sunburst, whoever asks it');
+  // The rectangle map still counts what it draws.
+  const t = overlayHarness('treemap');
+  t.renderSearchOverlay();
+  assert.equal(t.state.treemap.matches, 2);
+  assert.match(t.status.textContent, /^2 of 9 matches for “size>1gb”/);
+});
+
+/** The real tmRunGrammarQuery, answered with `total` matches, in `mode`. */
+async function grammarIn(mode: string, total: number, degraded: { reason: string }[] = []) {
+  const said: string[] = [];
+  const state = {
+    scanId: 's1', scanning: false, root: { path: '/r' },
+    treemap: { mode, matchedPaths: null as Set<string> | null, queryMode: 'bare', queryScanId: null as string | null, matchTotal: null as number | null, matches: 0, rootPath: '/r' },
+  };
+  const hits = Array.from({ length: Math.min(total, 3) }, (_, i) => ({ path: `/r/f${i}`, name: `f${i}`, size: 2e9, isDir: false, mtimeMs: 0 }));
+  const deps: Record<string, unknown> = {
+    $: () => ({ hidden: true, textContent: '', classList: { toggle() {}, contains: () => false }, setAttribute() {} }),
+    state,
+    api: async () => ({ hits, total, truncated: false, degraded }),
+    seedNodes() {}, renderSearchOverlay() {}, presentView() {}, tmSyncStageButton() {}, tmStageable: () => null,
+    tmSetQueryMessage: (t: string) => { said.push(t); },
+    tmUndrawnMessage: () => 'UNDRAWN', // the rectangle map's sentence — never the sunburst's
+    formatCount: (n: number) => n.toLocaleString('en-US'),
+    isSun: () => mode === 'sunburst',
+  };
+  const keys = Object.keys(deps);
+  const optional = ['tmSunburstQueryWords'].filter((n) => INDEX.includes(`function ${n}(`)).map(declSource).join('\n');
+  const src = `'use strict'; let tmLastHits = { q: '', paths: [], total: 0, truncated: false, stage: null }; let tmQuerySeq = 0; let tmQueryAbort = null;
+    ${optional}\n${['treeScanId', 'tmRunGrammarQuery'].map(declSource).join('\n')}\nreturn tmRunGrammarQuery;`;
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const run = new Function(...keys, src)(...keys.map((k) => deps[k])) as (q: string) => Promise<void>;
+  await run('size>1gb');
+  return said[said.length - 1];
+}
+
+test('C20: over the sunburst the box says the matches are not highlighted there, and where they are', async () => {
+  assert.equal(await grammarIn('sunburst', 9),
+    '9 matches — the sunburst does not highlight them. Switch to Treemap, Circles or Voronoi to see them.');
+  assert.equal(await grammarIn('sunburst', 1),
+    '1 match — the sunburst does not highlight it. Switch to Treemap, Circles or Voronoi to see it.');
+  assert.equal(await grammarIn('sunburst', 0), 'Nothing matched.');
+  assert.equal(await grammarIn('sunburst', 4, [{ reason: 'Last-opened dates are not recorded here.' }]),
+    'Last-opened dates are not recorded here. 4 matches — the sunburst does not highlight them. Switch to Treemap, Circles or Voronoi to see them.');
+  assert.equal(await grammarIn('treemap', 9), 'UNDRAWN', 'the rectangle map keeps its own account of what it drew');
+});
+
+/** The real setTreemapView, switching renderer under a grammar query whose answer is on screen. */
+async function switchRenderer(to: string, query: { mode: string; text: string }) {
+  const asked: string[] = [];
+  const el = () => ({ disabled: false, hidden: false, textContent: '', querySelectorAll: () => [], setAttribute() {}, classList: { toggle() {}, add() {}, remove() {} } });
+  const els: Record<string, ReturnType<typeof el>> = {};
+  const state = {
+    view: 'treemap', lens: { held: false },
+    treemap: { mode: 'treemap', rootPath: '/r', history: { active: false }, altZoomRaf: 0, altZoom: null, cells: [], altNote: '', hover: null, queryMode: query.mode, query: query.text },
+  };
+  const deps = {
+    state, TM_MODES: ['treemap', 'sunburst', 'circles', 'voronoi'],
+    $: (id: string) => (els[id] ||= el()),
+    lapseStop() {}, lensSetPinned() {}, lassoCancel() {}, cancelAnimationFrame() {}, altRefineCancel() {}, renderAltNote() {}, lapseSeekTo() {},
+    localStorage: { setItem() {} },
+    loadTreemap: async () => {},
+    tmApplyQuery: (q: string) => { asked.push(q); },
+  };
+  const setTreemapView = load<(m: string) => void>(['setTreemapView'], deps, 'setTreemapView');
+  setTreemapView(to);
+  for (let i = 0; i < 5; i++) await Promise.resolve(); // the load's landing
+  return { asked, els };
+}
+
+test('C20: switching renderer under a grammar query asks it again, so the box speaks of the renderer now on screen', async () => {
+  assert.deepEqual((await switchRenderer('sunburst', { mode: 'grammar', text: 'size>1gb' })).asked, ['size>1gb']);
+  assert.deepEqual((await switchRenderer('treemap', { mode: 'grammar', text: 'size>1gb' })).asked, ['size>1gb']);
+  assert.deepEqual((await switchRenderer('sunburst', { mode: 'bare', text: 'movie' })).asked, [], 'a bare word is the page\'s own filter, asked of nobody');
+  assert.deepEqual((await switchRenderer('sunburst', { mode: 'grammar', text: '  ' })).asked, [], 'nothing typed, nothing asked');
+});
+
+/* ══════════════ C21 — a query's answer comes back with the Treemap ══════════════ */
+
+test('C21: back in the Treemap, a grammar query whose answer the unmount cleared is asked again', () => {
+  const applied: string[] = [];
+  const state = { scanning: false, scanId: 's1', treemap: { query: 'size>1gb', queryMode: 'grammar', queryScanId: 's1', matchTotal: 9 as number | null } };
+  const deps = { state, tmApplyQuery: (q: string) => { applied.push(q); }, tmSyncStageButton() {} };
+  const page = load<{ clear: () => void; rejudge: () => void }>(
+    ['treeScanId', 'tmClearHits', 'tmRejudgeQuery'], deps, '{ clear: tmClearHits, rejudge: tmRejudgeQuery }',
+    'let tmLastHits = { q: "size>1gb", paths: [], total: 9, truncated: false, stage: null };');
+  page.rejudge();
+  assert.deepEqual(applied, [], 'an answer this scan gave and still on screen is not asked again');
+  page.clear(); // what the Treemap's unmount does on the way to another view
+  page.rejudge(); // and its mount on the way back
+  assert.deepEqual(applied, ['size>1gb'], 'the total, its explanation and the Stage offer come back with the highlights');
+});

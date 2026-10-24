@@ -310,6 +310,26 @@ function tmNoScanQueryWords() {
       : 'Opened from the saved index — scan this folder to search it.';
 }
 
+/**
+ * What the box says of a grammar answer over the sunburst (hunt C20). The
+ * sunburst draws no highlight, so the rectangle map's "N matches — M shown
+ * here … zoom in or raise Depth" was said of nothing drawn, with advice that
+ * cannot help: the count, that it shows none of them, and the renderers that
+ * do. A degraded answer's reasons come first, as everywhere (D31), and a
+ * definite nothing is said, since the sunburst's line names no query.
+ */
+function tmSunburstQueryWords(found, degraded) {
+  const said = degraded.map((d) => d.reason);
+  if (found > 0) {
+    const one = found === 1;
+    said.push(`${formatCount(found)} match${one ? '' : 'es'} — the sunburst does not highlight ${one ? 'it' : 'them'}. ` +
+      `Switch to Treemap, Circles or Voronoi to see ${one ? 'it' : 'them'}.`);
+  } else if (!degraded.length) {
+    said.push('Nothing matched.');
+  }
+  return said.join(' ');
+}
+
 /** Run a grammar query on the server and highlight what comes back. */
 async function tmRunGrammarQuery(q) {
   // Run on the scan the tree on screen came from (treeScanId): a scan still
@@ -388,7 +408,9 @@ async function tmRunGrammarQuery(q) {
     const degraded = out.degraded || [];
     const drawn = state.treemap.matches;
     const found = out.total;
-    if (degraded.length) {
+    if (state.treemap.mode === 'sunburst') {
+      tmSetQueryMessage(tmSunburstQueryWords(found, degraded), false);
+    } else if (degraded.length) {
       tmSetQueryMessage(degraded.map((d) => d.reason).join(' '), false);
     } else if (out.truncated) {
       tmSetQueryMessage(`Showing the ${formatCount(state.treemap.matchedPaths.size)} biggest of ${formatCount(found)} matches.`, false);
@@ -545,7 +567,12 @@ subscribe(TOPIC.scan, tmQueryScanChanged);
  */
 function tmRejudgeQuery() {
   const q = state.treemap.query;
-  if (!q.trim() || state.treemap.queryMode !== 'grammar' || state.treemap.queryScanId === treeScanId()) return;
+  if (!q.trim() || state.treemap.queryMode !== 'grammar') return;
+  // Answered by this tree's scan and still whole. The Treemap's unmount
+  // clears the answer's total, its words and its Stage offer (tmClearHits)
+  // and keeps its highlights: back in the view, "3 matches" stood alone as if
+  // it were the whole answer, so a cleared answer is asked again (hunt C21).
+  if (state.treemap.queryScanId === treeScanId() && state.treemap.matchTotal !== null) return;
   tmApplyQuery(q);
 }
 
