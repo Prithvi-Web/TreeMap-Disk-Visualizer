@@ -91,6 +91,47 @@ test('a SECOND, different corruption is kept as well', async () => {
   });
 });
 
+test('a later incident is copied once too, however many times the file is read (review HD-L1/L9)', async () => {
+  // The once-only check compared the bytes with `<name>.corrupt` alone. That
+  // file holds the FIRST incident's bytes, so a second, different incident
+  // never equalled it, and every later read of the still-bad file made another
+  // `<name>.corrupt-<ms>` copy and logged it again. notes.json is read by
+  // every Smart suggestions list and every Autopilot run, and agent-policy.json
+  // on every enforcement, so the folder grew without bound.
+  await withDataDir(async (dir) => {
+    const { readJsonFile, preserveCorrupt } = await import('../src/services/storage');
+    fs.writeFileSync(path.join(dir, 'settings.json'), '{first corruption');
+    await readJsonFile('settings.json', {});
+    fs.writeFileSync(path.join(dir, 'settings.json'), '{a DIFFERENT corruption');
+    for (let i = 0; i < 5; i++) await readJsonFile('settings.json', {});
+    // The path notes.json takes for a file that parses but is not the store.
+    for (let i = 0; i < 5; i++) await preserveCorrupt('settings.json', new Error('wrong shape'), 'is not a store');
+    const backups = fs.readdirSync(dir).filter((f) => f.includes('.corrupt')).sort();
+    assert.equal(backups.length, 2, `one copy per incident, found: ${backups.join(', ')}`);
+  });
+});
+
+test('two incidents in the same millisecond each keep their own copy', async () => {
+  // A timestamped name alone let the second copy of a millisecond overwrite
+  // the first: a different incident's only copy, gone.
+  await withDataDir(async (dir) => {
+    const { readJsonFile } = await import('../src/services/storage');
+    const realNow = Date.now;
+    Date.now = () => 1_700_000_000_000;
+    try {
+      for (const bad of ['{one', '{two', '{three']) {
+        fs.writeFileSync(path.join(dir, 'settings.json'), bad);
+        await readJsonFile('settings.json', {});
+      }
+    } finally {
+      Date.now = realNow;
+    }
+    const backups = fs.readdirSync(dir).filter((f) => f.includes('.corrupt'));
+    const contents = backups.map((f) => fs.readFileSync(path.join(dir, f), 'utf8')).sort();
+    assert.deepEqual(contents, ['{one', '{three', '{two'], `found: ${backups.join(', ')}`);
+  });
+});
+
 test('an absent store is a first run, and leaves nothing behind', async () => {
   // The caveat has to mean something: a `.corrupt` file appearing on a fresh
   // install would be alarming and wrong.

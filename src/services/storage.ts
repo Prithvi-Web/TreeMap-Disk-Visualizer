@@ -1,4 +1,4 @@
-import { promises as fsp } from 'fs';
+import { promises as fsp, constants as fsConstants } from 'fs';
 import path from 'path';
 import os from 'os';
 import { isEphemeral } from './portableMode';
@@ -186,8 +186,28 @@ export async function preserveCorrupt(name: string, err: unknown, what = 'could 
     // inside the branch that copies.
     const kept = await fsp.readFile(backup).catch(() => null);
     if (kept !== null && kept.equals(current)) return; // same incident, already kept
-    const target = kept === null ? backup : `${backup}-${String(Date.now())}`;
-    await fsp.copyFile(source, target);
+    // ...and an incident is the same whichever copy holds it. `<name>.corrupt`
+    // holds the FIRST one, so comparing with it alone copied a later incident
+    // again on every read of the still-bad file (review HD-L1).
+    const prefix = `${name}.corrupt-`;
+    for (const sibling of await fsp.readdir(dir).catch(() => [] as string[])) {
+      if (!sibling.startsWith(prefix)) continue;
+      const held = await fsp.readFile(path.join(dir, sibling)).catch(() => null);
+      if (held !== null && held.equals(current)) return;
+    }
+    // Claimed, never written over: two incidents in one millisecond each keep
+    // their own copy.
+    const stamp = String(Date.now());
+    let target = kept === null ? backup : `${backup}-${stamp}`;
+    for (let n = 1; ; n++) {
+      try {
+        await fsp.copyFile(source, target, fsConstants.COPYFILE_EXCL);
+        break;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'EEXIST' || n > 100) throw e;
+        target = `${backup}-${stamp}-${String(n)}`;
+      }
+    }
     console.error(
       `[treemap] ${name} ${what} (${err instanceof Error ? err.message : String(err)}). ` +
         `The original is kept at ${target}.`,
