@@ -17,6 +17,7 @@ import { getCapsuleJob, setSourceCallForTests } from '../src/services/timeCapsul
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { describeConflicts } from '../src/services/openHandleGuard';
 import { readProvenance } from '../src/services/provenanceTracker';
+import { parse } from '../src/services/query/parse';
 import {
   linuxTrashLocations, windowsTrashNote, recycleInfoOriginalName, listAccountBin, resolveTrashLocations, getTrashInfo, clearFreedesktopTrash, liveDriveTrashFs,
   parseWindowsTrashDrives, WINDOWS_TRASH_DRIVES_SCRIPT,
@@ -451,5 +452,39 @@ test('provenance asks about the file itself: an access time not recorded, or a d
     assert.equal(fine.lastOpenedUnknown, undefined, 'control: where this file\'s openings are recorded, a null date is "not opened since it was saved"');
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+/* ═════════ Review F1.21 — a saved view runs from Clean Up with its own terms, files only ═════════ */
+
+test('a saved view sent from Clean Up parses as the view and files only - an open quote included (review F1.21)', async () => {
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const head = 'async function findBySavedView(scanId) {';
+  const at = page.indexOf(head);
+  assert.notEqual(at, -1, 'control: the page has it');
+  let depth = 0;
+  let end = -1;
+  for (let i = at + head.length - 1; i < page.length; i++) {
+    if (page[i] === '{') depth++;
+    else if (page[i] === '}' && --depth === 0) { end = i + 1; break; }
+  }
+  const src = page.slice(at, end);
+  for (const view of ['name:"my report', 'path:"a b', 'name:foo"', 'size>100mb or ext:iso', 'name:"q" ext:pdf']) {
+    let sent = '';
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const find = new Function('selectedSavedView', 'toast', 'api', `${src}\nreturn findBySavedView;`)(
+      () => ({ q: view }), () => {},
+      async (_url: string, opts: { body: string }) => { sent = JSON.parse(opts.body).q; return { hits: [], total: 0, truncated: false }; },
+    ) as (scanId: string) => Promise<unknown>;
+    await find('s1');
+    const alone = parse(view);
+    const asSent = parse(sent);
+    assert.ok(alone.ok, `control: the view parses alone: ${view}`);
+    assert.ok(asSent.ok, `as sent it parses too: ${sent} (${asSent.ok ? '' : asSent.error})`);
+    assert.ok(asSent.ast.kind === 'and', `control: the view and files only: ${sent}`);
+    assert.deepEqual(asSent.ast.left, alone.ast, `the view's own terms, unchanged: ${view}`);
+    const files = parse('type:file');
+    assert.ok(files.ok);
+    assert.deepEqual(asSent.ast.right, files.ast, 'and files only');
   }
 });

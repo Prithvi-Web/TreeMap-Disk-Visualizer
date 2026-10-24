@@ -156,6 +156,18 @@ test('a saved view run from Clean Up asks the server for files only, so the 500 
   assert.equal(sent[0].limit, 500);
 });
 
+test('a saved view whose quote is left open is closed where it ends, so grouping it does not swallow the bracket (review F1.21)', async () => {
+  const sent: string[] = [];
+  const findWith = (q: string) => declared<(scanId: string) => Promise<unknown>>('async function findBySavedView(scanId) {', {
+    selectedSavedView: () => ({ q }), toast: () => {},
+    api: async (_url: string, opts: { body: string }) => { sent.push(JSON.parse(opts.body).q); return { hits: [], total: 0, truncated: false }; },
+  });
+  await findWith('name:"my report')('s1');
+  assert.equal(sent[0], '(name:"my report") type:file', 'the open quote closed at the end of the view, where it ends alone');
+  await findWith('name:"my report" ext:pdf')('s1');
+  assert.equal(sent[1], '(name:"my report" ext:pdf) type:file', 'control: a closed quote is left as written');
+});
+
 /* ═════════ C30 — Smart suggestions: a path inside a chosen folder is not counted again ═════════ */
 
 test('Smart suggestions count and send a folder once, never again for paths inside it (C30)', () => {

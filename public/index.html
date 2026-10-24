@@ -42620,6 +42620,11 @@ $('ruleDupOn').addEventListener('change', () => { $('cleanPromoteWhy').hidden = 
 async function findBySavedView(scanId) {
   const view = selectedSavedView();
   if (!view) { toast('Pick a saved view first', 'error'); return; }
+  // A quote the view leaves open is closed where its text ends (review F1.21). The grammar turns
+  // quoting on and off at every `"`, and an open one runs to the end of the text, so alone
+  // `name:"my report` is one term; grouped below, it swallowed the `)` and failed ("This bracket is
+  // never closed") for a view the map's box runs. Closed at its own end, every term is as it was.
+  const viewQ = (view.q.split('"').length - 1) % 2 === 1 ? view.q + '"' : view.q;
   const out = await api('/api/query', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     // Files only, asked of the server (hunt C29): a size term matches folders
@@ -42627,7 +42632,7 @@ async function findBySavedView(scanId) {
     // dropped here after the server cut the list to 500 left few files or
     // none, beside a count that included the folders. Grouped, so an `or` in
     // the view stays inside it.
-    body: JSON.stringify({ scanId, q: `(${view.q}) type:file`, limit: 500, sort: 'size' }),
+    body: JSON.stringify({ scanId, q: `(${viewQ}) type:file`, limit: 500, sort: 'size' }),
   });
   // §2.2's degraded list is why this is not just a hit count: a query needing
   // a signal this machine cannot supply must not come back looking like
