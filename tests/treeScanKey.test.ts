@@ -1091,7 +1091,7 @@ test('the highlight box\'s query asked of the older scan during a rescan is not 
 
 test('opening an archive or disk image on the map asks the scan the tree on screen came from — never the running scan, which answers 409', async () => {
   const $ = stubDom();
-  const state: Record<string, unknown> = { root: TREE, ...HELD, pathIndex: new Map() };
+  const state: Record<string, unknown> = { root: TREE, ...HELD, pathIndex: new Map(), view: 'treemap', treemap: { rootPath: '/r' } };
   const { fns, asks } = page<{ open: (n: unknown) => Promise<void> }>(['async function expandContainerNode('], {
     state, $, loadTreemap: noop, toast: noop, formatCount: String, updateTmStatus: noop,
   }, '{ open: expandContainerNode }', () => ({ children: [], entryCount: 0, truncated: false }));

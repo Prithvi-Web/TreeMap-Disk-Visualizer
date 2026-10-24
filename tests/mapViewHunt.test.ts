@@ -1171,3 +1171,36 @@ test('HB2 (L2, L7, L10): a plain word over the sunburst is told again on the way
     'the word still in the box is told again that the sunburst highlights none — never a silent box');
   assert.equal(said.filter((t) => t).length, 2, 'said once on each entry, never twice');
 });
+
+/** The real expandContainerNode, its POST held until `answer` is called. */
+function expandHarness() {
+  let answer: (v: unknown) => void = () => {};
+  const loaded: string[] = [];
+  const toasts: string[] = [];
+  const zip = { name: 'a.zip', path: '/r/a.zip', size: 10, type: 'file', container: 'zip' };
+  const state = { view: 'treemap', scanId: 's1', treemap: { rootPath: '/r' }, pathIndex: new Map<string, unknown>([[zip.path, { ...zip }]]) };
+  const expand = load<(n: unknown) => Promise<void>>(['treeScanId', 'expandContainerNode'], {
+    state, $: () => ({ textContent: '' }), api: () => new Promise((land) => { answer = land; }),
+    loadTreemap: (p: string) => { loaded.push(p); }, toast: (m: string) => { toasts.push(m); }, formatCount: String, updateTmStatus() {},
+  }, 'expandContainerNode');
+  const run = (arrange: (s: typeof state) => void) => {
+    const out = expand(zip);
+    arrange(state); // what happens while the archive is listed
+    answer({ children: [{ path: '/r/a.zip/x', name: 'x', size: 10, type: 'file', virtual: true }], entryCount: 1, truncated: false });
+    return out;
+  };
+  return { run, loaded, toasts, state };
+}
+
+test('HB2 (L5): an archive opened in the Treemap is gone into only while the Treemap still shows the folder it was clicked in', async () => {
+  const stay = expandHarness();
+  await stay.run(() => {});
+  assert.deepEqual(stay.loaded, ['/r/a.zip'], 'control: still here, the archive opens');
+  const left = expandHarness();
+  await left.run((s) => { s.view = 'city'; }); // Disk City opened before the listing came back
+  assert.deepEqual(left.loaded, [], 'never a map load under the view that took its place — it rewrites the root Disk City stands on');
+  assert.deepEqual(left.toasts, ['Opened a.zip — 1 entry'], 'the archive was opened, and is said to be: it opens at once next time');
+  const moved = expandHarness();
+  await moved.run((s) => { s.treemap.rootPath = '/r/b'; }); // another folder clicked meanwhile
+  assert.deepEqual(moved.loaded, [], 'nor over the folder the user went to since');
+});

@@ -23151,6 +23151,7 @@ async function expandContainerNode(n) {
   const node = state.pathIndex.get(n.path);
   if (node && node.children && node.children.length) { loadTreemap(n.path, true); return; }
   $('tmStatus').textContent = `Opening ${n.name}…`;
+  const rootAtClick = state.treemap.rootPath;
   try {
     const resp = await api('/api/container/expand', {
       method: 'POST',
@@ -23169,6 +23170,12 @@ async function expandContainerNode(n) {
       }
     }
     toast(`Opened ${n.name} — ${formatCount(resp.entryCount)} entr${resp.entryCount === 1 ? 'y' : 'ies'}${resp.truncated ? ' (largest shown)' : ''}`);
+    // Gone into only while the Treemap still shows the folder it was clicked
+    // in (review L5): left for Disk City while it was listed, the load landed
+    // there and rewrote the shared root the city stands on (C72's symptom);
+    // another folder clicked meanwhile is where the user is now. Opened all
+    // the same — its listing is kept, and a click goes straight in.
+    if (state.view !== 'treemap' || state.treemap.rootPath !== rootAtClick) return;
     loadTreemap(n.path, true);
   } catch (e) {
     updateTmStatus();
