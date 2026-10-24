@@ -480,9 +480,28 @@ test('each item the Trash refused is named, with its own reason (review F1.23)',
   assert.match(said, /2 could not be moved to the Trash\. Those are untouched, their copies were discarded, and they are still in your cart: a\.bin Chrome has it open b\.bin Permission denied/,
     `each by name, each with its own reason: ${said}`);
   assert.match(said, /1 left in place .*big\.iso Too big\./, 'control: the item only left in place, apart');
-  const many = cartSummary({ failedToTrash: Array.from({ length: 8 }, (_, i) => ({ path: `/c/f${i}.bin`, reason: 'in use' })) });
+  const many = cartSummary({ failedToTrash: Array.from({ length: 8 }, (_, i) => ({ path: `/c/f${i}.bin`, reason: i % 2 ? 'in use' : 'denied' })) });
   assert.match(many, /f5\.bin in use …and 2 more/, `a long list is cut as the others are: ${many}`);
   assert.doesNotMatch(many, /f6\.bin/);
+});
+
+test('a reason every refused item shares is said once, and each row names only its item (HC-L2)', () => {
+  const HELD = 'Chrome has a file you’re deleting open right now. Deleting it may not free the space until that program closes it.';
+  const shared = cartSummary({ failedToTrash: Array.from({ length: 8 }, (_, i) => ({ path: `/c/f${i}.bin`, reason: HELD })) });
+  assert.equal(shared.split('Chrome has a file').length - 1, 1, `the open-file check's one sentence is said once: ${shared}`);
+  assert.match(shared, /8 could not be moved to the Trash\. Chrome has a file you’re deleting open right now\. Deleting it may not free the space until that program closes it\. Those are untouched, their copies were discarded, and they are still in your cart: f0\.bin f1\.bin f2\.bin f3\.bin f4\.bin f5\.bin …and 2 more$/, shared);
+  const one = cartSummary({ failedToTrash: [{ path: '/c/held.txt', reason: 'in use' }] });
+  assert.match(one, /It is untouched, its copy was discarded, and it is still in your cart: held\.txt in use$/, `control: one item keeps its reason on its row: ${one}`);
+});
+
+test('the items the Trash may or may not have taken are named, each with its own reason, or one shared reason said once (HC-L7)', () => {
+  const unsure = cartSummary({ unverified: [{ path: '/c/a.bin', reason: 'The Trash did not answer.' }, { path: '/c/a.bin/x.txt', reason: 'It is inside a.bin. The Trash did not answer.' }] });
+  assert.match(unsure, /2 could not be confirmed as moved to the Trash\. They stay in your cart: a\.bin The Trash did not answer\. x\.txt It is inside a\.bin\. The Trash did not answer\./, unsure);
+  const shared = cartSummary({ unverified: [{ path: '/c/a.bin', reason: 'The Trash did not answer.' }, { path: '/c/b.bin', reason: 'The Trash did not answer.' }] });
+  assert.match(shared, /2 could not be confirmed as moved to the Trash: The Trash did not answer\. They stay in your cart: a\.bin b\.bin Undo/, shared);
+  assert.equal(shared.split('did not answer').length - 1, 1, `said once: ${shared}`);
+  const one = cartSummary({ unverified: [{ path: '/c/a.bin', reason: 'The Trash did not answer.' }] });
+  assert.match(one, /1 could not be confirmed as moved to the Trash\. It stays in your cart: a\.bin The Trash did not answer\./, one);
 });
 
 test('the cart counts the programs holding staged items by name: two processes of one program are one program (review F1.11)', () => {

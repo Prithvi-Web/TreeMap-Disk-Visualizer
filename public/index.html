@@ -36890,17 +36890,30 @@ function cartCommitSummary(result) {
         `<div class="cart-mf-row"><span class="nm" title="${escapeHtml(g.path)}">${escapeHtml(baseName(g.path))}</span></div>`).join('') +
       (gone.length > 6 ? `<div class="cart-mf-row muted">…and ${formatCount(gone.length - 6)} more</div>` : '') + `</div>`;
   }
+  // Items by name, six at most, each with its own reason (review F1.23): one reason said for all of
+  // them hid the rest. A reason two or more share is said once above them instead, and each row names
+  // only its item (HC-L2, HC-L7): the open-file check refuses a whole batch with one sentence, which
+  // under every row was said six times.
+  const reasonOf = (x, fallback) => x.reason || fallback;
+  const sharedReason = (list, fallback) =>
+    list.length > 1 && list.every((x) => reasonOf(x, fallback) === reasonOf(list[0], fallback)) ? reasonOf(list[0], fallback) : null;
+  const asSentence = (s) => String(s).trim().replace(/([^.!?])$/, '$1.');
+  const reasonRows = (list, fallback, shared) => `<div class="cart-mf-list">` + list.slice(0, 6).map((x) =>
+      `<div class="cart-mf-row"><span class="nm" title="${escapeHtml(x.path)}">${escapeHtml(baseName(x.path))}</span>` +
+      (shared ? '' : `<span class="why">${escapeHtml(reasonOf(x, fallback))}</span>`) + `</div>`).join('') +
+    (list.length > 6 ? `<div class="cart-mf-row muted">…and ${formatCount(list.length - 6)} more</div>` : '') + `</div>`;
   if (failed.length) {
-    // Each by name, with its own reason (review F1.23): one reason said for all of them hid the rest.
+    const why = sharedReason(failed, 'The Trash did not take it.');
     html += `<div class="cart-mf-left">${icon('alert', 13)} <b>${formatCount(failed.length)} could not be moved to the Trash.</b> ` +
+      (why ? `${escapeHtml(asSentence(why))} ` : '') +
       `${failed.length === 1 ? 'It is untouched, its copy was discarded, and it is still in your cart:' : 'Those are untouched, their copies were discarded, and they are still in your cart:'}</div>` +
-      `<div class="cart-mf-list">` + failed.slice(0, 6).map((f) =>
-        `<div class="cart-mf-row"><span class="nm" title="${escapeHtml(f.path)}">${escapeHtml(baseName(f.path))}</span>` +
-        `<span class="why">${escapeHtml(f.reason || 'The Trash did not take it.')}</span></div>`).join('') +
-      (failed.length > 6 ? `<div class="cart-mf-row muted">…and ${formatCount(failed.length - 6)} more</div>` : '') + `</div>`;
+      reasonRows(failed, 'The Trash did not take it.', why);
   }
   if (unverified.length) {
-    html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(unverified.length)} could not be confirmed as moved to the Trash: ${escapeHtml(unverified[0].reason)} ${unverified.length === 1 ? 'It stays' : 'They stay'} in your cart.</div>`;
+    const why = sharedReason(unverified, 'The Trash’s report could not be confirmed.');
+    html += `<div class="cart-mf-left">${icon('alert', 13)} ${formatCount(unverified.length)} could not be confirmed as moved to the Trash` +
+      `${why ? `: ${escapeHtml(asSentence(why))}` : '.'} ${unverified.length === 1 ? 'It stays' : 'They stay'} in your cart:</div>` +
+      reasonRows(unverified, 'The Trash’s report could not be confirmed.', why);
   }
   if (trashed.length || unverified.length) {
     // The capsule verifies content byte for byte AND puts the recorded

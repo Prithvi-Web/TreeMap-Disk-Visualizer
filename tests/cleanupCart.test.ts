@@ -836,7 +836,7 @@ test('the rest of the cart\'s one-item sentences agree in number: the sheet, a r
 
   const refused = plainText(summarySays({ failedToTrash: [{ path: DMG.path, reason: 'in use' }] }));
   assert.match(refused, /1 could not be moved to the Trash\. It is untouched, its copy was discarded, and it is still in your cart:\s*Installer\.dmg\s*in use/, refused);
-  const refusedTwo = plainText(summarySays({ failedToTrash: [{ path: DMG.path, reason: 'in use' }, { path: '/c/x', reason: 'in use' }] }));
+  const refusedTwo = plainText(summarySays({ failedToTrash: [{ path: DMG.path, reason: 'in use' }, { path: '/c/x', reason: 'denied' }] }));
   assert.match(refusedTwo, /2 could not be moved to the Trash\. Those are untouched, their copies were discarded, and they are still in your cart:/, refusedTwo);
 });
 
