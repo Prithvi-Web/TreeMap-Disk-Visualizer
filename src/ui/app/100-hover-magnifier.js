@@ -336,8 +336,23 @@ $('tmViewSeg').addEventListener('click', (e) => {
 setTreemapView(state.treemap.mode); // reflect persisted choice on load
 
 /* ───────────────────────────── Keyboard-first navigation (Feature 6) ───────────────────────────── */
+/**
+ * What j/k move through: the top level of the folder on screen (hunt C02).
+ * The rectangle map's are the rectangles it draws there — the server lays it
+ * out from the whole scan, and the page's tree holds a folder the first frame
+ * pruned with no children, so read from the tree j/k did nothing there, and a
+ * level further, in a folder the tree never held, moved through the scan
+ * root's folders, none of them on screen, for Enter, c and Delete to act on.
+ * Not the Trash cell, nor a preview's staged block: neither is an item here.
+ * The other renderers draw from the tree (loadTreemap fetches what they show),
+ * and a folder it does not hold gives nothing, never the scan root's folders.
+ */
 function kbSiblings() {
-  const root = state.pathIndex.get(state.treemap.rootPath) || state.root;
+  if (!isSun() && !isCells()) {
+    return state.treemap.nodes.filter((n) => n.depth === 1 && !n.isTrash && !n.freed && n.size > 0)
+      .sort((a, b) => b.size - a.size);
+  }
+  const root = state.treemap.rootPath ? state.pathIndex.get(state.treemap.rootPath) : state.root;
   if (!root || !root.children) return [];
   return [...root.children].filter((c) => c.size > 0).sort((a, b) => b.size - a.size);
 }
