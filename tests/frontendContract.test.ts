@@ -2377,7 +2377,7 @@ test('the package panel feeds the one Clean Up selection, deduped by path', () =
   // suggestions; selecting it twice must not count its bytes twice.
   assert.match(fn, /const chosen = new Map\(\)/, 'the selection is keyed by path');
   assert.match(fn, /#packageOrphans \.pkg-ck/, 'the package panel contributes to it');
-  assert.match(fn, /paths: \[\.\.\.chosen\.keys\(\)\]/, 'and the result is the deduped key set');
+  assert.match(fn, /paths: \[\.\.\.outer\.keys\(\)\]/, 'and the result is the deduped key set, a path inside another chosen one left out (hunt C30)');
 });
 
 test('a broken rule pack makes the package panel say so, not report zero orphans', () => {
