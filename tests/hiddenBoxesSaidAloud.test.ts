@@ -2358,6 +2358,58 @@ test('a view whose mount paints its boxes again says only what it paints as it c
   assert.deepEqual(h.live.said.filter(Boolean), [later], 'control: the count lands, and its own note is said, alone');
 });
 
+test('the Dashboard already up, entered again — as a scan lands, fails or is stopped (switchView(state.view)) — takes back nothing and says nothing again: only a view that is left is taken back (review F1.2)', () => {
+  const d = dashboardPage();
+  d.fns.switchView('dashboard');
+  d.frame();
+  d.fns.renderRefusedFolders();
+  d.frame();
+  assert.equal(d.live.textContent, ACCESS_SAID, 'control: the Dashboard\'s row said');
+  d.live.said.length = 0;
+  d.fns.switchView('dashboard'); // finishScan, failScan, stopScan: the view that is up, entered again
+  for (let i = 0; i < 4; i++) d.frame();
+  assert.deepEqual([d.live.said, d.live.textContent], [[], ACCESS_SAID], 'the Dashboard entered again while up: nothing written in its region, which says what it said');
+});
+
+test('History already up, entered again, its mount painting its note again with the same words, says nothing again: only a view that is left is taken back (review F1.2)', async () => {
+  const h = historyPage(async () => ({ modified: [], created: [], degraded: [{ reason: CAL_CAPPED }] }));
+  h.fns.switchView('history');
+  await turns();
+  h.frame();
+  h.frame();
+  assert.equal(h.live.textContent, CAL_CAPPED, 'control: History\'s note said');
+  h.live.said.length = 0;
+  h.fns.switchView('history'); // its mount counts the calendar again, to the same note
+  await turns();
+  for (let i = 0; i < 4; i++) h.frame();
+  assert.deepEqual([h.live.said.filter(Boolean), h.live.textContent], [[], CAL_CAPPED], 'History entered again while up, its note painted again: not said a second time, and still said');
+});
+
+test('every box of the Dashboard said as it went is said again as it comes back, each once — its refused-folder row, its note on drives mounted inside, its index badge and the line under it (review F1.3)', () => {
+  const d = dashboardPage();
+  const boxes: Record<string, string> = {
+    indexBadgeSaid: 'Index live — always current.',
+    indexAnnounce: 'Indexing this folder for instant opening.',
+    accessSaid: ACCESS_SAID,
+    mountsNoteSaid: MOUNTS_SAID,
+  };
+  assert.deepEqual(Object.keys(boxes).filter((id) => !VIEW_REGIONS.get('dashboard')!.includes(id)), [], 'control: each is a region of the Dashboard\'s own');
+  d.fns.switchView('dashboard');
+  d.frame();
+  d.fns.renderRefusedFolders();
+  for (const [id, words] of Object.entries(boxes)) if (id !== 'accessSaid') d.fns.sayAloud(id, words);
+  d.frame();
+  d.frame();
+  for (const [id, words] of Object.entries(boxes)) assert.equal(d.$(id).textContent, words, `control: #${id} said`);
+  d.fns.switchView('elsewhere');
+  for (const id of Object.keys(boxes)) d.$(id).said.length = 0;
+  d.frame();
+  d.fns.switchView('dashboard');
+  for (let i = 0; i < 4; i++) d.frame();
+  assert.deepEqual(Object.keys(boxes).map((id) => d.$(id).said.filter(Boolean)), Object.values(boxes).map((w) => [w]),
+    'each of the four said again, once, as the Dashboard comes back — not only the first of them');
+});
+
 /** Disk City as the page registers it, its line painted from a city built of `nodes` buildings as it loads. */
 function cityPage(nodes: number) {
   const st = {
