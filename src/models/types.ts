@@ -917,6 +917,13 @@ export interface OffloadEntry {
    */
   originalKept?: true;
   /**
+   * Set when the original was one of several names of one file (a hard link: a link count above 1 when
+   * its copy was made; review F1.11). Moving one name to the Trash frees nothing while another stays, so
+   * the Offloaded tab counts no space freed for it. Absent on every other entry, and on every entry an
+   * earlier build recorded.
+   */
+  hardLinked?: true;
+  /**
    * The original's permission bits (`mode & 0o777`), given to its copy and put back by Restore (hunt
    * C45). Not on Windows, which has no POSIX permission bits, nor on an entry an earlier build recorded.
    */

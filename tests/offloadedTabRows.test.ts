@@ -37,7 +37,7 @@ function pageConstants(): string {
   return [...INDEX.matchAll(/^const OFFLOAD_[A-Z_]+ = [^;\n]+;$/gm)].map((m) => m[0]).join('\n');
 }
 
-interface Entry { id: string; name: string; originalPath: string; destPath: string; destRoot: string; size: number; hash: string; offloadedAt: number; restoredAt?: number; originalKept?: boolean }
+interface Entry { id: string; name: string; originalPath: string; destPath: string; destRoot: string; size: number; hash: string; offloadedAt: number; restoredAt?: number; originalKept?: boolean; hardLinked?: boolean }
 interface Index { destinations: { root: string; mounted: boolean; lastSeenAt: number; totalBytes: number; activeCount: number; restoredCount: number }[]; entries: Entry[] }
 
 /** `count` offloaded files on `root`, newest first, as GET /api/offload/index serves them. */
@@ -140,4 +140,18 @@ test('the index serves each destination\'s files newest first, whatever order it
   for (const root of [appended, shuffled]) {
     assert.deepEqual(ids.filter((id) => id.startsWith(`${path.basename(root)}-`)), ages.slice(-200).reverse().map((at) => tag(root, at)), `${root} draws its newest 200, newest first`);
   }
+});
+
+test('a copy whose original had another name (a hard link) is not counted as space freed, and the line says why (review F1.11)', () => {
+  const [plain, linkA, linkB, kept] = entriesOn('/Volumes/Backup', 4);
+  const index: Index = {
+    destinations: [{ root: '/Volumes/Backup', mounted: true, lastSeenAt: 1, totalBytes: 4000, activeCount: 4, restoredCount: 0 }],
+    entries: [plain, { ...linkA, hardLinked: true }, { ...linkB, hardLinked: true }, { ...kept, originalKept: true, hardLinked: true }],
+  };
+  const { info } = drawn(index);
+  assert.match(info, /1000 B<\/span> freed locally/, `only the plain file's bytes are freed: ${info}`);
+  assert.match(info, /2<\/span> had other names \(hard links\) when they were offloaded, so they are not counted: moving one name of a file frees nothing while another stays\./, info);
+  assert.match(info, /1<\/span> was copied with its original left in place/, 'one left in place is said once, as that');
+  const one = drawn({ ...index, entries: [plain, { ...linkA, hardLinked: true }] }).info;
+  assert.match(one, /1<\/span> had another name \(a hard link\) when it was offloaded, so it is not counted/, one);
 });

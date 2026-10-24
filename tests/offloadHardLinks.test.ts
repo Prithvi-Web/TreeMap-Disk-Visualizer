@@ -100,6 +100,8 @@ test('a hard link\'s second name inside a selected folder is copied, recorded an
   assert.ok(fs.readFileSync(copy).equals(Buffer.alloc(5000, 7)), 'holding the file\'s bytes');
   const recorded = (await getOffloadIndex()).entries.filter((e) => e.originalPath.startsWith(proj + path.sep)).map((e) => e.originalPath).sort();
   assert.deepEqual(recorded, [other, second].sort(), 'and is in the record Restore reads');
+  const otherEntry = (await getOffloadIndex()).entries.find((e) => e.originalPath === other);
+  assert.equal(otherEntry?.hardLinked, undefined, 'a file with one name carries no such mark');
 });
 
 test('a hard link\'s second name selected on its own is planned at its real size, so the free-space check sees it', async () => {
@@ -137,6 +139,8 @@ test('two names of one file inside the same selected folder are each copied and 
   const job = await withOpenFileCheck('clear', async () => settled((await startOffload(scan, [proj], dest, prepared)).jobId));
   assert.equal(job.status, 'complete', job.error);
   assert.deepEqual(fs.readdirSync(path.join(dest, 'proj')).sort(), ['a.bin', 'b.bin'], 'each name has its copy');
+  const linked = (await getOffloadIndex()).entries.filter((e) => e.originalPath.startsWith(proj + path.sep)).map((e) => e.hardLinked);
+  assert.deepEqual(linked, [true, true], 'each is recorded as one of several names, so the Offloaded tab counts no space freed for it (review F1.11)');
   const recorded = (await getOffloadIndex()).entries.filter((e) => e.originalPath.startsWith(proj + path.sep)).map((e) => e.originalPath).sort();
   assert.deepEqual(recorded, [a, b].sort(), 'and each is in the record, so Restore brings both names back');
 });

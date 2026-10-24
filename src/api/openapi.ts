@@ -616,6 +616,7 @@ const schemas: Json = {
       offloadedAt: int(),
       restoredAt: int('Present once copied back and re-verified'),
       originalKept: bool('Present (true) when the offload left the original in place rather than moving it to the Trash — a folder that gained a file during the copy, an original open at the trash step, one the Trash refused — so its copy freed no space'),
+      hardLinked: bool('Present (true) when the original was one of several names of one file (a hard link) when its copy was made: moving one name to the Trash frees nothing while another stays, so the Offloaded tab counts no space freed for it'),
       mode: int('The original\u2019s permission bits (mode & 0o777), given to its copy and put back by Restore. Absent on Windows, which has no POSIX permission bits, and on entries an earlier build recorded'),
       mtimeMs: num('The original\u2019s modified time in milliseconds, with any finer part as a fraction (a file system that keeps nanoseconds gives one); given to its copy and put back by Restore to the millisecond. Absent on entries an earlier build recorded'),
       atimeMs: num('The original\u2019s last-opened time in milliseconds, with any finer part as a fraction; given to its copy and put back by Restore to the millisecond. Absent on entries an earlier build recorded'),

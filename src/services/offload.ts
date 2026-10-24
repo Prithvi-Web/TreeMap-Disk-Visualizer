@@ -1047,11 +1047,12 @@ interface SourceLook {
   ctimeNs: bigint;
   ino: bigint;
   dev: bigint;
+  nlink: bigint;
   mode: number;
 }
 
 function sourceLookOf(st: fs.BigIntStats): SourceLook {
-  return { size: st.size, mtimeNs: st.mtimeNs, atimeNs: st.atimeNs, ctimeNs: st.ctimeNs, ino: st.ino, dev: st.dev, mode: Number(st.mode) };
+  return { size: st.size, mtimeNs: st.mtimeNs, atimeNs: st.atimeNs, ctimeNs: st.ctimeNs, ino: st.ino, dev: st.dev, nlink: st.nlink, mode: Number(st.mode) };
 }
 
 /** The file a look is of, whichever of its names it was taken by (review F1.6). */
@@ -1218,7 +1219,7 @@ async function changedWhileCopied(src: string, look: SourceLook): Promise<'chang
 async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string[], destDir: string, listed: ListedSelection): Promise<void> {
   const createdFiles: string[] = [];
   let createdDirs: string[] = [];
-  const results: { src: string; dest: string; size: number; hash: string; meta: FileMeta }[] = [];
+  const results: { src: string; dest: string; size: number; hash: string; meta: FileMeta; hardLinked: boolean }[] = [];
   /** Each original as it was right before its copy was made (hunt C06). */
   const looks = new Map<string, SourceLook>();
   /** Copies whose dates or permissions could not be set (hunt C45). */
@@ -1265,7 +1266,7 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       const missed = await applyFileMeta(item.dest, meta.mode === undefined ? meta : { ...meta, mode: meta.mode | 0o400 });
       if (missed !== null) metaMisses.push(missed);
       const st = await fsp.stat(item.dest);
-      results.push({ src: item.src, dest: item.dest, size: st.size, hash, meta });
+      results.push({ src: item.src, dest: item.dest, size: st.size, hash, meta, hardLinked: look.nlink > 1n });
       job.filesDone++;
     }
 
@@ -1389,6 +1390,8 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
             hash: r.hash,
             offloadedAt: now,
             ...(isUnder(r.src, keptTops) ? { originalKept: true as const } : {}),
+            // One of several names of a file (review F1.11): trashing it freed no space of its own.
+            ...(r.hardLinked ? { hardLinked: true as const } : {}),
             ...r.meta,
           });
         }
