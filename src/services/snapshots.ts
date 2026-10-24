@@ -4,7 +4,8 @@ import path from 'path';
 import { FileNode, ScanResult, Snapshot, SnapshotBoundary, SnapshotDiff, SnapshotDeltaEntry, SnapshotTreeNode } from '../models/types';
 import { appDataDir, readJsonFile, writeJsonFile } from './storage';
 import { isEphemeral } from './portableMode';
-import { Flag, ScanStore, TreeSource, asStore, storeOf } from './scanStore';
+import { ScanStore, TreeSource, asStore, storeOf } from './scanStore';
+import { listingUnknown } from './scanRefusals';
 import { mountOutcome } from '../utils/mountBoundaries';
 import { separatorOf } from '../utils/pathSeparator';
 
@@ -190,9 +191,9 @@ function compactTree(store: ScanStore, id: number, depth: number, perDir: number
   const out: SnapshotTreeNode = { n: store.name(id), s: store.size(id) };
   if (store.isDir(id)) {
     out.t = 1;
-    if (store.flag(id, Flag.Unlisted)) out.u = 1;
+    if (listingUnknown(store, id)) out.u = 1;
     if (depth > 0) {
-      const unlisted = (c: number): number => (store.isDir(c) && store.flag(c, Flag.Unlisted) ? 1 : 0);
+      const unlisted = (c: number): number => (store.isDir(c) && listingUnknown(store, c) ? 1 : 0);
       const kids = store
         .childIds(id)
         .filter((c) => store.size(c) > 0 || unlisted(c) === 1)

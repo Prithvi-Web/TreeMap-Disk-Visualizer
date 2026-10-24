@@ -2,13 +2,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
-import { isolatedDataDir } from './fixtures/dataDir';
-isolatedDataDir('treemap-journalUnlisted-data-');
+import fs from 'node:fs';
 
-import type { FileNode, SnapshotTreeNode } from '../src/models/types';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-journalUnlisted-data-');
+process.env.TREEMAP_NO_GDU = '1';
+
+import type { FileNode, ScanResult, SnapshotTreeNode } from '../src/models/types';
 import { significantChanges } from '../src/services/journal';
 import { buildSnapshotTree } from '../src/services/snapshots';
-import { buildStoreFromTree, Flag } from '../src/services/scanStore';
+import { buildStoreFromTree, Flag, storeOf } from '../src/services/scanStore';
+import { getScan, peekScan, startScan } from '../src/services/diskScanner';
+import { updateSettings } from '../src/services/settings';
+import { waitFor } from './fixtures/waitFor';
 
 /**
  * The journal never says a process removed what a scan could not read (hunt C47). A folder the newer
@@ -54,4 +60,39 @@ test('a snapshot tree marks a folder its scan did not list in full, and keeps it
   assert.ok(kept, 'kept, though it is 0 bytes and 40 larger items stand beside it');
   assert.equal(kept?.u, 1, 'marked as not listed in full');
   assert.equal(tree.u, undefined, 'a folder listed in full carries no mark');
+});
+
+test('in a folder listed only in part, a change in what both scans list is still found, and only the rest is left out (review F1.2)', () => {
+  // proj had an entry whose stat failed in the newer scan; proj/src/big.bin grew by 20 GB.
+  const prev = node('x', 1 * GB, [node('proj', 1 * GB, [node('src', 1 * GB, [node('big.bin', 1 * GB)])])]);
+  const curr = node('x', 21 * GB, [node('proj', 21 * GB, [node('src', 21 * GB, [node('big.bin', 21 * GB)])], true)]);
+  assert.deepEqual(significantChanges(prev, curr, '/x'), [{ path: '/x/proj/src/big.bin', delta: 20 * GB }]);
+  // And what its matched children do not explain is left out: not reported at proj, nor above it.
+  const shrunk = node('x', 6 * GB, [node('proj', 6 * GB, [node('src', 6 * GB, [node('big.bin', 6 * GB)])], true)]);
+  const before = node('x', 9 * GB, [node('proj', 9 * GB, [node('src', 1 * GB, [node('big.bin', 1 * GB)])])]);
+  assert.deepEqual(significantChanges(before, shrunk, '/x'), [{ path: '/x/proj/src/big.bin', delta: 5 * GB }]);
+});
+
+async function scanToEnd(root: string): Promise<ScanResult> {
+  const started = await startScan(root, {});
+  await waitFor(() => peekScan(started.scanId)?.status !== 'running', 'the scan settling');
+  return getScan(started.scanId) as ScanResult;
+}
+
+test('a folder holding what a "Don\'t scan" rule left out is listed in full for the journal (review F1.2, F1.13)', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-journalUnlisted-rule-'));
+  fs.mkdirSync(path.join(root, 'node_modules'));
+  fs.writeFileSync(path.join(root, 'node_modules', 'x.js'), 'x');
+  fs.mkdirSync(path.join(root, 'proj'));
+  fs.writeFileSync(path.join(root, 'proj', 'a.txt'), 'a');
+  await updateSettings({ ignore: [{ pattern: 'node_modules', scope: 'scan' }] });
+  try {
+    const scan = await scanToEnd(root);
+    const store = storeOf(scan);
+    assert.equal(store.flag(store.rootId, Flag.Unlisted), true, 'never offered as empty: what the rule left out is in it');
+    const tree = buildSnapshotTree(store);
+    assert.equal(tree.u, undefined, 'but its change is known: every entry the rule did not match was listed');
+  } finally {
+    await updateSettings({ ignore: [] });
+  }
 });

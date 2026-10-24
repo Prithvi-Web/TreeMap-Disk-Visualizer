@@ -460,9 +460,11 @@ OpenAPI 3 spec).
    - `GET /api/file-types`, `GET /api/apps`,
      `GET /api/compare`, `GET /api/forecast` — further angles. Compare (and
      MCP `compare_scans`) never calls what only one scan listed in a folder
-     the other could not list in full — refused, unreadable, not entered —
-     removed or added: it is not compared, and `unlistedFolders` counts such
-     folders.
+     the other could not list in full — refused, unreadable, not entered,
+     or holding an entry it could not look at — removed or added: it is not
+     compared, and `unlistedFolders` counts such folders. A folder that left
+     out only what a "Don't scan" rule matched is compared whole: under the
+     same rules both scans left out the same.
    - `GET`/`POST /api/platform/shell-integration` — the "Scan with TreeMap"
      right-click entry. Per-user, no elevation, and the installed flag is read
      from the OS every time rather than remembered. It starts the installed
@@ -1155,9 +1157,12 @@ read-what-you-saw) permission to act.
   recorded to `journal.jsonl` (capped and rotated) as sentences with the
   structured fields beside them — path, date, signed byte delta, and an
   attribution that is an app name, `"you"` (a deletion made through TreeMap),
-  or exactly `"an unidentified process"`, never a guess. A folder one of
-  the two scans could not list in full (refused, unreadable, not entered)
-  is not read as a change at all, there or in the folder above it.
+  or exactly `"an unidentified process"`, never a guess. The change of a
+  folder one of the two scans could not list in full (refused, unreadable,
+  not entered, or holding an entry it could not look at) is not read as a
+  change at all, there or in the folder above it; what both scans list
+  inside it still is. A folder that left out only what a "Don't scan" rule
+  matched is read in full.
   `GET /api/journal?limit=100` reads it back, newest first; nothing writes it
   over HTTP.
 - **Folder notes (v4 §9.5).** `GET /api/notes` lists them; `PUT /api/notes`

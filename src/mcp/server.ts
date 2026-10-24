@@ -809,7 +809,7 @@ export function buildMcpServer(): McpServer {
       description:
         'Structural diff between two completed scans of the same root path: what appeared, vanished, grew or ' +
         'shrank, biggest absolute change first. Subtrees present in only one scan collapse to a single entry. ' +
-        'What only one scan listed in a folder the other could not list in full (refused, unreadable, not entered) ' +
+        'What only one scan listed in a folder the other could not list in full (refused, unreadable, not entered, or holding an entry it could not look at) ' +
         'is not compared, never called vanished or appeared; unlistedFolders and unlistedNote say how many such folders. ' +
         'Run scan_path on the same folder at two different times to get the two scanIds.',
       inputSchema: {

@@ -693,9 +693,11 @@ export interface SnapshotTreeNode {
   /** Present (1) = directory. */
   t?: 1;
   /**
-   * Present (1) = a folder its scan did not list in full (`Flag.Unlisted`: refused, unreadable, not
-   * entered, or entries left out), kept however small (hunt C47): the journal does not read its change as
-   * something a process did. Absent on trees an earlier build stored.
+   * Present (1) = a folder whose contents its scan does not wholly know (`listingUnknown`: refused,
+   * unreadable, not entered, or holding an entry it could not look at — not one that left out only what a
+   * "Don't scan" rule matched), kept however small (hunt C47): the journal does not read its own change
+   * as something a process did, though it reads the children both trees hold (review F1.2). Absent on
+   * trees an earlier build stored.
    */
   u?: 1;
   c?: SnapshotTreeNode[];
@@ -753,7 +755,7 @@ export interface CompareResult {
   entries: CompareEntry[];
   truncated: boolean;
   /**
-   * Present when one of the scans did not list a folder in full (`Flag.Unlisted`) and that left something
+   * Present when one of the scans did not list a folder in full (`listingUnknown`) and that left something
    * out (hunt C47): how many such folders. What only one scan listed in them is not compared — never
    * called removed or added.
    */

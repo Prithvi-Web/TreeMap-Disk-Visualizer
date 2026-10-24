@@ -173,15 +173,25 @@ export function significantChanges(prev: SnapshotTreeNode, curr: SnapshotTreeNod
   const sep = separatorOf(rootPath);
   const join = (p: string, n: string): string => p + (p.endsWith(sep) ? '' : sep) + n;
 
-  /** A folder one of the two scans did not list in full (hunt C47): its change is not known, so never reported. */
+  /**
+   * A folder one of the two scans did not list in full (hunt C47): its own change is not known, so it is
+   * never reported, nor counted in the folder above it. What both scans list in it is known, though (a
+   * folder holding an entry whose stat failed is listed but for that entry), so the walk still goes into
+   * the children both trees hold and reports theirs (review F1.2).
+   */
   const unread = (x: { p: SnapshotTreeNode; c: SnapshotTreeNode }): boolean => x.p.u === 1 || x.c.u === 1;
   const walk = (p: SnapshotTreeNode, c: SnapshotTreeNode, nodePath: string): void => {
-    if (unread({ p, c })) return;
     const prevKids = new Map((p.c ?? []).map((k) => [k.n, k]));
     const pairs: { p: SnapshotTreeNode; c: SnapshotTreeNode }[] = [];
     for (const kid of c.c ?? []) {
       const prevKid = prevKids.get(kid.n);
       if (prevKid) pairs.push({ p: prevKid, c: kid });
+    }
+    // An unread child's change is not this folder's to report; what it lists is walked on its own.
+    for (const x of pairs.filter(unread)) walk(x.p, x.c, join(nodePath, x.c.n));
+    if (unread({ p, c })) {
+      for (const x of pairs) if (!unread(x) && Math.abs(x.c.s - x.p.s) >= SIGNIFICANT_BYTES) walk(x.p, x.c, join(nodePath, x.c.n));
+      return;
     }
     // What a folder below that one scan could not read moved is left out of this one's change too:
     // reported here it read as a remainder some process removed.

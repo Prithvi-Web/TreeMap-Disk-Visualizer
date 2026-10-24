@@ -503,7 +503,7 @@ const schemas: Json = {
       totalDelta: int(),
       entries: arr(ref('CompareEntry'), 'Biggest absolute change first, capped at 1000'),
       truncated: bool(),
-      unlistedFolders: int('Present when one of the scans did not list a folder in full (refused, unreadable, not entered, or with entries left out) and that left something out: how many such folders. What only one scan listed in them is not compared — never called removed or added'),
+      unlistedFolders: int('Present when one of the scans did not list a folder in full (refused, unreadable, not entered, or holding an entry it could not look at — not one that left out only what a “Don’t scan” rule matched, which both scans left out alike) and that left something out: how many such folders. What only one scan listed in them is not compared — never called removed or added'),
     },
     ['scanIdA', 'scanIdB', 'rootPath', 'totalDelta', 'entries', 'truncated'],
   ),

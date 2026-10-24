@@ -59,6 +59,14 @@ export enum Flag {
    * not name it. Never serialized.
    */
   Unlisted = 1024,
+  /**
+   * Beside `Unlisted`: what this folder's listing left out is only what a "Don't scan" rule matched
+   * (review F1.3). It is still not empty, but every entry the rule did not match was listed, so two
+   * scans under the same rules compare it, and the journal reads it, as listed in full. Cleared when a
+   * read failure leaves something out of it too. Set by Node only (`scanRefusals.markLeftOutByRule`),
+   * never by the native build; never serialized.
+   */
+  LeftOutByRule = 2048,
 }
 
 export type CloudProviderName = 'icloud' | 'onedrive' | 'dropbox';
@@ -476,6 +484,8 @@ export class ObjectScanStore implements ScanStore {
   private removed = new Set<number>();
   /** Folders whose listing the tree does not hold in full (`Flag.Unlisted`): not a FileNode field, so kept beside the tree. */
   private unlisted = new Set<number>();
+  /** Of those, the ones only a "Don't scan" rule left entries out of (`Flag.LeftOutByRule`). */
+  private leftOutByRule = new Set<number>();
 
   /** Build-mode: start from a root described like any other node. */
   constructor(rootPath: string, sep: string, rootFields: NodeInput) {
@@ -501,6 +511,7 @@ export class ObjectScanStore implements ScanStore {
     store.parents = [];
     store.removed = new Set();
     store.unlisted = new Set();
+    store.leftOutByRule = new Set();
     store.register(root, -1);
     return store;
   }
@@ -596,6 +607,7 @@ export class ObjectScanStore implements ScanStore {
       case Flag.HasAccessed: return n.accessedAt !== undefined;
       case Flag.Removed: return this.removed.has(id);
       case Flag.Unlisted: return this.unlisted.has(id);
+      case Flag.LeftOutByRule: return this.leftOutByRule.has(id);
       default: return false;
     }
   }
@@ -658,6 +670,7 @@ export class ObjectScanStore implements ScanStore {
       case Flag.GitRepo: if (on) n.gitRepo = true; else delete n.gitRepo; break;
       case Flag.Virtual: if (on) n.virtual = true; else delete n.virtual; break;
       case Flag.Unlisted: if (on) this.unlisted.add(id); else this.unlisted.delete(id); break;
+      case Flag.LeftOutByRule: if (on) this.leftOutByRule.add(id); else this.leftOutByRule.delete(id); break;
       default:
         throw new Error(`setFlag: ${Flag[f]} is structural, not settable`);
     }

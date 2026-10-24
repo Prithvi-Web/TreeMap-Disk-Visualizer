@@ -27,7 +27,7 @@ import {
 import { forgetScan } from './containerScanner';
 import { abortGduScan, findGduBinary, gduScanIntoStore } from './gduScanner';
 import { cloudProviderFor } from './cloudFolders';
-import { markUnlisted, markUnlistedPaths, noteRefused, noteUnlistedBelow } from './scanRefusals';
+import { listingUnknown, markLeftOutByRule, markUnlisted, markUnlistedPaths, noteRefused, noteUnlistedBelow } from './scanRefusals';
 import { JUNK_FILES } from './emptyFolderCheck';
 import { AppError, permissionDeniedMessage } from '../middleware/errorHandler';
 import { PackedScanStore, ScanStore, Flag, fileNodeToInput, buildStoreFromTree, asStore, TreeSource } from './scanStore';
@@ -1620,8 +1620,9 @@ async function processDirectory(
   if (ignore.length > 0) {
     const listedCount = entries.length;
     entries = entries.filter((ent) => !matchesAny(ignore, path.join(dirPath, ent.name), ent.name));
-    // What the pattern left out is still in the folder: it is not empty (U-4).
-    if (entries.length < listedCount) markUnlisted(store, dirId);
+    // What the pattern left out is still in the folder: it is not empty (U-4). Only a rule left it out,
+    // so what is listed is all the rest (review F1.3).
+    if (entries.length < listedCount) markLeftOutByRule(store, dirId);
   }
 
   for (let i = 0; i < entries.length; i += STAT_BATCH) {
@@ -2125,11 +2126,13 @@ const COMPARE_CAP = 1000;
  * size changed. Directories present in both are never emitted themselves —
  * their change is fully explained by the child entries.
  *
- * A child absent from a folder one of the scans did not list in full (`Flag.Unlisted`: refused,
- * unreadable, not entered, or listed with entries left out) is not known to be gone or new, so it is
+ * A child absent from a folder one of the scans did not list in full (`listingUnknown`: refused,
+ * unreadable, not entered, or an entry it could not look at) is not known to be gone or new, so it is
  * never emitted as removed or added (hunt C47): one scan run with Full Disk Access and one without
  * listed everything in ~/Library/Mail as removed. Such folders are counted in `unlistedFolders`;
- * children both scans list are compared as ever.
+ * children both scans list are compared as ever. A folder that left out only what a "Don't scan" rule
+ * matched is compared whole (review F1.3): under the same rules both scans left out the same, and a
+ * change of rules between them is the page's to explain (coverageExplains).
  */
 export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entries: CompareEntry[]; truncated: boolean; unlistedFolders: number } {
   const a = asStore(sourceA);
@@ -2158,8 +2161,8 @@ export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entrie
     for (const c of a.childIds(aId)) aChildren.set(a.name(c), c);
     // Whether each scan listed this folder whole: a child one of them did not list is not known to be gone or new.
     // Counted only where that left a child out, so a folder neither scan entered (/dev in a scan of /) says nothing.
-    const aWhole = !a.flag(aId, Flag.Unlisted);
-    const bWhole = !b.flag(bId, Flag.Unlisted);
+    const aWhole = !listingUnknown(a, aId);
+    const bWhole = !listingUnknown(b, bId);
     let leftOut = false;
 
     for (const cb of b.childIds(bId)) {
@@ -2197,7 +2200,7 @@ export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entrie
 export function unlistedFoldersNote(count: number): string | null {
   if (count === 0) return null;
   return `${formatCount(count)} folder${count === 1 ? '' : 's'} one of these scans could not list in full (refused, unreadable, not entered, ` +
-    'or with entries left out), so what is in them that only one scan listed is not compared — neither removed nor added.';
+    'or holding an entry it could not look at), so what is in them that only one scan listed is not compared — neither removed nor added.';
 }
 
 /** collectFileTypes' per-extension tally, fed one file at a time by either walk. */

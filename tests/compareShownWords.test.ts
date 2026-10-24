@@ -68,7 +68,7 @@ test('a folder one of the scans could not list in full is said, and what is in i
   const entries = [{ path: '/r/other.txt', name: 'other.txt', type: 'file', sizeA: 1, sizeB: 5, delta: 4, change: 'grew' }];
   html = '';
   (ctx.renderCompare as (r: unknown) => void)({ entries, totalDelta: 4, truncated: false, unlistedFolders: 2, deep: true, whenA: 1, whenB: 2, rules: null });
-  assert.match(html.replace(/\s+/g, ' '), /2 folders one of these scans could not list in full \(refused, unreadable or not entered\), so what only one scan listed in them is not compared — not called removed or added\./, html);
+  assert.match(html.replace(/\s+/g, ' '), /2 folders one of these scans could not list in full \(refused, unreadable, not entered, or holding an entry it could not look at\), so what only one scan listed in them is not compared — not called removed or added\./, html);
   html = '';
   (ctx.renderCompare as (r: unknown) => void)({ entries, totalDelta: 4, truncated: false, unlistedFolders: 0, deep: true, whenA: 1, whenB: 2, rules: null });
   assert.doesNotMatch(html, /could not list in full/, 'nothing said when every folder was listed');

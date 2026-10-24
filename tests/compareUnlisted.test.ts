@@ -12,6 +12,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { compareTrees, createScanRecord, getScan, peekScan, startScan } from '../src/services/diskScanner';
 import { buildStoreFromTree, Flag, storeOf } from '../src/services/scanStore';
+import { markLeftOutByRule, markUnlisted } from '../src/services/scanRefusals';
+import { updateSettings } from '../src/services/settings';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { buildMcpServer } from '../src/mcp/server';
@@ -86,6 +88,54 @@ test('two scans that listed everything compare as before, with nothing counted',
   const r = compareTrees(storeOf(scanOf(ROOT, { ...MAIL, 'other.txt': 1 })), storeOf(scanOf(ROOT, { 'Mail/': 0, 'other.txt': 1 })));
   assert.deepEqual(rows(r), ['Mail/msg-0.emlx removed', 'Mail/msg-1.emlx removed', 'Mail/msg-2.emlx removed']);
   assert.equal(r.unlistedFolders, 0);
+});
+
+test('a folder that left out only what a "Don\'t scan" rule matched is compared whole, unless a read failed in it too (review F1.3)', () => {
+  // Both scans ran under the same rules: what one of them left out by rule, the other did too.
+  const ruled = (tree: Record<string, number>, alsoUnread: false | 'after' | 'before' = false): ScanResult => {
+    const scan = scanOf(ROOT, tree);
+    const store = storeOf(scan);
+    const proj = store.findByPath(path.join(ROOT, 'proj'));
+    if (alsoUnread === 'before') markUnlisted(store, proj); // a read failure already marked, then the rule
+    markLeftOutByRule(store, proj);
+    if (alsoUnread === 'after') markUnlisted(store, proj); // an entry whose stat failed, after the rule
+    return scan;
+  };
+  const before = { 'proj/': 0, 'proj/a.txt': 1000, 'proj/b.txt': 3000 };
+  const now = { 'proj/': 0, 'proj/a.txt': 1000, 'proj/c.txt': 2000 };
+  const whole = compareTrees(storeOf(ruled(before)), storeOf(ruled(now)));
+  assert.deepEqual(rows(whole), ['proj/b.txt removed', 'proj/c.txt added']);
+  assert.equal(whole.unlistedFolders, 0, 'nothing in it is unknown');
+  for (const order of ['after', 'before'] as const) {
+    const unread = compareTrees(storeOf(ruled(before)), storeOf(ruled(now, order)));
+    assert.deepEqual(rows(unread), ['proj/c.txt added'], `${order}: a read failure in the newer scan leaves b.txt unknown; c.txt is new to an older listing that held all the rest`);
+    assert.equal(unread.unlistedFolders, 1);
+  }
+  const store = storeOf(ruled(now));
+  assert.equal(store.flag(store.findByPath(path.join(ROOT, 'proj')), Flag.Unlisted), true, 'still never offered as empty: what the rule left out is in it');
+});
+
+test('two real scans under a "Don\'t scan" rule: a file deleted beside the rule\'s match is removed, one made there is added (review F1.13)', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-compareUnlisted-rule-'));
+  const proj = path.join(root, 'proj');
+  fs.mkdirSync(path.join(proj, 'node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 'node_modules', 'x.js'), 'x');
+  fs.writeFileSync(path.join(proj, 'keep.txt'), Buffer.alloc(1000));
+  fs.mkdirSync(path.join(proj, 'dist'));
+  fs.writeFileSync(path.join(proj, 'dist', 'big.bin'), Buffer.alloc(3000));
+  await updateSettings({ ignore: [{ pattern: 'node_modules', scope: 'scan' }] });
+  try {
+    const a = await scanToEnd(root);
+    fs.rmSync(path.join(proj, 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(proj, 'fresh.txt'), Buffer.alloc(2000));
+    const b = await scanToEnd(root);
+    const r = compareTrees(storeOf(a), storeOf(b));
+    const at = (e: { path: string; change: string }): string => `${path.relative(root, e.path).split(path.sep).join('/')} ${e.change}`;
+    assert.deepEqual(r.entries.map(at).sort(), ['proj/dist removed', 'proj/fresh.txt added']);
+    assert.equal(r.unlistedFolders, 0);
+  } finally {
+    await updateSettings({ ignore: [] });
+  }
 });
 
 /* ---------- a folder the operating system refuses, over HTTP and MCP ---------- */

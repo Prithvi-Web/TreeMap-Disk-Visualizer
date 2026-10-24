@@ -132,6 +132,31 @@ export function noteUnlistedBelow(scan: ScanResult, dirPath: string): void {
  */
 export function markUnlisted(store: ScanStore, id: number): void {
   if (!store.flag(id, Flag.Unlisted)) store.setFlag(id, Flag.Unlisted, true);
+  // Not only a rule's matches are missing now (review F1.3).
+  if (store.flag(id, Flag.LeftOutByRule)) store.setFlag(id, Flag.LeftOutByRule, false);
+}
+
+/**
+ * Folder `id`'s listing left out entries a "Don't scan" rule matched (review F1.3): it is marked
+ * `Flag.Unlisted` like any folder whose listing is short — what the rule left out is still in it, so
+ * Empty Folders never offers it — and, unless something else was already left out of it, also
+ * `Flag.LeftOutByRule`: every entry the rule did not match was listed. A later `markUnlisted` (an
+ * entry whose stat failed) clears that.
+ */
+export function markLeftOutByRule(store: ScanStore, id: number): void {
+  if (store.flag(id, Flag.Unlisted)) return;
+  store.setFlag(id, Flag.Unlisted, true);
+  store.setFlag(id, Flag.LeftOutByRule, true);
+}
+
+/**
+ * Whether what folder `id` holds is not all known (review F1.3): the scan was refused it, could not read
+ * it, did not enter it, or could not look at one of its entries. A folder that left out only what a
+ * "Don't scan" rule matched is known — the other scan under the same rules left out the same — so
+ * Compare and the journal read it as listed in full.
+ */
+export function listingUnknown(store: ScanStore, id: number): boolean {
+  return store.flag(id, Flag.Unlisted) && !store.flag(id, Flag.LeftOutByRule);
 }
 
 /**
