@@ -36586,7 +36586,9 @@ async function cartTrashAll() {
     const gone = (plan.items || []).filter((i) => i.code === 'ITEM_GONE').map((i) => i.path);
     if (gone.length) {
       cartDropTrashed(gone);
-      saveCart(); renderCart(); refreshCartButtons();
+      // Awaited: renderCart hides the dock only after its own await (it resolves the cart's nodes
+      // first), and the check below read a dock still shown, so it never moved focus (review F1.1).
+      saveCart(); await renderCart(); refreshCartButtons();
       // A cart emptied so hides its dock, and with it the button this sheet would give focus back to
       // as it closes, leaving it on <body> (HC-L6). Focus goes to a control on screen first, which
       // the sheet then remembers as where it came from.

@@ -527,7 +527,11 @@ test('the cart counts the programs holding staged items by name: two processes o
   assert.match(unnamed, /It is open in other programs right now/, `with no name, processes are told apart by their ids: ${unnamed}`);
 });
 
-/** cartTrashAll over a cart and a dry run's answer; renderCart shows the dock while the cart holds anything, as the page's does. */
+/**
+ * cartTrashAll over a cart and a dry run's answer; renderCart shows the dock while the cart holds anything, as the page's does —
+ * and, as the page's does, only after an await (`await ensureNodes(...)` comes first), so nothing that reads the dock
+ * before awaiting it sees the change (review F1.1).
+ */
 function cartPress(cart: Set<string>, answer: (roots: string[]) => Array<Record<string, unknown>>) {
   const seen = { saves: 0, dryRuns: 0, focusReturns: 0, toasts: [] as string[] };
   const { $, els } = makeEls();
@@ -537,7 +541,7 @@ function cartPress(cart: Set<string>, answer: (roots: string[]) => Array<Record<
     cartDryRun: async (roots: string[]) => { seen.dryRuns++; return { items: answer(roots) }; },
     cartManifestHtml: () => 'manifest', cartExecuteCommit: async () => {},
     saveCart: () => { seen.saves++; },
-    renderCart: () => { if (cart.size) $('cartDock').classList.add('show'); else $('cartDock').classList.remove('show'); },
+    renderCart: async () => { await Promise.resolve(); if (cart.size) $('cartDock').classList.add('show'); else $('cartDock').classList.remove('show'); },
     refreshCartButtons: () => {}, cartFocusReturn: () => { seen.focusReturns++; },
     tmIsInside: (p: string, dir: string) => p.startsWith(dir + '/'),
   }, `let confirmPaths = []; let onConfirmTrash = null; let cartCommitKey = '';\n${blockAt('function cartDropTrashed(trashed) {')}`);
@@ -606,8 +610,9 @@ test('closing the "nothing can be moved" sheet over a cart it emptied gives focu
       return { items: roots.map((p) => ({ path: p, willDelete: false, code: 'ITEM_GONE', reason: GONE })) };
     },
     cartManifestHtml: () => 'manifest', cartExecuteCommit: async () => {}, saveCart: () => {},
-    // The emptied cart hides the dock, and the Move to Trash button in it with it.
-    renderCart: () => { if (cart.size) $('cartDock').classList.add('show'); else { $('cartDock').classList.remove('show'); cartTrash.shown = false; } },
+    // The emptied cart hides the dock, and the Move to Trash button in it with it — after an await, as the page's renderCart
+    // does (it resolves the cart's nodes first), so a check of the dock that does not wait for it sees it still shown (review F1.1).
+    renderCart: async () => { await Promise.resolve(); if (cart.size) $('cartDock').classList.add('show'); else { $('cartDock').classList.remove('show'); cartTrash.shown = false; } },
     refreshCartButtons: () => {}, cartFocusReturn: () => viewControl.focus(),
     tmIsInside: (p: string, dir: string) => p.startsWith(dir + '/'),
   }, `let confirmPaths = []; let onConfirmTrash = null; let cartCommitKey = '';\n${blockAt('function cartDropTrashed(trashed) {')}`);
