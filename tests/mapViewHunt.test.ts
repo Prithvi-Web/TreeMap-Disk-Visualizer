@@ -318,7 +318,7 @@ function bareWordIn(mode: string, raw: string, matches = 0) {
   const said: string[] = [];
   const grammar: string[] = [];
   const state = { root: { path: '/r' }, treemap: { mode, query: '', queryMode: 'bare', matchedPaths: null, matchTotal: null as number | null, matches } };
-  const apply = load<(q: string) => void>(['TM_GRAMMAR_FIELDS', 'TM_GRAMMAR_RE', 'tmIsGrammarQuery', 'tmApplyQuery'], {
+  const apply = load<(q: string) => void>(['TM_GRAMMAR_FIELDS', 'TM_GRAMMAR_RE', 'TM_SUNBURST_BARE_WORDS', 'tmIsGrammarQuery', 'tmApplyQuery'], {
     state, tmCancelQueries() {}, tmClearHits() {}, tmSetQueryMessage: (t: string) => { said.push(t); },
     isSun: () => mode === 'sunburst', isCells: () => mode === 'circles' || mode === 'voronoi',
     presentSunburst() {}, renderSearchOverlay() {}, renderCellsStatus() {}, presentCells() {}, presentTreemap() {},
@@ -992,4 +992,42 @@ test('HB2 (L11): a rebuild of Disk City\'s list keeps focus on the building\'s r
   t.body.focus();
   t.render();
   assert.equal(t.doc.activeElement, t.body, 'control: a rebuild takes no focus it did not hold');
+});
+
+/**
+ * The real tmApplyQuery, tmSetQueryMessage and sayAloud over `mode`, the box's live region (#tmQuerySaid) recording
+ * every time words go into it, a frame passing between applications as it does between pauses in typing.
+ */
+function typedAloud(mode: string, matches = 0) {
+  const fills: string[] = [];
+  const said = { _t: '', set textContent(v: string) { this._t = v; if (v) fills.push(v); }, get textContent() { return this._t; } };
+  const el = () => ({ textContent: '', hidden: true, classList: { toggle() {} }, setAttribute() {} });
+  const els: Record<string, unknown> = { tmQuerySaid: said, tmQueryErr: el(), tmSearch: el() };
+  const frames: (() => void)[] = [];
+  const state = { root: { path: '/r' }, treemap: { mode, query: '', queryMode: 'bare', matchedPaths: null, matchTotal: null as number | null, matches } };
+  const apply = load<(q: string) => void>(['TM_GRAMMAR_FIELDS', 'TM_GRAMMAR_RE', 'TM_SUNBURST_BARE_WORDS', 'tmIsGrammarQuery', 'asSentences', 'sayAloud', 'tmSetQueryMessage', 'tmApplyQuery'], {
+    state, $: (id: string) => els[id], requestAnimationFrame: (f: () => void) => { frames.push(f); },
+    tmCancelQueries() {}, tmClearHits() {}, tmSyncQueryBar() {},
+    isSun: () => mode === 'sunburst', isCells: () => mode === 'circles' || mode === 'voronoi',
+    presentSunburst() {}, renderSearchOverlay() {}, renderCellsStatus() {}, presentCells() {}, presentTreemap() {},
+    tmUnknownFieldHint: (q: string) => (q === 'sise' ? 'Did you mean size?' : null), tmRunGrammarQuery: async () => {},
+  }, 'tmApplyQuery', 'const aloudSaid = new Map();');
+  const type = (q: string) => { apply(q); while (frames.length) frames.shift()!(); };
+  return { type, fills, box: els.tmQueryErr as { textContent: string } };
+}
+
+test('HB2 (L1, L8, L14): a plain word typed over the sunburst is said once — the same sentence at every pause is no news', () => {
+  const t = typedAloud('sunburst');
+  for (const q of ['n', 'no', 'nod', 'node']) t.type(q);
+  assert.deepEqual(t.fills, ['The sunburst does not highlight matches. Switch to Treemap, Circles or Voronoi to see what matches.'],
+    'four pauses, one announcement: the box is never emptied first, so its unchanged words are not said again');
+  assert.equal(t.box.textContent, 'The sunburst does not highlight matches. Switch to Treemap, Circles or Voronoi to see what matches.');
+  t.type('');
+  assert.equal(t.box.textContent, '', 'control: an emptied box says nothing');
+  t.type('node');
+  assert.equal(t.fills.length, 2, 'control: after the box was emptied the sentence is news again');
+  // The field hint over a renderer that highlights is said once too.
+  const h = typedAloud('treemap');
+  h.type('sise'); h.type('sise');
+  assert.deepEqual(h.fills, ['Did you mean size?'], 'the same hint at the next pause is not said again');
 });

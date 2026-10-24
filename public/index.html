@@ -27483,6 +27483,9 @@ function tmSunburstQueryWords(found, degraded, paths, viewRoot, truncated) {
   return said.join(' ');
 }
 
+/** What the box says of a plain word typed over the sunburst (review F1.8): it highlights none. */
+const TM_SUNBURST_BARE_WORDS = 'The sunburst does not highlight matches. Switch to Treemap, Circles or Voronoi to see what matches.';
+
 /** Run a grammar query on the server and highlight what comes back. */
 async function tmRunGrammarQuery(q) {
   // Run on the scan the tree on screen came from (treeScanId): a scan still
@@ -27649,7 +27652,6 @@ function tmApplyQuery(raw) {
     state.treemap.matchedPaths = null;
     state.treemap.matchTotal = null; // no server answer to compare the map against
     tmClearHits();
-    tmSetQueryMessage('', false);
     if (isSun()) presentSunburst();
     // §6.2 — the overlay's own `updateTmStatus` writes nothing for these
     // renderers, so clearing the box would otherwise leave "2 matches for …"
@@ -27660,11 +27662,13 @@ function tmApplyQuery(raw) {
     // Not over the sunburst, which draws no search highlight and counts no
     // matches, so "found nothing" would be a guess.
     const hint = q && !isSun() && !(state.treemap.matches > 0) ? tmUnknownFieldHint(q) : null;
-    if (hint) tmSetQueryMessage(hint, false);
     // Over the sunburst a word typed found no highlight, no count and no
     // words — a box that looked as if it had found nothing (review F1.8).
     // A grammar query says the same (tmSunburstQueryWords).
-    if (q && isSun()) tmSetQueryMessage('The sunburst does not highlight matches. Switch to Treemap, Circles or Voronoi to see what matches.', false);
+    // Written once, with what the box says now: emptied first, it was said
+    // again at every pause in the typing, the same words each time, since an
+    // empty box is news and so are the words after it (review L1, L8, L14).
+    tmSetQueryMessage(hint || (q && isSun() ? TM_SUNBURST_BARE_WORDS : ''), false);
     return;
   }
   void tmRunGrammarQuery(q);

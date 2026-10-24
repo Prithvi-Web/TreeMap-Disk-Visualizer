@@ -337,7 +337,7 @@ async function bareMessage(q: string, matches: number, view: 'treemap' | 'sunbur
     presentCells: () => {},
     renderCellsStatus: () => {},
   };
-  const consts = ['TM_GRAMMAR_FIELDS', 'TM_GRAMMAR_RE', 'TM_FIELDLIKE_RE'].filter((n) => INDEX.includes(`const ${n} =`));
+  const consts = ['TM_GRAMMAR_FIELDS', 'TM_GRAMMAR_RE', 'TM_FIELDLIKE_RE', 'TM_SUNBURST_BARE_WORDS'].filter((n) => INDEX.includes(`const ${n} =`));
   const helpers = ['tmIsGrammarQuery', 'tmEditDistance', 'tmUnknownFieldHint'].filter((n) => new RegExp(`function ${n}\\s*\\(`).test(INDEX));
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
