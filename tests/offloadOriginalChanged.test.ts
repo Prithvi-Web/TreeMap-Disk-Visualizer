@@ -159,6 +159,15 @@ test('a change time that moved alone is said as "may have changed", and the fold
   assert.match(job.error ?? '', /b\.txt may have changed after its copy was made/, job.error);
 });
 
+test('a change time that moved alone after another item went to the Trash is still "may have changed": only another name of the same file excuses it', { skip: process.platform === 'win32' ? 'a permission on Windows is the read-only attribute, which a test folder then cannot be cleaned up past' : false }, async () => {
+  const { folders: [first, second], scan } = projects('ctime2', ['first', 'second']);
+  const { job, trashed } = await offloadChanging('ctime2', scan, [first, second], path.join('second', 'doc.txt'), () => {
+    fs.chmodSync(path.join(second, 'b.txt'), 0o600);
+  });
+  assert.deepEqual(trashed, [first], 'the first folder went on to the Trash');
+  assert.match(job.error ?? '', /second was left in place: b\.txt may have changed after its copy was made/, job.error);
+});
+
 /**
  * A file written to WHILE its copy streams (a database, a mailbox or a VM disk in use) gives a copy that
  * matches its own stream's hash — so it verifies — but equals neither the old file nor the new one

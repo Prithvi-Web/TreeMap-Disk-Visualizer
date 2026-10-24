@@ -140,3 +140,51 @@ test('two names of one file inside the same selected folder are each copied and 
   const recorded = (await getOffloadIndex()).entries.filter((e) => e.originalPath.startsWith(proj + path.sep)).map((e) => e.originalPath).sort();
   assert.deepEqual(recorded, [a, b].sort(), 'and each is in the record, so Restore brings both names back');
 });
+
+/**
+ * Moving one name of a hard-linked file to the Trash (a rename) moves the shared file's change time, so
+ * the look right before the next name's own trash step saw "may have changed" and left it in place,
+ * half the selection done, with a warning that nothing had changed it (review F1.6). A change time
+ * that moved because another name of the same file went on to its trash step in this job is not read
+ * as a change; size, modified time and file id still are.
+ */
+test('two names of one file, each selected on its own, both go to the Trash with no "may have changed"', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-offloadHardLinks-pair-'));
+  const a = path.join(root, 'a.bin');
+  const b = path.join(root, 'b.bin');
+  fs.writeFileSync(a, Buffer.alloc(2000, 5));
+  fs.linkSync(a, b);
+  const scan = createScanRecord(root);
+  scan.status = 'complete';
+  scan.root = dirNode(root, [fileNode(a, 2000), fileNode(b, 0, { hardlinkDuplicate: true })]);
+  const dest = fileTempDir('treemap-offloadHardLinks-pair-dest-');
+  const before = trashedPaths.length;
+  const job = await withOpenFileCheck('clear', async () => {
+    const prepared = await prepareOffload(scan, [a, b], dest);
+    return settled((await startOffload(scan, [a, b], dest, prepared)).jobId);
+  });
+  assert.equal(job.status, 'complete', job.error);
+  assert.equal(job.error, undefined, 'nothing was left in place');
+  assert.deepEqual(trashedPaths.slice(before), [a, b], 'both names went to the Trash');
+});
+
+test('a name of a file selected on its own, then a folder holding its other name: both go to the Trash', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-offloadHardLinks-fileThenFolder-'));
+  const a = path.join(root, 'a.bin');
+  const proj = path.join(root, 'proj');
+  fs.mkdirSync(proj);
+  const b = path.join(proj, 'b.bin');
+  fs.writeFileSync(a, Buffer.alloc(2000, 6));
+  fs.linkSync(a, b);
+  const scan = createScanRecord(root);
+  scan.status = 'complete';
+  scan.root = dirNode(root, [fileNode(a, 2000), dirNode(proj, [fileNode(b, 0, { hardlinkDuplicate: true })])]);
+  const dest = fileTempDir('treemap-offloadHardLinks-fileThenFolder-dest-');
+  const before = trashedPaths.length;
+  const job = await withOpenFileCheck('clear', async () => {
+    const prepared = await prepareOffload(scan, [a, proj], dest);
+    return settled((await startOffload(scan, [a, proj], dest, prepared)).jobId);
+  });
+  assert.equal(job.error, undefined, job.error);
+  assert.deepEqual(trashedPaths.slice(before), [a, proj]);
+});

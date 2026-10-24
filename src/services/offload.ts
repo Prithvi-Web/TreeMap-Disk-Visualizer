@@ -1046,11 +1046,17 @@ interface SourceLook {
   atimeNs: bigint;
   ctimeNs: bigint;
   ino: bigint;
+  dev: bigint;
   mode: number;
 }
 
 function sourceLookOf(st: fs.BigIntStats): SourceLook {
-  return { size: st.size, mtimeNs: st.mtimeNs, atimeNs: st.atimeNs, ctimeNs: st.ctimeNs, ino: st.ino, mode: Number(st.mode) };
+  return { size: st.size, mtimeNs: st.mtimeNs, atimeNs: st.atimeNs, ctimeNs: st.ctimeNs, ino: st.ino, dev: st.dev, mode: Number(st.mode) };
+}
+
+/** The file a look is of, whichever of its names it was taken by (review F1.6). */
+function fileKeyOf(look: SourceLook): string {
+  return `${look.dev}:${look.ino}`;
 }
 
 /** Milliseconds from a time in nanoseconds, as Node computes a plain stat's `…Ms`. */
@@ -1163,8 +1169,11 @@ function plannedUnder(plan: readonly PlannedCopy[], topPaths: readonly string[])
  * rewrite with its size and modified time put back moves it, and so does a new permission or
  * attribute). A file of a folder that is gone is a change too; a file selected on its own that is gone
  * goes on to its trash step, whose own look says what became of it. As the Undo Vault's CAPSULE_CHANGED.
+ * A change time that moved on a file another name of which went on to its trash step earlier in this
+ * job (`sentOn`) is not read as one (review F1.6): moving a name of a hard-linked file to the Trash
+ * moves the change time every name of it shares.
  */
-async function changedSinceCopy(top: string, files: readonly string[], looks: ReadonlyMap<string, SourceLook>): Promise<{ reason: string; code: string } | null> {
+async function changedSinceCopy(top: string, files: readonly string[], looks: ReadonlyMap<string, SourceLook>, sentOn: ReadonlySet<string>): Promise<{ reason: string; code: string } | null> {
   const nameOf = (src: string): string => (src === top ? 'it' : path.relative(top, src));
   let changeTimeOnly: string | null = null;
   for (const src of files) {
@@ -1183,7 +1192,7 @@ async function changedSinceCopy(top: string, files: readonly string[], looks: Re
     if (!now.isFile() || now.size !== was.size || now.mtimeNs !== was.mtimeNs || now.ino !== was.ino) {
       return { code: ORIGINAL_CHANGED, reason: `${nameOf(src)} changed after its copy was made (the copy holds it as it was then)` };
     }
-    if (changeTimeOnly === null && now.ctimeNs !== was.ctimeNs) changeTimeOnly = nameOf(src);
+    if (changeTimeOnly === null && now.ctimeNs !== was.ctimeNs && !sentOn.has(fileKeyOf(was))) changeTimeOnly = nameOf(src);
   }
   if (changeTimeOnly === null) return null;
   return {
@@ -1279,7 +1288,15 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     // And each item once more at its own turn, right before its trash step (hunt C06): one holding a file
     // that is not what was copied is left in place, its verified copies standing and recorded.
     try {
-      if (toTrash.length > 0) trashed = await moveToTrash(toTrash, { checkEach: (top) => changedSinceCopy(top, filesOf.get(top) ?? [], looks) });
+      // The files whose item went on to its trash step, by file rather than name (review F1.6).
+      const sentOn = new Set<string>();
+      const checkEach = async (top: string): Promise<{ reason: string; code: string } | null> => {
+        const files = filesOf.get(top) ?? [];
+        const verdict = await changedSinceCopy(top, files, looks, sentOn);
+        if (verdict === null) for (const f of files) { const look = looks.get(f); if (look) sentOn.add(fileKeyOf(look)); }
+        return verdict;
+      };
+      if (toTrash.length > 0) trashed = await moveToTrash(toTrash, { checkEach });
     } catch (err) {
       // B2 refused: something got opened between the pre-flight and here.
       //

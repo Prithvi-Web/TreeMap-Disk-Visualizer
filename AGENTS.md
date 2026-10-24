@@ -627,6 +627,8 @@ OpenAPI 3 spec).
      was made — the copy holds it as it was then — and one whose change time
      alone moved may have changed (a new permission or attribute moves it
      too); either way the item stays, and the job's warning names the file.
+     A change time moved by this job itself — another name of the same file
+     (a hard link) went on to its trash step before — is not read as one.
      Each file is also looked at the moment its copy ends: one that changed,
      or may have, while it was being copied has a copy that matches what was
      read — so it verifies — but may mix old and new, so that copy is removed
