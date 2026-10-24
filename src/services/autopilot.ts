@@ -977,8 +977,11 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
       `${formatBytes(policy.requireConfirmationAbove ?? 0)} you asked to be consulted about.`;
   } else if (policy.dryRunFirst) {
     wouldBlockReason = 'This policy is set to preview every run, so it never deletes.';
-  } else if (capRefusal !== null) {
-    wouldBlockReason = `A real run would delete nothing: ${capRefusal}.`;
+  }
+  // agent-policy.json's byte cap holds a run however it was approved (the hunt, C53): said beside
+  // whatever else the preview says, so a policy not yet approved is not approved blind to it.
+  if (capRefusal !== null && !policy.dryRunFirst) {
+    wouldBlockReason = withSentence(wouldBlockReason, `${policy.approvedAt ? 'A real run' : 'Once approved, a run'} would delete nothing: ${capRefusal}.`);
   }
   // A policy an earlier build saved with kinds no rule here has: the preview says so as every run of
   // it does (runPolicyNow's record), after whatever else it says (BQL item 14).

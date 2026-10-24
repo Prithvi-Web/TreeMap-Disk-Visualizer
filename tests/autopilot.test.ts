@@ -1297,6 +1297,8 @@ test('agent-policy.json\'s byte cap binds Autopilot: a run that would trash more
     for (const n of ['a', 'b', 'c']) await writeFile(path.join(dir, `${n}.bin`), 4096);
     await writeJsonFile('agent-policy.json', { allowedRoots: [], protectedPaths: [], maxBytesPerOperation: 5000 });
     const [policy] = await savePolicies([{ id: 'capped-op', name: 'p', path: dir, match: { kind: 'custom', exts: ['bin'] }, dryRunFirst: false, enabled: true }]);
+    const unapproved = await simulatePolicy(policy);
+    assert.match(String(unapproved.wouldBlockReason), /Once approved, a run would delete nothing: .*per-operation cap in agent-policy\.json/, `a policy is not approved blind to the cap: ${unapproved.wouldBlockReason}`);
     await approvePolicyForTests(policy.id);
     const live = (await listPolicies())[0];
     const sim = await simulatePolicy(live);
