@@ -24,6 +24,7 @@ import {
   MECHANISM_NAMES,
   CONFIGURE_RETRY_MS,
   applyEngineBudgetSetting,
+  noteNativeGovernorLevel,
   applyChildBudget,
   beginScanBudget,
   budgetSnapshot,
@@ -425,6 +426,29 @@ test('a person’s scan that starts while an unattended scan runs is held below 
   assert.deepEqual((person.changes ?? []).map((c) => c.effective), ['balanced', 'turbo']);
   forgetScanBudget('person');
   useShim();
+});
+
+test('a scheduled scan the native engine walks records the governor’s level, not the Eco it asked for, and says why (hunt C41)', () => {
+  // The forced preset reaches only the built-in walker and gdu (dutyFor, workerCap, childPriority); the
+  // native walk runs under the governor's process-wide level, and the record said "eco" all the same.
+  const native = useFakeNative(fakeSnapshot(ON_MAINS));
+  applyEngineBudgetSetting({ preset: 'turbo', cpuPercent: null });
+  const scheduled = beginScanBudget('sched-native', 'eco');
+  assert.equal(scheduled.effective, 'eco', 'control: on the walker and gdu it holds Eco');
+  noteNativeGovernorLevel('sched-native');
+  assert.equal(scheduled.effective, 'turbo', 'the native walk runs at the governor’s level, and the record says so');
+  assert.equal(scheduled.preset, 'eco', 'what it asked for is still named');
+  assert.match(String((scheduled.changes ?? []).at(-1)?.reason), /native engine/, JSON.stringify(scheduled.changes));
+  forgetScanBudget('sched-native');
+  void native;
+  useShim();
+});
+
+test('the native branch of a scan notes the governor’s level on its budget record (hunt C41)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'diskScanner.ts'), 'utf8');
+  const at = src.indexOf('if (nativeWalk) {\n      scan.engine = \'native\';');
+  assert.ok(at > 0, 'the native branch is found');
+  assert.match(src.slice(at, at + 600), /noteNativeGovernorLevel\(scan\.scanId\)/);
 });
 
 test('under an explicit preset the auto base changes nothing a scan runs at, so no change is recorded', () => {
@@ -853,7 +877,7 @@ test('applyChildBudget never throws for a child that is already gone', () => {
 
 /* ───────────────────────────── pause / resume ───────────────────────────── */
 
-test('pausing a running walker halts `scanned` within 200 ms and resuming lets it finish with every entry counted', async () => {
+test('pausing a running walker halts `scanned` once the batches already under way land, and resuming lets it finish with every entry counted', async () => {
   useShim();
   await updateSettings({ engineBudget: { preset: 'eco', cpuPercent: null } });
   const root = await buildTree(120, 100, 'treemap-pause-walker-');
@@ -867,6 +891,15 @@ test('pausing a running walker halts `scanned` within 200 ms and resuming lets i
     await Promise.all(Array.from({ length: 500 }, (_, i) => fsp.writeFile(path.join(big, `f${f + i}.txt`), '')));
   }
   const total = 1 + 121 + 120 * 100 + 8_000;
+  // Counted, not timed (the hunt, C82): a batch of lstats already under way when the pause lands still
+  // adds to `scanned` as it lands, so "halted" is read once no lstat is in flight — every batch begun
+  // before the pause has landed — never after a fixed 200 ms, which a slow runner could outlast.
+  const realLstat = fs.promises.lstat;
+  let lstatsInFlight = 0;
+  (fs.promises as { lstat: typeof realLstat }).lstat = (async (...args: Parameters<typeof realLstat>) => {
+    lstatsInFlight++;
+    try { return await realLstat.apply(fs.promises, args); } finally { lstatsInFlight--; }
+  }) as typeof realLstat;
   try {
     const scan = await startScan(root);
     await waitFor(() => scan.status !== 'running' || scan.currentPath === big, 'the walker reaching the big folder', 2);
@@ -878,9 +911,12 @@ test('pausing a running walker halts `scanned` within 200 ms and resuming lets i
     assert.deepEqual({ paused: outcome.paused, supported: outcome.supported, scanId: outcome.scanId, source: outcome.source },
       { paused: true, supported: true, scanId: scan.scanId, source: 'node-shim' });
     assert.equal(isScanPaused(scan.scanId), true);
-    await sleep(200);
+    await waitFor(() => lstatsInFlight === 0, 'every batch begun before the pause landing', 2);
+    // What a landed batch adds is added in the microtasks after its last lstat: let them run.
+    await new Promise<void>((r) => setImmediate(r));
+    await new Promise<void>((r) => setImmediate(r));
     const halted = scan.scanned;
-    await sleep(300);
+    await sleep(300); // a pause for a broken gate to show itself in, not a bound
     assert.equal(scan.scanned, halted, 'scanned kept moving while paused');
     assert.equal(scan.status, 'running', 'paused is still running, not finished');
     assert.ok(halted < total, 'it really was paused mid-way');
@@ -897,6 +933,7 @@ test('pausing a running walker halts `scanned` within 200 ms and resuming lets i
     assert.equal(done.scanned, total, 'every folder and file was counted once');
     assert.equal(isScanPaused(scan.scanId), false, 'completion clears the pause state');
   } finally {
+    (fs.promises as { lstat: typeof realLstat }).lstat = realLstat;
     await updateSettings({ engineBudget: { preset: 'auto', cpuPercent: null } });
     await fsp.rm(root, { recursive: true, force: true });
   }

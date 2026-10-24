@@ -32,7 +32,7 @@ import { JUNK_FILES } from './emptyFolderCheck';
 import { AppError, permissionDeniedMessage } from '../middleware/errorHandler';
 import { PackedScanStore, ScanStore, Flag, fileNodeToInput, buildStoreFromTree, asStore, TreeSource } from './scanStore';
 import { platform } from '../platform';
-import { beginScanBudget, forgetScanBudget, isScanPaused, scanBudget, throttleBatch, whenResumed, workerCap } from './engineBudget';
+import { beginScanBudget, forgetScanBudget, isScanPaused, noteNativeGovernorLevel, scanBudget, throttleBatch, whenResumed, workerCap } from './engineBudget';
 import { statToInput } from './scan/nodeInput';
 import { FAST_PATH_UNAVAILABLE, MFT_NOT_VERIFIED, decideNative, ignorePatternClause, mftOfferedOn, nativeRuleCause, rootName, runMftWalk, nativeStorageFor, runNativeWalk, type RuleCause } from './scan/nativeEngine';
 import { nativeProjection } from './scan/projection';
@@ -1072,6 +1072,9 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
       scan.fastPath = nativeWalk.fastPath;
       scan.engineReason = told([nativeWalk.reason, ...(fastRescanSkipped ? [FAST_RESCAN_NOT_USED] : []), ...(mftClause === null ? [] : [mftClause])].join('; '));
       scan.fallbackReason = mftFallback;
+      // A forced preset (the scheduler's Eco) reaches only the walker and gdu: the record says the level
+      // this walk runs at (the hunt, C41).
+      noteNativeGovernorLevel(scan.scanId);
       // The memory store's room, sized from the projection (U-31, the owner's
       // U-Q15): a tree that outgrew the default room is walked once, not once
       // to the ceiling and again. Interim until T16's chooser.

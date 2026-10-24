@@ -679,7 +679,7 @@ rule. Thermal state comes from `NSProcessInfo.thermalState` through
 power-throttling notifications on Windows; battery from
 `IOPSCopyPowerSourcesInfo`, `GetSystemPowerStatus`,
 `/sys/class/power_supply`. Sleep notifications pause the scan; wake resumes
-it from its checkpoint. Scheduled scans always run Eco.
+it from its checkpoint. Scheduled scans run Eco on the built-in walker and gdu; the native walk takes no per-scan cap yet (P5-14), so a scheduled scan it walks runs at the governor's level — at most Balanced under Automatic — and its record says so (`budget.effective`, with the reason in `budget.changes`).
 
 The **legacy engines obey the preset approximately**: the Node walker's
 concurrency and yield cadence become governor-controlled, and gdu is

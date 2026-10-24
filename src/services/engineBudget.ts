@@ -581,6 +581,25 @@ export function beginScanBudget(scanId: string, forced?: EffectiveBudgetPreset, 
   return budget;
 }
 
+/** Why a scheduled scan the native engine walks is not at the Eco it asked for (the hunt, C41). */
+const NATIVE_RUNS_GOVERNOR_LEVEL = 'The native engine walks at the level TreeMap’s governor holds for the whole app; the Eco a scheduled scan asks for holds only on the built-in walker and gdu.';
+
+/**
+ * A scan under a forced preset that the native engine walks (the hunt, C41): the preset reaches only the
+ * built-in walker and gdu (dutyFor, workerCap, childPriority), and the native walk runs at the
+ * governor's process-wide level — Balanced under Automatic, Turbo under an explicit Turbo — while the
+ * record said Eco. The record now says the level it runs at, and why; what it asked for stays in
+ * `preset`. Nothing changes for a scan whose forced level is the governor's anyway.
+ */
+export function noteNativeGovernorLevel(scanId: string): void {
+  const s = states.get(scanId);
+  if (!s || !s.override || !s.record) return;
+  const governs = scanBudget(undefined, autoBase).effective;
+  if (governs === lastEffective(s.record)) return;
+  s.record.effective = governs;
+  noteBudgetChange(s.record, governs, NATIVE_RUNS_GOVERNOR_LEVEL);
+}
+
 /**
  * Drop everything held for a scan: throttle timing, the forced preset, a
  * pause, its say in the auto base. A paused scan is released so a walker parked
