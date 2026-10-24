@@ -14,6 +14,12 @@ import { getOffloadIndex, getOffloadJob, prepareOffload, setOffloadFileMetaFault
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { buildOpenApiDocument } from '../src/api/openapi';
 import { setCopyFaultForTests } from '../src/utils/copyVerify';
+import http from 'node:http';
+import { createApp } from '../src/server';
+import { resetRateLimiter } from '../src/middleware/rateLimiter';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { buildMcpServer } from '../src/mcp/server';
 import { isRestoreCopyFor } from './fixtures/restoreCopy';
 import type { FileNode, OffloadJob, ScanResult } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
@@ -179,13 +185,22 @@ test('a drive that cannot hold a copy\'s dates is said, never a reason to undo t
     });
     assert.equal(job.status, 'complete', job.error);
     assert.ok(!fs.existsSync(proj), 'the verified offload went ahead');
-    assert.match(job.error ?? '', /The dates or permissions of 1 copy could not be set at the destination/, job.error);
-    assert.match(job.error ?? '', /TreeMap's record keeps the originals' dates and permissions for Restore/, job.error);
+    // A note, never the job's error (review F1.8): it denies nothing the job did, so the page's
+    // "originals are in the Trash" still stands beside it.
+    assert.equal(job.error, undefined, job.error);
+    assert.match(job.note ?? '', /The dates or permissions of 1 copy could not be set at the destination/, job.note);
+    const last = (await framesOf(job.jobId)).at(-1) ?? {};
+    assert.equal(last.type, 'complete');
+    assert.equal(last.warning, undefined, 'the stream carries no warning');
+    assert.equal(last.note, job.note, 'the stream carries the note');
+    assert.equal((await mcpOffloadPayload(job.jobId)).note, job.note, 'and so does the MCP offload tool');
+    assert.match(job.note ?? '', /TreeMap's record keeps the originals' dates and permissions for Restore/, job.note);
     const ids = (await getOffloadIndex()).entries.filter((e) => e.originalPath === file).map((e) => e.id);
     const restore = await settled((await startRestore(ids)).jobId);
     assert.equal(restore.status, 'complete', restore.error);
     assert.ok(fs.existsSync(file), 'the restore went ahead');
-    assert.match(restore.error ?? '', /The dates or permissions of 1 restored file could not be set back/, restore.error);
+    assert.equal(restore.error, undefined, restore.error);
+    assert.match(restore.note ?? '', /The dates or permissions of 1 restored file could not be set back/, restore.note);
   } finally {
     refuse();
   }
@@ -233,3 +248,41 @@ test('a private file\'s copy, and its restore\'s file, are never readable by oth
   assert.deepEqual([...new Set(seen.restore)], [0o600], 'and so is the restore\'s temporary file');
   assert.equal(fs.statSync(secret).mode & 0o777, 0o600);
 });
+
+/** The frames of an offload job's progress stream, read until the server ends it. */
+async function framesOf(jobId: string): Promise<Record<string, unknown>[]> {
+  resetRateLimiter();
+  const server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const port = (server.address() as { port: number }).port;
+    const text = await new Promise<string>((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path: `/api/offload/${jobId}/progress`, method: 'GET' }, (res) => {
+        let buf = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: string) => { buf += c; });
+        res.on('end', () => resolve(buf));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    return text.split('\n').filter((l) => l.startsWith('data: ')).map((l) => JSON.parse(l.slice(6)) as Record<string, unknown>);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+}
+
+/** What the MCP offload tool answers for a finished job, asked by its id. */
+async function mcpOffloadPayload(jobId: string): Promise<Record<string, unknown>> {
+  const server = buildMcpServer();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'treemap-offloadKeepsMeta-test', version: '0.0.0' });
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  try {
+    const reply = (await client.callTool({ name: 'offload', arguments: { jobId } })) as { isError?: boolean; structuredContent?: Record<string, unknown> };
+    assert.ok(!reply.isError, JSON.stringify(reply));
+    return reply.structuredContent ?? {};
+  } finally {
+    await client.close();
+  }
+}

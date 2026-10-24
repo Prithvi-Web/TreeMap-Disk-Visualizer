@@ -337,6 +337,7 @@ function offloadJobPayload(job: OffloadJob): Record<string, unknown> {
     bytesTotal: job.bytesTotal,
     bytesTotalFormatted: formatBytes(job.bytesTotal),
     ...(job.error !== undefined ? { error: job.error } : {}),
+    ...(job.note !== undefined ? { note: job.note } : {}),
     ...(job.status === 'running'
       ? { hint: 'Call offload again with this jobId to keep waiting for it.' }
       : {}),

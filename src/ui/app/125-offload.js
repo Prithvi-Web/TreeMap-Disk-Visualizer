@@ -440,6 +440,8 @@ function watchJob(opts) {
       // them was reported as an unqualified success.
       if (ev.warning) toast(ev.warning, 'error', 12000);
       opts.onComplete(ev);
+      // Said after the job's own success line, in the ordinary style: a note denies nothing (review F1.8).
+      if (ev.note) toast(ev.note, 'success', 12000);
     // A stopped job's event goes to the page that asked: an undo stopped part-way
     // says what it had put back (hunt C75).
     } else if (ev.type === 'error') {

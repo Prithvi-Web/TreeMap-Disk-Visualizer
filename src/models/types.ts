@@ -942,6 +942,12 @@ export interface OffloadJob {
   bytesDone: number;
   currentPath: string;
   error?: string;
+  /**
+   * What a finished job wants said that denies nothing it did (review F1.8): today, that some files'
+   * dates or permissions could not be set (a drive that cannot hold them). Never a reason to hold back
+   * the job's success line, as an `error` on a complete job is.
+   */
+  note?: string;
   cancelled: boolean;
   startedAt: number;
   finishedAt?: number;
@@ -957,7 +963,7 @@ export type OffloadStreamEvent =
    * were unreachable: `complete` carried no message, there is no
    * `GET /api/offload/:jobId`, and the UI toasted an unqualified success.
    */
-  | { type: 'complete'; filesDone: number; bytesDone: number; warning?: string }
+  | { type: 'complete'; filesDone: number; bytesDone: number; warning?: string; note?: string }
   | { type: 'error'; message: string }
   /** `filesDone`: how many files the job had done — a cancelled restore's stay where it put them (hunt C49). */
   | { type: 'cancelled'; filesDone: number }

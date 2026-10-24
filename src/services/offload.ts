@@ -1343,8 +1343,9 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       const kept = `${path.basename(first.path)} was left in place${more}: ${first.reason}, so it was not moved to the Trash. Its verified copies stand at ${destDir}.`;
       job.error = job.error ? `${job.error} Also: ${kept}` : kept;
     }
+    // A note, not a warning (review F1.8): it denies nothing the job did.
     const metaWord = metaMissSentence(metaMisses, 'copies');
-    if (metaWord !== null) job.error = job.error ? `${job.error} Also: ${metaWord}` : metaWord;
+    if (metaWord !== null) job.note = metaWord;
     // Every selected item the Trash did not take — a folder left in place, an original found open, one
     // the Trash refused or did not answer about — is still here: its copies are recorded as such, so
     // the Offloaded tab never counts them as space freed (final review F3.2).
@@ -1582,7 +1583,7 @@ async function restoreEntries(job: OffloadJob, entries: OffloadEntry[]): Promise
   } else {
     job.status = 'complete';
     const metaWord = metaMissSentence(metaMisses, 'restored');
-    if (metaWord !== null) job.error = metaWord;
+    if (metaWord !== null) job.note = metaWord;
   }
 }
 

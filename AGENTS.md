@@ -640,8 +640,10 @@ OpenAPI 3 spec).
      verifies — and the record keeps them (a date as milliseconds, with any
      finer part as a fraction), so Restore puts them back on each file it
      writes, likewise private until then. A
-     drive that cannot hold them is said in the job's warning, never a reason
-     to undo; folders are made anew. The record
+     drive that cannot hold them is said in the job's `note` (on the
+     progress stream's `complete` frame, and in MCP `offload`'s answer) — a
+     note, not a warning, since it denies nothing the job did — never a
+     reason to undo; folders are made anew. The record
      Restore reads (`offload-manifest.json`, app-data) is saved first; the
      drive's own copy of it is written after, one write of each drive's
      record at a time, and a drive that does not answer for 60 seconds is
