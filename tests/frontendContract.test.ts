@@ -1970,10 +1970,11 @@ function autopilotRunRow(run: Record<string, unknown>): string {
   assert.ok(src.length > 100 && src.length < 9000, `the renderAutopilotRuns slice is ${src.length} chars`);
   const host = { innerHTML: '', querySelectorAll: () => [] as unknown[] };
   const make = new Function(
-    '$', 'formatBytes', 'formatCount', 'formatDate', 'escapeHtml', 'icon', 'AP_STATUS_LABEL', 'state',
+    '$', 'formatBytes', 'formatCount', 'formatDate', 'escapeHtml', 'icon', 'AP_STATUS_LABEL', 'state', 'apFocusMark', 'apFocusRestore',
     `${src}; return renderAutopilotRuns;`,
   );
-  make(() => host, (n: number) => `${n} B`, (n: number) => String(n), () => 'today', (s: unknown) => String(s), () => '', {}, { autopilot: { policies: [] } })([run]);
+  // The focus keeper (the hunt, C38) has no focus to keep here.
+  make(() => host, (n: number) => `${n} B`, (n: number) => String(n), () => 'today', (s: unknown) => String(s), () => '', {}, { autopilot: { policies: [] } }, () => null, () => undefined)([run]);
   return host.innerHTML;
 }
 
@@ -2116,7 +2117,7 @@ test('byte limits are entered in GB and converted once, in one place', () => {
   // Anchored on a string that occurs once: '#apMatchSeg' also appears inside
   // setApMatchKind, above this function, which would slice backwards to
   // nothing and silently assert against an empty string.
-  const fn = code.slice(code.indexOf('function policyFromEditor'), code.indexOf("$('apAddBtn')"));
+  const fn = code.slice(code.indexOf('function policyFromEditor'), code.indexOf("$('apAddBtn').addEventListener"));
   assert.match(fn, /const gb = \(id\)/, 'one conversion helper, not three hand-written multiplications');
   assert.match(fn, /maxBytesPerRun: gb\('apMaxRun'\)/);
   assert.match(fn, /maxBytesPerWeek: gb\('apMaxWeek'\)/);

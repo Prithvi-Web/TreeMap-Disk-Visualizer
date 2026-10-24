@@ -46,10 +46,48 @@ async function loadAutopilot() {
   renderAutopilot();
 }
 
+/**
+ * The control in `host` that has focus, noted before a repaint replaces every row (the hunt, C38):
+ * which of Edit, Remove, Approve or Undo it is and for what, where it sits among its kind, and the
+ * run it belongs to. Null when focus is elsewhere.
+ */
+function apFocusMark(host) {
+  const had = document.activeElement;
+  if (!had || had === document.body || !host.contains(had)) return null;
+  const attr = ['data-ap-edit', 'data-ap-delete', 'data-ap-approve', 'data-ap-undo'].find(a => had.hasAttribute(a)) || null;
+  const run = had.closest('[data-run]');
+  return {
+    attr,
+    value: attr ? had.getAttribute(attr) : null,
+    index: attr ? [...host.querySelectorAll(`[${attr}]`)].indexOf(had) : -1,
+    run: run ? run.getAttribute('data-run') : null,
+  };
+}
+
+/**
+ * After the repaint, focus goes back where it was noted (the hunt, C38): Removing a policy, approving a
+ * run and saving an edit repainted the lists under focus, which a browser then hands to <body>. The
+ * same control, else its run's header, else the control of its kind now in its place, else Add policy,
+ * else focusLanding(). Focus the person moved meanwhile is left where it is.
+ */
+function apFocusRestore(host, mark) {
+  if (!mark) return;
+  const at = document.activeElement;
+  if (at && at !== document.body && at.isConnected) return;
+  const same = mark.attr ? [...host.querySelectorAll(`[${mark.attr}]`)] : [];
+  const runEl = mark.run ? [...host.querySelectorAll('[data-run]')].find(el => el.getAttribute('data-run') === mark.run) : null;
+  const to = same.find(el => el.getAttribute(mark.attr) === mark.value)
+    || (runEl && runEl.querySelector('.bp-head'))
+    || (mark.index >= 0 && same.length ? same[Math.min(mark.index, same.length - 1)] : null)
+    || $('apAddBtn') || focusLanding();
+  if (to) to.focus({ preventScroll: true });
+}
+
 function renderAutopilot() {
   const policies = state.autopilot.policies || [];
   const runs = state.autopilot.runs || [];
   const host = $('apPolicies');
+  const focusMark = apFocusMark(host);
 
   // FX: the heartbeat is a strict function of the armed set — the same
   // enabled && approved && !dryRunFirst predicate the info line counts as
@@ -99,6 +137,7 @@ function renderAutopilot() {
     host.querySelectorAll('[data-ap-delete]').forEach(b =>
       b.addEventListener('click', () => deletePolicy(b.dataset.apDelete)));
   }
+  apFocusRestore(host, focusMark);
 
   renderAutopilotRuns(runs);
 }
@@ -217,8 +256,10 @@ function renderAutopilotRuns(runs) {
   const host = $('apRuns');
   const policies = state.autopilot.policies || [];
   const approvable = approvableRunIds(runs, policies);
+  const focusMark = apFocusMark(host);
   if (!runs.length) {
     host.innerHTML = `<div class="muted">Nothing has run yet. Each run will be listed here with exactly what it removed — or why it decided not to.</div>`;
+    apFocusRestore(host, focusMark);
     return;
   }
   host.innerHTML = runs.map(r => {
@@ -281,6 +322,7 @@ function renderAutopilotRuns(runs) {
   });
   host.querySelectorAll('[data-ap-approve]').forEach(b => b.addEventListener('click', () => approveAutopilotRun(b.dataset.apApprove)));
   host.querySelectorAll('[data-ap-undo]').forEach(b => b.addEventListener('click', () => undoAutopilotRun(b.dataset.apUndo)));
+  apFocusRestore(host, focusMark);
 }
 
 /**

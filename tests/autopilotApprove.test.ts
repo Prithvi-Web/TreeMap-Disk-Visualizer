@@ -677,7 +677,7 @@ function renderedRuns(runs: unknown[], policies: unknown[]): string {
   const host = { innerHTML: '', querySelectorAll: () => [] };
   const render = new Function(
     '$', 'state', 'formatBytes', 'formatCount', 'escapeHtml', 'icon', 'formatDate', 'approveAutopilotRun', 'undoAutopilotRun',
-    `${pageSource('AP_STATUS_LABEL')} ${pageSource('approvableRunIds')} ${INDEX.includes('function unapprovableRunNote(') ? pageSource('unapprovableRunNote') : ''} ${INDEX.includes('function leftAloneHtml(') ? pageSource('leftAloneHtml') : ''} ${pageSource('renderAutopilotRuns')}; return renderAutopilotRuns;`,
+    `${pageSource('AP_STATUS_LABEL')} ${pageSource('approvableRunIds')} ${INDEX.includes('function unapprovableRunNote(') ? pageSource('unapprovableRunNote') : ''} ${INDEX.includes('function leftAloneHtml(') ? pageSource('leftAloneHtml') : ''} ${INDEX.includes('function apFocusMark(') ? `const document = { activeElement: null, body: null }; ${pageSource('apFocusMark')} ${pageSource('apFocusRestore')}` : ''} ${pageSource('renderAutopilotRuns')}; return renderAutopilotRuns;`,
   )(() => host, { autopilot: { policies } }, String, String, (s: string) => s, () => '', String, () => undefined, () => undefined) as (runs: unknown[]) => void;
   render(runs);
   return host.innerHTML;
@@ -887,4 +887,95 @@ test('"Nothing matched." is said only under a run that looked and found nothing,
   assert.equal(count(renderedRuns([run('s', 'failed', 'Nothing was deleted — the delete stopped: no room', 'live')], [policy])), 0, 'a stopped delete had matches');
   assert.equal(count(renderedRuns([run('e', 'completed', 'Nothing matched this time.')], [policy])), 1, 'said once, by the server');
   assert.equal(count(renderedRuns([run('d', 'completed', 'Simulated — this policy is set to preview every run rather than delete.')], [policy])), 1, 'a preview that found nothing still says so');
+});
+
+/* A small stand-in for the DOM the Autopilot lists repaint: elements with attributes, a parent, and focus. */
+type FakeEl = { attrs: Record<string, string>; cls: string[]; parent: FakeEl | null; isConnected: boolean; kids: FakeEl[];
+  hasAttribute(a: string): boolean; getAttribute(a: string): string | null; closest(sel: string): FakeEl | null; querySelector(sel: string): FakeEl | null; focus(): void };
+function fakeDom() {
+  const doc = { body: null as unknown as FakeEl, activeElement: null as unknown as FakeEl };
+  const make = (attrs: Record<string, string>, cls: string[] = [], parent: FakeEl | null = null): FakeEl => {
+    const el: FakeEl = {
+      attrs, cls, parent, isConnected: true, kids: [],
+      hasAttribute: (a) => a in attrs,
+      getAttribute: (a) => (a in attrs ? attrs[a] : null),
+      closest(sel) { const a = sel.replace(/^\[|\]$/g, ''); for (let e: FakeEl | null = el; e; e = e.parent) if (a in e.attrs) return e; return null; },
+      querySelector(sel) { const c = sel.replace(/^\./, ''); return el.kids.find((k) => k.cls.includes(c)) ?? null; },
+      focus() { doc.activeElement = el; },
+    };
+    if (parent) parent.kids.push(el);
+    return el;
+  };
+  doc.body = make({});
+  doc.activeElement = doc.body;
+  const host = { all: [] as FakeEl[],
+    contains(el: FakeEl) { return host.all.includes(el); },
+    querySelectorAll(sel: string) { const a = sel.replace(/^\[|\]$/g, ''); return host.all.filter((e) => a in e.attrs); },
+    /** innerHTML = …: every old row is detached, focus on one falls to <body>, as a browser does. */
+    replace(rows: FakeEl[]) {
+      for (const e of host.all) e.isConnected = false;
+      if (host.all.includes(doc.activeElement)) doc.activeElement = doc.body;
+      host.all = rows;
+    },
+  };
+  return { doc, host, make };
+}
+
+test('removing a policy, approving a run or saving an edit keeps focus on a control in the list, never on <body> (hunt C38)', () => {
+  const { doc, host, make } = fakeDom();
+  const addBtn = make({ id: 'apAddBtn' });
+  const page = new Function('document', '$', 'focusLanding',
+    `${pageSource('apFocusMark')} ${pageSource('apFocusRestore')}; return { mark: apFocusMark, restore: apFocusRestore };`,
+  )(doc, (id: string) => (id === 'apAddBtn' ? addBtn : null), () => null) as { mark: (h: unknown) => unknown; restore: (h: unknown, m: unknown) => void };
+  const row = (id: string) => [make({ 'data-ap-edit': id }), make({ 'data-ap-delete': id })];
+
+  // Remove: the trash button of the first policy had focus; the row now in its place takes it.
+  const [, del1] = row('p1'); host.all = [...row('p1').slice(0, 0), ...[make({ 'data-ap-edit': 'p1' }), del1], ...row('p2')];
+  del1.focus();
+  let mark = page.mark(host);
+  const [edit2, del2] = row('p2');
+  host.replace([edit2, del2]);
+  page.restore(host, mark);
+  assert.equal(doc.activeElement, del2, 'the next policy\'s Remove, in the removed one\'s place');
+
+  // Save after Edit: the same policy's Edit button, wherever its row now sits.
+  const [edit0, del0] = row('p0');
+  host.all = [edit0, del0, edit2, del2];
+  edit2.focus();
+  mark = page.mark(host);
+  const [edit2b, del2b] = row('p2');
+  host.replace([edit2b, del2b, ...row('p3')]);
+  page.restore(host, mark);
+  assert.equal(doc.activeElement, edit2b, 'the same policy\'s Edit');
+  host.all = [edit2b, del2b];
+
+  // The last policy removed: Add policy.
+  del2b.focus();
+  mark = page.mark(host);
+  host.replace([]);
+  page.restore(host, mark);
+  assert.equal(doc.activeElement, addBtn, 'Add policy, when no row is left');
+
+  // Approve: the run's Approve is gone once it is approved; its own header takes focus.
+  const run1 = make({ 'data-run': 'r1' }, ['ap-run']);
+  make({}, ['bp-head'], run1);
+  const approve = make({ 'data-ap-approve': 'r1' }, [], run1);
+  host.all = [run1, ...run1.kids];
+  approve.focus();
+  mark = page.mark(host);
+  const run1b = make({ 'data-run': 'r1' }, ['ap-run']);
+  const head1b = make({}, ['bp-head'], run1b);
+  host.replace([run1b, head1b]);
+  page.restore(host, mark);
+  assert.equal(doc.activeElement, head1b, 'the approved run\'s header');
+  assert.notEqual(doc.activeElement, doc.body);
+});
+
+test('both Autopilot lists repaint through the focus keeper (hunt C38)', () => {
+  for (const name of ['renderAutopilot', 'renderAutopilotRuns']) {
+    const body = pageSource(name);
+    const at = body.indexOf('host.innerHTML = ');
+    assert.ok(body.lastIndexOf('apFocusMark(host)', at) !== -1 && body.lastIndexOf('apFocusMark(host)', at) < at, `${name} notes the focused control before it repaints`);
+    assert.match(body, /apFocusRestore\(host, /, `${name} puts focus back after it repaints`);
+  }
 });
