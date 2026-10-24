@@ -4,7 +4,7 @@ import { platform } from '../platform';
 import { capabilityState } from '../platform/capabilities';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { assertNotAppDataPath, assertNotSpillPath, insideAnyScanRoot } from '../middleware/pathGuard';
-import { assertBytesCap, assertPathsAllowed, getPolicy, knownSizeOf } from './policy';
+import { assertBytesCapOver, assertPathsAllowed, getPolicy, knownSizeOf } from './policy';
 import { moveToTrash } from './cleaner';
 import { AppError } from '../middleware/errorHandler';
 import type { SnapshotCandidate, SnapshotSearchResult, SnapshotRestoreOutcome } from '../models/types';
@@ -197,7 +197,7 @@ async function assertMayReplace(destination: string): Promise<void> {
     }
     const policy = await getPolicy();
     assertPathsAllowed(policy, [destination]);
-    assertBytesCap(policy, knownSizeOf(destination));
+    assertBytesCapOver(policy, [{ path: destination, bytes: knownSizeOf(destination) }]);
   } catch (err) {
     throw asReplaceRefused(destination, err);
   }

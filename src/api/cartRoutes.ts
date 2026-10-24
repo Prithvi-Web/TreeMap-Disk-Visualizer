@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { guardBodyPaths, refuseSafetyRecords, requireInsideScanRoot } from '../middleware/pathGuard';
 import { idempotency } from '../middleware/idempotency';
-import { getPolicy, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../services/policy';
+import { getPolicy, assertPathsAllowed, assertBytesCapOver, knownSizeOf } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import {
   assertCartPaths,
@@ -59,11 +59,12 @@ cartRouter.post('/cart/commit', idempotency, guardBodyPaths, requireInsideScanRo
   // The scan's own figures, for the policy caps. The capsule's walk produces
   // the exact totals, but a cap has to be checked *before* the walk — a policy
   // that refuses 500 GB should not first spend minutes measuring it.
-  const totalKnownBytes = paths.reduce((sum, p) => sum + (knownSizeOf(p) ?? 0), 0);
+  const sized = paths.map((p) => ({ path: p, bytes: knownSizeOf(p) }));
+  const totalKnownBytes = sized.reduce((sum, s) => sum + (s.bytes ?? 0), 0);
   const policy = await getPolicy();
   try {
     assertPathsAllowed(policy, paths);
-    assertBytesCap(policy, totalKnownBytes);
+    assertBytesCapOver(policy, sized);
   } catch (err) {
     if (err instanceof AppError) {
       await appendAudit({

@@ -219,6 +219,25 @@ export function assertBytesCap(policy: AgentPolicy, bytes: number | null): void 
 }
 
 /**
+ * The byte cap over each path's own size (hunt C08), as `knownSizeOf` gives it: the same completed
+ * scans the scanned-root rule reads. With no cap set nothing is checked. With one set, a path no
+ * completed scan sized — a file made since the scan, say — is refused rather than counted as
+ * nothing: the cap is a promise about every operation, and an unknown size cannot keep it.
+ */
+export function assertBytesCapOver(policy: AgentPolicy, sized: { path: string; bytes: number | null }[]): void {
+  if (policy.maxBytesPerOperation === null) return;
+  const unsized = sized.find((s) => s.bytes === null);
+  if (unsized !== undefined) {
+    throw new AppError(
+      403,
+      'POLICY_BYTES_UNKNOWN',
+      `No completed scan sized "${unsized.path}", so TreeMap cannot hold it to the ${formatBytes(policy.maxBytesPerOperation)} per-operation cap in agent-policy.json — scan its folder again first`,
+    );
+  }
+  assertBytesCap(policy, sized.reduce((sum, s) => sum + (s.bytes ?? 0), 0));
+}
+
+/**
  * Recursive size of `p` according to any completed scan that contains it: by its
  * own spelling, or else by where it is (`placeToSize`), spelled as that scan
  * spells its paths (the final review, F1.4). Found by its text alone, a folder

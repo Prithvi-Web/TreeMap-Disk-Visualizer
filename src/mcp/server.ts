@@ -21,12 +21,12 @@ import { prepareOffload, startOffload, getOffloadJob } from '../services/offload
 import { moveToTrash } from '../services/cleaner';
 import { checkOpenHandles, describeConflicts, type OpenHandleReport } from '../services/openHandleGuard';
 import { storeOf } from '../services/scanStore';
-import { insideAnyScanRoot, assertNotSpillPath, assertNotAppDataPath, assertNotSafetyRecord } from '../middleware/pathGuard';
+import { insideAnyScanRoot, outsideScanRootSentence, assertNotSpillPath, assertNotAppDataPath, assertNotSafetyRecord } from '../middleware/pathGuard';
 import { isVirtualPath } from '../services/containerScanner';
 import { sanitizePath, PathRejectedError } from '../utils/pathSanitizer';
 import { AppError, permissionDeniedMessage } from '../middleware/errorHandler';
 import { formatBytes, ONE_MB } from '../utils/formatBytes';
-import { getPolicy, assertScanAllowed, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../services/policy';
+import { getPolicy, assertScanAllowed, assertPathsAllowed, assertBytesCap, assertBytesCapOver, knownSizeOf } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { OffloadJob, ScanResult } from '../models/types';
 import { assertToolAvailable } from '../services/storageMode';
@@ -217,7 +217,7 @@ function guardDestructivePaths(raw: string[]): string[] {
     assertNotSpillPath(p);
     assertNotSafetyRecord(p); // the agent policy and the audit log are never removed or moved (F1.11)
     if (!insideAnyScanRoot(p)) {
-      throw new AppError(403, 'OUTSIDE_SCAN_ROOT', `"${p}" is outside every scanned root — scan its folder first`);
+      throw new AppError(403, 'OUTSIDE_SCAN_ROOT', outsideScanRootSentence(p));
     }
     if (isVirtualPath(p)) {
       throw new AppError(403, 'VIRTUAL_PATH', `"${p}" is inside an archive — act on the archive itself instead`);
@@ -899,7 +899,7 @@ export function buildMcpServer(): McpServer {
         const policy = await getPolicy();
         try {
           assertPathsAllowed(policy, paths);
-          assertBytesCap(policy, knownTotal);
+          assertBytesCapOver(policy, sized);
         } catch (err) {
           if (err instanceof AppError) {
             await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun, outcome: 'refused', code: err.code });

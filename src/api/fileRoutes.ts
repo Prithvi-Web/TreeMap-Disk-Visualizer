@@ -15,7 +15,7 @@ import {
 import { AppError } from '../middleware/errorHandler';
 import { getOrRenderThumbnail, THUMB_DIM, THUMB_MAX_INPUT } from '../services/thumbnailCache';
 import { idempotency } from '../middleware/idempotency';
-import { getPolicy, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../services/policy';
+import { getPolicy, assertPathsAllowed, assertBytesCapOver, knownSizeOf } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { checkOpenHandles } from '../services/openHandleGuard';
 import { emptyCheckSession, isNotEmptyCode, NOT_EMPTY_CODES, type NotEmptyCode } from '../services/emptyFolderCheck';
@@ -150,7 +150,7 @@ fileRouter.delete('/files', idempotency, guardBodyPaths, requireInsideScanRoot, 
   const policy = await getPolicy();
   try {
     assertPathsAllowed(policy, paths);
-    assertBytesCap(policy, totalKnownBytes);
+    assertBytesCapOver(policy, sized);
   } catch (err) {
     if (err instanceof AppError) {
       await appendAudit({ action: 'files.trash', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: totalKnownBytes, dryRun: dryRun === true, outcome: 'refused', code: err.code });

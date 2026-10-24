@@ -764,7 +764,11 @@ read-what-you-saw) permission to act.
   (`DELETE /api/files`, `/api/cart/commit`, `/api/files/open`,
   `/api/files/terminal`, `/api/files/preview`, `/api/offload`, `/api/git/gc`,
   `/api/container/expand`) demand the path lie inside the root of a scan this
-  server performed. Outside → `403 { code: "OUTSIDE_SCAN_ROOT" }`. A scan
+  server performed. Outside → `403 { code: "OUTSIDE_SCAN_ROOT" }`. Only a
+  completed scan counts: one still running, one that failed and one that was
+  stopped grant nothing (the refusal names the scan that has not finished),
+  since none of them listed what would be acted on, and the byte cap and the
+  audit size a path from the completed scans this rule reads. A scan
   grants only what it listed: a path at or beneath a folder it never descended
   into — a fixed never-descend folder such as `/Volumes` after a scan of `/`,
   or a drive mounted inside the folder that it did not enter under "Stay on
@@ -1049,11 +1053,15 @@ read-what-you-saw) permission to act.
   spelling, a name in another case — so no other spelling of a protected file
   reaches it, and a link in an allowed root does not lead out of it; an entry
   written through a link holds the folder it leads to too. The byte cap
-  refuses any single oversized operation — an Autopilot run is one: a run
-  whose selection is over the cap deletes nothing and is recorded `blocked`
-  with the refusal, and its preview says so in `wouldBlockReason`. Violations are
+  refuses any single oversized operation, each path sized by the completed
+  scans the scanned-root rule reads; with a cap set, a path to trash or
+  re-encode that no completed scan sized (a file made since the scan) is
+  refused rather than counted as nothing (`POLICY_BYTES_UNKNOWN`: scan its
+  folder again). An Autopilot run is one operation: a run whose selection
+  is over the cap deletes nothing and is recorded `blocked` with the
+  refusal, and its preview says so in `wouldBlockReason`. Violations are
   `403 { code: "POLICY_ROOT_NOT_ALLOWED" | "POLICY_PROTECTED_PATH" |
-  "POLICY_BYTES_EXCEEDED" }`. An entry may begin with `~` for your home
+  "POLICY_BYTES_EXCEEDED" | "POLICY_BYTES_UNKNOWN" }`. An entry may begin with `~` for your home
   folder, and every gate reads an entry alike — where it lives and where it
   really is. An absent or empty file imposes nothing. The
   policy is deliberately not writable through the API. It governs local paths

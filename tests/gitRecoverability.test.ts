@@ -16,6 +16,11 @@ import { createScanRecord } from '../src/services/diskScanner';
 import type { GitRecoverability } from '../src/services/recoverabilityTypes';
 import { commandsOf, recordGit, subcommand, type RecordedGit, type ScriptedAnswer } from './fixtures/gitRecorder';
 
+/** A scan record that has completed: only a completed scan grants the scanned-root rule (hunt C08). */
+function completedScanRecord(root: string): void {
+  createScanRecord(root).status = 'complete';
+}
+
 /**
  * FG4 — git is never run in a repository TreeMap has not vetted, and every call is hardened.
  *
@@ -486,7 +491,7 @@ test('a .git file naming a folder inside a scan goes on to git\'s own answer', a
  */
 test('through the provider, a .git file naming a folder no scan covers leaves git unknown, and git is not started', async () => {
   const scanned = tmp('treemap-gitrec-prov-');
-  createScanRecord(scanned);
+  completedScanRecord(scanned);
   const unscanned = tmp('treemap-gitrec-prov-unscanned-');
   const project = path.join(scanned, 'project');
   fs.mkdirSync(project);
@@ -509,9 +514,9 @@ test('through the provider, a .git file naming a folder no scan covers leaves gi
 
 test('through the provider, the same redirect into a scanned folder is read', async () => {
   const scanned = tmp('treemap-gitrec-prov-in-');
-  createScanRecord(scanned);
+  completedScanRecord(scanned);
   const admin = tmp('treemap-gitrec-prov-admin-');
-  createScanRecord(admin);
+  completedScanRecord(admin);
   const project = path.join(scanned, 'project');
   fs.mkdirSync(project);
   fs.writeFileSync(path.join(project, '.git'), `gitdir: ${admin}\n`);
@@ -544,7 +549,7 @@ test('through the provider, a request cancelled while a repository is vetted sto
   // FG4e, review L3: the provider hands its request's signal to the vetting, which stops at its next
   // alternates entry. Counted by the resolutions of the borrowed folder after the cancellation.
   const scanned = tmp('treemap-gitrec-prov-abort-');
-  createScanRecord(scanned);
+  completedScanRecord(scanned);
   const project = path.join(scanned, 'project');
   const shared = path.join(project, 'shared', 'objects');
   fs.mkdirSync(path.join(project, '.git', 'objects', 'info'), { recursive: true });

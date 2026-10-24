@@ -6,7 +6,7 @@ import { AppError } from '../middleware/errorHandler';
 import { describeFsError } from '../utils/errno';
 import { checkOpenHandles, describeConflicts, type OpenHandleReport } from './openHandleGuard';
 import { capabilityState } from '../platform/capabilities';
-import { assertNotSafetyRecord, assertNotSpillPath, insideAnyScanRoot } from '../middleware/pathGuard';
+import { assertNotSafetyRecord, assertNotSpillPath, insideAnyScanRoot, outsideScanRootSentence } from '../middleware/pathGuard';
 import { RealMachineRefusal, refuseUnderTestRunner } from './realMachineGuard';
 import { emptyCheckSession, NOT_EMPTY_CODES } from './emptyFolderCheck';
 
@@ -406,7 +406,7 @@ export type OpenScope = 'scanned' | 'offloadCopy';
 function assertMayOpen(p: string, scope: OpenScope): void {
   assertNotSpillPath(p);
   if (scope === 'scanned' && !insideAnyScanRoot(p)) {
-    throw new AppError(403, 'OUTSIDE_SCAN_ROOT', `"${p}" is outside every scanned root — scan its folder first`);
+    throw new AppError(403, 'OUTSIDE_SCAN_ROOT', outsideScanRootSentence(p));
   }
 }
 

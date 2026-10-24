@@ -759,7 +759,7 @@ const schemas: Json = {
     {
       allowedRoots: arr(str(), 'When non-empty, scans and destructive targets must lie inside one of these'),
       protectedPaths: arr(str(), 'Never trashed or offloaded (nor anything containing them)'),
-      maxBytesPerOperation: nullable(int('Refuse a single destructive operation over this many bytes; null = no cap')),
+      maxBytesPerOperation: nullable(int('Refuse a single destructive operation over this many bytes, sized by completed scans; with a cap set, a path no completed scan sized is refused POLICY_BYTES_UNKNOWN; null = no cap')),
     },
     ['allowedRoots', 'protectedPaths', 'maxBytesPerOperation'],
     'User-editable guard rails (agent-policy.json in the app-data dir); empty file = no restriction',
@@ -3008,7 +3008,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     },
     responses: {
       '400': errorResponse('PATH_REQUIRED without a path; PATH_INVALID or PATH_BLOCKED for the path or the destination'),
-      '403': errorResponse('SPILL_PATH for the path or the destination; APP_DATA_PATH for the destination when it is app-data or anything in it — the agent policy and the audit log among them — however it is spelled, a link that leads there included; with overwrite, for the file it would replace: OUTSIDE_SCAN_ROOT; SAFETY_RECORD for a link TreeMap reaches its agent policy and audit log through, which no request removes or moves (a folder there, one above app-data included, is 409 DESTINATION_IS_FOLDER instead); or POLICY_ROOT_NOT_ALLOWED, POLICY_PROTECTED_PATH or POLICY_BYTES_EXCEEDED from agent-policy.json'),
+      '403': errorResponse('SPILL_PATH for the path or the destination; APP_DATA_PATH for the destination when it is app-data or anything in it — the agent policy and the audit log among them — however it is spelled, a link that leads there included; with overwrite, for the file it would replace: OUTSIDE_SCAN_ROOT; SAFETY_RECORD for a link TreeMap reaches its agent policy and audit log through, which no request removes or moves (a folder there, one above app-data included, is 409 DESTINATION_IS_FOLDER instead); or POLICY_ROOT_NOT_ALLOWED, POLICY_PROTECTED_PATH, POLICY_BYTES_EXCEEDED or POLICY_BYTES_UNKNOWN from agent-policy.json'),
       '200': jsonResponse('Recovered', obj(
         {
           restored: bool(), originalPath: str(), restoredTo: str(), fromSnapshotId: nullable(str()),

@@ -17,6 +17,11 @@ import { readAudit } from '../src/services/audit';
 import { commandsOf, recordGit } from './fixtures/gitRecorder';
 import { listAsWindowsNode20 } from './fixtures/windowsListing';
 
+/** A scan record that has completed: only a completed scan grants the scanned-root rule (hunt C08). */
+function completedScanRecord(root: string): void {
+  createScanRecord(root).status = 'complete';
+}
+
 /**
  * FG4 — `git gc` runs only on a repository whose data is really where it looks, and keeps what
  * a person could still want back.
@@ -61,7 +66,7 @@ function scannedRepo(): { root: string; repo: string } {
   fs.writeFileSync(path.join(repo, 'a.txt'), 'a');
   git(repo, ['add', '-A']);
   git(repo, ['commit', '-qm', 'init']);
-  createScanRecord(root);
+  completedScanRecord(root);
   return { root, repo };
 }
 

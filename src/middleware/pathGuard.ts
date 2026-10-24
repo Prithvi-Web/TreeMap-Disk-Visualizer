@@ -213,11 +213,33 @@ export function guardQueryPath(...params: string[]) {
  * it did not enter under "Stay on this drive" — is outside that scan, unless
  * another scan covers it. The prefix test alone let a delete, an offload or an
  * open reach files on a drive the scan never saw.
+ *
+ * Only a COMPLETED scan grants (hunt C08): one still running has not listed its folder yet, and
+ * one that failed or was stopped listed nothing TreeMap keeps — so the byte cap and the audit,
+ * which size a path from completed scans (`knownSizeOf`), would have let a delete under its root
+ * through as 0 bytes. The rule, the cap and the audit read the same scans.
  */
 export function insideAnyScanRoot(p: string): boolean {
   if (p.startsWith('cloud://')) return false; // never on this filesystem
   const where = whereUnlessSecondName(p);
-  return where !== null && allScans().some((scan) => listedBy(scan, p, where));
+  return where !== null && allScans().some((scan) => scan.status === 'complete' && listedBy(scan, p, where));
+}
+
+/**
+ * The sentence for a path the scanned-root rule refuses (hunt C08): scan its folder first — and,
+ * where a scan of that folder has not completed, why that scan does not count. Only a completed
+ * scan grants: one still running has not listed the folder yet, and one that failed or was stopped
+ * listed nothing TreeMap keeps, so the byte cap and the audit (`knownSizeOf`, which reads completed
+ * scans) could not size what it would act on.
+ */
+export function outsideScanRootSentence(p: string): string {
+  const base = `"${p}" is outside every scanned root — scan its folder first`;
+  if (p.startsWith('cloud://')) return base;
+  const where = whereUnlessSecondName(p);
+  const unfinished = where === null ? undefined : allScans().find((scan) => scan.status !== 'complete' && listedBy(scan, p, where));
+  if (unfinished === undefined) return base;
+  const state = unfinished.status === 'running' ? 'has not finished yet' : 'did not finish';
+  return `${base}. The scan of "${unfinished.rootPath}" ${state}, and only a completed scan lets TreeMap act on what it listed`;
 }
 
 /**
@@ -585,11 +607,7 @@ function scanRootRefusal(req: Request, refuseSpill: boolean, readOnly = false): 
     const spill = refuseSpill ? spillPathRefusal(p) : null;
     if (spill) return spill;
     if (!(readOnly ? underAnyScanRoot(p, unanswerableHere.has(p)) : insideAnyScanRoot(p))) {
-      return new AppError(
-        403,
-        'OUTSIDE_SCAN_ROOT',
-        `"${p}" is outside every scanned root — scan its folder first`
-      );
+      return new AppError(403, 'OUTSIDE_SCAN_ROOT', readOnly ? `"${p}" is outside every scanned root — scan its folder first` : outsideScanRootSentence(p));
     }
     // Entries inside a container exist in its directory listing, not on
     // disk — only the container itself can be trashed or opened.
