@@ -1703,6 +1703,36 @@ test('words the scan\'s voice gives the open sheet and takes back before its fra
   }
 });
 
+test('words that reach the open sheet in a later frame than a toast it has said, while that toast is still up — another toast, or the scan\'s next words — are said there in a frame of their own, and stay said as the first toast goes, whether it goes after their frame or before it (review F2.3)', () => {
+  const first = 'Moved 3 items to the Trash';
+  for (const [what, words] of [['a second toast', 'Could not save the scanning budget: offline'], ['the scan\'s words', '1,200 items scanned so far']] as const) {
+    for (const goes of ['after their frame', 'before their frame'] as const) {
+      const at = `${what}, the first toast going ${goes}`;
+      const v = scanVoice();
+      v.open();
+      v.fns.toast(first); // focus in the sheet: said there too
+      v.frame();
+      v.frame();
+      assert.equal(v.sheetLive.textContent, first, `${at}: control, the first toast is said in the sheet`);
+      if (what === 'a second toast') v.fns.toast(words, 'error');
+      else v.write(v.scan, words);
+      assert.equal(v.sheetLive.textContent, '', `${at}: the region is emptied at once, so what comes next is a change, heard`);
+      /** The first toast runs out its time and goes: its fade, then its removal, which takes back what the sheet said of it. */
+      const firstGoes = () => { v.timers.shift()!.fn(); v.timers.pop()!.fn(); };
+      if (goes === 'before their frame') firstGoes();
+      v.frame();
+      v.frame();
+      assert.equal(v.sheetLive.textContent, words, `${at}: the new words are said in the sheet a frame later`);
+      if (goes === 'after their frame') {
+        firstGoes();
+        assert.equal(v.sheetLive.textContent, words, `${at}: the first toast going takes back only its own words — the new ones stay said`);
+      }
+      if (what === 'a second toast') { v.timers.shift()!.fn(); v.timers.pop()!.fn(); } else v.write(v.scan, '');
+      assert.equal(v.sheetLive.textContent, '', `${at}: and once they go too, nothing is left said`);
+    }
+  }
+});
+
 test('words the scan\'s voice holds back are its words only while the node it holds them with is all the region holds: other words written in the same task — a scan started another way as the folder check ends — are what it says from that write on, before the watch hears of it (review F1.6)', () => {
   const v = scanVoice();
   v.open();
