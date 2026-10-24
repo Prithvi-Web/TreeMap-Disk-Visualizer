@@ -425,3 +425,31 @@ test('provenance names why a last-opened date is unknown: a file it cannot read 
   assert.equal(gone.lastOpenedAt, null, 'control: no date');
   assert.match(gone.lastOpenedUnknown ?? '', /could not read/, 'and why');
 });
+
+test('provenance asks about the file itself: an access time not recorded, or a drive that records no openings, is unknown with why, never "not opened since it was saved" (review F1.5/F1.16)', async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tm-hc-lastopened-'));
+  try {
+    const f = path.join(dir, 'report.pdf');
+    await fsp.writeFile(f, 'x');
+    const t = new Date('2026-01-02T03:04:05Z');
+    const answer = (info: { lastUsedMs: number | null; source: 'spotlight' | 'atime' | 'none'; caveat?: string }) =>
+      async (paths: string[]) => new Map(paths.map((p) => [p, { useCount: null, ...info }]));
+    const recorded = answer({ lastUsedMs: t.getTime(), source: 'atime' });
+
+    await fsp.utimes(f, 0, t);
+    const zero = await readProvenance(f, recorded);
+    assert.equal(zero.lastOpenedAt, null, 'control: no date');
+    assert.equal(zero.lastOpenedUnknown, 'This file\u2019s access time is not recorded.', 'an access time of 0 is not recorded, whatever the rest of the computer does (F1.5)');
+
+    await fsp.utimes(f, t, t);
+    const noatime = 'This drive is mounted noatime, so it does not record when files are opened.';
+    const frozen = await readProvenance(f, answer({ lastUsedMs: null, source: 'none', caveat: noatime }));
+    assert.equal(frozen.lastOpenedAt, null, 'control: no date');
+    assert.equal(frozen.lastOpenedUnknown, noatime, 'a file on a drive that records no openings is unknown, in the drive\'s own words (F1.16)');
+
+    const fine = await readProvenance(f, recorded);
+    assert.equal(fine.lastOpenedUnknown, undefined, 'control: where this file\'s openings are recorded, a null date is "not opened since it was saved"');
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});

@@ -2458,7 +2458,8 @@ test('a file with no recorded origin is explained, not left blank', () => {
   const fn = code.slice(code.indexOf('async function loadProvenance'), code.indexOf('function renderPreviewMeta'));
   assert.match(fn, /data\.absentReason/, 'the server’s explanation is shown');
   assert.match(fn, /!data\.supported/, 'and an OS that cannot record it says so separately');
-  assert.match(fn, /never opened since it was saved/, 'last-opened has an honest unknown state');
+  assert.match(fn, /data\.lastOpenedUnknown/, 'last-opened has an honest unknown state, which says why (hunt C92)');
+  assert.match(fn, /never opened since it was saved/, 'and a known "not opened since" says so');
 });
 
 /* ══════════════ Drive health reports, never editorialises (§C4) ══════════════ */

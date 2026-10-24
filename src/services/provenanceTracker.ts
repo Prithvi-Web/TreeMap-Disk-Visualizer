@@ -1,7 +1,7 @@
 import fs from 'fs';
 import { platform } from '../platform';
 import { capabilityState } from '../platform/capabilities';
-import { ProvenanceInfo } from '../platform/types';
+import { LastUsedInfo, ProvenanceInfo } from '../platform/types';
 
 /**
  * provenanceTracker — where a file came from (§C3).
@@ -40,8 +40,10 @@ export interface ProvenanceResult {
   lastOpenedAt: number | null;
   /**
    * Set when a null `lastOpenedAt` is UNKNOWN, with why (hunt C92): the file's
-   * dates could not be read, or this computer does not record openings. Absent
-   * with a null date, openings are recorded and none came after the last change.
+   * dates could not be read, its access time is not recorded, or its drive or
+   * this computer records no openings (asked of the file: review F1.16). Absent
+   * with a null date, this file's openings are recorded and none came after its
+   * last change.
    */
   lastOpenedUnknown?: string;
   /** Why there is no record, when there is none. */
@@ -80,7 +82,29 @@ async function openingsNotRecorded(): Promise<string | null> {
   }
 }
 
-export async function readProvenance(filePath: string): Promise<ProvenanceResult> {
+/** The per-file last-opened reader (`platform().readLastUsed`), injected so a test stands in for a drive. */
+export type ReadLastUsed = (paths: string[]) => Promise<Map<string, LastUsedInfo>>;
+
+/**
+ * Why THIS file's last opening is not known, or null when its openings are recorded (hunt C92;
+ * review F1.5, F1.16). Asked of the file, never only of the computer: one drive mounted `noatime`
+ * records no openings while the rest of the computer does, and an access time of 0 records none
+ * anywhere. The per-file reader is the one the `lastUsed` fact reads, so the two agree.
+ */
+async function openingsNotRecordedFor(filePath: string, st: fs.Stats, readLastUsed: ReadLastUsed): Promise<string | null> {
+  if (!Number.isFinite(st.atimeMs) || st.atimeMs <= 0) return 'This file’s access time is not recorded.';
+  let info: LastUsedInfo | undefined;
+  try {
+    info = (await readLastUsed([filePath])).get(filePath);
+  } catch {
+    return openingsNotRecorded();
+  }
+  if (info === undefined) return 'TreeMap could not read this file\'s dates.';
+  if (info.source !== 'none') return null;
+  return info.caveat ?? (await openingsNotRecorded()) ?? 'This computer does not record when this file is opened.';
+}
+
+export async function readProvenance(filePath: string, readLastUsed: ReadLastUsed = (paths) => platform().readLastUsed(paths)): Promise<ProvenanceResult> {
   const provider = platform();
   const state = await capabilityState('provenance');
 
@@ -105,7 +129,7 @@ export async function readProvenance(filePath: string): Promise<ProvenanceResult
   };
   // A null date is a finding only where openings are recorded and the dates were read (hunt C92).
   if (base.lastOpenedAt === null) {
-    const unknown = st === null ? 'TreeMap could not read this file\'s dates.' : await openingsNotRecorded();
+    const unknown = st === null ? 'TreeMap could not read this file\'s dates.' : await openingsNotRecordedFor(filePath, st, readLastUsed);
     if (unknown) base.lastOpenedUnknown = unknown;
   }
 

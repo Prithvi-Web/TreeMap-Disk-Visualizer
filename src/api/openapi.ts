@@ -1758,7 +1758,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             downloadedAt: nullable(int('Unix epoch milliseconds')),
             mechanism: nullable(str('Which OS record answered')),
             lastOpenedAt: nullable(int()),
-            lastOpenedUnknown: str('Set when lastOpenedAt is null because the date is unknown, with why: the file\'s dates could not be read, or this computer does not record openings. Absent with a null date: openings are recorded and none came after the last change'),
+            lastOpenedUnknown: str('Set when lastOpenedAt is null because the date is unknown, with why: the file\'s dates could not be read, its access time is not recorded, or its drive or this computer records no openings (asked of the file). Absent with a null date: this file\'s openings are recorded and none came after its last change'),
             absentReason: str('Why nothing was recorded, when nothing was'),
           },
           ['path', 'supported', 'found'],
