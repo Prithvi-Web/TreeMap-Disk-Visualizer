@@ -72,10 +72,15 @@ async function loadMissing() {
     body.classList.remove('fx-chart-loading');
     // The saved index's tree, which no scan stands behind, is a folder on
     // screen: said as what the statement waits for, not "Run a scan".
-    body.innerHTML = `<div class="muted">${escapeHtml(!state.root ? 'Run a scan to reconcile this disk.'
+    const waits = !state.root ? 'Run a scan to reconcile this disk.'
       : treeScanComing() ? 'This statement is worked out from a finished scan — it fills in once the scan finishes.'
-        : 'Opened from the saved index — scan this folder to reconcile this disk.')}</div>`;
+        : 'Opened from the saved index — scan this folder to reconcile this disk.';
+    body.innerHTML = `<div class="muted">${escapeHtml(waits)}</div>`;
     $('missingInfo').textContent = '';
+    // Said in #missingSaid, beside the card, which is plain (review F1.3):
+    // held while the view is not up or a sheet is open over it, and said a
+    // frame after. Guarded, here and below: a page reader may lift this without sayAloud.
+    if (typeof sayAloud === 'function') sayAloud('missingSaid', waits);
     return;
   }
   if (missingAsking && missingAsking.scanId === scanId && missingAsking.seq === missingSeq) return; // its answer paints
@@ -99,6 +104,7 @@ async function loadMissing() {
     body.innerHTML = skeletonRows(3, 30, 'Reconciling this disk…');
     if (typeof sayWorking === 'function') sayWorking(body, 'missingWorking'); // and said aloud (guarded: a page reader may lift this function without it)
     $('missingInfo').textContent = ''; // nor its caption: it names that scan's volume and "every line below" (review F2.1)
+    if (typeof sayAloud === 'function') sayAloud('missingSaid', ''); // nor what was said of the statement it showed
   }
   try {
     const statement = await api(`/api/missing-gigabytes?scanId=${encodeURIComponent(scanId)}`);
@@ -114,6 +120,7 @@ async function loadMissing() {
     missingData = null;
     $('missingInfo').textContent = '';
     body.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
+    if (typeof sayAloud === 'function') sayAloud('missingSaid', e.message);
   } finally {
     if (missingAsking && missingAsking.seq === seq) missingAsking = null; // a newer ask's stays
   }
@@ -173,6 +180,20 @@ function mgCountSaid(line) {
   return `${formatCount(n)} ${n === 1 ? 'item' : 'items'}`;
 }
 
+/**
+ * What a statement comes to, in a sentence, as #missingSaid says it when the
+ * statement is painted (review F1.3, F1.10): the volume, its used and total
+ * figures and what is unaccounted, named and figured as the receipt prints
+ * them. The receipt itself is read as it is reached; said whole on every
+ * paint, it was every line of it.
+ */
+function mgSaid(d) {
+  const vol = d.volume.mountPoint === '/' ? 'This disk' : d.volume.mountPoint;
+  const left = d.lines.find((l) => l.id === 'unaccounted');
+  const residual = left && left.bytes !== null ? ` ${left.label}: ${left.bytes < 0 ? '−' : ''}${formatBytes(Math.abs(left.bytes))}.` : '';
+  return `${vol}: ${formatBytes(d.volume.usedBytes)} used of ${formatBytes(d.volume.totalBytes)}.${residual}`;
+}
+
 function renderMissing() {
   const d = missingData;
   if (!d) return;
@@ -217,7 +238,8 @@ function renderMissing() {
      segment or remedy focused or clicked meanwhile would be taken from under
      the person — focus dropped to <body>, its row's highlight gone. Nothing on
      a statement about to be replaced can be used; "Updating…" in the head is
-     outside the inert parts, so it is still said. */
+     outside the inert parts, so it can still be read, and is said in
+     #missingSaid (below). */
   const inert = missingUpdating ? ' inert' : '';
 
   const reserved = d.volume.reservedBytes || 0;
@@ -294,13 +316,16 @@ function renderMissing() {
       `<span class="mg-vol">${escapeHtml(d.volume.mountPoint === '/' ? 'This disk' : d.volume.mountPoint)}</span>` +
       // Labelled, so the scanned folder never reads as the disk's name (QA D41).
       `<span class="mg-mp">Scanned: ${escapeHtml(d.rootPath)}</span>` +
-      // The scan's last statement while it is asked again (loadMissing): said, so it is not read as now.
-      (missingUpdating ? `<span class="mg-mp" role="status">Updating…</span>` : '') +
+      // The scan's last statement while it is asked again (loadMissing): marked, so it is not read as now —
+      // and said in #missingSaid (below), not by a live region put on screen already filled (review F1.3).
+      (missingUpdating ? `<span class="mg-mp">Updating…</span>` : '') +
       `<span class="mg-cap"><b>${escapeHtml(formatBytes(d.volume.usedBytes))}</b> used of ${escapeHtml(formatBytes(total))}</span>` +
     `</div>` +
     barHtml +
     `<div class="mg-receipt"${inert}>${rows}${totalHtml}</div>` +
     d.caveats.map(c => `<div class="mg-caveat">${escapeHtml(c)}</div>`).join('');
+  // Said beside the card: that it is being updated, or what it comes to.
+  if (typeof sayAloud === 'function') sayAloud('missingSaid', missingUpdating ? 'Updating this statement…' : mgSaid(d));
 }
 
 /* Segment → its row. Delegated, so re-rendering never leaves listeners behind. */
@@ -359,6 +384,22 @@ function mgHandOff(id, fallbackMessage) {
   });
 }
 
+/**
+ * The receipt taken down as the view goes: the statements kept for the next
+ * visit are small (missingCache, a few scans'), but the receipt they paint is
+ * not, and the registry exists to stop exactly that accumulating across view
+ * switches. An answer still on its way is kept, and not painted here. Nothing
+ * of it is left said, so the next visit says its statement again (review F1.3).
+ */
+function missingTakeDown() {
+  missingSeq++;
+  missingData = null;
+  $('missingBody').classList.remove('fx-chart-loading');
+  $('missingBody').innerHTML = '<div class="muted">Run a scan to reconcile this disk.</div>';
+  $('missingInfo').textContent = '';
+  if (typeof sayAloud === 'function') sayAloud('missingSaid', ''); // guarded, as in loadMissing
+}
+
 registerView({
   id: 'missing',
   label: 'Missing GB',
@@ -377,17 +418,7 @@ registerView({
     if (mountedView && mountedView.id === 'missing') loadMissing();
   },
   mount() { loadMissing(); },
-  unmount() {
-    // The receipt is taken down: the statements kept for the next visit are
-    // small (missingCache, a few scans'), but the receipt they paint is not,
-    // and the registry exists to stop exactly that accumulating across view
-    // switches. An answer still on its way is kept, and not painted here.
-    missingSeq++;
-    missingData = null;
-    $('missingBody').classList.remove('fx-chart-loading');
-    $('missingBody').innerHTML = '<div class="muted">Run a scan to reconcile this disk.</div>';
-    $('missingInfo').textContent = '';
-  },
+  unmount() { missingTakeDown(); },
 });
 
 /* ── What the two switchable channels mean, and which values exist ────────

@@ -6,8 +6,10 @@
     <div class="card glass">
       <h2><span data-icon="pie"></span>Where the space actually went</h2>
       <div class="apps-info muted" id="missingInfo"></div>
-      <div id="missingBody" aria-live="polite"><div class="muted">Run a scan to reconcile this disk.</div></div>
+      <div id="missingBody"><div class="muted">Run a scan to reconcile this disk.</div></div>
       <!-- What this part is working on, said aloud: its loader puts the sentence of the working rows it writes here (sayWorking), beside the card's body, whose every write would take it away. -->
       <div id="missingWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+      <!-- What the card says, said aloud: what the statement comes to, in a sentence, or what it waits for, that it is being updated, or why there is none (sayAloud). The card itself is plain: written while a sheet was open over the view its words went unheard, and the view came back with them already in it; heard, they were the whole receipt (review F1.3). -->
+      <div id="missingSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
   </section>

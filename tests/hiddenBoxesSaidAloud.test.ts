@@ -102,6 +102,10 @@ const SAID: ReadonlyArray<{ box: string; region: string; parts?: string[]; sayer
   // The note over a map with nothing to draw was a live region hidden while it had nothing to say, shown already filled
   // by tmSetEmpty (BQU item 24).
   { box: 'tmEmpty', region: 'tmEmptySaid' },
+  // The Missing Gigabytes card was a live region in a view, written straight with its whole receipt: under an open
+  // sheet the answer went unheard and the card came back already filled, and heard, a receipt was every line of it
+  // (review F1.3, F1.4, F1.10).
+  { box: 'missingBody', region: 'missingSaid' },
 ];
 
 /** The boxes that were never a status a person needs to hear as it changes, with why. */
@@ -198,7 +202,7 @@ function blocksOf(src: string): Array<{ start: number; end: number }> {
   while (i < src.length) {
     const c = src[i];
     if (c === '/' && src[i + 1] === '/') { i = src.indexOf('\n', i); if (i === -1) break; continue; }
-    if (c === '/' && src[i + 1] === '*') { i = src.indexOf('*/', i) + 2; continue; }
+    if (c === '/' && src[i + 1] === '*') { i = src.indexOf('*/', i + 2); if (i === -1) break; i += 2; continue; } // a comment the source cuts short ends it
     if (c === '\'' || c === '"') {
       for (i++; i < src.length && src[i] !== c; i++) if (src[i] === '\\') i++;
       i++; prev = 'x'; continue;
@@ -848,6 +852,100 @@ test('the note over a map with nothing to draw says itself in its own region a f
   assert.deepEqual(p.$('tmEmptySaid').said, [], 'the same note again is no news: a repaint says nothing');
   p.fns.tmSetEmpty('');
   assert.deepEqual([p.$('tmEmpty').hidden, p.$('tmEmptySaid').textContent], [true, ''], 'a map drawn: the note goes and the region is emptied at once');
+});
+
+/* ── the Missing Gigabytes statement ── */
+
+/** A statement of the whole disk, as the server sends one: its lines sum to its used figure. */
+const MG_STATEMENT = {
+  scanId: 's1', rootPath: '/Users/x',
+  volume: { mountPoint: '/', totalBytes: 500e9, usedBytes: 245e9, freeBytes: 255e9, reservedBytes: 0, mechanism: 'statfs(/)', mechanismLabel: 'what macOS reports for Macintosh HD' },
+  lines: [
+    { id: 'scanned', label: 'Files TreeMap scanned', bytes: 233e9, available: true, detail: 'What the scan counted.', count: 1200, notes: [], remedy: null },
+    { id: 'unaccounted', label: 'Unaccounted', bytes: 12e9, available: true, detail: 'The volume holds this much that no line above explained.', count: null, notes: [], remedy: null },
+  ],
+  unaccountedBytes: 12e9, coversWholeVolume: false,
+  caveats: ['This scan started at /Users/x, not at /, so everything else on the volume is inside Unaccounted.'], generatedAt: 0,
+};
+
+/**
+ * The Missing Gigabytes view's loader, painters and take-down over Els, with aloudWait: the view in the page's main
+ * part, the statement asked of the scan `scan.id` names (null: none stands behind the tree), answered as the test says.
+ */
+function missingView() {
+  const held: Array<{ ok: (v: unknown) => void; no: (e: Error) => void }> = [];
+  const scan = { id: 's1' as string | null, coming: false };
+  const p = waitingPage(['const MG_SEG', 'let missingData', 'const MISSING_CACHE_SCANS', 'const missingCache', 'let missingSeq', 'let missingUpdating', 'let missingAsking',
+    'function mgRemember(', 'async function loadMissing(', 'function mgSegmentBytes(', 'function mgSegmentName(', 'function mgSegmentFigure(', 'function mgCountSaid(',
+    'function mgSaid(', 'function renderMissing(', 'function missingTakeDown('], {
+    state: { root: { path: '/Users/x' } }, treeScanId: () => scan.id, treeScanComing: () => scan.coming,
+    api: () => new Promise((ok, no) => { held.push({ ok, no }); }),
+    skeletonRows: (_n: number, _h: number, label: string) => `<div role="status" aria-label="${label}"></div>`,
+    formatBytes: (n: number) => `${n / 1e9} GB`,
+  });
+  const view = p.$('view-missing');
+  view.parent = p.main;
+  const live = p.$('missingSaid');
+  live.parent = view;
+  p.$('missingBody').parent = view;
+  p.fns.aloudKnow(live);
+  p.frame();
+  return { ...p, live, held, scan };
+}
+
+test('the Missing Gigabytes card is plain, and what it comes to is said in #missingSaid, in a sentence — the volume, its used and total figures and what is unaccounted — held while a sheet is open over the view and said a frame after it goes; its waits, its update and its failure are said there too, and nothing is left said once the view goes (review F1.3, F1.4, F1.10)', async () => {
+  assert.ok(!isLive(tagOf('missingBody')), `the card is no live region: written while a sheet was open its words went unheard, and heard they were the whole receipt: ${tagOf('missingBody')}`);
+  const v = missingView();
+  /** Each frame's rendering of the region: heard (on screen, not inert) or not, and its words. */
+  const rendered: Array<{ heard: boolean; text: string }> = [];
+  const frame = () => { v.frame(); rendered.push({ heard: v.live.getClientRects().length > 0 && !v.live.closest('[inert]'), text: v.live.textContent }); };
+  void v.fns.loadMissing();
+  assert.match(v.$('missingBody').innerHTML, /Reconciling this disk…/, 'control: the first visit shows its working rows (their sentence said in #missingWorking)');
+  v.mo.inert(v.main, true); // a sheet opens over the view while the statement is worked out
+  v.held.shift()!.ok(MG_STATEMENT);
+  await turns();
+  assert.match(v.$('missingBody').innerHTML, /mg-receipt/, 'control: the answer is painted under the sheet');
+  frame();
+  frame();
+  assert.deepEqual(rendered.map((r) => r.text), ['', ''], 'under the sheet nothing is put in the region: inert, it would never be heard');
+  v.mo.inert(v.main, false); // the sheet goes
+  frame();
+  frame();
+  const said = 'This disk: 245 GB used of 500 GB. Unaccounted: 12 GB.';
+  assert.deepEqual(rendered.slice(2), [{ heard: true, text: '' }, { heard: true, text: said }],
+    'the frame the view comes out from under the sheet renders the region empty, and the next says what the statement comes to — in a sentence, never the whole receipt');
+
+  // Asked again with its last statement kept: shown at once, being updated — and said so — then the answer, or why there is none.
+  void v.fns.loadMissing();
+  assert.match(v.$('missingBody').innerHTML, /Updating…/, 'control: the kept statement is shown, marked as being updated');
+  v.frame();
+  v.frame();
+  assert.equal(v.live.textContent, 'Updating this statement…', 'and that it is being updated is said');
+  v.held.shift()!.no(new Error('The disk layout could not be read.'));
+  await turns();
+  v.frame();
+  assert.equal(v.live.textContent, 'The disk layout could not be read.', 'a statement that could not be read says why');
+
+  // A scan of its own for another tree: its working rows, and nothing of the last scan's statement left said.
+  void v.fns.loadMissing(); // asked again, nothing kept since the failure: its working rows, then the answer
+  v.held.shift()!.ok(MG_STATEMENT);
+  await turns();
+  v.frame();
+  assert.equal(v.live.textContent, said, 'control: the statement said again');
+  v.scan.id = 's2';
+  void v.fns.loadMissing();
+  assert.equal(v.live.textContent, '', 'another scan\'s statement asked for, with none kept: what was said of the last one is taken back at once');
+  // A scan that starts while the view is up: what the statement waits for.
+  v.scan.id = null;
+  v.scan.coming = true;
+  void v.fns.loadMissing();
+  v.frame();
+  assert.equal(v.live.textContent, 'This statement is worked out from a finished scan — it fills in once the scan finishes.', 'what the card waits for is said');
+  v.fns.missingTakeDown();
+  assert.equal(v.live.textContent, '', 'the view gone, nothing of it is left said, so the next visit says it again');
+  // Named and figured as the receipt prints them: a volume by where it is mounted, a residual below zero with its sign.
+  const other = { ...MG_STATEMENT, volume: { ...MG_STATEMENT.volume, mountPoint: '/Volumes/Data' }, lines: [MG_STATEMENT.lines[0], { ...MG_STATEMENT.lines[1], bytes: -1.5e9 }] };
+  assert.equal(v.fns.mgSaid(other), '/Volumes/Data: 245 GB used of 500 GB. Unaccounted: −1.5 GB.', 'another volume, and a residual below zero, said as the receipt prints them');
 });
 
 /* ── the History view's calendar and journal ── */
@@ -1610,7 +1708,6 @@ function wordsWritten(id: string): string[] {
  */
 const WRITTEN_STRAIGHT: ReadonlyMap<string, string> = new Map([
   ['tmKbAnnounce', 'written only as j and k move the highlight on the map, which has focus: the map is on screen, and no sheet is open — a sheet takes focus'],
-  ['missingBody', 'the Missing Gigabytes card itself: what it shows as its view opens is the view, read as it is reached; what it announces is the statement that comes later, while the view is up — an answer for a view that has gone is dropped'],
   ['scanAnnounce', 'the scan\'s voice: outside every view, always on screen, and what it is given while a sheet is open is said in the sheet on top, and held as a sheet goes until the page is heard again (scanVoiceChanged)'],
   ['stopAnnounce', 'the Stop\'s voice, beside the scan\'s, said in a sheet the same way (scanVoiceChanged)'],
 ]);
@@ -1654,7 +1751,7 @@ test('every live region in the page is said through sayAloud or sayWorking, whic
   assert.match(INDEX, /\ndocument\.querySelectorAll\('\[aria-live\]'\)\.forEach\(aloudKnow\);/, 'every live region is shown to the watch as the page loads, so its first words wait for no extra frame');
 });
 
-test('the live regions the script makes are three, each said where it is seen: a part\'s working rows (their sentence said by sayWorking), the Missing Gigabytes "Updating…" (part of its card), and a chart\'s walk (filled only as the arrow keys walk the focused chart) — no notice the script shows already filled is one (BQT item 28)', () => {
+test('the live regions the script makes are two, each said where it is seen: a part\'s working rows (their sentence said by sayWorking) and a chart\'s walk (filled only as the arrow keys walk the focused chart) — no notice the script shows already filled is one, the Missing Gigabytes "Updating…" included, said in #missingSaid (BQT item 28, review F1.3)', () => {
   const script = INDEX.slice(INDEX.indexOf('<script', INDEX.indexOf('<body')));
   const made = [
     ...[...script.matchAll(/setAttribute\('(?:role', '(?:status|alert|log)'|aria-live')[^\n]{0,30}/g)].map((m) => ({ at: m.index, text: m[0] })),
@@ -1663,8 +1760,7 @@ test('the live regions the script makes are three, each said where it is seen: a
   assert.deepEqual(made, [
     '<div role="status" aria-label="${escapeHtml(label)}">',
     'setAttribute(\'aria-live\', \'polite\');',
-    '<span class="mg-mp" role="status">',
-  ], 'skeletonRows\' template, the chart\'s walk and the card\'s "Updating…", in the page\'s order, and nothing else');
+  ], 'skeletonRows\' template and the chart\'s walk, in the page\'s order, and nothing else');
 });
 
 /* ── each region converted, run ── */

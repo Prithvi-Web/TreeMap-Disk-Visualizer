@@ -397,7 +397,7 @@ test('G06: an older ask that fails after a newer one answered does not take the 
   assert.equal(usedShown(p.body), 700, 'and is still kept');
 });
 
-test('G06 review F3.3: the scan\'s last receipt, shown while it is asked again, lends no control to the hand — the answer replaces every one; "Updating…" is still said, and the answer\'s receipt can be used', async () => {
+test('G06 review F3.3: the scan\'s last receipt, shown while it is asked again, lends no control to the hand — the answer replaces every one; "Updating…" is still shown, and the answer\'s receipt can be used', async () => {
   const p = page();
   p.view.mount();
   await p.asks[0].answer(withRemedy('s1', 600));
@@ -409,7 +409,9 @@ test('G06 review F3.3: the scan\'s last receipt, shown while it is asked again, 
   // A segment focused or clicked now would be detached by the answer's
   // rewrite: focus dropped to <body>, its row's highlight gone.
   assert.deepEqual(usable(p.body.innerHTML).controls, [], 'no segment and no remedy can take focus or a click while the receipt is being replaced');
-  assert.ok(usable(p.body.innerHTML).statusSaid, 'its "Updating…" is outside the inert parts, so it is still said');
+  assert.match(p.body.innerHTML, /<span class="mg-mp">Updating…<\/span>/, 'its "Updating…" is outside the inert parts');
+  // Said in #missingSaid, beside the card, not by a live region of its own put on screen already filled (review F1.3).
+  assert.equal(usable(p.body.innerHTML).statusSaid, false, 'and is plain text: no live region the receipt writes is put on screen already filled');
 
   const same = withRemedy('s1', 600);
   await p.asks[1].answer(same); // the same figures
