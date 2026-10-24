@@ -1084,7 +1084,9 @@ read-what-you-saw) permission to act.
   refused rather than counted as nothing (`POLICY_BYTES_UNKNOWN`: scan its
   folder again). An Autopilot run is one operation: a run whose selection
   is over the cap deletes nothing and is recorded `blocked` with the
-  refusal, and its preview says so in `wouldBlockReason`. Violations are
+  refusal, and its preview says so in `wouldBlockReason`, as does the
+  `blockedReason` of a run awaiting approval — the first run's, and one
+  held for its size — so no run is approved blind to it. Violations are
   `403 { code: "POLICY_ROOT_NOT_ALLOWED" | "POLICY_PROTECTED_PATH" |
   "POLICY_BYTES_EXCEEDED" | "POLICY_BYTES_UNKNOWN" }`. An entry may begin with `~` for your home
   folder, and every gate reads an entry alike — where it lives and where it
@@ -1163,7 +1165,9 @@ read-what-you-saw) permission to act.
   run, approved or not, and deletes nothing. Approving a run lets the
   next run delete up to what it matched past `requireConfirmationAbove`,
   once (`approvedBytes`, spent by that run even if it only previews); a
-  bigger match asks again.
+  bigger match asks again. An approved run's `blockedReason` says it was
+  approved and what its policy may do next, in place of the sentence that
+  asked.
 - **Journal.** Significant disk changes noticed by scheduled scans are
   recorded to `journal.jsonl` (capped and rotated) as sentences with the
   structured fields beside them — path, date, signed byte delta, and an

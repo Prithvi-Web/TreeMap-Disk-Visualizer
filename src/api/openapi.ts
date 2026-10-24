@@ -3055,16 +3055,16 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'post',
     path: '/api/autopilot/policies/{id}/approve',
-    summary: 'Let a policy start deleting, after its mandatory first dry run — bound to the run the person looked at',
+    summary: 'Approve a policy\'s mandatory first dry run so it runs on its own — bound to the run the person looked at. It deletes only while it is enabled and dryRunFirst is false',
     tag: 'autopilot',
     destructive: true,
     parameters: [pathParam('id', 'Policy id')],
     requestBody: jsonBody(obj({ runId: str('The run being approved: the policy\'s newest run, awaiting approval') }, ['runId'])),
     responses: {
-      '200': jsonResponse('Approved: a first approval lets the policy delete on its own; approving a run held by requireConfirmationAbove lets its next run delete up to what that run matched, once (approvedBytes)', obj({ policy: ref('AutopilotPolicy') }, ['policy'])),
+      '200': jsonResponse('Approved: a first approval lets the policy run on its own, deleting only while it is enabled and dryRunFirst is false (“Only ever preview” unticked), within its own limits and agent-policy.json\'s byte cap; approving a run held by requireConfirmationAbove lets its next run delete up to what that run matched, once (approvedBytes)', obj({ policy: ref('AutopilotPolicy') }, ['policy'])),
       '400': errorResponse('RUN_ID_REQUIRED'),
       '404': errorResponse('POLICY_NOT_FOUND, or RUN_NOT_FOUND (no such run of this policy)'),
-      '409': errorResponse('APPROVAL_NOT_ASKED (that run is not awaiting approval), or APPROVAL_STALE (not the policy\'s newest run, or made before its folder or match changed — it showed something else; a policy never approved is previewed afresh at its next check)'),
+      '409': errorResponse('APPROVAL_NOT_ASKED (that run is not awaiting approval, or was already approved), or APPROVAL_STALE (not the policy\'s newest run, or made before its folder or match changed — it showed something else; a policy never approved is previewed afresh at its next check)'),
     },
   },
   {

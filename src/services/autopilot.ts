@@ -970,7 +970,7 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
 
   let wouldBlockReason: string | undefined;
   if (!policy.approvedAt) {
-    wouldBlockReason = `This policy has never run for real. ${afterApprovalSentence(policy)}`;
+    wouldBlockReason = `This policy has never run for real. ${afterApprovalSentence(policy, capRefusal)}`;
   } else if (heldForSize(policy, bytesMatched)) {
     wouldBlockReason =
       `A real run would stop and ask: this matches ${formatBytes(bytesMatched)}, more than the ` +
@@ -979,9 +979,10 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
     wouldBlockReason = 'This policy is set to preview every run, so it never deletes.';
   }
   // agent-policy.json's byte cap holds a run however it was approved (the hunt, C53): said beside
-  // whatever else the preview says, so a policy not yet approved is not approved blind to it.
-  if (capRefusal !== null && !policy.dryRunFirst) {
-    wouldBlockReason = withSentence(wouldBlockReason, `${policy.approvedAt ? 'A real run' : 'Once approved, a run'} would delete nothing: ${capRefusal}.`);
+  // whatever else the preview says. A policy not yet approved has it in afterApprovalSentence, in place
+  // of "Approving it is what lets it start deleting", which it would contradict (review F1.5).
+  if (capRefusal !== null && !policy.dryRunFirst && policy.approvedAt) {
+    wouldBlockReason = withSentence(wouldBlockReason, `A real run would delete nothing: ${capRefusal}.`);
   }
   // A policy an earlier build saved with kinds no rule here has: the preview says so as every run of
   // it does (runPolicyNow's record), after whatever else it says (BQL item 14).
@@ -1012,11 +1013,32 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
  * let it run for real" was said to a policy set to "Only ever preview" — the editor's default — whose
  * every later run only previewed, and to one switched off, which never runs until it is switched on.
  */
-function afterApprovalSentence(policy: AutopilotPolicy): string {
+function afterApprovalSentence(policy: AutopilotPolicy, capRefusal: string | null = null): string {
+  const whenOn = policy.enabled ? '' : ', once it is switched on';
+  if (policy.dryRunFirst) {
+    return `Approving it lets it run on its own${whenOn}, but it is set to “Only ever preview”, so it deletes nothing until that is unticked.`;
+  }
+  // agent-policy.json's byte cap refuses what it would select (review F1.5): the record Approve is
+  // pressed on says so, rather than promise a deletion every run of it is refused.
+  if (capRefusal !== null) return `Approving it lets it run on its own${whenOn}, but a run would delete nothing: ${capRefusal}.`;
+  return `Approving it is what lets it start deleting${whenOn}.`;
+}
+
+/**
+ * What an approved run says in place of the sentence that asked for the approval (review F1.13): it
+ * deleted nothing, and what its policy may do next, as it is set now.
+ */
+function approvedRunSentence(policy: AutopilotPolicy): string {
   const whenOn = policy.enabled ? '' : ', once it is switched on';
   return policy.dryRunFirst
-    ? `Approving it lets it run on its own${whenOn}, but it is set to “Only ever preview”, so it deletes nothing until that is unticked.`
-    : `Approving it is what lets it start deleting${whenOn}.`;
+    ? `Approved — this run deleted nothing. The policy runs on its own${whenOn}, but it is set to “Only ever preview”, so it deletes nothing until that is unticked.`
+    : `Approved — this run deleted nothing. Its next run${whenOn} may delete what it matches then, within the policy’s own limits and any byte cap in agent-policy.json.`;
+}
+
+/** agent-policy.json's byte cap over what a run of `policy` would select from `candidates` now, or null (review F1.5). */
+function capRefusalFor(policy: AutopilotPolicy, candidates: Candidate[], runs: AutopilotRun[], agentPolicy: AgentPolicy, now: number): string | null {
+  const { selected } = applyCaps(candidates, effectiveCap(policy, runs, now), limitsOf(policy));
+  return byteCapRefusal(agentPolicy, selected.reduce((sum, c) => sum + c.bytes, 0));
 }
 
 function heldForSize(policy: AutopilotPolicy, bytesMatched: number): boolean {
@@ -1164,7 +1186,8 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
     run.status = 'awaiting-approval';
     run.blockedReason =
       `This policy has never run. Here is exactly what it would delete — ${formatBytes(run.bytesMatched)} across ` +
-      `${candidates.length} item${candidates.length === 1 ? '' : 's'}. ${afterApprovalSentence(policy)}`;
+      `${candidates.length} item${candidates.length === 1 ? '' : 's'}. ` +
+      afterApprovalSentence(policy, capRefusalFor(policy, candidates, store.runs, agentPolicy, now));
     return record();
   }
 
@@ -1185,6 +1208,10 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
     run.blockedReason =
       `This matched ${formatBytes(run.bytesMatched)}, which is more than the ${formatBytes(policy.requireConfirmationAbove ?? 0)} ` +
       `you asked to be consulted about. Nothing was deleted.`;
+    // Approving it would not let it delete either when agent-policy.json's byte cap refuses what it would
+    // select (review F1.5): said here, or approving loops — held, approved, refused, held again.
+    const capRefusal = capRefusalFor(policy, candidates, store.runs, agentPolicy, now);
+    if (capRefusal !== null) run.blockedReason = withSentence(run.blockedReason, `Even approved, a run would delete nothing: ${capRefusal}.`);
     return record();
   }
 
@@ -1376,6 +1403,8 @@ export async function approvePolicy(policyId: string, runId: string): Promise<Au
     // it again and GET /api/autopilot/runs told agents it still needed one.
     run.status = 'completed';
     run.approvedAt = now;
+    // Nor does it keep the sentence that asked for the approval (review F1.13).
+    run.blockedReason = approvedRunSentence(policy);
     await saveStore(store);
     return policy;
   });

@@ -1298,7 +1298,7 @@ test('agent-policy.json\'s byte cap binds Autopilot: a run that would trash more
     await writeJsonFile('agent-policy.json', { allowedRoots: [], protectedPaths: [], maxBytesPerOperation: 5000 });
     const [policy] = await savePolicies([{ id: 'capped-op', name: 'p', path: dir, match: { kind: 'custom', exts: ['bin'] }, dryRunFirst: false, enabled: true }]);
     const unapproved = await simulatePolicy(policy);
-    assert.match(String(unapproved.wouldBlockReason), /Once approved, a run would delete nothing: .*per-operation cap in agent-policy\.json/, `a policy is not approved blind to the cap: ${unapproved.wouldBlockReason}`);
+    assert.match(String(unapproved.wouldBlockReason), /Approving it lets it run on its own, but a run would delete nothing: .*per-operation cap in agent-policy\.json/, `a policy is not approved blind to the cap: ${unapproved.wouldBlockReason}`);
     await approvePolicyForTests(policy.id);
     const live = (await listPolicies())[0];
     const sim = await simulatePolicy(live);
@@ -1315,6 +1315,54 @@ test('agent-policy.json\'s byte cap binds Autopilot: a run that would trash more
     await savePolicies([]);
     await fsp.rm(dir, { recursive: true, force: true });
   }
+});
+
+test('the first run\'s record — what Approve is pressed on — and a run held for its size name agent-policy.json\'s byte cap, and nothing promises a deletion the cap refuses (review F1.5)', async () => {
+  const dir = await mkTmp();
+  const trashed: string[] = [];
+  setTrashStepForTests(async (p) => { trashed.push(p); });
+  try {
+    await writeFile(path.join(dir, 'a.log'), 1000);
+    await writeJsonFile('agent-policy.json', { allowedRoots: [], protectedPaths: [], maxBytesPerOperation: 500 });
+    const [policy] = await savePolicies([{ id: 'cap-first', name: 'p', path: dir, match: { kind: 'custom', exts: ['log'] }, dryRunFirst: false, enabled: true }]);
+    const first = await runPolicy(policy);
+    assert.equal(first.status, 'awaiting-approval', String(first.blockedReason));
+    assert.match(String(first.blockedReason), /would delete nothing: .*per-operation cap in agent-policy\.json/, `the run Approve is offered on names the cap: ${first.blockedReason}`);
+    assert.doesNotMatch(String(first.blockedReason), /lets it start deleting/, `and promises no deletion the cap refuses: ${first.blockedReason}`);
+    const sim = await simulatePolicy(policy);
+    assert.match(String(sim.wouldBlockReason), /would delete nothing: .*per-operation cap/, String(sim.wouldBlockReason));
+    assert.doesNotMatch(String(sim.wouldBlockReason), /lets it start deleting/, `the preview does not contradict itself: ${sim.wouldBlockReason}`);
+    assert.equal(String(sim.wouldBlockReason).split('per-operation cap').length - 1, 1, `and names the cap once: ${sim.wouldBlockReason}`);
+
+    // Approved, and held because it matched more than "Ask me first above": approving that run would not let it delete either.
+    await savePolicies([{ ...policy, requireConfirmationAbove: 100 }]);
+    await approvePolicyForTests(policy.id);
+    const held = await runPolicy((await listPolicies())[0]);
+    assert.equal(held.status, 'awaiting-approval', String(held.blockedReason));
+    assert.match(String(held.blockedReason), /would delete nothing: .*per-operation cap in agent-policy\.json/, `a run held for its size names the cap: ${held.blockedReason}`);
+    assert.deepEqual(trashed, [], 'nothing reached the Trash step');
+  } finally {
+    setTrashStepForTests(null);
+    await writeJsonFile('agent-policy.json', {});
+    await savePolicies([]);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('the approve endpoint\'s texts say what approval lets a policy do as it is set — never that it starts deleting whatever it is set to (review F1.14)', () => {
+  const doc = buildOpenApiDocument() as { paths: Record<string, Record<string, { summary: string; responses: Record<string, { description: string }> }>> };
+  const op = doc.paths['/api/autopilot/policies/{id}/approve'].post;
+  const words = [op.summary, op.responses['200'].description].join(' ');
+  assert.doesNotMatch(words, /starts? deleting|delete on its own/, words);
+  for (const said of [op.summary, op.responses['200'].description]) {
+    assert.match(said, /dryRunFirst/, said);
+    assert.match(said, /enabled/, said);
+  }
+  assert.match(op.responses['409'].description, /APPROVAL_NOT_ASKED \([^)]*already approved/, op.responses['409'].description);
+  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  const row = readme.split('\n').find((l) => l.includes('`POST /api/autopilot/policies/:id/approve`')) ?? '';
+  assert.doesNotMatch(row, /start deleting/, row);
+  assert.match(row, /Only ever preview/, row);
 });
 
 test('an item larger than the policy\'s own limit is never promised to "a later run", and "was reached" is said only when something was taken (hunt C43)', () => {

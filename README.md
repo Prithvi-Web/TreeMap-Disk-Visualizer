@@ -540,7 +540,7 @@ A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows in
 | `POST /api/system/snapshots/restore` | Recover it, written beside the original (asks for admin on macOS/Windows) |
 | `GET /api/autopilot/policies` · `PUT …` | Standing cleanup policies (re-validated on save; editing a policy's scope revokes its approval) |
 | `POST /api/autopilot/simulate` | Exactly what a policy would delete — writes nothing, touches no schedule |
-| `POST /api/autopilot/policies/:id/approve` | Let a policy start deleting, after its mandatory first preview |
+| `POST /api/autopilot/policies/:id/approve` | Approve a policy's mandatory first preview so it runs on its own; it deletes only while it is enabled and not set to "Only ever preview" |
 | `GET /api/autopilot/runs` · `POST …/runs/:id/undo` | Run history, and a verified one-click undo from the Undo Vault |
 | `GET /api/timecapsule` | The Undo Vault: what the Clean Up cart and Autopilot copied aside before trashing it, with capacity + history |
 | `POST /api/timecapsule/:id/restore` · `DELETE /api/timecapsule/:id` | Verified restore to the original path (202 + SSE job), or forget one copy |

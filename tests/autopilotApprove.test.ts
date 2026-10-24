@@ -789,6 +789,26 @@ test('an approved run is marked approved and is no longer awaiting approval; app
   }
 });
 
+test('an approved run says it was approved and what that lets the policy do — never the sentence that asked for the approval (review F1.13)', async () => {
+  for (const dryRunFirst of [false, true]) {
+    const id = `said-${String(dryRunFirst)}`;
+    const dir = folder(id, { 'a.log': 1000 });
+    await savePolicies([{ id, name: 'Logs', path: dir, match: { kind: 'custom', exts: ['log'] }, dryRunFirst, enabled: true }]);
+    try {
+      const seen = await runOnce(id);
+      assert.match(String(seen.blockedReason), /Approving it/, `control: the run asked: ${seen.blockedReason}`);
+      await approvePolicy(id, seen.id);
+      const after = (await listRuns()).find((r) => r.id === seen.id);
+      assert.ok(after);
+      assert.doesNotMatch(String(after.blockedReason), /Approving it/, `an approved run no longer asks: ${after.blockedReason}`);
+      assert.match(String(after.blockedReason), /^Approved\b/, String(after.blockedReason));
+      assert.match(String(after.blockedReason), dryRunFirst ? /“Only ever preview”, so it deletes nothing/ : /next run may delete what it matches/, String(after.blockedReason));
+    } finally {
+      await savePolicies([]);
+    }
+  }
+});
+
 test('the page labels an approved run "Approved" and offers no Approve on it; a repeat confirm never says "more than 0 B asks again" (hunt C37)', () => {
   const policy = { id: 'P', name: 'Logs', path: '/home/me/logs', match: { kind: 'custom', exts: ['log'] }, requireConfirmationAbove: null, approvedAt: 9, cooldownDays: 7, enabled: true };
   const approved = { id: 'r1', policyId: 'P', policyName: 'Logs', at: 1, mode: 'dry-run', status: 'completed', approvedAt: 9, items: [], bytesMatched: 2000, bytesDeleted: 0, skipped: [], scope: { path: policy.path, match: policy.match } };
