@@ -143,6 +143,11 @@ const VIEWS = [
       // on the way back in. Keeping them is the leak the registry exists to
       // close; the only reason it went unnoticed is that they are small.
       state.treemap.cells = [];
+      // The rectangles and arcs go with them: the keyboard reads what was
+      // drawn (kbSiblings), and back in the view, until the map lands again,
+      // they are no map on screen (review L9).
+      state.treemap.pxRects = [];
+      state.treemap.arcs = [];
       state.treemap.altNote = '';
       // What its notes over and under the map said goes with the view, as
       // every view's regions do (viewUnsay; review F2.5, BQX).

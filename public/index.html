@@ -8481,6 +8481,11 @@ const VIEWS = [
       // on the way back in. Keeping them is the leak the registry exists to
       // close; the only reason it went unnoticed is that they are small.
       state.treemap.cells = [];
+      // The rectangles and arcs go with them: the keyboard reads what was
+      // drawn (kbSiblings), and back in the view, until the map lands again,
+      // they are no map on screen (review L9).
+      state.treemap.pxRects = [];
+      state.treemap.arcs = [];
       state.treemap.altNote = '';
       // What its notes over and under the map said goes with the view, as
       // every view's regions do (viewUnsay; review F2.5, BQX).
@@ -26979,6 +26984,11 @@ function setTreemapView(mode) {
   altRefineCancel();
   state.treemap.altZoom = null;
   state.treemap.cells = [];
+  // The rectangles and arcs too: j/k, Enter, c and Delete read what was drawn
+  // (kbSiblings), and until the new renderer draws, the last rectangle map's
+  // or sunburst's — another folder's, nowhere on screen — were offered (review L9).
+  state.treemap.pxRects = [];
+  state.treemap.arcs = [];
   state.treemap.altNote = '';
   renderAltNote();
   localStorage.setItem('tm-viewmode', mode);

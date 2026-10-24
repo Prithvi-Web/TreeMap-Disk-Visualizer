@@ -314,6 +314,11 @@ function setTreemapView(mode) {
   altRefineCancel();
   state.treemap.altZoom = null;
   state.treemap.cells = [];
+  // The rectangles and arcs too: j/k, Enter, c and Delete read what was drawn
+  // (kbSiblings), and until the new renderer draws, the last rectangle map's
+  // or sunburst's — another folder's, nowhere on screen — were offered (review L9).
+  state.treemap.pxRects = [];
+  state.treemap.arcs = [];
   state.treemap.altNote = '';
   renderAltNote();
   localStorage.setItem('tm-viewmode', mode);

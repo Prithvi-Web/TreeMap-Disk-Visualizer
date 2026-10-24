@@ -1255,3 +1255,42 @@ test('HB2 (L4, L13): a map that lands during a morph stays — the morph\'s last
   for (let i = 0; i < 10 && s.frames.size; i++) s.runFrames(50);
   assert.deepEqual(s.sunDrawn, [], 'no frame of /r is drawn over B\'s sunburst');
 });
+
+test('HB2 (L9): j/k never move through what an earlier renderer drew — a renderer switch, and leaving the Treemap, take the drawn set with them', async () => {
+  const oldChild = { path: '/home/u/A/old-child', name: 'old-child', size: 5, type: 'dir', depth: 1 };
+  const bKid = { path: '/home/u/B/c', name: 'c', size: 3, type: 'dir' };
+  const B = { path: '/home/u/B', name: 'B', size: 3, type: 'dir', children: [bKid] };
+  const el = () => ({ disabled: false, hidden: false, textContent: '', value: '', querySelectorAll: () => [], setAttribute() {}, classList: { toggle() {}, add() {}, remove() {} } });
+  const els: Record<string, ReturnType<typeof el>> = {};
+  const state = {
+    view: 'treemap', lens: { held: false }, root: { path: '/home/u' }, pathIndex: new Map<string, unknown>([[B.path, B]]),
+    treemap: { mode: 'sunburst', rootPath: '/home/u/B', history: { active: false }, altZoomRaf: 0, altZoom: null, cells: [] as unknown[], altNote: '', hover: null,
+      queryMode: 'bare', query: '', kbSel: null,
+      pxRects: [{ n: oldChild }] as unknown[], // the rectangle map drawn at A, before the sunburst
+      arcs: [{ n: bKid, depth: 1 }] as unknown[] },
+  };
+  const deps = {
+    state, TM_MODES: ['treemap', 'sunburst', 'circles', 'voronoi'], $: (id: string) => (els[id] ||= el()),
+    lapseStop() {}, lensSetPinned() {}, lassoCancel() {}, cancelAnimationFrame() {}, altRefineCancel() {}, renderAltNote() {}, lapseSeekTo() {},
+    localStorage: { setItem() {} }, loadTreemap: () => new Promise(() => {}), tmApplyQuery() {}, // the new renderer's map is still being asked
+    isSun: () => state.treemap.mode === 'sunburst', isCells: () => state.treemap.mode === 'circles' || state.treemap.mode === 'voronoi',
+  };
+  const page = load<{ setTreemapView: (m: string) => void; kbSiblings: () => unknown[] }>(['setTreemapView', 'kbSiblings'], deps, '{ setTreemapView, kbSiblings }');
+  assert.deepEqual(page.kbSiblings(), [bKid], 'control: over the sunburst, its arcs');
+  page.setTreemapView('treemap');
+  assert.deepEqual(page.kbSiblings(), [], 'until the rectangle map draws B, nothing — never A\'s old-child, nowhere on screen');
+  state.treemap.pxRects = [{ n: { ...bKid, depth: 1 } }];
+  assert.equal(page.kbSiblings().length, 1, 'control: once it has drawn, its rectangles');
+  page.setTreemapView('sunburst');
+  assert.deepEqual(page.kbSiblings(), [], 'back in the sunburst before it draws: never the arcs it drew last time');
+  // And leaving the Treemap: what it drew is no map on the way back in, until the map lands again.
+  state.treemap.pxRects = [{ n: oldChild }]; state.treemap.arcs = [{ n: bKid, depth: 1 }];
+  const noop = () => {};
+  const unmount = load<{ unmount: () => void }>([], {
+    state: { ...state, live: { on: false }, lens: { held: false, at: null } }, $: (id: string) => (els[id] ||= el()),
+    tmCancelQueries: noop, tmCloseHints: noop, tmClearHits: noop, nlClose: noop, exitCartPreview: noop, tmSetQueryMessage: noop, disableLive: noop,
+    cancelAnimationFrame: noop, altRefineCancel: noop, lapseStop: noop, clearTimeout: noop, tmResizeDeb: 0, lassoCancel: noop, fxTmPillBeamsSync: noop,
+  }, `(${viewSource('treemap')})`, 'let tmLoadSeq = 0; let tmAnimFrame = 0;');
+  unmount.unmount();
+  assert.deepEqual([state.treemap.pxRects, state.treemap.arcs], [[], []], 'the unmount drops the rectangles and arcs, as it drops the shapes');
+});
