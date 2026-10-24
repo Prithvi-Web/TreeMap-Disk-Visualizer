@@ -43,6 +43,8 @@
  *                                  launch, tray, the File menu, the scan queue).
  *  - onCommand(cb)               cb(name) for a menu item the page owns:
  *                                  'settings' | 'palette' | 'sidebar' | 'shortcuts' | 'rescan'.
+ *                                  One chosen while the page is still loading is sent
+ *                                  once it has loaded (the latest one only).
  */
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 

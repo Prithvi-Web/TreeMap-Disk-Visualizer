@@ -925,6 +925,32 @@ test('main: the application menu is the packaged template, and its items reach t
   } finally { h.dispose(); }
 });
 
+test('main (review F1.2): a menu command chosen while the window is closed, or its page still loading, reaches the page once it has loaded', async () => {
+  const dir = mkTmp();
+  const h = await loadMain({ dataDir: dir, isPackaged: true });
+  try {
+    await h.loadPage();
+    const items = flatten(h.stub.Menu.applied!.template as any[]);
+    const click = (re: RegExp) => items.find((i) => re.test(i.label || '')).click();
+    const commands = () => h.win().webContents.on_channel('treemap:command');
+    h.win().close(); // ⌘W: on macOS the app and its menu stay
+    click(/^Settings/);
+    assert.equal(h.windows().length, 1, 'the command opens the window');
+    assert.deepEqual(commands(), [], 'nothing is sent to a page still loading: nothing there would hear it');
+    await h.loadPage();
+    assert.deepEqual(commands(), ['settings'], 'sent once its page is up: Settings opens');
+    click(/^Rescan$/);
+    h.win().webContents.emit('did-finish-load'); // the same window loads its page again (a reload)
+    assert.deepEqual(commands(), ['settings', 'rescan'], 'a loaded page hears a command at once, and the one held is sent once — not again at a reload');
+    h.win().close();
+    click(/^Settings/);
+    h.win().close(); // closed again before its page loaded
+    h.stub.app.emit('activate');
+    await h.loadPage();
+    assert.deepEqual(commands(), [], 'a command held for a window that closed unloaded is not delivered to a later window');
+  } finally { h.dispose(); }
+});
+
 test('main: the tray uses the template glyph on macOS and the colour glyph elsewhere; Linux quits with the last window', async () => {
   const dir = mkTmp();
   let h = await loadMain({ dataDir: dir, platform: 'darwin' });

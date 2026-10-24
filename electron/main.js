@@ -126,6 +126,21 @@ function pumpScanQueue() {
   mainWindow.webContents.send('treemap:scan-path', dir);
 }
 
+/**
+ * A menu command (Settings…, Rescan, Command Palette…, Toggle Sidebar,
+ * Keyboard Shortcuts) reaches the page's onCommand listener, which exists
+ * only once the page has loaded: sent to a window still loading — one the
+ * command itself opened after ⌘W — it was dropped, and a blank window opened
+ * with nothing in it (review F1.2). It waits for did-finish-load instead, the
+ * latest one only, and goes with a window that closes before it loads.
+ */
+let pendingCommand = null;
+
+function sendCommand(name) {
+  if (pageReady()) mainWindow.webContents.send('treemap:command', name);
+  else pendingCommand = name;
+}
+
 function pumpSoon() {
   if (pumpTimer) return;
   pumpTimer = unref(
@@ -323,6 +338,11 @@ function createWindow(port) {
   win.webContents.on('did-finish-load', () => {
     scanQueue.reset();
     pumpScanQueue();
+    if (pendingCommand) {
+      const name = pendingCommand;
+      pendingCommand = null;
+      win.webContents.send('treemap:command', name);
+    }
     scheduleFirstUpdateCheck();
   });
 
@@ -371,7 +391,9 @@ function createWindow(port) {
     saveState();
   });
   win.on('closed', () => {
-    if (mainWindow === win) mainWindow = null;
+    if (mainWindow !== win) return;
+    mainWindow = null;
+    pendingCommand = null;
   });
 }
 
@@ -696,7 +718,7 @@ function buildMenu() {
   const actions = {
     command: (name) => () => {
       showMainWindow();
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('treemap:command', name);
+      sendCommand(name);
     },
     scanFolder: () => {
       showMainWindow();
