@@ -292,6 +292,8 @@ test('the wrong sentence is gone from the shipped query handler', () => {
   const run = fnSource('tmRunGrammarQuery');
   assert.ok(!/The rest are deeper than this view draws/.test(run),
     'the unconditional "the rest are deeper" sentence is no longer shipped');
-  assert.match(run, /tmUndrawnMessage\s*\(/,
+  // Worded by tmQueryAnswerWords, which words it again as the map changes (HB2, L6/L12).
+  assert.match(run, /tmQueryAnswerWords\s*\(/, 'the handler words its answer through the one wording');
+  assert.match(fnSource('tmQueryAnswerWords'), /tmUndrawnMessage\s*\(/,
     'the handler builds its message through the classifier instead');
 });

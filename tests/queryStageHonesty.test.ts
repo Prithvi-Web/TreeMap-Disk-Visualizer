@@ -99,6 +99,7 @@ async function queryThenStage(q: string, hits: Hit[], opts: { cart?: string[]; t
     ${declOf('tmSyncStageButton')}
     ${declOf('treeScanId')}
     ${declOf('treeScanComing')}
+    ${declOf('tmQueryAnswerWords')}
     ${declOf('tmRunGrammarQuery')}
     ${declOf('tmStageMatches')}
     return { run: tmRunGrammarQuery, stage: tmStageMatches };`;
@@ -223,7 +224,7 @@ async function messageFor(answer: Record<string, unknown>): Promise<string> {
   };
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const run = new Function(...keys, `let tmLastHits = null; let tmQuerySeq = 0; let tmQueryAbort = null;\n${declOf('treeScanId')}\n${declOf('treeScanComing')}\n${declOf('tmRunGrammarQuery')}\nreturn tmRunGrammarQuery;`)(...keys.map((k) => deps[k]));
+  const run = new Function(...keys, `let tmLastHits = null; let tmQuerySeq = 0; let tmQueryAbort = null;\n${declOf('treeScanId')}\n${declOf('treeScanComing')}\n${declOf('tmQueryAnswerWords')}\n${declOf('tmRunGrammarQuery')}\nreturn tmRunGrammarQuery;`)(...keys.map((k) => deps[k]));
   await run('size>0');
   return said[said.length - 1];
 }

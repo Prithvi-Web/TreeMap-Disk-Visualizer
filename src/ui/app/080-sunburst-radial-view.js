@@ -9,6 +9,10 @@ function drawView() {
   // than only when the mode is switched on. `ensureScores` skips everything
   // already known, so the repeat calls after the first cost nothing.
   if (state.treemap.colorMode === 'reclaim') fetchScoresForTreemap();
+  // And the highlight box's words follow what was drawn: the folder, the
+  // renderer, the matches drawn (review L6, L12). Guarded: a page reader
+  // may lift this function without it.
+  if (typeof tmRewordQuery === 'function') tmRewordQuery();
 }
 function presentView(opts) {
   if (isSun()) presentSunburst();

@@ -357,6 +357,56 @@ function tmSunburstQueryWords(found, degraded, paths, viewRoot, truncated) {
 /** What the box says of a plain word typed over the sunburst (review F1.8): it highlights none. */
 const TM_SUNBURST_BARE_WORDS = 'The sunburst does not highlight matches. Switch to Treemap, Circles or Voronoi to see what matches.';
 
+/**
+ * What the box says of the grammar answer on hand (tmLastHits, the total in
+ * state.treemap.matchTotal) for the map drawn now: the renderer on screen,
+ * the folder it shows and how many matches it drew.
+ */
+function tmQueryAnswerWords() {
+  const found = state.treemap.matchTotal;
+  const degraded = tmLastHits.degraded || [];
+  if (state.treemap.mode === 'sunburst') {
+    return tmSunburstQueryWords(found, degraded, tmLastHits.paths, state.treemap.rootPath, tmLastHits.truncated);
+  }
+  if (degraded.length) return degraded.map((d) => d.reason).join(' ');
+  if (tmLastHits.truncated) return `Showing the ${formatCount(state.treemap.matchedPaths.size)} biggest of ${formatCount(found)} matches.`;
+  const drawn = state.treemap.matches;
+  if (found > drawn) return tmUndrawnMessage(found, drawn, tmLastHits.paths, state.treemap.rootPath);
+  return '';
+}
+
+/**
+ * The box's words follow the map they speak of (review L6, L12, L2, L7,
+ * L10). They were worded once, as the answer landed, for the folder and the
+ * drawing on screen then: raise Depth as they advised, or drill, go up or
+ * turn on Hide cloud, and "3 shown here … raise Depth" stood beside a status
+ * line counting 8, "the ones in this folder" spoke of a folder left. Called
+ * after every draw (drawView) and every count of the matches drawn
+ * (renderSearchOverlay); unchanged words are no news, and are not said
+ * again. A plain word over the sunburst is told it highlights none
+ * here too: the Treemap's unmount empties the box, and back in the view the
+ * word stood in it with nothing said.
+ *
+ * Left alone: words of no answer on hand — cleared, or asked for newer text
+ * still out — and words over a picture that is not the map: the cart
+ * preview's, a morph's passing frame (its last one words the box), another
+ * view's.
+ */
+function tmRewordQuery() {
+  if (state.view !== 'treemap' || tmPreview.on || tmMorph) return;
+  const q = state.treemap.query.trim();
+  let words;
+  if (state.treemap.queryMode === 'grammar') {
+    if (state.treemap.matchTotal === null || tmLastHits.q !== q) return;
+    words = tmQueryAnswerWords();
+  } else if (q && isSun()) {
+    words = TM_SUNBURST_BARE_WORDS;
+  } else {
+    return;
+  }
+  tmSetQueryMessage(words, false); // the same words again are not said again (sayAloud)
+}
+
 /** Run a grammar query on the server and highlight what comes back. */
 async function tmRunGrammarQuery(q) {
   // Run on the scan the tree on screen came from (treeScanId): a scan still
@@ -412,6 +462,7 @@ async function tmRunGrammarQuery(q) {
       total: out.total,
       truncated: Boolean(out.truncated),
       stage: tmStageable(out.hits || [], q, state.root && state.root.path),
+      degraded: out.degraded || [], // what the answer could not supply, said first (tmQueryAnswerWords)
     };
     seedNodes((out.hits || []).map((h) => ({ path: h.path, name: h.name, size: h.size, type: h.isDir ? 'dir' : 'file', modifiedAt: h.mtimeMs })));
     tmSyncStageButton();
@@ -431,21 +482,9 @@ async function tmRunGrammarQuery(q) {
     //
     // A degraded answer speaks first: when the server stopped at its candidate
     // cap (`capped`), its total is a floor, and "the N biggest of M" would
-    // present the cap as the count (D31).
-    const degraded = out.degraded || [];
-    const drawn = state.treemap.matches;
-    const found = out.total;
-    if (state.treemap.mode === 'sunburst') {
-      tmSetQueryMessage(tmSunburstQueryWords(found, degraded, tmLastHits.paths, state.treemap.rootPath, tmLastHits.truncated), false);
-    } else if (degraded.length) {
-      tmSetQueryMessage(degraded.map((d) => d.reason).join(' '), false);
-    } else if (out.truncated) {
-      tmSetQueryMessage(`Showing the ${formatCount(state.treemap.matchedPaths.size)} biggest of ${formatCount(found)} matches.`, false);
-    } else if (found > drawn) {
-      tmSetQueryMessage(tmUndrawnMessage(found, drawn, tmLastHits.paths, state.treemap.rootPath), false);
-    } else {
-      tmSetQueryMessage('', false);
-    }
+    // present the cap as the count (D31). Worded by tmQueryAnswerWords, which
+    // words it again as the map changes (tmRewordQuery).
+    tmSetQueryMessage(tmQueryAnswerWords(), false);
   } catch (e) {
     if (seq !== tmQuerySeq) return; // superseded, which is also how an aborted request ends
     if (scanAtRequest !== treeScanId()) return; // the older scan's failure, said over no tree of its own

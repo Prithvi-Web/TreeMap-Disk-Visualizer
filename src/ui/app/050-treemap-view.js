@@ -2843,6 +2843,10 @@ function renderSearchOverlay() {
     }
     state.treemap.matches = matches;
     updateTmStatus();
+    // The box's words follow the count, as the status line does (review L6,
+    // L12) — once counted, never with the 0 it starts from. Guarded: a page
+    // reader may lift this function without it.
+    if (typeof tmRewordQuery === 'function') tmRewordQuery();
     return;
   }
 
@@ -2880,6 +2884,7 @@ function renderSearchOverlay() {
   }
   state.treemap.matches = matches;
   updateTmStatus();
+  if (typeof tmRewordQuery === 'function') tmRewordQuery(); // as for the shapes, above
 }
 
 function updateTmStatus() {

@@ -781,7 +781,7 @@ test('the highlight box\'s query runs on the scan the tree on screen came from �
   const messages: string[] = [];
   const reasked: string[] = [];
   const state: Record<string, unknown> = { root: TREE, ...HELD, treemap: { rootPath: '/r', query: 'size>1gb', queryMode: 'bare', queryScanId: null, matches: 0 } };
-  const { fns, asks } = page<{ run: (q: string) => Promise<void>; rejudge: () => void }>(['async function tmRunGrammarQuery(', 'function tmRejudgeQuery(', 'function tmNoScanQueryWords('], {
+  const { fns, asks } = page<{ run: (q: string) => Promise<void>; rejudge: () => void }>(['function tmQueryAnswerWords(', 'async function tmRunGrammarQuery(', 'function tmRejudgeQuery(', 'function tmNoScanQueryWords('], {
     state, $, tmQuerySeq: 0, tmQueryAbort: null, tmLastHits: null, AbortController,
     tmSetQueryMessage: (m: string) => { messages.push(m); }, tmStageable: () => ({ paths: [] }), seedNodes: noop, tmSyncStageButton: noop,
     renderSearchOverlay: noop, presentView: noop, formatCount: String, tmUndrawnMessage: () => '', tmClearHits: noop,
@@ -830,7 +830,7 @@ function queryPage(state: Record<string, unknown>, answer: (url: string, signal:
   // The page's own tmClearHits and Stage button: what a cleared query takes down — the footer's total, the Stage offer —
   // is theirs, never a stand-in that does nothing (review F1.8).
   const { fns } = page<{ run: (q: string) => Promise<void>; mount: () => void; changed: () => void }>(
-    ['async function tmRunGrammarQuery(', 'function tmRejudgeQuery(', 'function tmRejudgeQueryWait(', 'function tmNoScanQueryWords(', 'function tmQueryScanChanged(', 'function tmCancelQueries(',
+    ['function tmQueryAnswerWords(', 'async function tmRunGrammarQuery(', 'function tmRejudgeQuery(', 'function tmRejudgeQueryWait(', 'function tmNoScanQueryWords(', 'function tmQueryScanChanged(', 'function tmCancelQueries(',
       'function tmClearHits(', 'function tmSyncStageButton('],
     given, `{ run: tmRunGrammarQuery, mount: () => (${pageView('treemap')}).mount(), changed: tmQueryScanChanged }`);
   /** The Stage offer as the map's bar shows it: its button, and the hits it would stage. */
@@ -977,7 +977,7 @@ function mapUnderQueryPage(state: Record<string, unknown>, answer: (url: string)
     formatBytes: (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${(n / 1e3).toFixed(1)} KB`),
   };
   const { fns } = page<{ run: (q: string) => Promise<void>; mount: () => void; changed: () => void; paint: () => void }>(
-    ['async function tmRunGrammarQuery(', 'function tmRejudgeQuery(', 'function tmRejudgeQueryWait(', 'function tmNoScanQueryWords(', 'function tmQueryScanChanged(', 'function tmCancelQueries(',
+    ['function tmQueryAnswerWords(', 'async function tmRunGrammarQuery(', 'function tmRejudgeQuery(', 'function tmRejudgeQueryWait(', 'function tmNoScanQueryWords(', 'function tmQueryScanChanged(', 'function tmCancelQueries(',
       'function tmClearHits(', 'function tmSyncStageButton(', 'function treemapMatch(', 'function renderSearchOverlay(', 'function updateTmStatus(', 'function renderCellsStatus('],
     given, `{ run: tmRunGrammarQuery, mount: () => (${pageView('treemap')}).mount(), changed: tmQueryScanChanged,
       paint: () => { renderSearchOverlay(); if (isCells()) renderCellsStatus(); } }`);

@@ -169,7 +169,7 @@ test('C02 (review F1.2): in the sunburst, circles and Voronoi j/k move through t
 const ctxStub = () => new Proxy({}, { get: (_t, k) => (k === 'canvas' ? {} : () => {}), set: () => true });
 
 /** The real renderSearchOverlay and updateTmStatus over a map whose last rectangles are another view's. */
-function overlayHarness(mode: string) {
+function overlayHarness(mode: string, extra: Record<string, unknown> = {}) {
   const status = { textContent: 'sunburst: 12 rings · 8.8 GB' };
   const state = {
     treemap: {
@@ -190,6 +190,7 @@ function overlayHarness(mode: string) {
     treemapMatch: () => false, tmKidsOf: () => new Map(), altCellPath() {},
     $: (id: string) => (id === 'tmStatus' ? status : null),
     tmPreview: { on: false }, formatCount: (n: number) => n.toLocaleString('en-US'), formatBytes: (b: number) => `${b} B`, formatWhen: () => 'then',
+    ...extra,
   };
   const page = load<{ renderSearchOverlay: () => void; updateTmStatus: () => void }>(
     ['renderSearchOverlay', 'updateTmStatus'], deps, '{ renderSearchOverlay, updateTmStatus }');
@@ -236,7 +237,7 @@ async function grammarIn(mode: string, total: number, degraded: { reason: string
   const keys = Object.keys(deps);
   const optional = ['tmSunburstQueryWords'].filter((n) => INDEX.includes(`function ${n}(`)).map(declSource).join('\n');
   const src = `'use strict'; let tmLastHits = { q: '', paths: [], total: 0, truncated: false, stage: null }; let tmQuerySeq = 0; let tmQueryAbort = null;
-    ${optional}\n${['treeScanId', 'tmIsInside', 'tmUndrawnBreakdown', 'tmRunGrammarQuery'].map(declSource).join('\n')}\nreturn tmRunGrammarQuery;`;
+    ${optional}\n${['treeScanId', 'tmIsInside', 'tmUndrawnBreakdown', 'tmQueryAnswerWords', 'tmRunGrammarQuery'].map(declSource).join('\n')}\nreturn tmRunGrammarQuery;`;
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const run = new Function(...keys, src)(...keys.map((k) => deps[k])) as (q: string) => Promise<void>;
   await run('size>1gb');
@@ -1030,4 +1031,143 @@ test('HB2 (L1, L8, L14): a plain word typed over the sunburst is said once — t
   const h = typedAloud('treemap');
   h.type('sise'); h.type('sise');
   assert.deepEqual(h.fills, ['Did you mean size?'], 'the same hint at the next pause is not said again');
+});
+
+/** What the box says, and the real functions that word a query's answer for the map now drawn. */
+const REWORD_NAMES = ['TM_SUNBURST_BARE_WORDS', 'tmIsInside', 'tmUndrawnBreakdown', 'tmUndrawnMessage', 'tmSunburstQueryWords', 'tmQueryAnswerWords', 'tmRewordQuery'];
+const NINE = ['/r', '/r/a/x1', '/r/a/x2', '/r/b/y1', '/r/b/y2', '/r/b/y3', '/r/c/z1', '/r/c/z2', '/r/c/z3'];
+
+function rewordHarness(mode: string) {
+  const said: string[] = []; // what the box's live region says, frame by frame
+  const live = { _t: '', set textContent(v: string) { this._t = v; if (v) said.push(v); }, get textContent() { return this._t; } };
+  const box = { textContent: '', hidden: true, classList: { toggle() {} } };
+  const els: Record<string, unknown> = { tmQueryErr: box, tmQuerySaid: live, tmSearch: { classList: { toggle() {} }, setAttribute() {} } };
+  const frames: (() => void)[] = [];
+  const preview = { on: false };
+  const state = {
+    view: 'treemap',
+    treemap: { mode, rootPath: '/r', query: 'size>1gb', queryMode: 'grammar', matchTotal: 9 as number | null, matchedPaths: new Set(NINE), matches: 3 },
+  };
+  const page = load<{ reword: () => void; say: (t: string) => void; words: () => string; setMorph: (m: unknown) => void }>(
+    [...REWORD_NAMES, 'asSentences', 'sayAloud', 'tmSetQueryMessage'], {
+      state, tmPreview: preview, $: (id: string) => els[id], requestAnimationFrame: (f: () => void) => { frames.push(f); }, tmSyncQueryBar() {},
+      formatCount: (n: number) => n.toLocaleString('en-US'), isSun: () => state.treemap.mode === 'sunburst',
+    }, '{ reword: tmRewordQuery, say: tmSetQueryMessage, words: tmQueryAnswerWords, setMorph: (m) => { tmMorph = m; } }',
+    'const aloudSaid = new Map(); let tmMorph = null; let tmLastHits = { q: "size>1gb", paths: ' + JSON.stringify(NINE) + ', total: 9, truncated: false, stage: null, degraded: [] };');
+  const frame = () => { while (frames.length) frames.shift()!(); };
+  page.say(page.words()); frame(); // what the answer said as it landed
+  said.length = 0;
+  const reword = () => { page.reword(); frame(); };
+  return { ...page, reword, state, said, box, preview };
+}
+
+test('HB2 (L6, L12): the box\'s words about a grammar answer follow the map — raise Depth, drill or go up, and they speak of what is drawn now', () => {
+  const t = rewordHarness('treemap');
+  assert.equal(t.box.textContent, '9 matches — 3 shown here. One is this folder itself, which has no rectangle of its own; 5 are deeper than this view draws. Zoom in or raise Depth.');
+  t.reword();
+  assert.deepEqual(t.said, [], 'the same map, the same words: nothing is said again');
+  t.state.treemap.matches = 8; // Depth raised as advised: the status line reads "8 of 9 matches"
+  t.reword();
+  assert.equal(t.box.textContent, '9 matches — 8 shown here. One is this folder itself, which has no rectangle of its own.',
+    'never "3 shown here … raise Depth" beside a status line counting 8');
+  t.state.treemap.rootPath = '/r/b'; t.state.treemap.matches = 3; // a drill into b
+  t.reword();
+  assert.equal(t.box.textContent, '9 matches — 3 shown here. 6 are elsewhere in the scan, outside this folder. Go up to see them.');
+  t.state.treemap.rootPath = '/r'; t.state.treemap.matches = 9; // every match drawn
+  t.reword();
+  assert.equal(t.box.textContent, '', 'nothing left to explain: the box goes');
+  // The sunburst speaks of the folder on screen too.
+  const s = rewordHarness('sunburst');
+  assert.match(s.box.textContent, /^9 matches — the sunburst does not highlight them\. One is this folder itself; 8 are in this folder\./);
+  s.state.treemap.rootPath = '/r/a'; // an arc clicked
+  s.reword();
+  assert.equal(s.box.textContent, '9 matches — the sunburst does not highlight them. 7 are elsewhere in the scan, outside this folder; 2 are in this folder. ' +
+    'Switch to Treemap, Circles or Voronoi to see the ones in this folder, and go up there for the rest.');
+});
+
+test('HB2 (L6, L12): the words are left alone where they speak of no answer on hand, or of a picture that is not the map', () => {
+  const cases: [string, (t: ReturnType<typeof rewordHarness>) => void][] = [
+    ['the answer cleared (the unmount, a failed query)', (t) => { t.state.treemap.matchTotal = null; }],
+    ['newer text typed, its answer not in yet', (t) => { t.state.treemap.query = 'size>2gb'; }],
+    ['the cart preview up, a picture of the cart', (t) => { t.preview.on = true; }],
+    ['a morph still running', (t) => { t.setMorph({}); }],
+    ['another view on screen', (t) => { t.state.view = 'city'; }],
+  ];
+  for (const [what, arrange] of cases) {
+    const t = rewordHarness('treemap');
+    const before = t.box.textContent;
+    arrange(t);
+    t.state.treemap.matches = 8;
+    t.reword();
+    assert.equal(t.box.textContent, before, what);
+  }
+  const t = rewordHarness('treemap');
+  t.setMorph({}); t.state.treemap.matches = 8; t.reword();
+  t.setMorph(null); t.reword(); // the morph's last frame
+  assert.deepEqual(t.said, ['9 matches — 8 shown here. One is this folder itself, which has no rectangle of its own.'], 'control: the morph\'s end words what it ended on, once');
+  const typed = rewordHarness('treemap');
+  typed.state.treemap.query = '  size>1gb '; typed.state.treemap.matches = 8; typed.reword();
+  assert.equal(typed.said.length, 1, 'control: the text in the box, spaced, is the query answered');
+  // A plain word over a renderer that highlights: the box is tmApplyQuery's (its field hint, or nothing), left as it is.
+  const bare = rewordHarness('treemap');
+  bare.state.treemap.queryMode = 'bare'; bare.state.treemap.query = 'sise'; bare.state.treemap.matchTotal = null;
+  bare.say('Did you mean size?');
+  bare.reword();
+  assert.equal(bare.box.textContent, 'Did you mean size?', 'a plain word over the Treemap keeps what tmApplyQuery said of it');
+});
+
+test('HB2 (L6, L12): the map\'s every repaint words the box — drawView after any renderer, and the overlay once it has counted', () => {
+  const order: string[] = [];
+  for (const mode of ['treemap', 'sunburst', 'circles']) {
+    order.length = 0;
+    const drawView = load<() => void>(['drawView'], {
+      state: { treemap: { colorMode: 'size' } }, isSun: () => mode === 'sunburst', isCells: () => mode === 'circles',
+      drawSunburst: () => order.push('draw'), drawCells: () => order.push('draw'), drawTreemap: () => order.push('draw'),
+      fetchScoresForTreemap() {}, tmRewordQuery: () => order.push('reword'),
+    }, 'drawView');
+    drawView();
+    assert.deepEqual(order, ['draw', 'reword'], `${mode}: the box is worded after the draw`);
+  }
+  for (const mode of ['treemap', 'circles']) {
+    const counted: number[] = [];
+    const h = overlayHarness(mode, { tmRewordQuery: () => counted.push(h.state.treemap.matches) });
+    if (mode === 'circles') h.state.treemap.cells = [{ depth: 1, kind: 'circle', cx: 0, cy: 0, r: 1, n: { path: '/r/a' } }] as never;
+    h.renderSearchOverlay();
+    assert.deepEqual(counted, [mode === 'circles' ? 1 : 2], `${mode}: worded once, with the count just made — never with the 0 it starts from`);
+  }
+});
+
+test('HB2 (L2, L7, L10): a plain word over the sunburst is told again on the way back into the Treemap', () => {
+  const said: string[] = [];
+  const box = { textContent: '' };
+  const noop = () => {};
+  const el = () => ({ hidden: false, textContent: '', classList: { add: noop, remove: noop, toggle: noop } });
+  const els: Record<string, unknown> = { tmQueryErr: box };
+  const state = {
+    view: 'treemap', root: { path: '/r' }, scanning: false, scanId: 's1', live: { on: false }, lens: { held: false, at: null },
+    treemap: { mode: 'sunburst', colorMode: 'size', rootPath: '/r', query: 'node_modules', queryMode: 'bare', queryScanId: null, matchTotal: null as number | null,
+      matchedPaths: null, matches: 0, altZoomRaf: 0, altZoom: null, cells: [], altNote: '' },
+  };
+  const deps: Record<string, unknown> = {
+    state, $: (id: string) => (els[id] ||= el()), tmPreview: { on: false }, formatCount: String, isSun: () => state.treemap.mode === 'sunburst',
+    isCells: () => false, drawSunburst: noop, drawCells: noop, drawTreemap: noop, fetchScoresForTreemap: noop,
+    tmSetQueryMessage: (t: string) => { said.push(t); box.textContent = t; }, tmApplyQuery: noop, tmSyncStageButton: noop,
+    fxTmPillBeamsSync: noop, loadSavedViews: noop, refreshDock: noop, tmRejudgeQueryWait: noop,
+    tmCancelQueries: noop, tmCloseHints: noop, nlClose: noop, exitCartPreview: noop, disableLive: noop,
+    cancelAnimationFrame: noop, altRefineCancel: noop, lapseStop: noop, clearTimeout: noop, tmResizeDeb: 0, lassoCancel: noop,
+  };
+  const view = load<{ mount: () => void; unmount: () => void }>([...REWORD_NAMES, 'drawView', 'treeScanId', 'tmClearHits', 'tmRejudgeQuery'], deps,
+    `(${viewSource('treemap')})`,
+    // The sunburst's load, as loadTreemap's sunburst branch ends: through drawView.
+    'let tmLoadSeq = 0; let tmAnimFrame = 0; let tmMorph = null; let tmLastHits = { q: "", paths: [], total: 0, truncated: false, stage: null }; function loadTreemap() { drawView(); }');
+  view.mount();
+  assert.equal(box.textContent, 'The sunburst does not highlight matches. Switch to Treemap, Circles or Voronoi to see what matches.', 'control: said as the view first drew');
+  view.unmount(); // to the Dashboard: the box is emptied
+  state.view = 'dashboard';
+  assert.equal(box.textContent, '');
+  state.view = 'treemap';
+  view.mount(); // and back
+  assert.equal(box.textContent, 'The sunburst does not highlight matches. Switch to Treemap, Circles or Voronoi to see what matches.',
+    'the word still in the box is told again that the sunburst highlights none — never a silent box');
+  assert.equal(said.filter((t) => t).length, 2, 'said once on each entry, never twice');
 });
