@@ -6,7 +6,7 @@ import { guardQueryPath, assertNotSpillPath, assertNotAppDataPath } from '../mid
 import { refusedChildren, sanitizePath } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
 import { idempotency } from '../middleware/idempotency';
-import { findDeleted, ReplaceRefused, restoreFromSnapshot } from '../services/snapshotRecovery';
+import { FailedAfterReplace, findDeleted, ReplaceRefused, restoreFromSnapshot } from '../services/snapshotRecovery';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { diskUsage } from '../services/diskUsage';
 import { listVolumes, volumesUnavailableReason } from '../services/volumes';
@@ -162,6 +162,9 @@ systemRouter.get('/system/snapshots/find-deleted', guardQueryPath('path'), async
  * password, at the moment it is invoked (§3.8). A dismissed prompt comes back
  * as `AUTHORIZATION_DECLINED` — an answer, not a fault.
  */
+/** Restore answers that are a failure of the work, not a refusal of the request (hunt C54). */
+const RESTORE_FAILURE_CODES = new Set(['RESTORE_FAILED', 'DESTINATION_FOLDER_UNAVAILABLE', 'SNAPSHOTS_UNREADABLE']);
+
 systemRouter.post('/system/snapshots/restore', idempotency, async (req: Request, res: Response) => {
   const body = req.body as { path?: unknown; destination?: unknown; overwrite?: unknown };
   if (typeof body.path !== 'string' || !body.path.trim()) {
@@ -187,10 +190,15 @@ systemRouter.post('/system/snapshots/restore', idempotency, async (req: Request,
     res.json(outcome);
   } catch (err) {
     if (err instanceof AppError) {
-      // A refusal of the file the restore would replace names that file; any other, the one asked for.
+      // A refusal of the file the restore would replace names that file; any other, the one asked
+      // for. A restore that failed after that file went to the Trash names both, as an error (hunt
+      // C54): this request did move it. A copy that ran and failed is an error, not a refusal.
+      const replaced = err instanceof FailedAfterReplace;
       await appendAudit({
         action: 'snapshots.restore', source: 'http', tokenId: tokenIdFor('http'),
-        paths: [err instanceof ReplaceRefused ? err.replaced : String(body.path)], bytes: null, dryRun: false, outcome: 'refused', code: err.code,
+        paths: replaced ? [err.replaced, String(body.path)] : [err instanceof ReplaceRefused ? err.replaced : String(body.path)],
+        bytes: null, dryRun: false,
+        outcome: replaced || RESTORE_FAILURE_CODES.has(err.code) ? 'error' : 'refused', code: err.code,
       });
     }
     throw err;

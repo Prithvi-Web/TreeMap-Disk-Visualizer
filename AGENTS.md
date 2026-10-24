@@ -1108,7 +1108,11 @@ read-what-you-saw) permission to act.
   inside its endpoint, so every refusal of that file — `OUTSIDE_SCAN_ROOT`,
   the policy's, an open file's, and `SAFETY_RECORD` for a link TreeMap
   reaches app-data through — is recorded against it: `snapshots.restore`,
-  `refused`, with its code.
+  `refused`, with its code. A restore that fails after that file went to the
+  Trash is recorded as `error`, naming that file and the path asked for; a
+  copy that ran and failed (`RESTORE_FAILED`, `DESTINATION_FOLDER_UNAVAILABLE`,
+  `SNAPSHOTS_UNREADABLE`) is `error` too, and a dismissed password prompt with
+  nothing replaced stays `refused`.
   A cart commit's line lists what was confirmed moved in `paths` and, apart,
   anything whose trash step was not confirmed either way in `unverified`.
   A line's `outcome` is the operation's own: emptying the Trash, purging

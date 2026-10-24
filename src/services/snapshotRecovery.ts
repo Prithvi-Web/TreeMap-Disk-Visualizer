@@ -178,6 +178,18 @@ export class ReplaceRefused extends AppError {
   }
 }
 
+/**
+ * A restore with `overwrite` that failed after the file at its destination went to the Trash to make
+ * room (hunt C54): the audit names that file, which this request did move, beside the path asked for.
+ */
+export class FailedAfterReplace extends AppError {
+  readonly replaced: string;
+  constructor(replaced: string, failure: AppError) {
+    super(failure.status, failure.code, failure.message, failure.details);
+    this.replaced = replaced;
+  }
+}
+
 /** `err`, a refusal of the file at `destination`, as `ReplaceRefused`; anything else as it is. */
 function asReplaceRefused(destination: string, err: unknown): unknown {
   return err instanceof AppError ? new ReplaceRefused(destination, err) : err;
@@ -326,7 +338,16 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
     replacedToTrash = true;
   }
 
-  const result = await provider.recoverFromSnapshots(snapshots, original, destination);
+  let result: Awaited<ReturnType<typeof provider.recoverFromSnapshots>>;
+  try {
+    result = await provider.recoverFromSnapshots(snapshots, original, destination);
+  } catch (err) {
+    if (!replacedToTrash) throw err;
+    // The copy threw after the file there went to the Trash: say where it is, and name it (hunt C54).
+    const why = err instanceof Error ? err.message : String(err);
+    throw new FailedAfterReplace(destination, err instanceof AppError ? err : new AppError(409, 'RESTORE_FAILED',
+      `The restore failed (${why}). The file that was at ${destination} had already been moved to the Trash to make room, and is there still.`));
+  }
   if (!result.restored) {
     const trashNote = replacedToTrash
       ? ` The file that was at ${destination} had already been moved to the Trash to make room, and is there still.`
@@ -343,7 +364,8 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
           : result.destinationUnavailable ? 'DESTINATION_FOLDER_UNAVAILABLE'
             : result.failed ? 'RESTORE_FAILED'
               : 'NOT_IN_ANY_SNAPSHOT';
-    throw new AppError(409, code, `${result.reason ?? 'That path could not be recovered from any snapshot.'}${trashNote}`);
+    const failure = new AppError(409, code, `${result.reason ?? 'That path could not be recovered from any snapshot.'}${trashNote}`);
+    throw replacedToTrash ? new FailedAfterReplace(destination, failure) : failure;
   }
 
   const stat = await fsp.lstat(destination).catch(() => null);
