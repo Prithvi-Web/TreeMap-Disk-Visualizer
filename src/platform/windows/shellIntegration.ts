@@ -1,5 +1,6 @@
 import { runText } from '../exec';
 import type { ShellIntegrationResult } from '../types';
+import { runPowerShellJson } from './powershell';
 
 /**
  * "Scan with TreeMap" in Explorer's context menu (D2).
@@ -133,20 +134,44 @@ export async function isInstalled(): Promise<boolean> {
 }
 
 /**
- * The program a `reg query <key>\command /ve` answer names — the quoted path
- * before the folder argument installCommands writes — or null (review F1.3).
- * Read by REG_SZ, which no system translates; the default value's own label
- * ("(Default)") is in the system's language.
+ * The program a `…\command` value names — the quoted path before the folder
+ * argument installCommands writes — or null (review F1.3).
  */
-export function programOfCommand(regOutput: string): string | null {
-  const m = /REG_SZ\s+"([^"]+)"/.exec(regOutput);
+export function programOfCommandValue(value: string): string | null {
+  const m = /^"([^"]+)"/.exec(value);
   return m ? m[1] : null;
 }
 
+/**
+ * PowerShell that prints the command value of the folder entry: its UTF-8
+ * bytes in Base64, or `null` when the key holds no value. Not `reg query`:
+ * a console program prints in the console's code page, and Node reads its
+ * text as UTF-8, so `C:\Users\José\…` came back as `C:\Users\Jos�\…`, which
+ * never matched the launcher — Settings then said the app's own entry was
+ * not this app's, and re-adding it changed nothing (review HA-L1). Base64 is
+ * ASCII, which every code page prints alike. A missing key fails the script,
+ * which reads as no program.
+ */
+export const READ_COMMAND_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  `$value = (Get-Item -LiteralPath '${SHELL_KEYS[0].key.replace(/^HKCU\\/, 'HKCU:\\')}\\command').GetValue('')`,
+  "if ($null -eq $value) { 'null' } else { @{ utf8Base64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$value)) } | ConvertTo-Json -Compress }",
+].join('\n');
+
+/** The command value READ_COMMAND_SCRIPT's answer carries, or null for any other answer. */
+function commandValueOfAnswer(answer: unknown): string | null {
+  const b64 = answer && typeof answer === 'object' ? (answer as { utf8Base64?: unknown }).utf8Base64 : undefined;
+  if (typeof b64 !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(b64)) return null;
+  return Buffer.from(b64, 'base64').toString('utf8');
+}
+
 /** The program the Explorer entry in place starts, or null when there is none or it names none TreeMap can read. */
-export async function installedProgram(): Promise<string | null> {
+export async function installedProgram(
+  run: (script: string, opts: { timeoutMs: number }) => Promise<unknown> = runPowerShellJson,
+): Promise<string | null> {
   try {
-    return programOfCommand(await runText('reg.exe', ['query', `${SHELL_KEYS[0].key}\\command`, '/ve'], { timeoutMs: 10_000 }));
+    const value = commandValueOfAnswer(await run(READ_COMMAND_SCRIPT, { timeoutMs: 20_000 }));
+    return value === null ? null : programOfCommandValue(value);
   } catch {
     return null;
   }

@@ -291,19 +291,50 @@ test('review F1.3: the program an entry starts reads back from the entry itself,
   // Entries an earlier build wrote bare (before review F1.5) read back too.
   assert.equal(lin.programOfDolphinMenu('[Desktop Action treemapScan]\nName=Scan with TreeMap\nExec=/usr/bin/node %f\n'), '/usr/bin/node');
   assert.equal(lin.programOfThunarActions('<actions>\n<action>\n\t<unique-id>treemap-scan-1</unique-id>\n\t<command>/usr/bin/node %f</command>\n</action>\n</actions>\n'), '/usr/bin/node');
-  // What `reg query <key>\command /ve` prints for the value an install writes, whatever the system calls the default value.
+  // The command value an install writes names the program it starts (how it is read back: the HA-L1 test below).
   const exe = String.raw`C:\Users\x\AppData\Local\Programs\TreeMap\TreeMap.exe`;
   const add = win.installCommands(exe).find((c) => c.args[1].endsWith('\\command'));
   assert.ok(add, 'an install writes a command value');
-  const value = add.args[add.args.indexOf('/d') + 1];
-  for (const label of ['(Default)', '(Padrão)', '(Standard)']) {
-    assert.equal(win.programOfCommand(`\r\n${win.SHELL_KEYS[0].key}\\command\r\n    ${label}    REG_SZ    ${value}\r\n\r\n`), exe, `Explorer (${label})`);
-  }
+  assert.equal(win.programOfCommandValue(add.args[add.args.indexOf('/d') + 1]), exe, 'Explorer');
   // Text that is no entry of TreeMap's names no program.
   assert.equal(mac.programOfWorkflow('<plist version="1.0"><dict/></plist>'), null);
-  assert.equal(win.programOfCommand('ERROR: The system was unable to find the specified registry key or value.'), null);
+  assert.equal(win.programOfCommandValue('C:\\Windows\\notepad.exe %1'), null);
   assert.equal(lin.programOfNautilusScript('#!/bin/sh\necho hello\n'), null);
   assert.equal(lin.programOfThunarActions('<actions>\n<action>\n\t<unique-id>someone-else</unique-id>\n\t<command>/usr/bin/gimp %f</command>\n</action>\n</actions>\n'), null);
+});
+
+test('review HA-L1: the Windows entry\'s program reads back whole whatever letters its path holds — never from text a console prints in its own code page', async () => {
+  const win = await import('../src/platform/windows/shellIntegration');
+  // What a console printing in its own code page (850, 866, 932…) does to a letter past ASCII, as Node reads the text
+  // back as UTF-8: it is lost. `reg query` printed C:\Users\José as C:\Users\Jos�, never the launcher.
+  const throughConsole = (text: string) => text.replace(/[^\x00-\x7f]/g, '\uFFFD');
+  for (const exe of [
+    String.raw`C:\Users\José\AppData\Local\Programs\TreeMap\TreeMap.exe`,
+    String.raw`C:\Users\Дмитрий\AppData\Local\Programs\TreeMap\TreeMap.exe`,
+    String.raw`C:\Users\山田\AppData\Local\Programs\TreeMap\TreeMap.exe`,
+    String.raw`C:\Program Files\TreeMap\TreeMap.exe`,
+  ]) {
+    const add = win.installCommands(exe).find((c) => c.args[1].endsWith('\\command'))!;
+    const value = add.args[add.args.indexOf('/d') + 1];
+    const scripts: string[] = [];
+    // PowerShell, run on the value an install wrote: what the script prints for it — its UTF-8 bytes in Base64 —
+    // passed through the console as any text is.
+    const run = async (script: string): Promise<unknown> => {
+      scripts.push(script);
+      return JSON.parse(throughConsole(JSON.stringify({ utf8Base64: Buffer.from(value, 'utf8').toString('base64') })));
+    };
+    assert.equal(await win.installedProgram(run), exe, `the program reads back as written: ${exe}`);
+    assert.equal(scripts.length, 1, 'one PowerShell call');
+    assert.ok(scripts[0].includes(`'${win.SHELL_KEYS[0].key.replace(/^HKCU\\/, 'HKCU:\\')}\\command'`), 'it reads the key an install writes');
+    assert.match(scripts[0], /\.GetValue\(''\)/, 'its default value');
+    assert.match(scripts[0], /\[Convert\]::ToBase64String\(\[Text\.Encoding\]::UTF8\.GetBytes\(/, 'and prints it as Base64 of its UTF-8 bytes, which no code page alters');
+  }
+  // No value, or an answer that is not TreeMap's: no program — never a guess.
+  assert.equal(await win.installedProgram(async () => null), null);
+  assert.equal(await win.installedProgram(async () => ({ utf8Base64: 'IkM6XHgu!ZXhlIiAiJTEi' })), null,
+    'text that is not Base64 is no answer, though Node would decode it past the stray letter');
+  assert.equal(await win.installedProgram(async () => ({ utf8Base64: 'IkM6XHguZXhlIiAiJTEi' })), 'C:\\x.exe', 'control: the same answer whole');
+  assert.equal(await win.installedProgram(async () => { throw new Error('Cannot find path'); }), null);
 });
 
 test('review F1.15/F1.16: an entry already in place is seen, and can be removed, where adding is not offered; one that starts another program is never called this app\'s', { skip: !IS_MAC && !IS_LINUX }, async () => {

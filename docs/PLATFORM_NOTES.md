@@ -378,7 +378,7 @@ shipped a confidently wrong answer.
 | Topology | `Get-Disk` / `Get-Partition` / `Get-PhysicalDisk` / `Get-Volume`, plus `Get-VirtualDisk` for Storage Spaces; a volume is joined to its disk through its partition, a disk to its hardware by `UniqueId`, then `SerialNumber`, then `DeviceId` = disk `Number` | 3 | No partition map → volumes listed without their disks and the card says so. Volumes mounted only at a folder are not listed; dynamic-disk (LDM) volumes show as a loose card |
 | Snapshots | `Win32_ShadowCopy` (+ `mklink` to read) | 3 | System Protection off → stated plainly |
 | SMART | `smartctl --json` | 3 | Not installed → download link shown |
-| Shell menu | `reg.exe` under `HKCU` | 3 | — |
+| Shell menu | `reg.exe` under `HKCU` adds and removes it; the program an entry starts is read back through PowerShell as Base64 of its UTF-8 bytes, since `reg query` prints in the console's code page and loses every letter past ASCII | 3 | PowerShell missing → the program it starts is unknown, and the entry is not called this app's |
 | Zombie handles | **not implemented** | — | Explained in the UI |
 
 ### The NTFS turbo mode: built, opt-in, not yet verified end to end
