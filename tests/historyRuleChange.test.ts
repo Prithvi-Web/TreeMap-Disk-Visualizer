@@ -301,7 +301,7 @@ test('Trends’ Folder list leads each folder with its own name — corpus and c
     const sel = { innerHTML: '', disabled: false, title: '' };
     const run = load<() => Promise<void>>(['escapeHtml', 'loadTrends'], {
       ...base(browserWith([])),
-      state: { root: null, trends: { path: null, roots: [], snapshots: [] } },
+      state: { view: 'trends', root: null, trends: { path: null, roots: [], snapshots: [] } }, // the view is open, as mount() finds it
       api: async (url: string) => { assert.equal(url, '/api/snapshots'); return { roots: rootPaths.map((rootPath, i) => ({ rootPath, count: i + 2 })) }; },
       $: (id: string) => (id === 'trendRoot' ? sel : { textContent: '', innerHTML: '' }),
       loadTrendData: async () => {}, drawTrendChart: () => {}, drawTrendNet: () => {}, toast: (m: string) => assert.fail(m),

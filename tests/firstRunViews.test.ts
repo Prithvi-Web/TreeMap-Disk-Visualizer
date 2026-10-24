@@ -232,7 +232,8 @@ test('the Dashboard\'s welcome names it, and every empty state offers the same s
 
 async function trendsWith(roots: Array<{ rootPath: string; count: number }>, dom = makeDom()) {
   const { $ } = dom;
-  const state: Record<string, unknown> = { root: null, trends: { roots: [], snapshots: [], path: null } };
+  // The view is open: switchView sets it before mount() loads (a load that lands after it is left draws nothing, leftover HE-L2).
+  const state: Record<string, unknown> = { view: 'trends', root: null, trends: { roots: [], snapshots: [], path: null } };
   const browsed: unknown[] = [];
   const drawn: string[] = [];
   const src = slice('async function loadTrends(', '/* The tmLoadSeq pattern');
