@@ -591,7 +591,7 @@ test('C23 (review F1.4): the Treemap, the Grid and Disk City each hand a pressed
 /* ══════════════ C24 — Live, the slider and Play leave the cart preview's picture alone ══════════════ */
 
 /** The real liveRelayout (and maybeInjectTrash) over a stubbed server, with the preview `on` or not. */
-function liveHarness(opts: { preview: boolean; home?: boolean; previewDuringFetch?: boolean }) {
+function liveHarness(opts: { preview: boolean; home?: boolean; previewDuringFetch?: boolean; smallFiles?: boolean; previewDuringRetry?: boolean }) {
   const asked: string[] = [];
   const previewNodes = [{ path: '/r/a', size: 40, depth: 1, x: 0, y: 0, w: 40, h: 100 }, { path: '/r — freed', size: 60, depth: 1, freed: true, x: 40, y: 0, w: 60, h: 100 }];
   const tmPreview = { on: opts.preview };
@@ -607,6 +607,9 @@ function liveHarness(opts: { preview: boolean; home?: boolean; previewDuringFetc
     api: async (u: string) => {
       asked.push(u);
       if (opts.previewDuringFetch) tmPreview.on = true;
+      // A folder whose files shrank under the 4 KB floor: that ask draws nothing of its bytes, and is asked again with none.
+      if (opts.smallFiles && asked.length === 1) return { root: { path: '/r', size: 100 }, nodes: [] };
+      if (opts.previewDuringRetry) tmPreview.on = true;
       return { root: { path: '/r', size: 100 }, nodes: [{ path: '/r/a', size: 100, depth: 1, x: 0, y: 0, w: 100, h: 100 }] };
     },
     animateTreemapTo: (nodes: Record<string, unknown>[]) => { state.treemap.nodes = nodes; },
@@ -629,6 +632,17 @@ test('C24: a live re-layout waits while the cart preview is up — its hatched s
   const n = liveHarness({ preview: false });
   await n.liveRelayout();
   assert.deepEqual(n.state.treemap.nodes.map((x) => x.path), ['/r/a'], 'control: with no preview the live layout lands');
+});
+
+test('C24 (review F1.5): a preview put up while a folder of small files is asked again with no floor keeps its picture too', async () => {
+  const r = liveHarness({ preview: false, smallFiles: true, previewDuringRetry: true });
+  await r.liveRelayout();
+  assert.deepEqual(r.asked.map((u) => /minSize=(\d+)/.exec(u)![1]), ['4000', '1'], 'control: the 4 KB ask drew nothing, and the folder was asked again with none');
+  assert.equal(r.state.treemap.nodes, r.previewNodes, 'the preview\'s hatched picture is not replaced under its banner when the second answer lands');
+  assert.ok(r.state.live.dirty > 0, 'and the relayout is still owed');
+  const n = liveHarness({ preview: false, smallFiles: true });
+  await n.liveRelayout();
+  assert.deepEqual([n.state.treemap.nodes.map((x) => x.path), n.state.treemap.minSize], [['/r/a'], 1], 'control: with no preview the second answer lands, with its floor');
 });
 
 test('C24: a live re-layout of the home folder keeps the Trash cell beside it', async () => {
