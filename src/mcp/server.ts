@@ -259,6 +259,12 @@ async function refuseAdvicePaths(paths: string[]): Promise<void> {
   }
 }
 
+/** trash_paths calls running now (hunt C58): the MCP process waits for them before it exits. */
+let trashInFlight = 0;
+export function trashCallsInFlight(): number {
+  return trashInFlight;
+}
+
 /* ------------------------- summaries ------------------------- */
 
 function scanSummary(scan: ScanResult): Record<string, unknown> {
@@ -941,72 +947,79 @@ export function buildMcpServer(): McpServer {
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ paths: rawPaths, dryRun, ignoreOpenHandles }) =>
-      run(async () => {
-        const paths = guardDestructivePaths(rawPaths);
-        try {
-          await refuseAdvicePaths(paths);
-        } catch (err) {
-          if (err instanceof AppError && err.code === 'ADVISORY_PATH') {
-            await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: null, dryRun, outcome: 'refused', code: err.code });
+    async ({ paths: rawPaths, dryRun, ignoreOpenHandles }) => {
+      // Counted while it runs, so shutdown waits for it to answer and write its audit line (hunt C58).
+      trashInFlight++;
+      try {
+        return await run(async () => {
+          const paths = guardDestructivePaths(rawPaths);
+          try {
+            await refuseAdvicePaths(paths);
+          } catch (err) {
+            if (err instanceof AppError && err.code === 'ADVISORY_PATH') {
+              await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: null, dryRun, outcome: 'refused', code: err.code });
+            }
+            throw err;
           }
-          throw err;
-        }
-        const sized = paths.map((p) => {
-          const bytes = knownSizeOf(p);
-          return { path: p, bytes, bytesFormatted: bytes === null ? 'unknown' : formatBytes(bytes) };
-        });
-        const knownTotal = sized.reduce((sum, s) => sum + (s.bytes ?? 0), 0);
-        const policy = await getPolicy();
-        try {
-          assertPathsAllowed(policy, paths);
-          assertBytesCapOver(policy, sized);
-        } catch (err) {
-          if (err instanceof AppError) {
-            await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun, outcome: 'refused', code: err.code });
-          }
-          throw err;
-        }
-        if (dryRun) {
-          // B2: the dry run reports open files rather than refusing, so an
-          // agent can raise it with the user in the same breath as the manifest
-          // instead of discovering it only when the real call fails.
-          const openHandles = await checkOpenHandles(paths);
-          await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun: true, outcome: 'ok' });
-          return ok({
-            dryRun: true,
-            // Each part of an installed program says which (fifth browser pass F01).
-            wouldTrash: sized.map(withInstalledProgram),
-            totalKnownBytes: knownTotal,
-            totalKnownFormatted: formatBytes(knownTotal),
-            openHandles: openHandlesWord(openHandles),
-            note: 'Dry run — nothing was moved to the Trash.',
+          const sized = paths.map((p) => {
+            const bytes = knownSizeOf(p);
+            return { path: p, bytes, bytesFormatted: bytes === null ? 'unknown' : formatBytes(bytes) };
           });
-        }
-        let result;
-        // What the check before the Trash steps saw; none with ignoreOpenHandles, which skips it.
-        let checked = null as OpenHandleReport | null; // set in a callback: kept wide, never narrowed to null
-        try {
-          result = await moveToTrash(paths, { ignoreOpenHandles, onOpenHandleReport: (report) => { checked = report; } });
-        } catch (err) {
-          if (err instanceof AppError && err.code === 'OPEN_HANDLE_CONFLICT') {
-            await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun: false, outcome: 'refused', code: err.code });
+          const knownTotal = sized.reduce((sum, s) => sum + (s.bytes ?? 0), 0);
+          const policy = await getPolicy();
+          try {
+            assertPathsAllowed(policy, paths);
+            assertBytesCapOver(policy, sized);
+          } catch (err) {
+            if (err instanceof AppError) {
+              await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun, outcome: 'refused', code: err.code });
+            }
+            throw err;
           }
-          throw err;
-        }
-        await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun: false, outcome: result.failed.length === 0 ? 'ok' : 'error', ...(result.failed.length > 0 ? { code: 'PARTIAL_FAILURE' } : {}) });
-        const freed = sized
-          .filter((s) => result.deleted.includes(s.path))
-          .reduce((sum, s) => sum + (s.bytes ?? 0), 0);
-        return ok({
-          deleted: result.deleted,
-          failed: result.failed,
-          reclaimedBytes: freed,
-          reclaimedFormatted: formatBytes(freed),
-          ...(checked === null ? {} : { openHandles: openHandlesWord(checked) }),
-          note: trashNote(result.deleted.length, result.failed),
+          if (dryRun) {
+            // B2: the dry run reports open files rather than refusing, so an
+            // agent can raise it with the user in the same breath as the manifest
+            // instead of discovering it only when the real call fails.
+            const openHandles = await checkOpenHandles(paths);
+            await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun: true, outcome: 'ok' });
+            return ok({
+              dryRun: true,
+              // Each part of an installed program says which (fifth browser pass F01).
+              wouldTrash: sized.map(withInstalledProgram),
+              totalKnownBytes: knownTotal,
+              totalKnownFormatted: formatBytes(knownTotal),
+              openHandles: openHandlesWord(openHandles),
+              note: 'Dry run — nothing was moved to the Trash.',
+            });
+          }
+          let result;
+          // What the check before the Trash steps saw; none with ignoreOpenHandles, which skips it.
+          let checked = null as OpenHandleReport | null; // set in a callback: kept wide, never narrowed to null
+          try {
+            result = await moveToTrash(paths, { ignoreOpenHandles, onOpenHandleReport: (report) => { checked = report; } });
+          } catch (err) {
+            if (err instanceof AppError && err.code === 'OPEN_HANDLE_CONFLICT') {
+              await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun: false, outcome: 'refused', code: err.code });
+            }
+            throw err;
+          }
+          await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun: false, outcome: result.failed.length === 0 ? 'ok' : 'error', ...(result.failed.length > 0 ? { code: 'PARTIAL_FAILURE' } : {}) });
+          const freed = sized
+            .filter((s) => result.deleted.includes(s.path))
+            .reduce((sum, s) => sum + (s.bytes ?? 0), 0);
+          return ok({
+            deleted: result.deleted,
+            failed: result.failed,
+            reclaimedBytes: freed,
+            reclaimedFormatted: formatBytes(freed),
+            ...(checked === null ? {} : { openHandles: openHandlesWord(checked) }),
+            note: trashNote(result.deleted.length, result.failed),
+          });
         });
-      }),
+      } finally {
+        trashInFlight--;
+      }
+    },
   );
 
   const advertised = new Set<string>(MCP_TOOL_NAMES);

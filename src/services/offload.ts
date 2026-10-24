@@ -473,6 +473,12 @@ export function cancelAllOffloadJobs(): void {
   for (const job of jobs.values()) if (job.status === 'running') job.cancelled = true;
 }
 
+/** Whether any offload is still running — cancelled ones roll back first (hunt C58: MCP shutdown waits for it). */
+export function anyOffloadJobRunning(): boolean {
+  for (const job of jobs.values()) if (job.status === 'running') return true;
+  return false;
+}
+
 /* ---------------- copy + verify machinery ---------------- */
 
 /**

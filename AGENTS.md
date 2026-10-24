@@ -1216,6 +1216,10 @@ read-what-you-saw) permission to act.
 
 - `scan_path` returns a `scanId` and waits (bounded) for completion; pass
   `scanId` back to keep waiting on a long scan.
+- When the client ends the session (it closes stdin, or sends SIGINT or
+  SIGTERM), the server cancels its jobs and exits once a cancelled offload
+  has rolled back and saved its record and any `trash_paths` call has
+  answered and written its audit line — waiting at most 60 seconds.
 - `trash_paths` and `offload` accept `dryRun: true`, which returns the exact
   manifest — affected paths and bytes — while acting on nothing. **Dry-run
   first, show the user, then act.**

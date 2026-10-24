@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { buildMcpServer } from './server';
+import { buildMcpServer, trashCallsInFlight } from './server';
 import { cancelAllScans } from '../services/diskScanner';
 import { cancelAllDuplicateJobs } from '../services/duplicateFinder';
-import { cancelAllOffloadJobs } from '../services/offload';
+import { anyOffloadJobRunning, cancelAllOffloadJobs } from '../services/offload';
+import { shutdownWhenSettled } from './shutdown';
 
 /**
  * TreeMap MCP entry point (`npm run mcp`) — stdio transport for MCP clients
@@ -15,11 +16,24 @@ import { cancelAllOffloadJobs } from '../services/offload';
  * All logging goes to stderr — stdout is the MCP protocol channel.
  */
 
+let shuttingDown = false;
+
+/**
+ * Cancel everything, then exit once a cancelled offload has rolled back and saved its record and any
+ * trash_paths call has answered (bounded; hunt C58) — not in the same tick, which skipped both.
+ */
 function shutdown(): void {
-  cancelAllScans();
-  cancelAllDuplicateJobs();
-  cancelAllOffloadJobs();
-  process.exit(0);
+  if (shuttingDown) return;
+  shuttingDown = true;
+  void shutdownWhenSettled({
+    cancel: () => {
+      cancelAllScans();
+      cancelAllDuplicateJobs();
+      cancelAllOffloadJobs();
+    },
+    busy: () => anyOffloadJobRunning() || trashCallsInFlight() > 0,
+    exit: (code) => process.exit(code),
+  });
 }
 
 async function main(): Promise<void> {
