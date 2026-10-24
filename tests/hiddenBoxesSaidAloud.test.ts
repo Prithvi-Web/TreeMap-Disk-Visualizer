@@ -856,7 +856,12 @@ test('the note over a map with nothing to draw says itself in its own region a f
 
 /* ── the Missing Gigabytes statement ── */
 
-/** A statement of the whole disk, as the server sends one: its lines sum to its used figure. */
+/**
+ * A statement of the disk a home folder is on, as the server sends one: its lines sum to its used figure, and the scan
+ * did not start at the volume, so everything else on it is in Unaccounted — which its caveat says, in the server's
+ * words (missingGigabytes.ts).
+ */
+const MG_CAVEAT = 'This scan started at /Users/x, not at /, so everything else on the volume is inside Unaccounted. Scan the whole volume for a statement that accounts for every file.';
 const MG_STATEMENT = {
   scanId: 's1', rootPath: '/Users/x',
   volume: { mountPoint: '/', totalBytes: 500e9, usedBytes: 245e9, freeBytes: 255e9, reservedBytes: 0, mechanism: 'statfs(/)', mechanismLabel: 'what macOS reports for Macintosh HD' },
@@ -865,7 +870,7 @@ const MG_STATEMENT = {
     { id: 'unaccounted', label: 'Unaccounted', bytes: 12e9, available: true, detail: 'The volume holds this much that no line above explained.', count: null, notes: [], remedy: null },
   ],
   unaccountedBytes: 12e9, coversWholeVolume: false,
-  caveats: ['This scan started at /Users/x, not at /, so everything else on the volume is inside Unaccounted.'], generatedAt: 0,
+  caveats: [MG_CAVEAT], generatedAt: 0,
 };
 
 /**
@@ -893,7 +898,7 @@ function missingView() {
   return { ...p, live, held, scan };
 }
 
-test('the Missing Gigabytes card is plain, and what it comes to is said in #missingSaid, in a sentence — the volume, its used and total figures and what is unaccounted — held while a sheet is open over the view and said a frame after it goes; its waits, its update and its failure are said there too, and nothing is left said once the view goes (review F1.3, F1.4, F1.10)', async () => {
+test('the Missing Gigabytes card is plain, and what it comes to is said in #missingSaid, in a sentence — the volume, its used and total figures and what is unaccounted, then the caveats that qualify them — held while a sheet is open over the view and said a frame after it goes; its waits, its update and its failure are said there too, and nothing is left said once the view goes (review F1.3, F1.4, F1.10, F2.1, F2.2)', async () => {
   assert.ok(!isLive(tagOf('missingBody')), `the card is no live region: written while a sheet was open its words went unheard, and heard they were the whole receipt: ${tagOf('missingBody')}`);
   const v = missingView();
   /** Each frame's rendering of the region: heard (on screen, not inert) or not, and its words. */
@@ -911,9 +916,11 @@ test('the Missing Gigabytes card is plain, and what it comes to is said in #miss
   v.mo.inert(v.main, false); // the sheet goes
   frame();
   frame();
-  const said = 'This disk: 245 GB used of 500 GB. Unaccounted: 12 GB.';
+  // What it comes to, and what qualifies it: most of a home folder's disk is Unaccounted only because the scan did
+  // not cover it, and said bare that figure is heard as a mystery (review F2.1, F2.2).
+  const said = `This disk: 245 GB used of 500 GB. Unaccounted: 12 GB. ${MG_CAVEAT}`;
   assert.deepEqual(rendered.slice(2), [{ heard: true, text: '' }, { heard: true, text: said }],
-    'the frame the view comes out from under the sheet renders the region empty, and the next says what the statement comes to — in a sentence, never the whole receipt');
+    'the frame the view comes out from under the sheet renders the region empty, and the next says what the statement comes to — in a sentence, never the whole receipt — with the caveat that qualifies its Unaccounted figure');
 
   // Asked again with its last statement kept: shown at once, being updated — and said so — then the answer, or why there is none.
   void v.fns.loadMissing();
@@ -944,8 +951,14 @@ test('the Missing Gigabytes card is plain, and what it comes to is said in #miss
   v.fns.missingTakeDown();
   assert.equal(v.live.textContent, '', 'the view gone, nothing of it is left said, so the next visit says it again');
   // Named and figured as the receipt prints them: a volume by where it is mounted, a residual below zero with its sign.
-  const other = { ...MG_STATEMENT, volume: { ...MG_STATEMENT.volume, mountPoint: '/Volumes/Data' }, lines: [MG_STATEMENT.lines[0], { ...MG_STATEMENT.lines[1], bytes: -1.5e9 }] };
-  assert.equal(v.fns.mgSaid(other), '/Volumes/Data: 245 GB used of 500 GB. Unaccounted: −1.5 GB.', 'another volume, and a residual below zero, said as the receipt prints them');
+  // A scan of the whole volume has no caveat, and nothing is said after the figures.
+  const other = { ...MG_STATEMENT, rootPath: '/Volumes/Data', coversWholeVolume: true, caveats: [], volume: { ...MG_STATEMENT.volume, mountPoint: '/Volumes/Data' }, lines: [MG_STATEMENT.lines[0], { ...MG_STATEMENT.lines[1], bytes: -1.5e9 }] };
+  assert.equal(v.fns.mgSaid(other), '/Volumes/Data: 245 GB used of 500 GB. Unaccounted: −1.5 GB.', 'another volume, scanned whole, and a residual below zero, said as the receipt prints them');
+  // Every caveat the card prints is said, each its own sentence, in the order the card prints them.
+  const platform = 'TreeMap has no per-volume accounting for freebsd; only the filesystem\'s own totals are shown.';
+  v.fns.sayAloud('missingSaid', v.fns.mgSaid({ ...MG_STATEMENT, caveats: [MG_CAVEAT, platform] }));
+  v.frame();
+  assert.equal(v.live.textContent, `This disk: 245 GB used of 500 GB. Unaccounted: 12 GB. ${MG_CAVEAT} ${platform}`, 'two caveats: both said, after the figures, as the card prints them');
 });
 
 /* ── the History view's calendar and journal ── */

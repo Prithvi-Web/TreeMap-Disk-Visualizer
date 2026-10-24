@@ -186,12 +186,17 @@ function mgCountSaid(line) {
  * figures and what is unaccounted, named and figured as the receipt prints
  * them. The receipt itself is read as it is reached; said whole on every
  * paint, it was every line of it.
+ * Then the statement's caveats, each on a line of its own (sayAloud says them
+ * as sentences), as the card prints them under the receipt: a scan that did
+ * not start at the volume leaves everything else on it in Unaccounted, and
+ * said bare, that figure was heard as space nobody can explain (review F2.1,
+ * F2.2).
  */
 function mgSaid(d) {
   const vol = d.volume.mountPoint === '/' ? 'This disk' : d.volume.mountPoint;
   const left = d.lines.find((l) => l.id === 'unaccounted');
   const residual = left && left.bytes !== null ? ` ${left.label}: ${left.bytes < 0 ? '−' : ''}${formatBytes(Math.abs(left.bytes))}.` : '';
-  return `${vol}: ${formatBytes(d.volume.usedBytes)} used of ${formatBytes(d.volume.totalBytes)}.${residual}`;
+  return [`${vol}: ${formatBytes(d.volume.usedBytes)} used of ${formatBytes(d.volume.totalBytes)}.${residual}`, ...d.caveats].join('\n');
 }
 
 function renderMissing() {
