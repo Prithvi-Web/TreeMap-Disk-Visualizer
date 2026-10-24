@@ -744,7 +744,7 @@ test('the Clean Up cart, its Settings target and the Clean Up tabs say it in the
   assert.ok(/\{ label: 'Empty the Clean Up cart', /.test(INDEX), 'the palette\'s action');
   assert.ok(INDEX.includes("<button data-act=\"cart\">${icon(inCart ? 'check' : 'cart', 15)}${inCart ? 'Remove from Clean Up cart' : 'Add to Clean Up cart'}</button>"),
     'the right-click menu\'s cart entry, as every cart toggle says it (review F1.3)');
-  for (const tab of ['Custom rules', 'Smart suggestions', 'Empty folders', 'Shrink video', 'Cloud-safe']) {
+  for (const tab of ['Custom rules', 'Smart suggestions', 'Empty folders', 'Shrink video', 'Online-only files']) {
     assert.ok(new RegExp(`data-pane="\\w+"(?: id="\\w+" hidden)?><span data-icon="[\\w-]+"></span>${tab}</button>`).test(INDEX), `the Clean Up tab "${tab}"`);
   }
   assert.ok(/data-dupmode="near"><span data-icon="image"><\/span>Near-duplicate images<\/button>/.test(INDEX), 'the Duplicates mode');

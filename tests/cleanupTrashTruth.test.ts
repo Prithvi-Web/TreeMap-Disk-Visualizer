@@ -83,7 +83,7 @@ async function cloudSafeSaid(groups: Array<{ provider: string; count: number; to
 
 const FILE = { name: 'a.mov', path: '/u/iCloud/a.mov', size: 1000, modifiedAt: 1 };
 
-test('the Cloud-safe tab never calls removing an online-only file safe, and says deleting one deletes it from its cloud too (C03/C13)', async () => {
+test('the online-only files tab never calls removing an online-only file safe, and says deleting one deletes it from its cloud too (C03/C13)', async () => {
   const one = await cloudSafeSaid([{ provider: 'icloud', count: 1, totalSize: 1000, files: [FILE] }]);
   assert.match(one, /a\.mov/, 'control: the rows are painted');
   assert.doesNotMatch(one, /\bsafe\b/i, `no safety claim: ${one}`);
@@ -99,6 +99,13 @@ test('the Cloud-safe tab never calls removing an online-only file safe, and says
   assert.match(two, /removes it from the cloud service it syncs with too/, 'more than one provider: the sentence names none wrongly');
   const generic = await cloudSafeSaid([{ provider: 'cloud', count: 1, totalSize: 1000, files: [FILE] }]);
   assert.match(generic, /removes it from the cloud service it syncs with too/, 'an unnamed provider is not called "Cloud"');
+});
+
+test('the tab that opens the online-only files is named for what they are, never "safe" (review F1.7/F1.19)', () => {
+  const tab = /<button role="tab"[^>]* id="cleanTabCloud"[^>]*>(?:<span data-icon="[\w-]+"><\/span>)?([^<]+)<\/button>/.exec(INDEX)?.[1] ?? '';
+  assert.notEqual(tab, '', 'control: the tab\'s label is read');
+  assert.doesNotMatch(tab, /safe/i, `the label makes no safety claim over a pane that says deleting removes them from the cloud: ${tab}`);
+  assert.equal(tab, 'Online-only files', 'it names what is listed, in sentence case');
 });
 
 test('the Dashboard\'s cloud row claims nothing about safety (C13)', () => {
