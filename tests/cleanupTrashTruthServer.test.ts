@@ -20,7 +20,7 @@ import { readProvenance } from '../src/services/provenanceTracker';
 import { parse } from '../src/services/query/parse';
 import {
   linuxTrashLocations, windowsTrashNote, recycleInfoOriginalName, listAccountBin, resolveTrashLocations, getTrashInfo, clearFreedesktopTrash, liveDriveTrashFs,
-  parseWindowsTrashDrives, WINDOWS_TRASH_DRIVES_SCRIPT,
+  parseWindowsTrashDrives, WINDOWS_TRASH_DRIVES_SCRIPT, runTrashEmptiers, emptyTrashCommands,
 } from '../src/services/trash';
 import type { EmptyTrashResult } from '../src/services/trash';
 import { setCopyFaultForTests } from '../src/utils/copyVerify';
@@ -347,6 +347,37 @@ test('the Linux Trash never reads or empties through a link on a drive: a linked
     assert.deepEqual(fs.readdirSync(path.join(root, 'victim-f')), ['precious.txt'], 'nor a linked info folder');
     assert.deepEqual(fs.readdirSync(cFiles), ['x.txt'], 'a .Trash without the sticky bit is not a Trash (the freedesktop spec)');
     assert.deepEqual(fs.readdirSync(nFiles), ['n.txt'], 'a network drive is never looked in');
+  } finally {
+    await fsp.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('on Linux without gio, the freedesktop fallback that empties the Trash clean is an emptied Trash, with no failure left over from gio (HC-L3)', { skip: POSIX_ONLY }, async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'treemap-hcl3-'));
+  try {
+    const files = path.join(root, 'Trash', 'files');
+    fs.mkdirSync(files, { recursive: true });
+    fs.mkdirSync(path.join(root, 'Trash', 'info'));
+    fs.writeFileSync(path.join(files, 'old.bin'), Buffer.alloc(3000));
+    fs.writeFileSync(path.join(root, 'Trash', 'info', 'old.bin.trashinfo'), 'i');
+    const locate = async () => ({ dirs: [files], problems: [], note: null } as unknown as Awaited<ReturnType<typeof resolveTrashLocations>>);
+    const noGio = async (cmd: string): Promise<void> => { throw new Error(`spawn ${cmd} ENOENT`); };
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      const clean = await runTrashEmptiers(emptyTrashCommands('linux'), noGio, (failed) => clearFreedesktopTrash(failed, locate));
+      assert.deepEqual(clean, { ran: true, failed: [] }, 'the fallback emptied it: gio\'s absence is no failure');
+      assert.deepEqual(fs.readdirSync(files), [], 'and the Trash is empty');
+      // Control: a fallback that fails keeps both failures, and is no emptied Trash.
+      const both = await runTrashEmptiers(emptyTrashCommands('linux'), noGio, async (failed) => { failed.push({ location: files, reason: 'Permission denied' }); });
+      assert.deepEqual(both, { ran: false, failed: [{ location: 'gio', reason: "the system's own Trash emptier did not run" }, { location: files, reason: 'Permission denied' }] });
+      // Control: gio that runs is the emptier, and no fallback runs.
+      let fallbacks = 0;
+      const gio = await runTrashEmptiers(emptyTrashCommands('linux'), async () => {}, async () => { fallbacks++; });
+      assert.deepEqual({ ...gio, fallbacks }, { ran: true, failed: [], fallbacks: 0 });
+    } finally {
+      console.warn = warn;
+    }
   } finally {
     await fsp.rm(root, { recursive: true, force: true });
   }

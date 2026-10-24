@@ -608,6 +608,39 @@ export async function clearFreedesktopTrash(failed: EmptyTrashResult['failed'], 
 }
 
 /**
+ * Run the platform's emptiers in turn until one runs, then — on Linux, when none did — the
+ * freedesktop fallback, and say whether anything emptied the Trash and what failed.
+ *
+ * The fallback is what actually empties the Trash on a Linux box without `gio`, so it has to report
+ * that it ran: leaving `ran` false there made a successful empty come back as `{ emptied: false,
+ * freedBytes: 6144 }`. And a fallback that ran clean makes gio's absence no failure (HC-L3): its
+ * entry stayed in `failed`, so the same clean empty still came back `emptied: false`, toasted as an
+ * error and audited as a partial failure. A fallback that failed keeps both.
+ */
+export async function runTrashEmptiers(
+  commands: { cmd: string; args: string[] }[],
+  run: (cmd: string, args: string[]) => Promise<void>,
+  fallback: ((failed: EmptyTrashResult['failed']) => Promise<void>) | null,
+): Promise<{ ran: boolean; failed: EmptyTrashResult['failed'] }> {
+  const failed: EmptyTrashResult['failed'] = [];
+  for (const { cmd, args } of commands) {
+    try {
+      await run(cmd, args);
+      return { ran: true, failed };
+    } catch (err) {
+      // The page prints this after "Emptied X, but …", so it is a sentence;
+      // the command's own output goes to the terminal, where it can be read.
+      console.warn(`[treemap] ${cmd} could not empty the Trash:`, err instanceof Error ? err.message : err);
+      failed.push({ location: cmd, reason: "the system's own Trash emptier did not run" });
+    }
+  }
+  if (!fallback) return { ran: false, failed };
+  const fallbackFailed: EmptyTrashResult['failed'] = [];
+  await fallback(fallbackFailed);
+  return fallbackFailed.length === 0 ? { ran: true, failed: [] } : { ran: false, failed: [...failed, ...fallbackFailed] };
+}
+
+/**
  * Empty the system Trash / Recycle Bin via the platform's native mechanism.
  * Irreversible — the API route requires an explicit confirm flag before this
  * runs. Freed bytes are measured (before minus after), not assumed, so partial
@@ -632,7 +665,7 @@ export async function emptyTrash(): Promise<EmptyTrashResult> {
     return { emptied: true, verified: true, freedBytes: 0, itemCount: 0, failed: [] };
   }
 
-  const failed: EmptyTrashResult['failed'] = [];
+  let failed: EmptyTrashResult['failed'] = [];
   let ran = false;
 
   // Under the override this is a directory the caller owns, not the system
@@ -644,28 +677,8 @@ export async function emptyTrash(): Promise<EmptyTrashResult> {
     await clearDirectoryContents(override, failed);
     ran = failed.length === 0;
   } else {
-  for (const { cmd, args } of emptyTrashCommands()) {
-    try {
-      await runArgv(cmd, args);
-      ran = true;
-      break;
-    } catch (err) {
-      // The page prints this after "Emptied X, but …", so it is a sentence;
-      // the command's own output goes to the terminal, where it can be read.
-      console.warn(`[treemap] ${cmd} could not empty the Trash:`, err instanceof Error ? err.message : err);
-      failed.push({ location: cmd, reason: "the system's own Trash emptier did not run" });
-    }
-  }
-  if (!ran && process.platform !== 'darwin' && process.platform !== 'win32') {
-    // The freedesktop fallback is what actually empties the Trash on a Linux
-    // box without `gio`, so it has to report that it ran. Leaving `ran` false
-    // there made a successful empty come back as
-    // `{ emptied: false, freedBytes: 6144 }` — a result that contradicts
-    // itself, on a platform in this repo's CI matrix and its own Dockerfile.
-    const before = failed.length;
-    await clearFreedesktopTrash(failed);
-    ran = failed.length === before;
-  }
+    const linux = process.platform !== 'darwin' && process.platform !== 'win32';
+    ({ ran, failed } = await runTrashEmptiers(emptyTrashCommands(), runArgv, linux ? (f) => clearFreedesktopTrash(f) : null));
   }
 
   const after = await getTrashInfo();
