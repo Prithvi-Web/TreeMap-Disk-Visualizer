@@ -1274,9 +1274,9 @@ read-what-you-saw) permission to act.
   inside it refuses alike — and a folder holding one that a completed scan
   lists inside it. Each path is judged where it lives, as the scanned-root
   rule judges it — the links in its folders followed, on macOS's Data
-  volume spelling too, and its names compared as a file system folds them
-  (another case, `ſ` for `s`) — and so is a scan's root, however it was
-  typed. A rule whose advice is about its folder itself
+  volume spelling too, and its names compared as a file system may fold
+  them (another case, `ſ` for `s`), which only refuses more — and so is a
+  scan's root, however it was typed. A rule whose advice is about its folder itself
   (`adviceCovers: "folder"` in its pack: Windows' Temp folder, which
   programs expect to exist) refuses only that folder and a folder holding
   it, never a file or folder in it. While a rule pack cannot be read it

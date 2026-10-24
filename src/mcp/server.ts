@@ -734,8 +734,8 @@ export function buildMcpServer(): McpServer {
         'must never be trashed — its files are data (a VM disk) or the operating system\'s; reclaim that space with ' +
         'its adviceCommand instead, and trash_paths refuses its paths (ADVISORY_PATH). totalBytes counts only the ' +
         'other groups, and advisoryBytes the advice-only ones. Items of the other groups lie inside the scanned root ' +
-        'and can be passed to trash_paths, unless the scan was rooted inside an advice-only folder, whose contents ' +
-        'trash_paths refuses. itemCount is every match; items lists at most itemsPerGroup of them, and ' +
+        'and can be passed to trash_paths, unless the scan was rooted inside an advice-only folder whose advice covers ' +
+        'what it holds (Docker\'s VM folder, not Windows\' Temp folder): trash_paths refuses those. itemCount is every match; items lists at most itemsPerGroup of them, and ' +
         'itemsTruncated says when there are more.',
       inputSchema: {
         scanId: z.string().min(1).describe('A completed scan from scan_path'),
