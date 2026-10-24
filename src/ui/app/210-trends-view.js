@@ -2,6 +2,9 @@
 async function loadTrends() {
   try {
     const { roots } = await api('/api/snapshots');
+    // Left meanwhile (leftover HE-L2): the unmount destroyed the chart handles, and drawing now would
+    // build new ones in the hidden view. The next visit's mount loads afresh.
+    if (state.view !== 'trends') return;
     state.trends.roots = roots;
     const sel = $('trendRoot');
     // No history at all: what Trends will show and the action that starts it,
@@ -88,7 +91,8 @@ async function labelTrendForecast(path, seq) {
   let f;
   try { f = await api('/api/forecast?path=' + encodeURIComponent(path)); }
   catch { return; }
-  if (seq !== trendInfoSeq || state.trends.path !== path) return; // a newer load owns the view
+  // A newer load owns the view, or the view was left (leftover HE-L2, as loadTrendData's hunt C83 guard).
+  if (seq !== trendInfoSeq || state.trends.path !== path || state.view !== 'trends') return;
   // The chart's dashed tail rides this same answer AND this same rate — one
   // number, so the line and the date can never tell different stories — and a
   // changed rate is a changed slope, so it repaints before anything else.

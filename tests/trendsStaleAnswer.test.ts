@@ -146,3 +146,67 @@ test('the last-change list drops a comparison answer for a folder no longer show
   await running;
   assert.equal(host.innerHTML, 'before', 'folder /a\'s deltas are not written under folder /b');
 });
+
+/** labelTrendForecast over stand-ins, its /api/forecast answer pending until the test settles it (leftover HE-L2). */
+function forecastHarness() {
+  const pending = deferred<Record<string, unknown>>();
+  const drawn: string[] = [];
+  const info = { textContent: 'latest: 111 B · 7 files' };
+  const state = { view: 'trends', trends: { path: '/a', snapshots: [snap('a1', 1)] as unknown[], forecastRate: null as number | null } };
+  const deps: Record<string, unknown> = {
+    $: () => info, state, api: () => pending.promise,
+    drawTrendChart: () => drawn.push(`chart:${state.trends.forecastRate}`), formatDate: (t: number) => `d${t}`,
+  };
+  const keys = Object.keys(deps);
+  const label = new Function(...keys, `let trendInfoSeq = 1;\n${decl('labelTrendForecast')}\nreturn labelTrendForecast;`)(...keys.map((k) => deps[k])) as (p: string, seq: number) => Promise<void>;
+  return { pending, drawn, info, state, label };
+}
+
+const GROWING = { status: 'ok', bytesPerDay: 5000, fullInDays: 30, basis: 'volume' };
+
+test('a forecast answer that lands after Trends was left draws no chart in the hidden view and says nothing (leftover HE-L2)', async () => {
+  const h = forecastHarness();
+  const running = h.label('/a', 1);
+  h.state.view = 'dashboard'; // left before /api/forecast answered: the unmount destroyed the chart handle
+  h.pending.resolve(GROWING);
+  await running;
+  assert.deepEqual(h.drawn, [], 'no chart handle is built in a view that is not open');
+  assert.equal(h.state.trends.forecastRate, null, 'and the dropped answer\'s rate is not kept');
+  assert.equal(h.info.textContent, 'latest: 111 B · 7 files', 'nor is a date added to the line');
+});
+
+test('in the view still open, the same answer draws the dashed tail and adds the date (leftover HE-L2)', async () => {
+  const h = forecastHarness();
+  const running = h.label('/a', 1);
+  h.pending.resolve(GROWING);
+  await running;
+  assert.deepEqual(h.drawn, ['chart:5000']);
+  assert.match(h.info.textContent, /· at current growth, disk full ~d\d+$/, h.info.textContent);
+});
+
+test('an empty history that lands after Trends was left draws nothing in the hidden view (leftover HE-L2)', async () => {
+  const pending = deferred<{ roots: unknown[] }>();
+  const drawn: string[] = [];
+  const els: Record<string, Record<string, unknown>> = {};
+  const state = { view: 'trends', root: null, trends: { path: null, roots: [] as unknown[], snapshots: [] as unknown[] } };
+  const deps: Record<string, unknown> = {
+    $: (id: string) => (els[id] ??= {}), state, api: () => pending.promise,
+    drawTrendChart: () => drawn.push('chart'), drawTrendNet: () => drawn.push('net'), loadTrendData: async () => { drawn.push('load'); },
+    escapeHtml: (s: unknown) => String(s), toast: (m: string) => drawn.push(`toast:${m}`),
+  };
+  const keys = Object.keys(deps);
+  const loadTrends = new Function(...keys, `${decl('loadTrends')}\nreturn loadTrends;`)(...keys.map((k) => deps[k])) as () => Promise<void>;
+  const running = loadTrends();
+  state.view = 'dashboard';
+  pending.resolve({ roots: [] });
+  await running;
+  assert.deepEqual(drawn, [], 'no chart or strip is drawn for a view that is not open');
+  state.view = 'trends';
+  const shown = deferred<{ roots: unknown[] }>();
+  deps.api = () => shown.promise;
+  const again = new Function(...keys, `${decl('loadTrends')}\nreturn loadTrends;`)(...keys.map((k) => deps[k])) as () => Promise<void>;
+  const open = again();
+  shown.resolve({ roots: [] });
+  await open;
+  assert.deepEqual(drawn, ['chart', 'net'], 'in the view still open, the empty history is drawn as ever');
+});
