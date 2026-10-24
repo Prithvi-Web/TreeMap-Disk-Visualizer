@@ -336,10 +336,13 @@ function setTreemapView(mode) {
     // highlights none — was said of the renderer just left (hunt C20). A
     // grammar query is asked again; a plain word is the page's own filter,
     // asked of no server, and its words follow the renderer too (review F1.8).
+    // Not over text typed since, which its own debounce applies: applying the
+    // older text cancelled that debounce, and the box showed one query while
+    // the map showed another. Whatever applies a query puts it in the box first.
     const q = state.treemap.query;
     if (q && q.trim() && load && typeof load.then === 'function') {
       load.then(() => {
-        if (state.view === 'treemap' && state.treemap.mode === mode && state.treemap.query === q) tmApplyQuery(q);
+        if (state.view === 'treemap' && state.treemap.mode === mode && state.treemap.query === q && $('tmSearch').value === q) tmApplyQuery(q);
       }).catch(() => {});
     }
   }

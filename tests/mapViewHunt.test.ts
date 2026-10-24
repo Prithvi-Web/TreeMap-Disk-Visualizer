@@ -276,10 +276,11 @@ test('C20 (review F1.3): over the sunburst the box advises switching renderer on
 });
 
 /** The real setTreemapView, switching renderer under a grammar query whose answer is on screen. */
-async function switchRenderer(to: string, query: { mode: string; text: string }) {
+async function switchRenderer(to: string, query: { mode: string; text: string }, typedDuringLoad?: string) {
   const asked: string[] = [];
-  const el = () => ({ disabled: false, hidden: false, textContent: '', querySelectorAll: () => [], setAttribute() {}, classList: { toggle() {}, add() {}, remove() {} } });
+  const el = () => ({ disabled: false, hidden: false, textContent: '', value: '', querySelectorAll: () => [], setAttribute() {}, classList: { toggle() {}, add() {}, remove() {} } });
   const els: Record<string, ReturnType<typeof el>> = {};
+  els.tmSearch = { ...el(), value: query.text }; // the box holds the query applied
   const state = {
     view: 'treemap', lens: { held: false },
     treemap: { mode: 'treemap', rootPath: '/r', history: { active: false }, altZoomRaf: 0, altZoom: null, cells: [], altNote: '', hover: null, queryMode: query.mode, query: query.text },
@@ -294,6 +295,7 @@ async function switchRenderer(to: string, query: { mode: string; text: string })
   };
   const setTreemapView = load<(m: string) => void>(['setTreemapView'], deps, 'setTreemapView');
   setTreemapView(to);
+  if (typedDuringLoad !== undefined) els.tmSearch.value = typedDuringLoad; // typed while the new renderer loaded: its debounce is out
   for (let i = 0; i < 5; i++) await Promise.resolve(); // the load's landing
   return { asked, els };
 }
@@ -305,6 +307,10 @@ test('C20: switching renderer under a grammar query asks it again, so the box sp
   assert.deepEqual((await switchRenderer('sunburst', { mode: 'bare', text: 'movie' })).asked, ['movie']);
   assert.deepEqual((await switchRenderer('treemap', { mode: 'bare', text: 'movie' })).asked, ['movie']);
   assert.deepEqual((await switchRenderer('sunburst', { mode: 'grammar', text: '  ' })).asked, [], 'nothing typed, nothing asked');
+  // Text typed while the new renderer loaded is applied by its own debounce: applying the older text then cancelled it,
+  // leaving the box showing one query and the map another.
+  assert.deepEqual((await switchRenderer('sunburst', { mode: 'grammar', text: 'size>1gb' }, 'size>1gb ext:mov')).asked, [], 'never the older text over newer typing');
+  assert.deepEqual((await switchRenderer('treemap', { mode: 'bare', text: 'movie' }, 'movies')).asked, []);
 });
 
 /** The real tmApplyQuery with `raw` typed, over `mode`: what the box says, and whether anything was asked of the server. */
