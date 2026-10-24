@@ -425,3 +425,21 @@ test('a failed read of the saved budgets saves nothing — never this scan\'s bu
   ) as () => Promise<unknown>;
   await assert.rejects(read(), /stopped answering/, 'the failure reaches commitBudget and removeBudget, which say "Could not save budget" and write nothing');
 });
+
+test('a failed read of the saved budgets under the saved index\'s tree claims nothing and rejects nothing: loadBudgets is called without waiting, and after a save that went through (review F1.10)', async () => {
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const lift = (decl: string): string => {
+    const at = page.indexOf(decl);
+    assert.notEqual(at, -1, `${decl} is in the page`);
+    return page.slice(at, page.indexOf('\n}\n', at) + 2);
+  };
+  const src = `let loadBudgetsSeq = 0;\n${lift('async function loadBudgets(')}\n${lift('async function currentSavedBudgets(')}`;
+  const state = { root: { path: '/r' }, budgets: { list: [{ path: '/x', maxBytes: 1 }], saved: undefined as unknown, overPaths: new Set(), gauges: new Map() } };
+  let painted = 0;
+  const load = new Function('api', 'state', 'treeScanId', 'renderBudgetWidget', `${src}; return loadBudgets;`)(
+    async () => { throw new Error('the server stopped answering'); }, state, () => null, () => { painted++; },
+  ) as () => Promise<void>;
+  await load();
+  assert.equal(painted, 1, 'control: the no-scan branch ran');
+  assert.equal(state.budgets.saved, null, 'nothing is claimed about the saved budgets');
+});

@@ -33,7 +33,11 @@ async function loadBudgets() {
     // scan stands behind the tree (review F2.1).
     const seq = ++loadBudgetsSeq;
     state.budgets.saved = null;
-    const saved = await currentSavedBudgets();
+    // A failed read claims nothing and rejects nothing (review F1.10): this load runs without being
+    // waited on, and after a save that went through, which must not then be called a failed save.
+    // Only commitBudget's and removeBudget's own read refuses (C80).
+    let saved;
+    try { saved = await currentSavedBudgets(); } catch { return; }
     if (seq !== loadBudgetsSeq || treeScanId()) return;
     state.budgets.saved = saved;
     return;
@@ -291,23 +295,41 @@ $('budgetRemoveBtn').addEventListener('click', () => { if (budgetTarget) removeB
  */
 function noteFor(path) { return state.notes.get(path) || null; }
 
+/** True while the last read of the notes failed: the note sheet reads them again before it opens (review F1.18). */
+let notesUnread = false;
+
+/** Read the notes into state.notes; the error when the read failed, else null. */
 async function loadNotes() {
   try {
     const data = await api('/api/notes');
     state.notes = new Map((data.notes || []).map((n) => [n.path, n]));
+    notesUnread = false;
+    return null;
   } catch (e) {
     // No server-side notes is a fine state to boot in; the editor will say
     // so the moment a save fails for a real reason. A notes.json the server
     // cannot read is said now (the hunt, C05): the page would otherwise show
     // no notes and no pauses while every pause the file holds still applies.
     state.notes = new Map();
+    notesUnread = true;
     if (e && e.code === 'NOTES_UNREADABLE') toast(e.message, 'error');
+    return e;
   }
 }
 
 let noteTarget = null;
-function openNoteDialog(node) {
+async function openNoteDialog(node) {
   if (!node) return;
+  // After a failed read the notes are read again first (review F1.18): the page held none, so the
+  // sheet opened blank over a note it never saw and Save wrote over it. Still unreadable, the sheet
+  // does not open; loadNotes said why, or it is said here.
+  if (notesUnread) {
+    const failed = await loadNotes();
+    if (failed) {
+      if (failed.code !== 'NOTES_UNREADABLE') toast('Could not read your notes: ' + failed.message, 'error');
+      return;
+    }
+  }
   noteTarget = node;
   const existing = noteFor(node.path);
   $('noteFolderName').textContent = node.name || node.path;

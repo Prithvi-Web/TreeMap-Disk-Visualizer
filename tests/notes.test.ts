@@ -765,6 +765,38 @@ test('a notes.json that parses but is not the store TreeMap writes is unreadable
   }
 });
 
+test('after notes that could not be read, the note sheet reads them again before it opens — never blank over a note the page never saw — and does not open while they still cannot be read (review F1.18)', async () => {
+  const at = INDEX_HTML.indexOf('function noteFor(path)');
+  const src = INDEX_HTML.slice(at, INDEX_HTML.indexOf('async function commitNote', at));
+  const els: Record<string, any> = {};
+  const $ = (id: string) => (els[id] ??= { value: '', checked: false, textContent: '', title: '', style: { display: 'none' }, opened: 0, classList: { add() { els[id].opened++; } }, focus() {} });
+  const answers: Array<() => Promise<unknown>> = [];
+  const toasts: string[] = [];
+  const unreadable = () => Promise.reject(Object.assign(new Error('notes.json could not be read'), { code: 'NOTES_UNREADABLE' }));
+  const state = { notes: new Map() };
+  const page = new Function('$', 'state', 'api', 'toast', 'setTimeout', `${src}; return { loadNotes, openNoteDialog };`)(
+    $, state, () => answers.shift()!(), (m: string) => toasts.push(m), () => undefined,
+  ) as { loadNotes: () => Promise<unknown>; openNoteDialog: (n: unknown) => Promise<void> };
+  const folder = { path: '/Users/x/archive', name: 'archive' };
+
+  answers.push(unreadable);
+  await page.loadNotes();
+  assert.equal(toasts.length, 1, 'control: the boot read failed and said why');
+
+  answers.push(unreadable);
+  await page.openNoteDialog(folder);
+  assert.equal($('noteModal').opened, 0, 'still unreadable: the sheet does not open, so Save cannot write over a note it never showed');
+
+  answers.push(async () => ({ notes: [{ path: folder.path, text: 'client archive, keep', suppress: false }] }));
+  await page.openNoteDialog(folder);
+  assert.equal($('noteModal').opened, 1, 'repaired: the sheet opens');
+  assert.equal($('noteText').value, 'client archive, keep', 'with the note the page now has');
+  assert.equal($('noteSuppress').checked, false, 'and its pause choice');
+  assert.equal($('noteRemoveBtn').style.display, '', 'and Remove offered');
+  await page.openNoteDialog(folder);
+  assert.equal($('noteModal').opened, 2, 'read once repaired, the sheet opens again without asking again');
+});
+
 test('the page says why the notes could not be read, rather than booting with none (hunt C05)', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'ui', 'app', '160-folder-budgets.js'), 'utf8');
   const body = src.slice(src.indexOf('async function loadNotes'), src.indexOf('let noteTarget'));
