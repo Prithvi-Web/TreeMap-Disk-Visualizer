@@ -220,9 +220,27 @@ test('a file written to while its copy streamed: the copy, which may mix old and
   assert.doesNotMatch(job.error ?? '', /as it was then/, 'never said to hold the file as it was');
   assert.match(job.error ?? '', /Its other verified copies stand at /, job.error);
   assert.equal(fs.existsSync(path.join(dest, 'proj', 'db.bin')), false, 'the torn copy is not left at the destination');
+  assert.deepEqual(fs.readdirSync(path.join(dest, 'proj')), ['b.txt'], 'the folder holding the other verified copy stays (leftover HE-L7)');
   const entries = (await getOffloadIndex()).entries.filter((e) => e.originalPath.startsWith(proj + path.sep));
   assert.deepEqual(entries.map((e) => path.basename(e.originalPath)), ['b.txt'], 'only the copy that verified whole is recorded for Restore');
   assert.ok(entries.every((e) => e.originalKept === true), 'as a copy whose original stayed');
+});
+
+test('a folder made at the destination for a copy that was removed is removed with it, deepest first, while one holding a copy stays (leftover HE-L7)', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-offloadOriginalChanged-tornonly-'));
+  const proj = path.join(root, 'proj');
+  const data = path.join(proj, 'data');
+  fs.mkdirSync(data, { recursive: true });
+  const db = path.join(data, 'db.bin');
+  fs.writeFileSync(db, Buffer.alloc(300_000, 0x41));
+  const scan = createScanRecord(root);
+  scan.status = 'complete';
+  scan.root = dirNode(root, [dirNode(proj, [dirNode(data, [fileNode(db)])])]);
+  const { job, dest, trashed } = await offloadEditedMidCopy('tornonly', scan, [proj], db);
+  assert.equal(job.status, 'complete', job.error);
+  assert.deepEqual(trashed, [], 'the folder was not handed to the Trash');
+  assert.match(job.error ?? '', /proj was left in place: data[\\/]db\.bin changed while it was being copied/, job.error);
+  assert.deepEqual(fs.readdirSync(dest).filter((n) => n !== 'treemap-offload-manifest.json'), [], 'no empty folder is left at the destination');
 });
 
 test('a file selected on its own and written to while it was copied stays, with no copy standing for it', async () => {

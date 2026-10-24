@@ -1218,6 +1218,28 @@ async function changedWhileCopied(src: string, look: SourceLook): Promise<'chang
   return now.ctimeNs !== look.ctimeNs ? 'may have changed' : null;
 }
 
+/**
+ * Each folder this job made at the destination on the way to `dests` that holds nothing now, removed
+ * deepest first (leftover HE-L7): a copy removed because its original changed while it was copied left
+ * the folder made for it standing empty, unsaid, and the next offload of the same folder was renamed
+ * around it ("proj (offloaded 2)"). Never a folder that was there before (`createdDirs` holds the
+ * outermost each mkdir made, so every folder from there down was made by this job), and never one
+ * holding anything: rmdir, not rm, and a folder it cannot remove stays as it is.
+ */
+async function removeEmptiedDirs(dests: readonly string[], createdDirs: readonly string[]): Promise<void> {
+  const made = new Set(createdDirs);
+  const dirs = new Set<string>();
+  for (const dest of dests) {
+    for (let dir = path.dirname(dest); isUnder(dir, made); dir = path.dirname(dir)) {
+      dirs.add(dir);
+      if (made.has(dir)) break;
+    }
+  }
+  for (const dir of [...dirs].sort((a, b) => b.length - a.length)) {
+    await fsp.rmdir(dir).catch(() => undefined);
+  }
+}
+
 async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string[], destDir: string, listed: ListedSelection): Promise<void> {
   const createdFiles: string[] = [];
   let createdDirs: string[] = [];
@@ -1280,6 +1302,9 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       results.push({ src: item.src, dest: item.dest, size: st.size, hash, meta, hardLinked: look.nlink > 1n });
       job.filesDone++;
     }
+
+    // A folder made for copies that were removed is removed too (leftover HE-L7).
+    if (torn.size > 0) await removeEmptiedDirs(plan.filter((c) => torn.has(c.src)).map((c) => c.dest), createdDirs);
 
     // Every copy verified — only now do the local originals go to the Trash.
     job.phase = 'trashing';

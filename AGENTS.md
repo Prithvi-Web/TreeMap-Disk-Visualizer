@@ -644,7 +644,8 @@ OpenAPI 3 spec).
      Each file is also looked at the moment its copy ends: one that changed,
      or may have, while it was being copied has a copy that matches what was
      read — so it verifies — but may mix old and new, so that copy is removed
-     and never recorded for Restore, and its item stays.
+     and never recorded for Restore, and its item stays; a folder the job
+     made at the destination that holds no copy then is removed too.
      Each copy keeps its original's modified and last-opened dates, to the
      millisecond, and, off Windows (which has no POSIX permission bits), its
      permission bits — left readable by this user, so Restore can always read
