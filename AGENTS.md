@@ -625,14 +625,17 @@ OpenAPI 3 spec).
      planned at the file's real size — as a second name selected on its own
      is, so the confirm, the free-space check and the byte cap see it — and
      Restore brings each back as a file of its own. One that gains a file
-     while the copies run is left in place, its verified copies standing and
-     recorded; so is any selected item holding a file that is not what was
-     copied by its own turn. Each item is looked at again right before its
-     trash step (no bytes are read): a file whose size, modified time or file
-     id moved, or that is gone from a selected folder, changed after its copy
-     was made — the copy holds it as it was then — and one whose change time
-     alone moved may have changed (a new permission or attribute moves it
-     too); either way the item stays, and the job's warning names the file.
+     while the copies run, or before its own trash step — while an earlier
+     item goes to the Trash — is left in place, its verified copies standing
+     and recorded; so is any selected item holding a file that is not what
+     was copied by its own turn. Each item is looked at again right before
+     its trash step (no bytes are read): a selected folder is listed again,
+     and one holding anything that was not copied stays; a file whose size,
+     modified time or file id moved, or that is gone from a selected folder,
+     changed after its copy was made — the copy holds it as it was then —
+     and one whose change time alone moved may have changed (a new
+     permission or attribute moves it too); either way the item stays, and
+     the job's warning names the file.
      A change time moved by this job itself — another name of the same file
      (a hard link) went on to its trash step before — is not read as one.
      Each file is also looked at the moment its copy ends: one that changed,

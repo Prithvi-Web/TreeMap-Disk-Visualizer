@@ -1138,6 +1138,8 @@ function metaMissSentence(misses: readonly string[], where: 'copies' | 'restored
 /** The codes of a selected item left in place by its look right before its trash step (hunt C06). */
 const ORIGINAL_CHANGED = 'OFFLOAD_ORIGINAL_CHANGED';
 const ORIGINAL_UNREADABLE = 'OFFLOAD_ORIGINAL_UNREADABLE';
+/** The code of a selected folder left in place because it held something not copied by its own turn (leftover HE-L1). */
+const FOLDER_GAINED = 'OFFLOAD_NOT_FULLY_LISTED';
 
 /** Each selected item's planned files, by the item (`topPaths`): a file selected on its own is its own one. */
 function plannedUnder(plan: readonly PlannedCopy[], topPaths: readonly string[]): Map<string, string[]> {
@@ -1275,7 +1277,8 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     job.currentPath = '';
     // Each selected folder is looked at once more (final review F1.5): what was made in it since the
     // plan was checked has no copy, and the folder goes to the Trash whole. Such a folder is left in
-    // place, its verified copies standing and recorded, as for an original something holds open.
+    // place, its verified copies standing and recorded, as for an original something holds open. Asked
+    // here so such a folder is not put to the open-file check; asked again at its own turn, below.
     const leftInPlace: { folder: string; at: string; why: string }[] = [];
     for (const folder of listed.folders) {
       const unlisted = await firstUnlisted(folder, listed.files);
@@ -1290,10 +1293,23 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     let trashed: { deleted: string[]; failed: { path: string; reason: string; code?: string }[] } = { deleted: [], failed: [] };
     // And each item once more at its own turn, right before its trash step (hunt C06): one holding a file
     // that is not what was copied is left in place, its verified copies standing and recorded.
+    // A selected folder is listed again then too (leftover HE-L1, HE-L5): the look above comes before
+    // the open-file check and every earlier item's trash step, and a file made in the folder after it
+    // went to the Trash with the folder and no copy, the job saying it was offloaded. As the Undo
+    // Vault's walk again right before an item's trash step (CAPSULE_CHANGED).
+    const folderSet = new Set(listed.folders);
+    const unlistedAtTurn = new Map<string, { at: string; why: string }>();
     try {
       // The files whose item went on to its trash step, by file rather than name (review F1.6).
       const sentOn = new Set<string>();
       const checkEach = async (top: string): Promise<{ reason: string; code: string } | null> => {
+        if (folderSet.has(top)) {
+          const unlisted = await firstUnlisted(top, listed.files);
+          if (unlisted !== null) {
+            unlistedAtTurn.set(top, unlisted);
+            return { code: FOLDER_GAINED, reason: `it now holds ${path.relative(top, unlisted.at) || path.basename(top)}, which was not copied` };
+          }
+        }
         const files = filesOf.get(top) ?? [];
         const verdict = await changedSinceCopy(top, files, looks, sentOn);
         if (verdict === null) for (const f of files) { const look = looks.get(f); if (look) sentOn.add(fileKeyOf(look)); }
@@ -1313,7 +1329,12 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       job.error = `${torn.size > 0 ? 'Everything else' : 'Everything'} was copied and verified to ${destDir}, but the originals are still here: ${err.message}`;
     }
     const changed = trashed.failed.filter((f) => f.code === ORIGINAL_CHANGED || f.code === ORIGINAL_UNREADABLE);
-    const failedToTrash = trashed.failed.filter((f) => !changed.includes(f));
+    // A folder that held something new by its own turn is said with those found before the first trash step.
+    for (const f of trashed.failed) {
+      const unlisted = f.code === FOLDER_GAINED ? unlistedAtTurn.get(f.path) : undefined;
+      if (unlisted !== undefined) leftInPlace.push({ folder: f.path, ...unlisted });
+    }
+    const failedToTrash = trashed.failed.filter((f) => !changed.includes(f) && f.code !== FOLDER_GAINED);
     if (failedToTrash.length) {
       // Copies are safe at the destination; report the leftovers honestly.
       job.error = `Offloaded ${everything}, but ${failedToTrash.length} original${failedToTrash.length === 1 ? '' : 's'} couldn't be moved to the Trash: ${failedToTrash[0].reason}`;

@@ -31,9 +31,12 @@ destinationsOnAnotherDrive(); // every destination here stands for another drive
 
 const FAKE_TRASH = fileTempDir('treemap-offloadUnlisted-trash-');
 const trashedPaths: string[] = [];
+/** Run inside the stand-in Trash step, right before it takes `p`; a test sets it and clears it. */
+let duringTrashStep: ((p: string) => void) | null = null;
 
 before(() => {
   setTrashStepForTests(async (p) => {
+    duringTrashStep?.(p);
     trashedPaths.push(p);
     fs.renameSync(p, path.join(FAKE_TRASH, `${trashedPaths.length}-${path.basename(p)}`));
   });
@@ -217,6 +220,33 @@ test('two of three folders gaining a file are both left in place, the first name
   assert.deepEqual(trashedPaths.slice(before), [projB], 'only the untouched folder went to the Trash');
   assert.ok(fs.existsSync(path.join(projA, 'a.txt')) && fs.existsSync(path.join(projC, 'a.txt')), 'both that gained a file are in place');
   assert.match(job.error ?? '', /projA was left in place \(and 1 more folder\): /, job.error);
+});
+
+test('a file made in a later selected folder while an earlier one goes to the Trash leaves that folder in place: each folder is listed again at its own turn (leftover HE-L1, HE-L5)', async () => {
+  const { folders: [projA, projB], scan } = projects('own-turn', ['projA', 'projB']);
+  const dest = fileTempDir('treemap-offloadUnlisted-own-turn-dest-');
+  const late = path.join(projB, 'made-while-trashing.txt');
+  // Past the one look at every folder before the first trash step: made by projA's own trash step.
+  duringTrashStep = (p) => {
+    if (p === projA && !fs.existsSync(late)) fs.writeFileSync(late, 'written while an earlier folder went to the Trash');
+  };
+  const before = trashedPaths.length;
+  let job: OffloadJob;
+  try {
+    job = await withOpenFileCheck('clear', async () => {
+      const prepared = await prepareOffload(scan, [projA, projB], dest);
+      return settled((await startOffload(scan, [projA, projB], dest, prepared)).jobId);
+    });
+  } finally {
+    duringTrashStep = null;
+  }
+  assert.equal(job.status, 'complete', job.error);
+  assert.deepEqual(trashedPaths.slice(before), [projA], 'the folder that gained a file was not handed to the Trash');
+  assert.ok(fs.existsSync(late) && fs.existsSync(path.join(projB, 'a.txt')), 'it is in place, the new file in it');
+  assert.match(job.error ?? '', /^projB was left in place: it now holds made-while-trashing\.txt, which was not copied \(it was made after the offload was planned\), so it was not moved to the Trash\. Its verified copies stand at /, job.error);
+  assert.ok(fs.existsSync(path.join(dest, 'projB', 'a.txt')), 'its verified copy stands at the destination');
+  const entry = (await getOffloadIndex()).entries.find((e) => e.originalPath === path.join(projB, 'a.txt'));
+  assert.equal(entry?.originalKept, true, 'and is recorded as a copy whose original stayed, never as space freed');
 });
 
 test('an OS junk file the scan did not list (.DS_Store) does not hold a folder back', async () => {
