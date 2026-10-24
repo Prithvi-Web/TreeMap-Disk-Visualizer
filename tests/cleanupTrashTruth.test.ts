@@ -289,6 +289,20 @@ test('Shrink video says each original was kept only when each was; a run whose o
   assert.match(failedEncoder.said, /^No file was replaced\./, `what is true of it is said: ${failedEncoder.said}`);
   assert.doesNotMatch(failedEncoder.said, /says where/, `its row does not say where the file is: ${failedEncoder.said}`);
   assert.doesNotMatch(failedEncoder.toasts.map((t) => t[0]).join(' | '), /where each file is/, 'nor does the toast');
+  assert.ok(failedEncoder.toasts.some(([m, k]) => k === 'error' && m === 'Nothing was replaced — see the list for why'),
+    `the toast points at the list for why: ${JSON.stringify(failedEncoder.toasts)}`);
+
+  // Every row the server writes that says where the files are keeps the pane's sentence and the toast's pointer (review
+  // F1.5): the Trash's report that left TreeMap unsure where the original is, and the original whose place another file
+  // took — each naming where the re-encoded file was kept (compressionAdvisor's encodeOne).
+  const unsure = 'The Trash reported: it is locked. TreeMap could not confirm whether the original is still at /v/a.mov, so the re-encoded file was kept at /v/.treemap-encode/encoded-1.mov. Look in the Trash before removing either. Nothing was lost.';
+  const taken = 'The original left /v/a.mov (the Trash reported: it is locked), and another file stands there now, so the re-encoded file was kept at /v/.treemap-encode/encoded-1.mov rather than put over it. Look in the Trash for the original. Nothing was lost.';
+  for (const [name, row] of [['unsure', unsure], ['taken', taken]] as const) {
+    const run = await encodeRun(['/v/a.mov']).complete({ results: [{ path: '/v/a.mov', ok: false, error: row }], savedBytes: 0 });
+    assert.match(run.said, /^No file was replaced\. Each one’s line below says where it is\./, `${name}: its row says where each file is, and the pane says so: ${run.said}`);
+    assert.ok(run.toasts.some(([m, k]) => k === 'error' && m === 'Nothing was replaced — see the list for where each file is'),
+      `${name}: and the toast points at the list for it: ${JSON.stringify(run.toasts)}`);
+  }
 });
 
 test('an encoder that failed, or wrote no file, kept the original, and Shrink video says so (HC-L1)', async () => {
