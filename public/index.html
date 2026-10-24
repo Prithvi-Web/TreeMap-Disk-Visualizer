@@ -4531,7 +4531,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
     <div class="tm-foot">
       <div id="tmLegend" class="tm-legend"></div>
       <span class="num" id="tmStatus"></span>
-      <span class="hint"><span data-icon="mouse"></span><span>click to drill in · drag to lasso (<span data-key="alt">⌥</span> freehand, <span data-key="mod">⌘</span> to unstage) · hold Z to magnify · Esc to go up</span></span>
+      <span class="hint"><span data-icon="mouse"></span><span>click to drill in<span id="tmHintFlat"> · drag to lasso (<span data-key="alt">⌥</span> freehand, <span data-key="mod">⌘</span> to unstage) · hold Z to magnify</span> · Esc to go up</span></span>
     </div>
     <!-- v4 §8.3 — the drive dock: drop the cart on a drive to offload -->
     <div class="drive-dock" id="tmDock" hidden aria-label="Connected drives — drop your cart on one to offload"></div>
@@ -26780,6 +26780,10 @@ function setTreemapView(mode) {
   if (mode === 'sunburst') { state.lens.held = false; lensSetPinned(false); }
   const lensBtn = $('tmLensToggle');
   if (lensBtn) lensBtn.disabled = mode === 'sunburst';
+  // The footer's hint offers the lasso and the Z lens only where they work:
+  // lassoAvailable() and the Z key both refuse the sunburst (hunt C28).
+  const flatHint = $('tmHintFlat');
+  if (flatHint) flatHint.hidden = mode === 'sunburst';
   lassoCancel();
   // Leaving a renderer drops what it drew. Otherwise the next hit test, cart
   // preview or lasso could answer with a shape that is no longer on screen.

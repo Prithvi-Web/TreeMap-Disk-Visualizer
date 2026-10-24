@@ -579,3 +579,16 @@ test('C27: the Grid\'s card offers no click to look inside — a click there pre
   const html = tooltipFor({ name: 'a.zip', path: '/r/a.zip', type: 'file', size: 5, modifiedAt: 0, container: 'zip' }, { view: 'grid' });
   assert.doesNotMatch(html, /look inside/);
 });
+
+/* ══════════════ C28 — the map's hint offers only what works in the renderer on screen ══════════════ */
+
+test('C28: in Sunburst the hint does not offer the lasso or the Z lens, which do nothing there; the other renderers keep them', async () => {
+  const flat = /<span id="tmHintFlat">([\s\S]*?)<\/span> · Esc to go up/.exec(MARKUP);
+  assert.ok(flat, 'the lasso and lens phrases stand in a span of their own');
+  const words = flat![1].replace(/<[^>]+>/g, '');
+  assert.equal(words, ' · drag to lasso (⌥ freehand, ⌘ to unstage) · hold Z to magnify');
+  for (const [mode, hidden] of [['sunburst', true], ['treemap', false], ['circles', false], ['voronoi', false]] as const) {
+    const { els } = await switchRenderer(mode, { mode: 'bare', text: '' });
+    assert.equal(els.tmHintFlat.hidden, hidden, `${mode}: ${hidden ? 'not offered — lassoAvailable() and the Z key refuse the sunburst' : 'offered'}`);
+  }
+});

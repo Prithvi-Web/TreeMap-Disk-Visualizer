@@ -303,6 +303,10 @@ function setTreemapView(mode) {
   if (mode === 'sunburst') { state.lens.held = false; lensSetPinned(false); }
   const lensBtn = $('tmLensToggle');
   if (lensBtn) lensBtn.disabled = mode === 'sunburst';
+  // The footer's hint offers the lasso and the Z lens only where they work:
+  // lassoAvailable() and the Z key both refuse the sunburst (hunt C28).
+  const flatHint = $('tmHintFlat');
+  if (flatHint) flatHint.hidden = mode === 'sunburst';
   lassoCancel();
   // Leaving a renderer drops what it drew. Otherwise the next hit test, cart
   // preview or lasso could answer with a shape that is no longer on screen.
