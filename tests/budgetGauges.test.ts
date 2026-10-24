@@ -388,6 +388,24 @@ test('a slow grower whose breach is years off says the folder will not reach its
   assert.doesNotMatch(String(flat.reason), /disk|fill-up/, String(flat.reason));
 });
 
+test('a folder whose size only jitters reads the same whichever way its noise leans — never "too erratic" when no breach of its budget is in sight (review F1.2, F1.9)', () => {
+  // Two noise patterns, each as measured and mirrored: the fitted slope is a few hundred bytes a day, up or down,
+  // with centuries of headroom. Rescaled past the disk's flat floor, a positive one met the forecast's fit-quality
+  // gate and read "too erratic to project honestly" for a folder that is not growing; its mirror read flat.
+  const cases = [
+    { at: 500_000_000, maxBytes: 1_000_000_000, jitter: [0, 40_000, -30_000, 20_000, -50_000, 10_000, -20_000, 30_000] },
+    { at: 1_000_000_000, maxBytes: 2_000_000_000, jitter: [0, 20_000, -20_000, 30_000, -10_000, 10_000] },
+  ];
+  for (const { at, maxBytes, jitter } of cases) {
+    for (const sign of [1, -1]) {
+      const series = jitter.map((j, i) => pt(jitter.length - 1 - i, at + sign * j));
+      const p = computeBudgetProjection({ path: '/b', maxBytes }, series[series.length - 1].v, series, NOW);
+      assert.equal(p.status, 'stable', `${sign > 0 ? 'as measured' : 'mirrored'} (${p.bytesPerDay} B/day): ${p.status}: ${p.reason}`);
+      assert.doesNotMatch(String(p.reason), /erratic/, String(p.reason));
+    }
+  }
+});
+
 test('the gauge row says "flat" only for a folder that is not growing (hunt C40)', () => {
   const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const at = page.indexOf('function shortProjectionReason(');

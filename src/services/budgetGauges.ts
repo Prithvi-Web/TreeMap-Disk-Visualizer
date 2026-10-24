@@ -209,8 +209,12 @@ export function computeBudgetProjection(
   // the headroom is — and a folder 1 MB from its budget, growing 500 KB a day, read "flat — no breach in
   // sight" two days from its breach (the hunt, C40). For a budget the series and its headroom are scaled
   // together past that floor, which changes no breach date and no fit quality, so every other gate is
-  // still the forecast's own: too erratic, shrinking, or years away.
-  const f = first.status === 'stable' && first.bytesPerDay > 0 && first.bytesPerDay < BUDGET_FLAT_FLOOR
+  // still the forecast's own: too erratic, shrinking, or years away. Only where its slope would breach
+  // within the forecast's horizon: past it, a folder whose size merely jitters — a slope of a few hundred
+  // bytes a day, up or down — met the fit-quality gate and read "too erratic" when its noise leaned up
+  // and flat when it leaned down (review F1.2, F1.9). Beyond it, the folder will not reach its budget for years.
+  const breachPlausible = first.bytesPerDay > 0 && headroom / first.bytesPerDay <= BUDGET_HORIZON_DAYS;
+  const f = first.status === 'stable' && breachPlausible && first.bytesPerDay < BUDGET_FLAT_FLOOR
     ? computeForecast(snaps.map((s) => ({ ...s, totalSize: s.totalSize * budgetScale(first.bytesPerDay) })),
       headroom * budgetScale(first.bytesPerDay), now)
     : first;
@@ -228,6 +232,9 @@ export function computeBudgetProjection(
 
 /** The forecast's own flat floor, in bytes a day (forecast.ts STABLE_BYTES_PER_DAY). */
 const BUDGET_FLAT_FLOOR = 1_048_576;
+
+/** The forecast's own horizon, in days (forecast.ts MAX_FORECAST_DAYS): a breach further off is "years away". */
+const BUDGET_HORIZON_DAYS = 3650;
 
 /** How far a slow folder's series is scaled so its slope clears the disk's flat floor (the hunt, C40). */
 function budgetScale(bytesPerDay: number): number {
