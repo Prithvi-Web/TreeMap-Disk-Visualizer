@@ -424,6 +424,11 @@ function createWindow(port) {
     if (mainWindow !== win) return;
     mainWindow = null;
     pendingCommand = null;
+    // The page that was scanning is gone: nothing runs for this queue now, and
+    // the folder it was handed may be asked for again — still "current", it
+    // was ignored, and the next window opened blank (review HA-L2). What
+    // waits is kept, for the next page.
+    scanQueue.reset();
   });
 }
 

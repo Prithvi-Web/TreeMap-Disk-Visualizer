@@ -915,6 +915,24 @@ test('main (C56): a folder dropped on the Dock, or opened with TreeMap, while th
   } finally { h.dispose(); }
 });
 
+test('main (review HA-L2): a window closed while it scans a folder the shell handed it lets that folder be asked for again — the new window scans it', async () => {
+  const dir = mkTmp();
+  const a = path.join(dir, 'a');
+  fs.mkdirSync(a);
+  const h = await loadMain({ dataDir: dir });
+  try {
+    await h.loadPage();
+    h.stub.app.emit('open-file', { preventDefault() {} }, a); // a dock drop: the shell hands it over
+    assert.deepEqual(h.win().webContents.on_channel('treemap:scan-path'), [a]);
+    contractPage(h).start();
+    h.win().close(); // ⌘W while it scans: the page that was scanning it is gone
+    h.stub.app.emit('open-file', { preventDefault() {} }, a); // dropped again
+    assert.equal(h.windows().length, 1, 'the drop opens a window');
+    await h.loadPage();
+    assert.deepEqual(h.win().webContents.on_channel('treemap:scan-path'), [a], 'and its page scans the folder — not a blank window with the request lost');
+  } finally { h.dispose(); }
+});
+
 test('main (C88): a second launch\'s relative folder is read against the directory it was launched from, not this process\'s', async () => {
   const dir = mkTmp();
   const proj = path.join(dir, 'proj');
