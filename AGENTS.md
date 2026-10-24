@@ -636,8 +636,10 @@ OpenAPI 3 spec).
      Each copy keeps its original's modified and last-opened dates, to the
      millisecond, and, off Windows (which has no POSIX permission bits), its
      permission bits — left readable by this user, so Restore can always read
-     it — and the record keeps them (a date as milliseconds, with any finer
-     part as a fraction), so Restore puts them back on each file it writes. A
+     it, and readable by this user alone while it is written, until it
+     verifies — and the record keeps them (a date as milliseconds, with any
+     finer part as a fraction), so Restore puts them back on each file it
+     writes, likewise private until then. A
      drive that cannot hold them is said in the job's warning, never a reason
      to undo; folders are made anew. The record
      Restore reads (`offload-manifest.json`, app-data) is saved first; the

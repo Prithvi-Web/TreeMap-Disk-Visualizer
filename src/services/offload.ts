@@ -1237,7 +1237,9 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       job.currentPath = item.src;
       const look = sourceLookOf(await fsp.lstat(item.src, { bigint: true }));
       looks.set(item.src, look);
-      const hash = await copyWithHash(item.src, item.dest, jobProgress(job, true));
+      // Owner-only until it verifies and is given its original's bits (review F1.12): a private file is
+      // never readable by other accounts while it is written. Off Windows, which keeps no such bits.
+      const hash = await copyWithHash(item.src, item.dest, jobProgress(job, true), process.platform === 'win32' ? {} : { createMode: 0o600 });
       createdFiles.push(item.dest);
       // Looked at again the moment its copy ends (review F1.9): one written to meanwhile has a copy that
       // may mix old and new. A look that fails is the trash step's to read.
@@ -1526,7 +1528,10 @@ async function restoreEntries(job: OffloadJob, entries: OffloadEntry[]): Promise
       // Written beside its name and put there only once it verifies (FG3f #8): a quit or a kill
       // part-way leaves no part-copied file at the person's own name.
       const partial = partialNameFor(entry.originalPath);
-      const hash = await copyWithHash(entry.destPath, partial, jobProgress(job, true), { onCreated: (made) => recordRestorePartial(partial, made) });
+      // Owner-only until the recorded bits are put on it (review F1.12); an entry with none recorded (an
+      // earlier build's) is made as any new file, since nothing would set its bits after.
+      const createMode = typeof entry.mode === 'number' && process.platform !== 'win32' ? 0o600 : undefined;
+      const hash = await copyWithHash(entry.destPath, partial, jobProgress(job, true), { onCreated: (made) => recordRestorePartial(partial, made), createMode });
 
       job.phase = 'verifying';
       if (hash !== entry.hash) {

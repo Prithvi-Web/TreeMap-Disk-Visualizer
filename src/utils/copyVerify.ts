@@ -178,6 +178,12 @@ export interface CopyOptions {
    * a kill left — and only that file.
    */
   onCreated?: (identity: string) => Promise<void>;
+  /**
+   * The permission bits `dest` is made with (masked by the umask, as every new file's are), for a copy
+   * whose own are given to it only once it verifies (review F1.12): 0o600 keeps a private file private
+   * for the whole copy and read-back. Unset: the default, 0o666.
+   */
+  createMode?: number;
 }
 
 /**
@@ -187,7 +193,7 @@ export interface CopyOptions {
  */
 export async function copyWithHash(src: string, dest: string, progress?: CopyProgress, options: CopyOptions = {}): Promise<string> {
   const { stallMs } = options;
-  if (stallMs === undefined) return copyOnce(src, dest, progress, () => false, options.onCreated);
+  if (stallMs === undefined) return copyOnce(src, dest, progress, () => false, options);
   // The stall limit (FG3g M2). A read that never answers cannot be interrupted — the file system call
   // waits in a worker thread, and even destroying the stream waits for it — so the copy is answered
   // at once, as stalled, and its own work stops (removing what it made) whenever that read returns.
@@ -219,7 +225,7 @@ export async function copyWithHash(src: string, dest: string, progress?: CopyPro
       progress?.onBytes?.(n);
     },
     isCancelled: () => stalled || (progress?.isCancelled?.() ?? false),
-  }, () => stalled, options.onCreated);
+  }, () => stalled, options);
   copying.catch(() => {}); // answered below, or — once stalled — no longer waited for
   try {
     return await Promise.race([copying, expired]);
@@ -244,7 +250,7 @@ async function copyOnce(
   dest: string,
   progress: CopyProgress | undefined,
   abandoned: () => boolean,
-  onCreated?: (identity: string) => Promise<void>,
+  { onCreated, createMode }: CopyOptions,
 ): Promise<string> {
   // The source first, so a copy that cannot read its source makes nothing at all.
   const input = await fsp.open(src, 'r');
@@ -254,7 +260,7 @@ async function copyOnce(
   }
   let output: FileHandle;
   try {
-    output = await fsp.open(dest, 'wx'); // never clobber: on EEXIST what stands there is not this copy's
+    output = await fsp.open(dest, 'wx', createMode ?? 0o666); // never clobber: on EEXIST what stands there is not this copy's
   } catch (err) {
     await input.close().catch(() => {});
     throw err;

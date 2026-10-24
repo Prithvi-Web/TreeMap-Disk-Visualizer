@@ -13,6 +13,8 @@ import { createScanRecord } from '../src/services/diskScanner';
 import { getOffloadIndex, getOffloadJob, prepareOffload, setOffloadFileMetaFaultForTests, startOffload, startRestore } from '../src/services/offload';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { buildOpenApiDocument } from '../src/api/openapi';
+import { setCopyFaultForTests } from '../src/utils/copyVerify';
+import { isRestoreCopyFor } from './fixtures/restoreCopy';
 import type { FileNode, OffloadJob, ScanResult } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
@@ -201,4 +203,33 @@ test('a date finer than a millisecond is recorded as the fraction it is, and the
   assert.equal(fs.statSync(file).mtime.getTime(), 1_577_934_300_654, 'and Restore puts it back to the millisecond');
   const props = (buildOpenApiDocument() as { components: { schemas: Record<string, { properties: Record<string, { type: string }> }> } }).components.schemas.OffloadEntry.properties;
   assert.deepEqual([props.mtimeMs.type, props.atimeMs.type], ['number', 'number']);
+});
+
+test('a private file\'s copy, and its restore\'s file, are never readable by other accounts while they are written (review F1.12)', { skip: process.platform === 'win32' ? 'Windows has no POSIX permission bits' : false }, async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-offloadKeepsMeta-window-'));
+  const proj = path.join(root, 'proj');
+  fs.mkdirSync(proj);
+  const secret = path.join(proj, 'secret.key');
+  fs.writeFileSync(secret, Buffer.alloc(300_000, 0x53)); // several chunks: looked at while it is written
+  fs.chmodSync(secret, 0o600);
+  const scan = createScanRecord(root);
+  scan.status = 'complete';
+  const folder: FileNode = { name: 'proj', path: proj, size: 300_000, type: 'dir', modifiedAt: Date.now(), isHidden: false, children: [fileNode(secret)] };
+  scan.root = { name: path.basename(root), path: root, size: 300_000, type: 'dir', modifiedAt: Date.now(), isHidden: false, children: [folder] };
+  const seen: { offload: number[]; restore: number[] } = { offload: [], restore: [] };
+  const undo = setCopyFaultForTests((dest) => {
+    const mode = fs.statSync(dest).mode & 0o777;
+    if (isRestoreCopyFor(dest, secret)) seen.restore.push(mode);
+    else if (dest.endsWith('secret.key')) seen.offload.push(mode);
+    return null;
+  });
+  try {
+    await offloadAndRestore('window', proj, scan, () => {});
+  } finally {
+    undo();
+  }
+  assert.ok(seen.offload.length > 0 && seen.restore.length > 0, 'both copies were looked at while written');
+  assert.deepEqual([...new Set(seen.offload)], [0o600], 'the copy is private from the moment it is made');
+  assert.deepEqual([...new Set(seen.restore)], [0o600], 'and so is the restore\'s temporary file');
+  assert.equal(fs.statSync(secret).mode & 0o777, 0o600);
 });
