@@ -13,6 +13,7 @@ import { buildMcpServer } from '../src/mcp/server';
 import { startScan, getScan } from '../src/services/diskScanner';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { updateSettings } from '../src/services/settings';
+import { setNote, deleteNote } from '../src/services/notes';
 import { resetRuleCatalog } from '../src/services/rulePacks';
 import { readAudit } from '../src/services/audit';
 import { waitFor } from './fixtures/waitFor';
@@ -150,4 +151,67 @@ test('past the 200 items a group lists, itemCount is still every match and items
   assert.ok(!r.isError, JSON.stringify(r.content));
   const scratch = r.structuredContent.groups.find((g: { id: string }) => g.id === 'test-scratch');
   assert.deepEqual([scratch.itemCount, scratch.items.length, scratch.itemsTruncated], [201, 200, true]);
+});
+
+/** Each path, dry run and real run alike, is refused ADVISORY_PATH, and nothing reaches a Trash step. */
+async function assertAdvisoryRefused(paths: string[]): Promise<void> {
+  await withOpenFileCheck('clear', async () => {
+    for (const p of paths) {
+      for (const dryRun of [true, false]) {
+        const r = await call('trash_paths', { paths: [p], dryRun });
+        const text = r.content?.[0]?.text ?? '';
+        assert.equal(r.isError, true, `${p} dryRun=${dryRun} was not refused: ${JSON.stringify(r.structuredContent ?? text)}`);
+        assert.match(text, /ADVISORY_PATH/, text);
+      }
+    }
+  });
+  assert.deepEqual(trashed, [], 'nothing reached a Trash step');
+}
+
+test('an ignore pattern or a suppressing note that hides the advisory group from cleanup_suggestions does not let trash_paths take it (review F1.10)', async () => {
+  // The folder holding the bundle is refused only by what the scan's walk finds inside it, so it
+  // shows the claims are every advice-rule match, with no ignore pattern and no note applied.
+  const vm = path.join(ROOT, 'vm');
+  const listed = async (): Promise<string[]> => {
+    const r = await call('cleanup_suggestions', { scanId });
+    assert.ok(!r.isError, JSON.stringify(r.content));
+    return r.structuredContent.groups.map((g: { id: string }) => g.id);
+  };
+  await updateSettings({ ignore: [{ pattern: 'vmdisk.bundle', scope: 'suggest' }] });
+  try {
+    assert.ok(!(await listed()).includes('test-vm-disk'), 'the ignore pattern hides the group from the suggestions');
+    await assertAdvisoryRefused([BUNDLE, DISK, vm]);
+  } finally {
+    await updateSettings({ ignore: [] });
+  }
+  await setNote(vm, 'The VM lives here', true);
+  try {
+    assert.ok(!(await listed()).includes('test-vm-disk'), 'the note hides the group from the suggestions');
+    await assertAdvisoryRefused([BUNDLE, DISK, vm]);
+  } finally {
+    await deleteNote(vm);
+  }
+});
+
+test('while a rule pack cannot be read, trash_paths fails closed: it refuses even a path no advice rule names, and moves nothing (review F1.10)', async () => {
+  const broken = fileTempDir('treemap-mcp-advisory-broken-');
+  for (const name of fs.readdirSync(PACKS)) fs.copyFileSync(path.join(PACKS, name), path.join(broken, name));
+  fs.writeFileSync(path.join(broken, 'common.json'), '{ "schemaVersion": 1, "pack": "common", ');
+  process.env.TREEMAP_RULEPACK_DIR = broken;
+  resetRuleCatalog();
+  try {
+    await withOpenFileCheck('clear', async () => {
+      for (const dryRun of [true, false]) {
+        const r = await call('trash_paths', { paths: [SCRATCH_A], dryRun });
+        const text = r.content?.[0]?.text ?? '';
+        assert.equal(r.isError, true, `dryRun=${dryRun} went ahead: ${JSON.stringify(r.structuredContent ?? text)}`);
+        assert.match(text, /RULE_PACKS_UNAVAILABLE/, text);
+      }
+    });
+    assert.deepEqual(trashed, [], 'nothing reached a Trash step');
+    assert.ok(fs.existsSync(SCRATCH_A));
+  } finally {
+    process.env.TREEMAP_RULEPACK_DIR = PACKS;
+    resetRuleCatalog();
+  }
 });
