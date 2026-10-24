@@ -41763,12 +41763,16 @@ async function startEncode(paths) {
       const failed = (d.results || []).filter(r => !r.ok);
       // A job that stopped (an error, a cancel) never tried the rest (hunt C34).
       const notReached = Math.max(0, paths.length - (d.results || []).length);
+      // A failure says what became of its original (review F1.4/F1.24): "Kept the original" (or "Kept
+      // it", a link) is the one that left it in place. Another can mean it is in the Trash, or that
+      // TreeMap cannot tell, with the re-encoded file kept aside, so no blanket "kept" is said over it.
+      const allKept = failed.every((f) => /^Kept (the original|it)\b/.test(f.error || ''));
       $('vidFill').style.width = '100%';
       // The originals went to the Trash, which still holds them: smaller, not yet freed (D54).
       // Only those of the files re-encoded did: a file whose check failed kept its original.
       const said = (ok
         ? `${formatCount(ok)} re-encoded, ${formatBytes(d.savedBytes || 0)} smaller. ${ok === 1 ? 'The original is' : `The ${formatCount(ok)} originals are`} in the Trash until you empty it.`
-        : 'Nothing was re-encoded.') +
+        : allKept ? 'Nothing was re-encoded.' : 'No file was replaced. Each one’s line below says where it is.') +
         (d.error ? ` It stopped: ${String(d.error).replace(/\.?$/, '.')}` : '') +
         (notReached ? ` ${formatCount(notReached)} ${notReached === 1 ? 'was' : 'were'} not reached, and ${notReached === 1 ? 'is' : 'are'} as before.` : '');
       $('vidProgText').innerHTML = escapeHtml(said) +
@@ -41776,7 +41780,7 @@ async function startEncode(paths) {
           `<div>${escapeHtml(baseName(f.path))}: ${escapeHtml(f.error || 'failed')}</div>`).join('')}</div>` : '');
       if (ok) toast(`Re-encoded ${formatCount(ok)} file${ok === 1 ? '' : 's'} — ${formatBytes(d.savedBytes || 0)} smaller once you empty the Trash`);
       if (d.error || notReached) toast(`Shrink video stopped${d.error ? `: ${d.error}` : ''}${notReached ? ` — ${formatCount(notReached)} not reached` : ''}`, 'error', 9000);
-      else if (!ok) toast('Nothing was re-encoded — each original was kept', 'error');
+      else if (!ok) toast(allKept ? 'Nothing was re-encoded — each original was kept' : 'Nothing was replaced — see the list for where each file is', 'error');
       rescan({ unattended: true }); // the job ends when it ends, not at a click (review F2.1)
     }
   };

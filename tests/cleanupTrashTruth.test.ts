@@ -228,6 +228,28 @@ test('Shrink video says the originals are in the Trash only of the files it re-e
   assert.match(one.said, /1 re-encoded, 5 B smaller\. The original is in the Trash until you empty it\.$/, `one is "the original": ${one.said}`);
 });
 
+test('Shrink video says each original was kept only when each was; a run whose original may have left its place says nothing was replaced, and points at the list (review F1.4/F1.24)', async () => {
+  const kept = await encodeRun(['/v/a.mov', '/v/b.mov']).complete({
+    results: [{ path: '/v/a.mov', ok: false, error: 'Kept the original — the new file is not smaller' }, { path: '/v/b.mov', ok: false, error: 'Kept it — b.mov is a link' }],
+    savedBytes: 0,
+  });
+  assert.ok(kept.toasts.some(([m, k]) => k === 'error' && m === 'Nothing was re-encoded — each original was kept'), `control: every original was kept: ${JSON.stringify(kept.toasts)}`);
+
+  const moved = 'The original is in the Trash and the re-encoded file is at /v/.treemap-encode/encoded-1.mov, because it could not be renamed into place (EACCES). Nothing was lost.';
+  const left = await encodeRun(['/v/a.mov', '/v/b.mov']).complete({
+    results: [{ path: '/v/a.mov', ok: false, error: 'Kept the original — x' }, { path: '/v/b.mov', ok: false, error: moved }],
+    savedBytes: 0,
+  });
+  const said = left.toasts.map((t) => t[0]).join(' | ');
+  assert.doesNotMatch(said, /each original was kept/, `an original in the Trash was not kept: ${said}`);
+  assert.ok(left.toasts.some(([m, k]) => k === 'error' && /Nothing was replaced — see the list for where each file is/.test(m)), `the toast points at the list: ${said}`);
+  assert.doesNotMatch(left.said, /Nothing was re-encoded/, `a file was re-encoded and kept aside: ${left.said}`);
+  assert.match(left.said, /^No file was replaced\. /, 'the pane says what is true of every file');
+  assert.match(left.said, /b\.mov: The original is in the Trash/, 'and the row says where it is');
+  const failedEncoder = await encodeRun(['/v/a.mov']).complete({ results: [{ path: '/v/a.mov', ok: false, error: 'ffmpeg exited with code 1' }], savedBytes: 0 });
+  assert.doesNotMatch(failedEncoder.toasts.map((t) => t[0]).join(' | '), /each original was kept/, 'an error that does not say what became of the original claims nothing about it');
+});
+
 /* ═════════ C35 — git gc is not "safe": it prunes for good ═════════ */
 
 test('the git gc sheet says gc deletes unreachable objects for good, and never calls it safe (C35)', () => {
