@@ -334,9 +334,10 @@ test('review HA-L8: the Finder entry starts the program at any path — quotes, 
 
 test('review HA-L1: the Windows entry\'s program reads back whole whatever letters its path holds — never from text a console prints in its own code page', async () => {
   const win = await import('../src/platform/windows/shellIntegration');
-  // What a console printing in its own code page (850, 866, 932…) does to a letter past ASCII, as Node reads the text
-  // back as UTF-8: it is lost. `reg query` printed C:\Users\José as C:\Users\Jos�, never the launcher.
-  const throughConsole = (text: string) => text.replace(/[^\x00-\x7f]/g, '\uFFFD');
+  // `reg query` printed the value in the console's code page (850, 866, 932…), and Node read that text as UTF-8:
+  // C:\Users\José came back as C:\Users\Jos�, never the launcher. The script prints the value's UTF-8 bytes in
+  // Base64 instead, which is ASCII; here `run` answers what it prints for the value an install wrote, and the
+  // Windows-only round trip below runs the script itself (review F1.6).
   for (const exe of [
     String.raw`C:\Users\José\AppData\Local\Programs\TreeMap\TreeMap.exe`,
     String.raw`C:\Users\Дмитрий\AppData\Local\Programs\TreeMap\TreeMap.exe`,
@@ -346,11 +347,10 @@ test('review HA-L1: the Windows entry\'s program reads back whole whatever lette
     const add = win.installCommands(exe).find((c) => c.args[1].endsWith('\\command'))!;
     const value = add.args[add.args.indexOf('/d') + 1];
     const scripts: string[] = [];
-    // PowerShell, run on the value an install wrote: what the script prints for it — its UTF-8 bytes in Base64 —
-    // passed through the console as any text is.
+    // What the script prints for the value an install wrote: its UTF-8 bytes in Base64.
     const run = async (script: string): Promise<unknown> => {
       scripts.push(script);
-      return JSON.parse(throughConsole(JSON.stringify({ utf8Base64: Buffer.from(value, 'utf8').toString('base64') })));
+      return { utf8Base64: Buffer.from(value, 'utf8').toString('base64') };
     };
     assert.equal(await win.installedProgram(run), exe, `the program reads back as written: ${exe}`);
     assert.equal(scripts.length, 1, 'one PowerShell call');
@@ -364,6 +364,22 @@ test('review HA-L1: the Windows entry\'s program reads back whole whatever lette
     'text that is not Base64 is no answer, though Node would decode it past the stray letter');
   assert.equal(await win.installedProgram(async () => ({ utf8Base64: 'IkM6XHguZXhlIiAiJTEi' })), 'C:\\x.exe', 'control: the same answer whole');
   assert.equal(await win.installedProgram(async () => { throw new Error('Cannot find path'); }), null);
+});
+
+test('review F1.6: on Windows the entry added for a launcher whose path holds letters past ASCII reads back as that launcher through the PowerShell the app runs, and is removed after', { skip: process.platform !== 'win32' }, async (t) => {
+  const win = await import('../src/platform/windows/shellIntegration');
+  // The account's own entry, if one is there, is never touched: this writes and removes the real keys.
+  if (await win.isInstalled()) { t.skip('a "Scan with TreeMap" entry is already in this account\'s right-click menu'); return; }
+  const exe = String.raw`C:\Users\José Дмитрий 山田\AppData\Local\Programs\TreeMap\TreeMap.exe`;
+  try {
+    const added = await win.registerShellIntegration(exe);
+    assert.equal(added.installed, true, added.reason);
+    assert.equal(await win.installedProgram(), exe, 'the program reads back whole, every letter of its path');
+  } finally {
+    await win.unregisterShellIntegration();
+  }
+  assert.equal(await win.isInstalled(), false, 'removed: nothing is left behind');
+  assert.equal(await win.installedProgram(), null, 'and an entry that is gone names no program');
 });
 
 test('review F1.15/F1.16: an entry already in place is seen, and can be removed, where adding is not offered; one that starts another program is never called this app\'s', { skip: !IS_MAC && !IS_LINUX }, async () => {
