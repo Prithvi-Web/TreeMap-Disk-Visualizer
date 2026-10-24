@@ -184,8 +184,11 @@ export async function readSnapshotTrees(rootPath: string): Promise<Record<string
  * directory, `depth` levels deep. Sizes are kept as-is (not re-summed), so a
  * directory's stored size always reflects its full recursive weight even
  * when its smaller children were dropped. A folder the scan did not list in
- * full is marked (`u`) and kept first, however small (hunt C47): left out, a
- * refused folder's bytes read to the journal as removed by some process.
+ * full is marked (`u`) and kept however small (hunt C47): left out, a refused
+ * folder's bytes read to the journal as removed by some process. They are kept
+ * beside the largest `perDir`, never in their place (review F1.14), up to
+ * `perDir` more; a folder that still leaves one out is marked itself (review
+ * F1.5), so the journal reads its own change as not known.
  */
 function compactTree(store: ScanStore, id: number, depth: number, perDir: number): SnapshotTreeNode {
   const out: SnapshotTreeNode = { n: store.name(id), s: store.size(id) };
@@ -193,13 +196,15 @@ function compactTree(store: ScanStore, id: number, depth: number, perDir: number
     out.t = 1;
     if (listingUnknown(store, id)) out.u = 1;
     if (depth > 0) {
-      const unlisted = (c: number): number => (store.isDir(c) && listingUnknown(store, c) ? 1 : 0);
-      const kids = store
+      const unlisted = (c: number): boolean => store.isDir(c) && listingUnknown(store, c);
+      const bySize = store
         .childIds(id)
-        .filter((c) => store.size(c) > 0 || unlisted(c) === 1)
-        .sort((a, b) => unlisted(b) - unlisted(a) || store.size(b) - store.size(a))
-        .slice(0, perDir)
-        .map((c) => compactTree(store, c, depth - 1, perDir));
+        .filter((c) => store.size(c) > 0 || unlisted(c))
+        .sort((a, b) => store.size(b) - store.size(a));
+      const rest = bySize.slice(perDir).filter(unlisted);
+      const extra = rest.slice(0, perDir);
+      if (rest.length > extra.length) out.u = 1;
+      const kids = [...bySize.slice(0, perDir), ...extra].map((c) => compactTree(store, c, depth - 1, perDir));
       if (kids.length) out.c = kids;
     }
   }

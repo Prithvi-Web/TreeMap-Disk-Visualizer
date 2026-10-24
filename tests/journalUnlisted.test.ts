@@ -96,3 +96,30 @@ test('a folder holding what a "Don\'t scan" rule left out is listed in full for 
     await updateSettings({ ignore: [] });
   }
 });
+
+/** A root holding `flagged` small folders its scan could not list, beside one large listed folder. */
+function rootWith(flagged: number): ReturnType<typeof buildStoreFromTree> {
+  const root = path.join(path.sep, 'slot-root');
+  const unread: FileNode[] = Array.from({ length: flagged }, (_, i) => ({ name: `refused-${i}`, path: path.join(root, `refused-${i}`), size: 10 + i, type: 'dir', modifiedAt: 1, isHidden: false, children: [] }));
+  const movies: FileNode = { name: 'Movies', path: path.join(root, 'Movies'), size: 1_000_000_000_000, type: 'dir', modifiedAt: 1, isHidden: false, children: [] };
+  const top: FileNode = { name: 'slot-root', path: root, size: movies.size + unread.reduce((s, k) => s + k.size, 0), type: 'dir', modifiedAt: 1, isHidden: false, children: [...unread, movies] };
+  const store = buildStoreFromTree(top);
+  for (const k of unread) store.setFlag(store.findByPath(k.path), Flag.Unlisted, true);
+  return store;
+}
+
+test('folders a scan could not list never push the largest folders out of the stored tree (review F1.14)', () => {
+  const tree = buildSnapshotTree(rootWith(35)); // more than the 30 a folder keeps
+  const names = (tree.c ?? []).map((c) => c.n);
+  assert.ok(names.includes('Movies'), `the 1 TB folder is kept: ${names.join(', ')}`);
+  assert.equal(names.filter((n) => n.startsWith('refused-')).length, 35, 'and every folder it could not list, kept beside the largest');
+  assert.equal(tree.u, undefined, 'nothing was left out that the journal would misread');
+});
+
+test('past the room kept for them, a folder that leaves one out is itself marked, so its remainder is not read as removed (review F1.5)', () => {
+  const tree = buildSnapshotTree(rootWith(70));
+  const names = (tree.c ?? []).map((c) => c.n);
+  assert.ok(names.includes('Movies'), 'the largest folder is still kept');
+  assert.equal(names.length, 60, '30 largest, and 30 more of the folders it could not list');
+  assert.equal(tree.u, 1, 'a folder it could not list was left out of the stored tree, so this one\'s own change is not known');
+});

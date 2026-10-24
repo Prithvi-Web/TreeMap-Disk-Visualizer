@@ -695,9 +695,10 @@ export interface SnapshotTreeNode {
   /**
    * Present (1) = a folder whose contents its scan does not wholly know (`listingUnknown`: refused,
    * unreadable, not entered, or holding an entry it could not look at — not one that left out only what a
-   * "Don't scan" rule matched), kept however small (hunt C47): the journal does not read its own change
-   * as something a process did, though it reads the children both trees hold (review F1.2). Absent on
-   * trees an earlier build stored.
+   * "Don't scan" rule matched), kept however small (hunt C47) — or one that had more such folders than
+   * the stored tree keeps room for (review F1.5): the journal does not read its own change as something a
+   * process did, though it reads the children both trees hold (review F1.2). Absent on trees an earlier
+   * build stored.
    */
   u?: 1;
   c?: SnapshotTreeNode[];
