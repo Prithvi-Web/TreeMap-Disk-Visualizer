@@ -85,6 +85,21 @@ function collectTopGrowers(snaps: Snapshot[], now: number): ForecastGrower[] {
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
+/**
+ * How long a history spans, as the "not enough history" sentence says it (hunt C84, C90): under an hour
+ * is "less than an hour" — not under 0.05 days, which is 72 minutes — under a day in hours, and days
+ * with "day" or "days" chosen on the figure shown, never "1 days".
+ */
+function spanPhrase(spanDays: number): string {
+  if (spanDays * 24 < 1) return 'less than an hour';
+  const days = round2(spanDays);
+  if (days < 1) {
+    const hours = Math.round(spanDays * 24);
+    return `about ${hours} hour${hours === 1 ? '' : 's'}`;
+  }
+  return `${days} day${days === 1 ? '' : 's'}`;
+}
+
 /** Pure forecast over a root's snapshots — everything testable lives here. */
 export function computeForecast(
   snaps: Snapshot[],
@@ -111,7 +126,7 @@ export function computeForecast(
     return {
       ...base,
       status: 'insufficient',
-      reason: `Not enough history yet — ${count} scan${count === 1 ? '' : 's'} over ${spanDays < 0.05 ? 'less than an hour' : `${round2(spanDays)} day${spanDays === 1 ? '' : 's'}`}. Forecasting needs at least ${MIN_SNAPSHOTS} scans spanning ${MIN_SPAN_DAYS}+ days.${earlier > 0 ? ` ${earlier} earlier scan${earlier === 1 ? '' : 's'} stopped at different drives mounted inside this folder, so ${earlier === 1 ? 'it is' : 'they are'} not compared with these.` : ''}`,
+      reason: `Not enough history yet — ${count} scan${count === 1 ? '' : 's'} over ${spanPhrase(spanDays)}. Forecasting needs at least ${MIN_SNAPSHOTS} scans spanning ${MIN_SPAN_DAYS}+ days.${earlier > 0 ? ` ${earlier} earlier scan${earlier === 1 ? '' : 's'} stopped at different drives mounted inside this folder, so ${earlier === 1 ? 'it is' : 'they are'} not compared with these.` : ''}`,
     };
   }
 
