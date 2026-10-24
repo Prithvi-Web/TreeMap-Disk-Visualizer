@@ -877,3 +877,14 @@ test('after Save, the toast says what the saved policy will do next — an appro
   assert.match(handler, /toast\(stored \? apSavedToast\(stored\)/, 'and the toast is chosen from it');
   assert.doesNotMatch(handler, /toast\(edited\.enabled/, 'not from the edited draft');
 });
+
+test('"Nothing matched." is said only under a run that looked and found nothing, and never twice (hunt C42)', () => {
+  const policy = { id: 'P', name: 'Logs', path: '/home/me/logs', match: { kind: 'custom', exts: ['log'] }, requireConfirmationAbove: null, approvedAt: 9, cooldownDays: 7, enabled: true };
+  const run = (id: string, status: string, blockedReason: string, mode = 'dry-run'): Record<string, unknown> =>
+    ({ id, policyId: 'P', policyName: 'Logs', at: 1, mode, status, blockedReason, items: [], bytesMatched: 0, bytesDeleted: 0, skipped: [] });
+  const count = (html: string): number => (html.match(/Nothing matched/g) || []).length;
+  assert.equal(count(renderedRuns([run('f', 'failed', 'The folder /gone could not be scanned')], [policy])), 0, 'a failed run looked at nothing');
+  assert.equal(count(renderedRuns([run('s', 'failed', 'Nothing was deleted — the delete stopped: no room', 'live')], [policy])), 0, 'a stopped delete had matches');
+  assert.equal(count(renderedRuns([run('e', 'completed', 'Nothing matched this time.')], [policy])), 1, 'said once, by the server');
+  assert.equal(count(renderedRuns([run('d', 'completed', 'Simulated — this policy is set to preview every run rather than delete.')], [policy])), 1, 'a preview that found nothing still says so');
+});

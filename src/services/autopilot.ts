@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import {
+  AgentPolicy,
   AutopilotMatch,
   AutopilotPolicy,
   AutopilotRun,
@@ -30,7 +31,7 @@ import {
 import fs from 'fs';
 import nodePath from 'path';
 import { isSpillPath, livesAt, PathRejectedError, safetyRecordCandidateTest, sanitizePath, spillCandidateTest, takesSafetyRecord } from '../utils/pathSanitizer';
-import { getPolicy as getAgentPolicy, assertScanAllowed, assertPathsAllowed } from './policy';
+import { getPolicy as getAgentPolicy, assertScanAllowed, assertPathsAllowed, assertBytesCap } from './policy';
 import { suppressedNoteRoots, prepareSuppressed, suppressedRootCovering, noteRootInside } from './notes';
 import { installedProgramAt, installedProgramOf, programPhrase, type InstalledProgram } from './installedPrograms';
 import { formatBytes } from '../utils/formatBytes';
@@ -599,6 +600,7 @@ function describeAge(ms: number): string {
 export function applyCaps(
   candidates: Candidate[],
   capBytes: number | null,
+  limits: { perRun: number | null; perWeek: number | null } = { perRun: null, perWeek: null },
 ): { selected: Candidate[]; skipped: { path: string; reason: string }[] } {
   if (capBytes === null) return { selected: candidates, skipped: [] };
 
@@ -610,13 +612,46 @@ export function applyCaps(
       selected.push(candidate);
       used += candidate.bytes;
     } else {
-      skipped.push({
-        path: candidate.path,
-        reason: `left for a later run — this run's limit of ${formatBytes(capBytes)} was reached`,
-      });
+      skipped.push({ path: candidate.path, reason: leftByCapReason(candidate.bytes, capBytes, used, limits) });
     }
   }
   return { selected, skipped };
+}
+
+/**
+ * Why the cap left an item (the hunt, C43). One larger than the policy's own limit per run or per week
+ * can never be taken by any run of it, so it is not promised to "a later run"; and the limit "was
+ * reached" only when this run took something.
+ */
+function leftByCapReason(bytes: number, capBytes: number, used: number, limits: { perRun: number | null; perWeek: number | null }): string {
+  const over = limits.perRun !== null && bytes > limits.perRun ? { limit: limits.perRun, per: 'run' }
+    : limits.perWeek !== null && bytes > limits.perWeek ? { limit: limits.perWeek, per: 'week' } : null;
+  if (over) {
+    return `larger than this policy’s limit of ${formatBytes(over.limit)} per ${over.per}, so no run of it removes it — raise the limit, or remove it by hand`;
+  }
+  return used > 0
+    ? `left for a later run — this run's limit of ${formatBytes(capBytes)} was reached`
+    : `left for a later run — it is larger than the ${formatBytes(capBytes)} this run may still remove`;
+}
+
+/** The policy's own limits, as applyCaps words what they leave (the hunt, C43). */
+function limitsOf(policy: AutopilotPolicy): { perRun: number | null; perWeek: number | null } {
+  return { perRun: policy.maxBytesPerRun, perWeek: policy.maxBytesPerWeek };
+}
+
+/**
+ * agent-policy.json's per-operation byte cap, for what a run would hand to one delete (the hunt, C53):
+ * its refusal's sentence, or null when the cap allows it. Autopilot was held to the policy's allowed
+ * roots and protected paths but not to this cap, and its policies and their approval are both written
+ * over the API, so an agent could trash any amount in one run.
+ */
+function byteCapRefusal(agentPolicy: AgentPolicy, bytes: number): string | null {
+  try {
+    assertBytesCap(agentPolicy, bytes);
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
 }
 
 /** Bytes this policy has already deleted in the trailing week. */
@@ -930,7 +965,8 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
 
   const bytesMatched = permitted.reduce((sum, c) => sum + c.bytes, 0);
   const cap = effectiveCap(policy, store.runs, Date.now());
-  const capped = applyCaps(permitted, cap);
+  const capped = applyCaps(permitted, cap, limitsOf(policy));
+  const capRefusal = byteCapRefusal(agentPolicy, capped.selected.reduce((sum, c) => sum + c.bytes, 0));
 
   let wouldBlockReason: string | undefined;
   if (!policy.approvedAt) {
@@ -941,6 +977,8 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
       `${formatBytes(policy.requireConfirmationAbove ?? 0)} you asked to be consulted about.`;
   } else if (policy.dryRunFirst) {
     wouldBlockReason = 'This policy is set to preview every run, so it never deletes.';
+  } else if (capRefusal !== null) {
+    wouldBlockReason = `A real run would delete nothing: ${capRefusal}.`;
   }
   // A policy an earlier build saved with kinds no rule here has: the preview says so as every run of
   // it does (runPolicyNow's record), after whatever else it says (BQL item 14).
@@ -1071,11 +1109,13 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
   let heldBack: HeldBack = { byNotes: 0, inPrograms: 0, otherwise: 0 };
   /** Matched items agent-policy.json refused (below): a reason the run states too (review round 2, F2.4). */
   let refusedByPolicy = 0;
+  /** agent-policy.json as this run read it: its byte cap is applied to what the run selects (below). */
+  let agentPolicy: AgentPolicy;
   try {
     // agent-policy.json is the user's own "never touch these" list. It was
     // written for the API surface, but an unattended deleter is exactly what
     // those paths need protecting from, so it binds here too.
-    const agentPolicy = await getAgentPolicy();
+    agentPolicy = await getAgentPolicy();
     assertScanAllowed(agentPolicy, policy.path);
     // A run that can only preview — asked to, set to, or never approved — is
     // a dry run, and keeps nothing of its scan (C12). One that may delete
@@ -1151,7 +1191,7 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
     run.blockedReason = `This policy has used its weekly allowance of ${formatBytes(policy.maxBytesPerWeek ?? 0)}. It will resume next week.`;
     return record();
   }
-  const { selected, skipped } = applyCaps(candidates, cap);
+  const { selected, skipped } = applyCaps(candidates, cap, limitsOf(policy));
   // Append, never assign: anything already skipped here was refused by
   // agent-policy.json, and overwriting the list would silently drop the one
   // refusal the user most needs to see.
@@ -1183,6 +1223,15 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
       : heldBack.otherwise === 0 && why.length > 0
         ? `Everything that matched is ${why.join(' or ')} — nothing was deleted.`
         : 'Everything that matched was left alone — nothing was deleted.';
+    return record();
+  }
+
+  // One delete of everything selected: held to agent-policy.json's per-operation byte cap as every
+  // other destructive route is (the hunt, C53). Over it, the run deletes nothing and says why.
+  const capRefusal = byteCapRefusal(agentPolicy, selected.reduce((sum, c) => sum + c.bytes, 0));
+  if (capRefusal !== null) {
+    run.status = 'blocked';
+    run.blockedReason = `Nothing was deleted: ${capRefusal}.`;
     return record();
   }
 

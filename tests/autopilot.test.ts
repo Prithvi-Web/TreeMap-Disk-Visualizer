@@ -801,7 +801,7 @@ test('a run whose every candidate is over its allowance says so beside every oth
   const alone = await mkTmp();
   const trashed: string[] = [];
   setTrashStepForTests(async (p) => { trashed.push(p); });
-  const overLimit = (s: { path: string; reason: string }): boolean => path.basename(s.path) === 'loose.bin' && /limit of .* was reached/.test(s.reason);
+  const overLimit = (s: { path: string; reason: string }): boolean => path.basename(s.path) === 'loose.bin' && /larger than this policy’s limit of .* per run/.test(s.reason); // over the policy's own limit (the hunt, C43)
   try {
     const match = { kind: 'custom' as const, minBytes: MB };
     await writeFile(path.join(dir, 'loose.bin'), 2 * MB);
@@ -1285,4 +1285,44 @@ test('a run whose copies the capsule no longer holds cannot be silently half-und
     () => undoRun(id),
     (err: unknown) => err instanceof AppError && err.code === 'CAPSULE_EMPTY',
   );
+});
+
+/* ══════════════════ The hunt (C53, C43) ══════════════════ */
+
+test('agent-policy.json\'s byte cap binds Autopilot: a run that would trash more is held, deleting nothing, and its preview says so (hunt C53)', async () => {
+  const dir = await mkTmp();
+  const trashed: string[] = [];
+  setTrashStepForTests(async (p) => { trashed.push(p); });
+  try {
+    for (const n of ['a', 'b', 'c']) await writeFile(path.join(dir, `${n}.bin`), 4096);
+    await writeJsonFile('agent-policy.json', { allowedRoots: [], protectedPaths: [], maxBytesPerOperation: 5000 });
+    const [policy] = await savePolicies([{ id: 'capped-op', name: 'p', path: dir, match: { kind: 'custom', exts: ['bin'] }, dryRunFirst: false, enabled: true }]);
+    await approvePolicyForTests(policy.id);
+    const live = (await listPolicies())[0];
+    const sim = await simulatePolicy(live);
+    assert.match(String(sim.wouldBlockReason), /per-operation cap in agent-policy\.json/, `the preview says a run would be refused: ${sim.wouldBlockReason}`);
+    const result = await runPolicy(live);
+    assert.equal(result.status, 'blocked', String(result.blockedReason));
+    assert.equal(result.bytesDeleted, 0);
+    assert.match(String(result.blockedReason), /per-operation cap in agent-policy\.json/, String(result.blockedReason));
+    assert.deepEqual(trashed, [], 'nothing reached the Trash step');
+    for (const n of ['a', 'b', 'c']) assert.ok(fs.existsSync(path.join(dir, `${n}.bin`)));
+  } finally {
+    setTrashStepForTests(null);
+    await writeJsonFile('agent-policy.json', {});
+    await savePolicies([]);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('an item larger than the policy\'s own limit is never promised to "a later run", and "was reached" is said only when something was taken (hunt C43)', () => {
+  const huge = applyCaps([candidate('huge', 5000)], 1000, { perRun: 1000, perWeek: null });
+  assert.equal(huge.selected.length, 0);
+  assert.doesNotMatch(huge.skipped[0].reason, /later run/, huge.skipped[0].reason);
+  assert.match(huge.skipped[0].reason, /larger than this policy’s limit of .+ per run, so no run of it removes it/, huge.skipped[0].reason);
+  const weekly = applyCaps([candidate('big', 3000)], 1000, { perRun: null, perWeek: 2000 });
+  assert.match(weekly.skipped[0].reason, /limit of .+ per week, so no run of it removes it/, weekly.skipped[0].reason);
+  const waits = applyCaps([candidate('mid', 800)], 500, { perRun: 1000, perWeek: 2000 });
+  assert.match(waits.skipped[0].reason, /left for a later run/, 'it fits a later run, so it waits for one');
+  assert.doesNotMatch(waits.skipped[0].reason, /was reached/, `nothing was taken, so no limit "was reached": ${waits.skipped[0].reason}`);
 });

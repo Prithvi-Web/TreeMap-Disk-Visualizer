@@ -33451,6 +33451,11 @@ function renderAutopilotRuns(runs) {
       </div>`).join('');
     const more = r.items.length > 8 ? `<div class="muted" style="font-size:11px;padding:2px 0 0 10px;">…and ${formatCount(r.items.length - 8)} more</div>` : '';
     const skipped = r.skipped.length ? leftAloneHtml(r.skipped) : '';
+    // Only under a run that looked and found nothing (the hunt, C42): never under a failed run, which
+    // looked at nothing, nor one whose delete stopped, and not twice where the server's own reason
+    // already says it. What it left alone matched (review F1.2).
+    const saidNothingMatched = !r.items.length && !r.skipped.length && r.status === 'completed' &&
+      !/Nothing matched/.test(r.blockedReason || '');
 
     return `
     <div class="bp-acc ap-run" data-run="${escapeHtml(r.id)}">
@@ -33463,7 +33468,7 @@ function renderAutopilotRuns(runs) {
       </div>
       <div class="bp-items">
         ${r.blockedReason ? `<div class="ap-reason">${escapeHtml(r.blockedReason)}</div>` : ''}
-        ${items || (r.skipped.length ? '' : '<div class="muted" style="padding:4px 10px;">Nothing matched.</div>') /* what it left alone matched (review F1.2) */}
+        ${items || (saidNothingMatched ? '<div class="muted" style="padding:4px 10px;">Nothing matched.</div>' : '')}
         ${more}${skipped}
         <div class="ap-run-actions">
           ${approvable.has(r.id) ? `<button class="btn btn-primary" data-ap-approve="${escapeHtml(r.id)}"><span data-icon="check"></span>Approve this run</button>`

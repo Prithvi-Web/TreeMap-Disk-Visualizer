@@ -1024,7 +1024,9 @@ read-what-you-saw) permission to act.
   spelling, a name in another case — so no other spelling of a protected file
   reaches it, and a link in an allowed root does not lead out of it; an entry
   written through a link holds the folder it leads to too. The byte cap
-  refuses any single oversized operation. Violations are
+  refuses any single oversized operation — an Autopilot run is one: a run
+  whose selection is over the cap deletes nothing and is recorded `blocked`
+  with the refusal, and its preview says so in `wouldBlockReason`. Violations are
   `403 { code: "POLICY_ROOT_NOT_ALLOWED" | "POLICY_PROTECTED_PATH" |
   "POLICY_BYTES_EXCEEDED" }`. An entry may begin with `~` for your home
   folder, and every gate reads an entry alike — where it lives and where it
