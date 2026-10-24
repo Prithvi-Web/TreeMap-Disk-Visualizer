@@ -234,7 +234,8 @@ const NARROWEST_PER_DIR = Math.min(...TREE_SHAPES.map((shape) => shape.perDir));
  * What the previous stored tree knows of each path, for the time slider's diff overlay (leftover HE-L4):
  * its size where the tree stored it; null where it was not there — the nearest folder above it that the
  * tree stored listed every child with bytes; undefined where that is not known, because that folder's
- * list was cut to its largest children, or it sat at the depth limit with none stored. A tree an earlier
+ * list was cut to its largest children, it sat at the depth limit with none stored, or its scan could not
+ * list it in full (`u`, as hunt C47 reads it for the journal). A tree an earlier
  * build stored carries no marks (`m`): there a folder that kept as many children as the narrowest shape
  * keeps is read as cut. An item that only fell past the cut is never drawn as new.
  */
@@ -248,7 +249,7 @@ export function prevSizeLookup(prev: SnapshotTreeNode, rootPath: string): (p: st
     sizes.set(p, t.s);
     if (t.t === 1) {
       const atDepthLimit = t.c === undefined && t.s > 0;
-      if (atDepthLimit || (marked ? t.k === 1 : (t.c?.length ?? 0) >= NARROWEST_PER_DIR)) cut.add(p);
+      if (atDepthLimit || t.u === 1 || (marked ? t.k === 1 : (t.c?.length ?? 0) >= NARROWEST_PER_DIR)) cut.add(p);
     }
     for (const c of t.c ?? []) walk(c, join(p, c.n));
   };

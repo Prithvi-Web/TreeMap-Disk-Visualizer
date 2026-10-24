@@ -129,6 +129,14 @@ test('a stored tree marks a folder whose children it cut, and the overlay\'s loo
   assert.equal(prevSizeLookup(deep, '/r')('/r/a/b/c'), 10);
 });
 
+test('a folder the previous scan could not list in full is read as not known, never as holding nothing (leftover HE-L4, as hunt C47)', () => {
+  const prev: SnapshotTreeNode = { n: 'data', s: 10, t: 1, m: 1, c: [{ n: 'Mail', s: 0, t: 1, u: 1 }, { n: 'docs', s: 10, t: 1, c: [{ n: 'a', s: 10 }] }, { n: 'empty', s: 0, t: 1 }] };
+  const prevOf = prevSizeLookup(prev, '/data');
+  assert.equal(prevOf('/data/Mail/msg.emlx'), undefined, 'what a refused folder held is not known');
+  assert.equal(prevOf('/data/docs/b'), null, 'a folder listed in full held only what it lists');
+  assert.equal(prevOf('/data/empty/new'), null, 'nor did an empty folder hold anything');
+});
+
 test('a tree an earlier build stored, with no marks, is read as cut wherever it kept as many children as the narrowest shape keeps (leftover HE-L4)', () => {
   const kids = (n: number): SnapshotTreeNode[] => Array.from({ length: n }, (_, i) => ({ n: `k${i}`, s: 100 - i }));
   const wide: SnapshotTreeNode = { n: 'data', s: 999, t: 1, c: kids(10) };
