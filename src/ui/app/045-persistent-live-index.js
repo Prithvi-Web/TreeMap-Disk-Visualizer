@@ -2033,19 +2033,34 @@ function queueScan(p) {
   // The folder being scanned is not queued to be walked again straight after
   // — two files dropped from one folder scanned it twice, the second called
   // "it scans next" — and it is said once a scan, not once a file (review HA-L12).
-  if (sameFolder(p, state.scanningPath)) {
-    const said = `${state.scanningPath}\u0000${state.scanGen}`;
-    if (alreadyScanningSaid !== said) { alreadyScanningSaid = said; toast(`Already scanning ${p}`, 'success', 5000); }
-    return;
-  }
+  if (sameFolder(p, state.scanningPath)) { sayOnceThisScan(ALREADY_SCANNING, `Already scanning ${p}`); return; }
   if (scanQueue.some((q) => sameFolder(q, p))) return;
   scanQueue.push(p);
   toast(queuedSentence(p, scanQueue.length - 1), 'success', 5000);
 }
-let alreadyScanningSaid = null;
-/** One folder however its end is spelled: `/x/Photos` and `/x/Photos/` (and Windows' `\`) are one; the root stays itself. */
+/* What the queue has said while the scan running runs, said once a scan, not
+   once a file (review HA-L12, F1.1). Forgotten as each scan ends: in
+   drainScanQueue, which runs with the page not scanning after a landing
+   (TOPIC.scan), a failure or a quiet refresh that failed, and at a Stop
+   (clearScanQueue). Not by `scanGen`, which a disk scan bumps twice as it
+   starts — once in startScan, again in startScanRequest after the index
+   probe — so a drop of many files said it once each side of the probe. */
+const saidThisScan = new Set();
+const ALREADY_SCANNING = '\u0000scanning';
+function sayOnceThisScan(key, words) {
+  if (saidThisScan.has(key)) return;
+  saidThisScan.add(key);
+  toast(words, 'success', 5000);
+}
+/**
+ * One folder however its end is spelled: `/x/Photos` and `/x/Photos/` are
+ * one, and on a Windows path — a drive letter's, or a share's `\\server\…` —
+ * so is `C:\x\Photos\`; the root stays itself. A trailing `\` is a separator
+ * only there: on macOS and Linux `Photos\` is a name of its own, another
+ * folder, and calling it the folder being scanned dropped it (review F1.3).
+ */
 function sameFolder(a, b) {
-  const end = (s) => s.replace(/(.)[\\/]+$/, '$1');
+  const end = (s) => s.replace(/^(?:[A-Za-z]:|\\\\)/.test(s) ? /(.)[\\/]+$/ : /(.)\/+$/, '$1');
   return typeof a === 'string' && typeof b === 'string' && end(a) === end(b);
 }
 /** What the queue says of a folder waiting with `before` folders ahead of it (hunt C19). */
@@ -2063,18 +2078,20 @@ function queuedSentence(p, before) {
  */
 function sayShellQueued(held) {
   if (!held || typeof held.path !== 'string' || !held.path) return;
-  if (held.scanning === true) { toast(`Already scanning ${held.path}`, 'success', 5000); return; }
+  if (held.scanning === true) { sayOnceThisScan(ALREADY_SCANNING, `Already scanning ${held.path}`); return; }
   const ahead = Number.isInteger(held.before) && held.before > 0 ? held.before : 0;
   toast(queuedSentence(held.path, scanQueue.length + ahead), 'success', 5000);
 }
 function drainScanQueue() {
-  if (state.scanning || !scanQueue.length) return;
+  if (state.scanning) return;
+  saidThisScan.clear(); // the scan it was said of has ended
+  if (!scanQueue.length) return;
   const next = scanQueue.shift();
   $('pathInput').value = next;
   void startScan(next);
 }
 /** Empty the queue (a Stop); answers how many folders were waiting, which the Stop says will not be scanned (hunt C19). */
-function clearScanQueue() { const n = scanQueue.length; scanQueue.length = 0; return n; }
+function clearScanQueue() { const n = scanQueue.length; scanQueue.length = 0; saidThisScan.clear(); return n; }
 subscribe(TOPIC.scan, (scanId) => { if (scanId) setTimeout(drainScanQueue, 0); });
 /* ── end scan queue ── */
 

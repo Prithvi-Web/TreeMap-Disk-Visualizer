@@ -353,19 +353,30 @@ test('C18: the page registers the menu\'s commands with the bridge', () => {
 
 /* ═════════════════════ C19 — the queue says what is true ═════════════════════ */
 
-/** The page's scan queue, lifted whole out of the built page; startScan starts a scan the queue then waits behind. */
-function pageQueue() {
+/**
+ * The page's scan queue, lifted whole out of the built page; startScan starts a scan the queue then waits behind.
+ * It starts one as the page's does (startScan, then startScanRequest): beginScanChrome bumps `scanGen` once, the
+ * index is asked about — a round trip — and beginScanChrome bumps it again for the same scan (review F1.1).
+ * `requestScans`, when given, is the desktop shell's bridge method, reached through the page's own tellDesktop.
+ */
+function pageQueue(opts: { requestScans?: (paths: string[]) => unknown } = {}) {
   const { $ } = makeDom();
   const started: string[] = [];
   const toasts: string[] = [];
-  const state: { scanning: boolean; scanningPath?: string; scanGen?: number } = { scanning: false, scanGen: 1 };
+  const state: { scanning: boolean; scanningPath?: string; scanGen: number } = { scanning: false, scanGen: 1 };
+  const startScan = async (p: string) => {
+    started.push(p); state.scanning = true; state.scanningPath = p; state.scanGen++; // startScan's beginScanChrome
+    await new Promise((r) => setImmediate(r)); // the index probe
+    if (state.scanning) state.scanGen++; // startScanRequest's beginScanChrome, the same scan
+  };
+  const window = opts.requestScans ? { treemapDesktop: { requestScans: opts.requestScans } } : {};
   const at = INDEX.indexOf('const scanQueue = [];');
-  const src = INDEX.slice(at, INDEX.indexOf('/* ── end scan queue ── */', at));
+  const src = INDEX.slice(at, INDEX.indexOf('/* ── end scan queue ── */', at)) + '\n' + pageFn(TELL);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const q = new Function('state', 'startScan', 'toast', 'subscribe', 'TOPIC', '$', 'setTimeout',
-    `'use strict'; ${src} return { queueScan, clearScanQueue, sayShellQueued: typeof sayShellQueued === 'function' ? sayShellQueued : null };`)(
-    state, (p: string) => { started.push(p); state.scanning = true; state.scanningPath = p; }, (m: string) => toasts.push(m), () => {}, { scan: 'scan' }, $, () => 0,
-  ) as { queueScan: (p: string) => void; clearScanQueue: () => number; sayShellQueued: ((held: unknown) => void) | null };
+  const q = new Function('state', 'startScan', 'toast', 'subscribe', 'TOPIC', '$', 'setTimeout', 'window',
+    `'use strict'; ${src} return { queueScan, clearScanQueue, drainScanQueue, sayShellQueued: typeof sayShellQueued === 'function' ? sayShellQueued : null };`)(
+    state, startScan, (m: string) => toasts.push(m), () => {}, { scan: 'scan' }, $, () => 0, window,
+  ) as { queueScan: (p: string) => void; clearScanQueue: () => number; drainScanQueue: () => void; sayShellQueued: ((held: unknown) => void) | null };
   return { q, $, started, toasts, state };
 }
 
@@ -415,7 +426,44 @@ test('review HA-L12: a folder asked for again while it is being scanned — two 
   q.queueScan('/Users/x/Photos/Trips');
   q.queueScan('/Users/x/Photos/Trips/');
   assert.deepEqual(toasts.slice(1), ['Queued /Users/x/Photos/Trips — it scans next'], 'a folder waiting is queued once, however it is spelled');
-  state.scanGen = 2; // the next scan of it
+  state.scanning = false; q.clearScanQueue(); // a Stop: its chrome ends, then the queue is emptied
+  state.scanning = true; state.scanningPath = '/Users/x/Photos'; // a Rescan of it, started outside the queue
   q.queueScan('/Users/x/Photos');
   assert.deepEqual(toasts.slice(2), ['Already scanning /Users/x/Photos'], 'said again for another scan of it');
+});
+
+test('review F1.1: a drop of many files from the folder being scanned says "Already scanning" once for the scan — though the scan bumps its generation twice as it starts — and once again for each later scan of it', async () => {
+  const { q, started, toasts, state } = pageQueue();
+  q.queueScan('/Users/x/Photos'); // the first file starts the scan
+  for (let i = 0; i < 20; i++) { q.queueScan('/Users/x/Photos'); await new Promise((r) => setImmediate(r)); } // the rest, one by one
+  assert.equal(state.scanGen, 3, 'the model starts a scan as the page does: two generations');
+  assert.deepEqual([started, toasts], [['/Users/x/Photos'], ['Already scanning /Users/x/Photos']], 'said once for the scan, across both its generations');
+  q.sayShellQueued!({ path: '/Users/x/Photos', scanning: true }); // the same files dropped on the Dock: the shell says it holds none
+  assert.equal(toasts.length, 1, 'the shell\'s word for it is not said a second time either');
+  state.scanning = false; q.drainScanQueue(); // the scan landed (TOPIC.scan) or failed: the queue's turn
+  q.queueScan('/Users/x/Photos'); // a later drop of it starts its next scan
+  for (let i = 0; i < 5; i++) { q.queueScan('/Users/x/Photos'); await new Promise((r) => setImmediate(r)); }
+  assert.deepEqual([started.length, toasts], [2, ['Already scanning /Users/x/Photos', 'Already scanning /Users/x/Photos']], 'said once again for that scan');
+  state.scanning = false; q.drainScanQueue();
+  state.scanning = true; state.scanningPath = '/Users/x/Photos'; state.scanGen++; // Rescan, outside the queue
+  q.queueScan('/Users/x/Photos');
+  assert.equal(toasts.length, 3, 'and for a scan of it the queue did not start');
+});
+
+test('review F1.3: a folder whose name ends in a backslash is its own folder on macOS and Linux — queued, never "Already scanning" the folder beside it; on a Windows path a trailing backslash is the separator', () => {
+  const { q, started, toasts } = pageQueue();
+  q.queueScan('/Users/x/Photos');
+  q.queueScan('/Users/x/Photos\\'); // a sibling folder named `Photos\`
+  assert.deepEqual(toasts, ['Queued /Users/x/Photos\\ — it scans next'], 'queued: it is another folder, and is not being scanned');
+  assert.equal(q.clearScanQueue(), 1);
+  const win = pageQueue();
+  win.q.queueScan('C:\\Users\\x\\Photos');
+  win.q.queueScan('C:\\Users\\x\\Photos\\');
+  assert.deepEqual([win.started, win.toasts], [['C:\\Users\\x\\Photos'], ['Already scanning C:\\Users\\x\\Photos\\']], 'Windows: one folder however its end is spelled');
+  const unc = pageQueue();
+  unc.q.queueScan('\\\\server\\share\\Photos');
+  unc.q.queueScan('\\\\server\\share\\Photos\\');
+  assert.deepEqual(unc.toasts, ['Already scanning \\\\server\\share\\Photos\\'], 'and on a network share');
+  q.queueScan('/Users/x/Photos/');
+  assert.deepEqual([started, toasts.slice(1)], [['/Users/x/Photos'], ['Already scanning /Users/x/Photos/']], 'control: macOS and Linux still read a trailing / as the separator');
 });
