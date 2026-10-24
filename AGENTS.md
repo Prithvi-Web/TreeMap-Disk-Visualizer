@@ -1227,9 +1227,14 @@ read-what-you-saw) permission to act.
   its `adviceCommand` and a `note`) and leaves it out of `totalBytes`
   (`advisoryBytes` counts it); `itemCount` is every match, and
   `itemsTruncated` says when `items` lists fewer. `trash_paths` refuses a
-  path of an advice-only group — the item, anything inside it or a folder
-  holding it, in any completed scan that reaches it — with
-  `403 ADVISORY_PATH` (audited as refused), as Autopilot leaves one alone.
+  path of an advice-only group with `403 ADVISORY_PATH` (audited as
+  refused), as Autopilot leaves one alone: the item and anything inside it,
+  judged from the path itself — it and every folder above it read against
+  the rules as the walk reads a folder, so a scan rooted at the item or
+  inside it refuses alike — and a folder holding one that a completed scan
+  lists inside it. While a rule pack cannot be read it trashes nothing
+  (`500 RULE_PACKS_UNAVAILABLE`): nothing can say which paths are advice
+  only.
 - A size field is a raw byte count. Many have a human-formatted twin beside
   them, named after the field (`sizeFormatted`, `bytesFormatted`,
   `totalFormatted`, `deltaFormatted`, …), but not every size field has one:

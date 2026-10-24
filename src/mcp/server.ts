@@ -15,6 +15,7 @@ import type { ReclaimScoreFactValue } from '../services/facts';
 import { adviceClaimsFor, cleanupSuggestionsCountedFor } from '../services/cleanupMemo';
 import { suppressedNoteRoots } from '../services/notes';
 import { ruleCatalogStatus } from '../services/rulePacks';
+import { adviceHitAlong } from '../services/adviceGuard';
 import { getIgnoreMatchers } from '../services/settings';
 import { getForecast } from '../services/forecast';
 import { buildStatement } from '../services/missingGigabytes';
@@ -227,34 +228,47 @@ function guardDestructivePaths(raw: string[]): string[] {
   return paths;
 }
 
+/** trash_paths' refusal of a path an advice-only rule claims (hunt C12). */
+function advisoryRefusal(p: string, relation: 'is in' | 'holds', hit: { path: string; title: string; adviceCommand?: string }): AppError {
+  return new AppError(403, 'ADVISORY_PATH',
+    `"${p}" ${relation} "${hit.title}" (${hit.path}), which is advice only: TreeMap never trashes it` +
+      (hit.adviceCommand ? `. Instead: ${hit.adviceCommand}` : ''));
+}
+
 /**
  * Refuses a path an advice-only rule claims (hunt C12) — the claimed folder or file, anything
- * inside it, or a folder holding it — in any completed scan that reaches the path, as Autopilot
- * leaves such a group alone: its files are data (a VM disk) or the operating system's, and the
- * supported way to reclaim them is the rule's adviceCommand. Each path is judged as given and where
- * it lives (its parents' links resolved). Fails closed when the rule packs cannot be read: then
- * nothing can say which paths are advice only.
+ * inside it, or a folder holding it — as Autopilot leaves such a group alone: its files are data (a
+ * VM disk) or the operating system's, and the supported way to reclaim them is the rule's
+ * adviceCommand. Each path is judged as given and where it lives (its parents' links resolved).
+ * The item and anything inside it are judged from the path itself, every folder above it read
+ * against the rules (adviceGuard), whatever folder a scan started at: the cleanup walk examines only
+ * what lies below a scan's root, so a scan rooted at an advice-only folder, or inside one, claimed
+ * nothing (review F1.2, F1.5). A folder holding one is refused where a completed scan's walk finds it
+ * inside. Fails closed when the rule packs cannot be read: then nothing can say which paths are
+ * advice only.
  */
 async function refuseAdvicePaths(paths: string[]): Promise<void> {
   const spellings = paths.map((p) => ({ p, as: [...new Set([p, livesAt(p)])] }));
   const touches = (a: string, b: string): boolean => isInside(a, b) || isInside(b, a);
-  const scans = allScans().filter((scan) => scan.status === 'complete' && (scan.store || scan.root)
-    && spellings.some(({ as }) => as.some((q) => touches(scan.rootPath, q))));
-  if (scans.length === 0) return;
   const catalog = ruleCatalogStatus();
   if (!catalog.ok) {
     throw new AppError(500, 'RULE_PACKS_UNAVAILABLE',
       `The cleanup rule packs could not be read (${catalog.reason}), so TreeMap cannot tell which paths are advice only, and trashes nothing`);
   }
+  for (const { p, as } of spellings) {
+    for (const q of as) {
+      const hit = adviceHitAlong(q, catalog.catalog);
+      if (hit !== null) throw advisoryRefusal(p, 'is in', hit);
+    }
+  }
+  const scans = allScans().filter((scan) => scan.status === 'complete' && (scan.store || scan.root)
+    && spellings.some(({ as }) => as.some((q) => touches(scan.rootPath, q))));
   for (const scan of scans) {
     const claims = await adviceClaimsFor(storeOf(scan), catalog.catalog);
     for (const { p, as } of spellings) {
       const hit = claims.find((c) => as.some((q) => touches(c.path, q)));
       if (hit === undefined) continue;
-      const relation = as.some((q) => isInside(hit.path, q)) ? 'is in' : 'holds';
-      throw new AppError(403, 'ADVISORY_PATH',
-        `"${p}" ${relation} "${hit.title}" (${hit.path}), which is advice only: TreeMap never trashes it` +
-          (hit.adviceCommand ? `. Instead: ${hit.adviceCommand}` : ''));
+      throw advisoryRefusal(p, as.some((q) => isInside(hit.path, q)) ? 'is in' : 'holds', hit);
     }
   }
 }
