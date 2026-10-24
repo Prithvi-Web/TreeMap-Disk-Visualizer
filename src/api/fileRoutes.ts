@@ -11,6 +11,7 @@ import {
   insideAnyScanRoot,
   assertNotSpillPath,
   refuseSafetyRecords,
+  withUnfinishedScan,
 } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
 import { getOrRenderThumbnail, THUMB_DIM, THUMB_MAX_INPUT } from '../services/thumbnailCache';
@@ -291,7 +292,7 @@ fileRouter.get('/files/preview', guardQueryPath('path'), async (req: Request, re
   }
   assertNotSpillPath(target); // TreeMap's own spill folder is never opened (§S.5.3)
   if (!insideAnyScanRoot(target)) {
-    throw new AppError(403, 'OUTSIDE_SCAN_ROOT', 'Preview is only available for files inside a scanned folder');
+    throw new AppError(403, 'OUTSIDE_SCAN_ROOT', withUnfinishedScan('Preview is only available for files inside a scanned folder', target));
   }
   let st: fs.Stats;
   try {

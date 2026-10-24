@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { Flag, ScanStore, TreeSource, asStore } from './scanStore';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
-import { appDataPathRefusal, insideAnyScanRoot, safetyRecordRefusal, spillPathRefusal } from '../middleware/pathGuard';
+import { appDataPathRefusal, insideAnyScanRoot, safetyRecordRefusal, spillPathRefusal, withUnfinishedScan } from '../middleware/pathGuard';
 import { isInside } from '../utils/pathSanitizer';
 import { installedProgramOf, programPhrase } from './installedPrograms';
 
@@ -700,7 +700,7 @@ export async function relocateSecret(from: string, to: string): Promise<Relocate
   // not take its caller's word that the path was judged (git gc re-checks the same way; T17a's
   // security review found a request that reached this with its path unjudged).
   for (const [end, p] of [['source', from], ['destination', to]] as const) {
-    if (!insideAnyScanRoot(p)) throw new Error(`The ${end} ${p} is outside every scanned folder, so nothing was moved`);
+    if (!insideAnyScanRoot(p)) throw new Error(withUnfinishedScan(`The ${end} ${p} is outside every scanned folder, so nothing was moved`, p));
     const spill = spillPathRefusal(p);
     if (spill) throw new Error(spill.message);
   }

@@ -3,7 +3,7 @@ import path from 'path';
 import { platform } from '../platform';
 import { capabilityState } from '../platform/capabilities';
 import { sanitizePath } from '../utils/pathSanitizer';
-import { assertNotAppDataPath, assertNotSpillPath, insideAnyScanRoot } from '../middleware/pathGuard';
+import { assertNotAppDataPath, assertNotSpillPath, insideAnyScanRoot, withUnfinishedScan } from '../middleware/pathGuard';
 import { assertBytesCapOver, assertPathsAllowed, getPolicy, knownSizeOf } from './policy';
 import { moveToTrash } from './cleaner';
 import { AppError } from '../middleware/errorHandler';
@@ -204,8 +204,8 @@ function asReplaceRefused(destination: string, err: unknown): unknown {
 async function assertMayReplace(destination: string): Promise<void> {
   try {
     if (!insideAnyScanRoot(destination)) {
-      throw new AppError(403, 'OUTSIDE_SCAN_ROOT',
-        `${destination} is outside every scanned root, so TreeMap did not replace it — scan its folder first, or restore beside it.`);
+      throw new AppError(403, 'OUTSIDE_SCAN_ROOT', withUnfinishedScan(
+        `${destination} is outside every scanned root, so TreeMap did not replace it — scan its folder first, or restore beside it.`, destination));
     }
     const policy = await getPolicy();
     assertPathsAllowed(policy, [destination]);

@@ -24,7 +24,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createApp } from '../src/server';
 import { buildMcpServer } from '../src/mcp/server';
-import { startScan } from '../src/services/diskScanner';
+import { startScan, createScanRecord, cancelScan } from '../src/services/diskScanner';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { updateSettings } from '../src/services/settings';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
@@ -188,6 +188,37 @@ test('the file a restore replaces is held to the rules a delete is: outside ever
   });
   assert.deepEqual(trashed, [], 'nothing was moved to the Trash');
   assert.deepEqual([outside, protectedOne, path.join(SCANNED, 'present.txt')].map((p) => fs.existsSync(p)), [true, true, true]);
+});
+
+test('a file a scan still running lists is refused, and the refusal says that scan has not finished (review F1.4)', async () => {
+  const dir = fs.realpathSync(fileTempDir('treemap-snapshotReplaceRules-running-'));
+  const target = fileAt(path.join(dir, 'draft.txt'), 'being scanned');
+  const rec = createScanRecord(dir);
+  const before = trashed.length;
+  try {
+    resetRateLimiter();
+    resetIdempotencyCache();
+    const payload = JSON.stringify({ path: path.join(ELSEWHERE, 'gone.txt'), destination: target, overwrite: true });
+    const answer = await new Promise<{ status: number; body: { code?: string; error?: string } }>((resolve, reject) => {
+      const r = http.request(
+        { host: '127.0.0.1', port, path: '/api/system/snapshots/restore', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } },
+        (res) => {
+          let buf = '';
+          res.setEncoding('utf8');
+          res.on('data', (c: string) => { buf += c; });
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, body: JSON.parse(buf) }));
+        },
+      );
+      r.on('error', reject);
+      r.end(payload);
+    });
+    assert.deepEqual([answer.status, answer.body.code], [403, 'OUTSIDE_SCAN_ROOT'], JSON.stringify(answer.body));
+    assert.match(String(answer.body.error), /did not replace it — scan its folder first, or restore beside it\. The scan of ".*" has not finished yet, and only a completed scan lets TreeMap act on what it listed\.$/);
+    assert.equal(trashed.length, before, 'nothing was moved to the Trash');
+    assert.ok(fs.existsSync(target));
+  } finally {
+    cancelScan(rec.scanId);
+  }
 });
 
 test('a file the Trash step itself refuses or fails to take — a link TreeMap reaches its records through, a file another program holds open, a file the Trash would not take — is not replaced, and the audit names that file, not the one asked for (the final review, F3.1)', async () => {

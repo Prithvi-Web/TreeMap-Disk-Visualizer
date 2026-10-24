@@ -2,7 +2,7 @@ import { promises as fsp } from 'fs';
 import path from 'path';
 import { listedFolderIsReal } from '../utils/listedFolder';
 import { sanitizePath } from '../utils/pathSanitizer';
-import { insideAnyScanRoot } from '../middleware/pathGuard';
+import { insideAnyScanRoot, withUnfinishedScan } from '../middleware/pathGuard';
 import { ScanStore, TreeSource, asStore, Flag } from './scanStore';
 import { RealMachineRefusal, refuseUnderTestRunner } from './realMachineGuard';
 import { gitInvocation, runGitInvocation, vetRepository, type GitInvocation } from './gitSafe';
@@ -228,7 +228,7 @@ export async function runGitGc(repoPath: unknown): Promise<GitGcResult> {
     return { ok: false, error: err instanceof Error ? err.message : 'Invalid path' };
   }
   if (!insideAnyScanRoot(safe)) {
-    return { ok: false, error: 'Repository is outside every scanned root' };
+    return { ok: false, error: withUnfinishedScan('Repository is outside every scanned root', safe) };
   }
   // Under a test runner the real gc refuses before anything reaches the machine, its own
   // checks included; a test that stood in for it goes on through them.

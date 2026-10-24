@@ -23,7 +23,7 @@ import {
   diffSnapshots,
 } from '../services/snapshots';
 import { buildTreemap } from '../utils/treemap';
-import { guardQueryPath, guardBodyPath, guardBodyPaths, requireInsideScanRoot, insideAnyScanRoot, assertNotSpillPath, assertNotAppDataPath, refuseSafetyRecords } from '../middleware/pathGuard';
+import { guardQueryPath, guardBodyPath, guardBodyPaths, requireInsideScanRoot, insideAnyScanRoot, assertNotSpillPath, assertNotAppDataPath, refuseSafetyRecords, withUnfinishedScan } from '../middleware/pathGuard';
 import { getAppAttribution } from '../services/appAttribution';
 import { storeOf } from '../services/scanStore';
 import { getForecast } from '../services/forecast';
@@ -382,7 +382,7 @@ function assertRelocationDestination(dest: string): void {
   assertNotSpillPath(dest);
   assertNotAppDataPath(dest);
   if (!insideAnyScanRoot(dest)) {
-    throw new AppError(403, 'OUTSIDE_SCAN_ROOT', 'The destination is outside every scanned folder — scan it first');
+    throw new AppError(403, 'OUTSIDE_SCAN_ROOT', withUnfinishedScan('The destination is outside every scanned folder — scan it first', dest));
   }
 }
 
@@ -470,7 +470,7 @@ insightRouter.get('/provenance', guardQueryPath('path'), async (req: Request, re
     throw new AppError(400, 'PATH_REQUIRED', 'A "path" query parameter is required');
   }
   if (!insideAnyScanRoot(target)) {
-    throw new AppError(403, 'OUTSIDE_SCAN_ROOT', 'Provenance is only available for files inside a scanned folder');
+    throw new AppError(403, 'OUTSIDE_SCAN_ROOT', withUnfinishedScan('Provenance is only available for files inside a scanned folder', target));
   }
   res.json(await readProvenance(target));
 });
@@ -582,7 +582,7 @@ insightRouter.post('/compression/encode', idempotency, guardBodyPaths, async (re
   }
   for (const p of paths) {
     if (!insideAnyScanRoot(p)) {
-      throw new AppError(403, 'OUTSIDE_SCAN_ROOT', `${p} is outside every scanned folder`);
+      throw new AppError(403, 'OUTSIDE_SCAN_ROOT', withUnfinishedScan(`${p} is outside every scanned folder`, p));
     }
   }
   const availability = await mediaTools().availability();

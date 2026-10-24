@@ -233,13 +233,24 @@ export function insideAnyScanRoot(p: string): boolean {
  * scans) could not size what it would act on.
  */
 export function outsideScanRootSentence(p: string): string {
-  const base = `"${p}" is outside every scanned root — scan its folder first`;
-  if (p.startsWith('cloud://')) return base;
+  return withUnfinishedScan(`"${p}" is outside every scanned root — scan its folder first`, p);
+}
+
+/**
+ * A route's own refusal of a path outside every scanned root, with why a scan of its folder that has
+ * not completed does not count, when there is one (hunt C08; review F1.4, F1.6): the preview,
+ * provenance, encode, relocation, snapshot-overwrite and git gc refusals say it as the guard's
+ * sentence does. `message` is returned as it is when no such scan lists the path; otherwise the
+ * clause follows it as a sentence of its own, ending as `message` ends.
+ */
+export function withUnfinishedScan(message: string, p: string): string {
+  if (p.startsWith('cloud://')) return message;
   const where = whereUnlessSecondName(p);
   const unfinished = where === null ? undefined : allScans().find((scan) => scan.status !== 'complete' && listedBy(scan, p, where));
-  if (unfinished === undefined) return base;
+  if (unfinished === undefined) return message;
   const state = unfinished.status === 'running' ? 'has not finished yet' : 'did not finish';
-  return `${base}. The scan of "${unfinished.rootPath}" ${state}, and only a completed scan lets TreeMap act on what it listed`;
+  const clause = `The scan of "${unfinished.rootPath}" ${state}, and only a completed scan lets TreeMap act on what it listed`;
+  return message.endsWith('.') ? `${message} ${clause}.` : `${message}. ${clause}`;
 }
 
 /**

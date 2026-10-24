@@ -19,6 +19,8 @@ import { resetIdempotencyCache } from '../src/middleware/idempotency';
 import { insideAnyScanRoot } from '../src/middleware/pathGuard';
 import { POLICY_FILE } from '../src/services/policy';
 import { buildMcpServer } from '../src/mcp/server';
+import { relocateSecret } from '../src/services/securityHygieneScanner';
+import { runGitGc } from '../src/services/gitScanner';
 import { waitFor } from './fixtures/waitFor';
 
 /**
@@ -203,5 +205,36 @@ test('MCP trash_paths reads the same scans: a running scan grants nothing, and a
     }
   } finally {
     await client.close();
+  }
+});
+
+test('every route and service that refuses a path a running scan lists says that scan has not finished (review F1.4, F1.6)', async () => {
+  const { dir, big } = mkRoot('unfinished-all');
+  const { dir: done } = mkRoot('unfinished-src');
+  await completedScanOf(done);
+  const key = path.join(done, 'id_rsa');
+  fs.writeFileSync(key, 'not a real key');
+  fs.mkdirSync(path.join(dir, 'repo', '.git'), { recursive: true });
+  const rec = createScanRecord(dir);
+  const unfinished = new RegExp(`The scan of "${dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}" has not finished yet`);
+  try {
+    const q = encodeURIComponent(big);
+    const answers: Record<string, { status: number; body: any }> = { // eslint-disable-line @typescript-eslint/no-explicit-any
+      preview: await request('GET', `/api/files/preview?path=${q}`),
+      provenance: await request('GET', `/api/provenance?path=${q}`),
+      encode: await request('POST', '/api/compression/encode', { paths: [big], confirm: true }),
+      relocate: await request('POST', '/api/security/relocate', { path: key, to: path.join(dir, 'id_rsa'), confirm: true }),
+    };
+    for (const [route, answer] of Object.entries(answers)) {
+      assert.deepEqual([answer.status, answer.body.code], [403, 'OUTSIDE_SCAN_ROOT'], `${route}: ${JSON.stringify(answer.body)}`);
+      assert.match(answer.body.error, unfinished, `${route} says why a folder being scanned is refused`);
+    }
+    await assert.rejects(relocateSecret(key, path.join(dir, 'id_rsa')), (err: Error) => unfinished.test(err.message), 'relocateSecret says so too');
+    const gc = await runGitGc(path.join(dir, 'repo'));
+    assert.equal(gc.ok, false);
+    assert.match(String(gc.error), unfinished, 'and git gc');
+    assert.ok(fs.existsSync(key), 'nothing was moved');
+  } finally {
+    cancelScan(rec.scanId);
   }
 });
