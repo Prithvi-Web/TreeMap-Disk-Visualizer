@@ -599,7 +599,13 @@ OpenAPI 3 spec).
      is, so the confirm, the free-space check and the byte cap see it — and
      Restore brings each back as a file of its own. One that gains a file
      while the copies run is left in place, its verified copies standing and
-     recorded. The record
+     recorded; so is any selected item holding a file that is not what was
+     copied by its own turn. Each item is looked at again right before its
+     trash step (no bytes are read): a file whose size, modified time or file
+     id moved, or that is gone from a selected folder, changed after its copy
+     was made — the copy holds it as it was then — and one whose change time
+     alone moved may have changed (a new permission or attribute moves it
+     too); either way the item stays, and the job's warning names the file. The record
      Restore reads (`offload-manifest.json`, app-data) is saved first; the
      drive's own copy of it is written after, one write of each drive's
      record at a time, and a drive that does not answer for 60 seconds is

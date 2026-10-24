@@ -1031,16 +1031,96 @@ function isUnder(src: string, tops: ReadonlySet<string>): boolean {
   }
 }
 
+/** How an original was right before its copy was made (hunt C06), compared again right before its trash step. */
+interface SourceLook {
+  size: bigint;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+  ino: bigint;
+}
+
+function sourceLookOf(st: fs.BigIntStats): SourceLook {
+  return { size: st.size, mtimeNs: st.mtimeNs, ctimeNs: st.ctimeNs, ino: st.ino };
+}
+
+/** The codes of a selected item left in place by its look right before its trash step (hunt C06). */
+const ORIGINAL_CHANGED = 'OFFLOAD_ORIGINAL_CHANGED';
+const ORIGINAL_UNREADABLE = 'OFFLOAD_ORIGINAL_UNREADABLE';
+
+/** Each selected item's planned files, by the item (`topPaths`): a file selected on its own is its own one. */
+function plannedUnder(plan: readonly PlannedCopy[], topPaths: readonly string[]): Map<string, string[]> {
+  const tops = new Set(topPaths);
+  const under = new Map<string, string[]>();
+  for (const { src } of plan) {
+    for (let at = src; ;) {
+      if (tops.has(at)) {
+        const files = under.get(at) ?? [];
+        files.push(src);
+        under.set(at, files);
+        break;
+      }
+      const up = path.dirname(at);
+      if (up === at) break;
+      at = up;
+    }
+  }
+  return under;
+}
+
+/**
+ * Why a selected item must not go to the Trash after all, asked at its own turn right before its trash
+ * step (hunt C06), or null to go ahead. The copies are all made first and the originals trashed at the
+ * end of the job — on a large offload, hours later — so a file edited in between (an app still saving,
+ * or one that saves by writing a new file and renaming it over the old) went to the Trash while its
+ * copy, the one Restore brings back, held the earlier version. Every planned file of the item is looked
+ * at again (lstat, no bytes read) and compared with its look right before its copy was made: its size,
+ * modified time and file id (a definite change), or its change time alone ("may have changed": a
+ * rewrite with its size and modified time put back moves it, and so does a new permission or
+ * attribute). A file of a folder that is gone is a change too; a file selected on its own that is gone
+ * goes on to its trash step, whose own look says what became of it. As the Undo Vault's CAPSULE_CHANGED.
+ */
+async function changedSinceCopy(top: string, files: readonly string[], looks: ReadonlyMap<string, SourceLook>): Promise<{ reason: string; code: string } | null> {
+  const nameOf = (src: string): string => (src === top ? 'it' : path.relative(top, src));
+  let changeTimeOnly: string | null = null;
+  for (const src of files) {
+    const was = looks.get(src);
+    if (was === undefined) continue;
+    let now: fs.BigIntStats;
+    try {
+      now = await fsp.lstat(src, { bigint: true });
+    } catch (err) {
+      if (meansAbsent(err)) {
+        if (src === top) return null;
+        return { code: ORIGINAL_CHANGED, reason: `${nameOf(src)} was removed after its copy was made` };
+      }
+      return { code: ORIGINAL_UNREADABLE, reason: `${nameOf(src)} could not be looked at again right before its trash step (${describeFsError(err)})` };
+    }
+    if (!now.isFile() || now.size !== was.size || now.mtimeNs !== was.mtimeNs || now.ino !== was.ino) {
+      return { code: ORIGINAL_CHANGED, reason: `${nameOf(src)} changed after its copy was made (the copy holds it as it was then)` };
+    }
+    if (changeTimeOnly === null && now.ctimeNs !== was.ctimeNs) changeTimeOnly = nameOf(src);
+  }
+  if (changeTimeOnly === null) return null;
+  return {
+    code: ORIGINAL_CHANGED,
+    reason: `${changeTimeOnly} may have changed after its copy was made (its change time moved, as it does for a rewrite whose size ` +
+      'and modified time were put back, and for a new permission or attribute)',
+  };
+}
+
 async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string[], destDir: string, listed: ListedSelection): Promise<void> {
   const createdFiles: string[] = [];
   let createdDirs: string[] = [];
   const results: { src: string; dest: string; size: number; hash: string }[] = [];
+  /** Each original as it was right before its copy was made (hunt C06). */
+  const looks = new Map<string, SourceLook>();
   try {
     createdDirs = await ensureDirs(plan);
     for (const item of plan) {
       if (job.cancelled) throw new CopyCancelled();
       job.phase = 'copying';
       job.currentPath = item.src;
+      looks.set(item.src, sourceLookOf(await fsp.lstat(item.src, { bigint: true })));
       const hash = await copyWithHash(item.src, item.dest, jobProgress(job, true));
       createdFiles.push(item.dest);
 
@@ -1069,9 +1149,12 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     }
     const held = new Set(leftInPlace.map((l) => l.folder));
     const toTrash = topPaths.filter((p) => !held.has(p));
-    let trashed = { deleted: [] as string[], failed: [] as { path: string; reason: string }[] };
+    let trashed: { deleted: string[]; failed: { path: string; reason: string; code?: string }[] } = { deleted: [], failed: [] };
+    // And each item once more at its own turn, right before its trash step (hunt C06): one holding a file
+    // that is not what was copied is left in place, its verified copies standing and recorded.
+    const filesOf = plannedUnder(plan, topPaths);
     try {
-      if (toTrash.length > 0) trashed = await moveToTrash(toTrash);
+      if (toTrash.length > 0) trashed = await moveToTrash(toTrash, { checkEach: (top) => changedSinceCopy(top, filesOf.get(top) ?? [], looks) });
     } catch (err) {
       // B2 refused: something got opened between the pre-flight and here.
       //
@@ -1084,9 +1167,11 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       if (!(err instanceof AppError) || err.code !== 'OPEN_HANDLE_CONFLICT') throw err;
       job.error = `Everything was copied and verified to ${destDir}, but the originals are still here: ${err.message}`;
     }
-    if (trashed.failed.length) {
+    const changed = trashed.failed.filter((f) => f.code === ORIGINAL_CHANGED || f.code === ORIGINAL_UNREADABLE);
+    const failedToTrash = trashed.failed.filter((f) => !changed.includes(f));
+    if (failedToTrash.length) {
       // Copies are safe at the destination; report the leftovers honestly.
-      job.error = `Offloaded everything, but ${trashed.failed.length} original${trashed.failed.length === 1 ? '' : 's'} couldn't be moved to the Trash: ${trashed.failed[0].reason}`;
+      job.error = `Offloaded everything, but ${failedToTrash.length} original${failedToTrash.length === 1 ? '' : 's'} couldn't be moved to the Trash: ${failedToTrash[0].reason}`;
     }
     if (leftInPlace.length > 0) {
       const [first] = leftInPlace;
@@ -1095,6 +1180,12 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
         `${path.basename(first.folder)} was left in place${more}: it now holds ${path.relative(first.folder, first.at) || path.basename(first.folder)}, ` +
         `which was not copied (${first.why === 'the scan did not list it' ? 'it was made after the offload was planned' : first.why}), ` +
         `so it was not moved to the Trash. Its verified copies stand at ${destDir}.`;
+      job.error = job.error ? `${job.error} Also: ${kept}` : kept;
+    }
+    if (changed.length > 0) {
+      const [first] = changed;
+      const more = changed.length > 1 ? ` (and ${formatCount(changed.length - 1)} more item${changed.length === 2 ? '' : 's'})` : '';
+      const kept = `${path.basename(first.path)} was left in place${more}: ${first.reason}, so it was not moved to the Trash. Its verified copies stand at ${destDir}.`;
       job.error = job.error ? `${job.error} Also: ${kept}` : kept;
     }
     // Every selected item the Trash did not take — a folder left in place, an original found open, one
