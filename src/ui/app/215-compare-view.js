@@ -200,7 +200,7 @@ $('cmpRunBtn').addEventListener('click', async () => {
       if (state.compare.result !== pair) return;
       fxHuntBeamSync('cmpBody', false);
       // §7.4 — a same-root snapshot pair also gets the split-slider maps.
-      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: false, deep: false, whenA: diff.a.takenAt, whenB: diff.b.takenAt, splitRoot: a.rootPath, rules });
+      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: false, notCompared: diff.notCompared || 0, deep: false, whenA: diff.a.takenAt, whenB: diff.b.takenAt, splitRoot: a.rootPath, rules });
     }
   } catch (e) {
     if (state.compare.result !== pair) return;
@@ -376,6 +376,7 @@ function renderCompare(r) {
         &nbsp;·&nbsp; ${countsLead}<span class="cmp-ct" data-n="${counts.added}">${counts.added}</span> added · <span class="cmp-ct" data-n="${counts.removed}">${counts.removed}</span> removed · <span class="cmp-ct" data-n="${counts.grew}">${counts.grew}</span> grew · <span class="cmp-ct" data-n="${counts.shrank}">${counts.shrank}</span> shrank${
         ruled ? ` · ${ruled} changed by your “Don’t scan” rules` : ''}${listedNote}</div>
       ${r.rules ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} Your “Don’t scan” rules changed between these two scans, so part of this difference is what was scanned, not what is on disk.</div>` : ''}
+      ${r.notCompared ? snapshotNotComparedHtml(r.notCompared) : ''}
       ${r.unlistedFolders ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} ${formatCount(r.unlistedFolders)} folder${r.unlistedFolders === 1 ? '' : 's'} one of these scans could not list in full (refused, unreadable or not entered), so what only one scan listed in ${r.unlistedFolders === 1 ? 'it' : 'them'} is not compared — not called removed or added.</div>` : ''}
       ${r.entries.length ? '<div id="cmpCounts"></div>' : ''}
       ${r.entries.length

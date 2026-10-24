@@ -344,9 +344,11 @@ async function writeSnapshot(scan: ScanResult): Promise<Snapshot | null> {
   if (scan.status !== 'complete' || (!scan.store && !scan.root)) return null;
   const tree = storeOf(scan);
 
-  const topEntries = tree
-    .childIds(tree.rootId)
-    .filter((c) => tree.size(c) > 0)
+  // The largest MAX_TOP_ENTRIES direct children, empty ones included, and whether that left any out
+  // (hunt C46): a diff reads a path missing from a list that holds every child as gone, and one missing
+  // from a cut list as not known — an empty item left out read "removed" while it was there.
+  const children = tree.childIds(tree.rootId);
+  const topEntries = [...children]
     .sort((a, b) => tree.size(b) - tree.size(a))
     .slice(0, MAX_TOP_ENTRIES)
     .map((c) => ({ name: tree.name(c), path: tree.path(c), size: tree.size(c), type: tree.nodeType(c) }));
@@ -359,6 +361,7 @@ async function writeSnapshot(scan: ScanResult): Promise<Snapshot | null> {
     fileCount: scan.fileCount,
     dirCount: scan.dirCount,
     topEntries,
+    topEntriesCut: children.length > topEntries.length,
     hasTree: true,
   };
   const boundary = snapshotBoundaryOf(scan);
@@ -444,22 +447,40 @@ export async function getSnapshot(id: string): Promise<Snapshot | undefined> {
   return store.snapshots.find((s) => s.id === id);
 }
 
-/** Size deltas between two snapshots (top-level entries matched by path). */
+/**
+ * Whether a snapshot's list of top-level items may leave one out (hunt C46): its own word, or — for one
+ * an earlier build saved, with no word — a full list, which may have been cut at MAX_TOP_ENTRIES.
+ */
+function listMayLeaveOut(s: Snapshot): boolean {
+  if (typeof s.topEntriesCut === 'boolean') return s.topEntriesCut;
+  return s.topEntries.length >= MAX_TOP_ENTRIES;
+}
+
+/**
+ * Size deltas between two snapshots (top-level entries matched by path). A path in only one list is
+ * removed or new only when the other list holds every item (hunt C46); missing from a list that may have
+ * left it out, it crossed the largest-100 line or went or came — not known — so it is left out and
+ * counted in `notCompared`, never called removed or new with its whole size as the change.
+ */
 export function diffSnapshots(a: Snapshot, b: Snapshot): SnapshotDiff {
-  const byPath = new Map<string, SnapshotDeltaEntry>();
+  const inB = new Map(b.topEntries.map((e) => [e.path, e]));
+  const inA = new Set(a.topEntries.map((e) => e.path));
+  const aMayLeaveOut = listMayLeaveOut(a);
+  const bMayLeaveOut = listMayLeaveOut(b);
+  let notCompared = 0;
+  const deltas: SnapshotDeltaEntry[] = [];
   for (const e of a.topEntries) {
-    byPath.set(e.path, { name: e.name, path: e.path, type: e.type, sizeA: e.size, sizeB: null, delta: -e.size });
+    const now = inB.get(e.path);
+    if (now !== undefined) deltas.push({ name: e.name, path: e.path, type: e.type, sizeA: e.size, sizeB: now.size, delta: now.size - e.size });
+    else if (bMayLeaveOut) notCompared++;
+    else deltas.push({ name: e.name, path: e.path, type: e.type, sizeA: e.size, sizeB: null, delta: -e.size });
   }
   for (const e of b.topEntries) {
-    const prev = byPath.get(e.path);
-    if (prev) {
-      prev.sizeB = e.size;
-      prev.delta = e.size - (prev.sizeA ?? 0);
-    } else {
-      byPath.set(e.path, { name: e.name, path: e.path, type: e.type, sizeA: null, sizeB: e.size, delta: e.size });
-    }
+    if (inA.has(e.path)) continue;
+    if (aMayLeaveOut) notCompared++;
+    else deltas.push({ name: e.name, path: e.path, type: e.type, sizeA: null, sizeB: e.size, delta: e.size });
   }
-  const entries = [...byPath.values()]
+  const entries = deltas
     .filter((e) => e.delta !== 0)
     .sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
 
@@ -469,5 +490,6 @@ export function diffSnapshots(a: Snapshot, b: Snapshot): SnapshotDiff {
     rootPath: b.rootPath,
     totalDelta: b.totalSize - a.totalSize,
     entries,
+    ...(notCompared > 0 ? { notCompared } : {}),
   };
 }

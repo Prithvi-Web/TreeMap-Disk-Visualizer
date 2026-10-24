@@ -39,7 +39,7 @@ const ctx: Record<string, unknown> = {
   FxCharts: { barSquares: () => ({ destroy() {} }) }, cmpCountsDrop() {}, cmpSplit: null, cmpCountsHandle: null,
 };
 vm.createContext(ctx);
-vm.runInContext(`${grab('function deltaRow(en, maxD, opts = {})')}\n${grab('function renderCompare(r)').replace('function renderCompare', 'globalThis.renderCompare = function')}`, ctx);
+vm.runInContext(`${grab('function snapshotNotComparedHtml(n)')}\n${grab('function deltaRow(en, maxD, opts = {})')}\n${grab('function renderCompare(r)').replace('function renderCompare', 'globalThis.renderCompare = function')}`, ctx);
 
 /** The card for `n` added files, as the server would return them; answers the rows drawn and the line above them. */
 function cardFor(n: number, truncated: boolean): { rows: number; line: string } {
@@ -72,6 +72,12 @@ test('a folder one of the scans could not list in full is said, and what is in i
   html = '';
   (ctx.renderCompare as (r: unknown) => void)({ entries, totalDelta: 4, truncated: false, unlistedFolders: 0, deep: true, whenA: 1, whenB: 2, rules: null });
   assert.doesNotMatch(html, /could not list in full/, 'nothing said when every folder was listed');
+});
+
+test('two History records: the card says how many top-level items it could not compare (hunt C46)', () => {
+  html = '';
+  (ctx.renderCompare as (r: unknown) => void)({ entries: [], totalDelta: 0, truncated: false, notCompared: 1, deep: false, whenA: 1, whenB: 2, rules: null });
+  assert.match(html, /1 top-level item is in only one of these scans’ lists of the largest 100, so it is not compared\./, html);
 });
 
 test('a list it draws whole says nothing of a cut', () => {

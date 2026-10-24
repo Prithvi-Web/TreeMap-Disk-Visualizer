@@ -258,7 +258,7 @@ async function renderTrendDeltas() {
     const [from, to] = days[0] === days[1] ? cmpWhenPair(a.takenAt, b.takenAt) : days;
     const head = `<div class="muted" style="margin-bottom:10px;" >${from} → ${to} — ${total}` +
       (rules ? ' — your “Don’t scan” rules changed between these two, so part of this is what was scanned, not what is on disk' : '') +
-      `</div>`;
+      `</div>` + (diff.notCompared ? snapshotNotComparedHtml(diff.notCompared) : '');
     if (!diff.entries.length) { host.innerHTML = head + '<div class="muted">No top-level changes between the last two snapshots.</div>'; return; }
     const maxD = Math.abs(diff.entries[0].delta) || 1;
     // Keyed by root path: the same folder's next comparison rolls whatever
@@ -269,6 +269,16 @@ async function renderTrendDeltas() {
     if (state.trends.path !== path || state.trends.snapshots !== snaps) return;
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   }
+}
+
+/**
+ * What a snapshot diff could not compare (hunt C46), as a line, or '' when it compared everything: a
+ * snapshot keeps its largest 100 top-level items, so an item in only one list crossed that line or went
+ * or came, and is neither removed nor new. Shared by Trends and Compare.
+ */
+function snapshotNotComparedHtml(n) {
+  if (!n) return '';
+  return `<div class="muted" style="margin:-4px 0 10px;">${formatCount(n)} top-level item${n === 1 ? ' is' : 's are'} in only one of these scans’ lists of the largest 100, so ${n === 1 ? 'it is' : 'they are'} not compared.</div>`;
 }
 
 /** Shared red/green delta row (Trends + Compare). */

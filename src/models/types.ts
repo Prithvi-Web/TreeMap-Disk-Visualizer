@@ -659,8 +659,14 @@ export interface Snapshot {
   totalSize: number;
   fileCount: number;
   dirCount: number;
-  /** Direct children of the root at scan time, largest first. */
+  /** Direct children of the root at scan time, largest first — the largest 100, empty ones included. */
   topEntries: SnapshotTopEntry[];
+  /**
+   * Whether `topEntries` left out any of the root's direct children (hunt C46): false when it holds every
+   * one, empty ones included. Absent on a snapshot an earlier build saved, which also left out empty
+   * items; a full list of those is read as one that may have been cut.
+   */
+  topEntriesCut?: boolean;
   /** True when a deeper tree was stored for the time-slider treemap. */
   hasTree?: boolean;
   /**
@@ -711,6 +717,12 @@ export interface SnapshotDiff {
   rootPath: string;
   totalDelta: number;
   entries: SnapshotDeltaEntry[];
+  /**
+   * Present when items were in only one snapshot's list and the other's may have left them out (hunt
+   * C46): how many. A snapshot keeps the largest 100 top-level items, so such an item crossed that line —
+   * or went or came — and is not compared, never called removed or new.
+   */
+  notCompared?: number;
 }
 
 /* ---------- Scan comparison ---------- */

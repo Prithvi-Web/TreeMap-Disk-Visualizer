@@ -1942,12 +1942,12 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/snapshots/compare',
-    summary: 'Deltas between two snapshots of the same root',
+    summary: 'Deltas between two snapshots of the same root (top-level items matched by path). A snapshot keeps its largest 100 top-level items; an item in only one list is removed or new only when the other list holds every item (topEntriesCut false), and otherwise is not compared — counted in notCompared, never called removed or new',
     tag: 'history',
     destructive: false,
     parameters: [queryParam('a', 'Snapshot id', { type: 'string' }, true), queryParam('b', 'Snapshot id', { type: 'string' }, true)],
     responses: {
-      '200': jsonResponse('Diff', opaque('SnapshotDiff: a, b, rootPath, totalDelta, entries[]')),
+      '200': jsonResponse('Diff', opaque('SnapshotDiff: a, b, rootPath, totalDelta, entries[], and notCompared when items crossed the largest-100 line')),
       '404': errorResponse('Unknown snapshot id'),
       '409': errorResponse('BOUNDARY_CHANGED — the two snapshots stopped at different drives mounted inside the folder, so a diff would show a drive as files added or removed'),
     },
