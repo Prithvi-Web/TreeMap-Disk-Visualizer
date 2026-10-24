@@ -134,14 +134,37 @@ test('a memory-mode scan hands its sealed store over at capacity length, as adop
   assert.equal(s.extDict[0], '', 'the dictionary\'s first extension is none');
 });
 
-/** The address space this process has mapped, in bytes: VmSize on Linux, ps's vsz on macOS. */
-function addressSpaceBytes(): number {
-  if (process.platform === 'linux') {
-    const kb = /^VmSize:\s+(\d+) kB$/m.exec(fs.readFileSync('/proc/self/status', 'utf8'))?.[1];
-    if (kb === undefined) assert.fail('/proc/self/status names no VmSize');
-    return Number(kb) * 1024;
+/**
+ * The regions this process has mapped readable and writable (not executable),
+ * and their bytes: /proc/self/maps on Linux, vmmap on macOS. A store's columns
+ * are such mappings, and so is the reservation a kept store would still hold —
+ * the private writable regions Linux's fork weighs whole against memory and
+ * swap (BQR-1 A1). The whole address space (VmSize, ps's vsz) also counts
+ * reservations nothing may write, which are no store's: V8 reserves 8 GiB
+ * (10 GiB on Node 20) for every WebAssembly memory, and tsx's loader makes such
+ * memories in every test file's process as their compiles settle. On Node 24
+ * two settle at the first turn of the event loop after the file loads: during
+ * the file's first test, but inside this test's two readings when it runs alone
+ * (a name pattern, every time) or the compile is late on a loaded Mac —
+ * 17,250,680,832 bytes in a full `npm test` on 24 Oct 2026, two 8 GiB
+ * reservations and the 71 MB a pass grows.
+ */
+function readWriteMappings(): { regions: number; bytes: number } {
+  const linux = process.platform === 'linux';
+  const listing = linux
+    ? fs.readFileSync('/proc/self/maps', 'utf8')
+    : execFileSync('vmmap', ['-w', '-interleaved', String(process.pid)], { maxBuffer: 1 << 30 }).toString();
+  // Linux: "start-end perms offset dev inode path"; vmmap: "type  start-end  [ vsize rsdnt dirty swap] current/max share …".
+  const region = linux ? /^([0-9a-f]+)-([0-9a-f]+) (\S{3})/ : /\s([0-9a-f]+)-([0-9a-f]+)\s+\[[^\]]*\]\s+(\S{3})\//;
+  let regions = 0;
+  let bytes = 0;
+  for (const line of listing.split('\n')) {
+    const m = region.exec(line);
+    if (m?.[3] !== 'rw-') continue;
+    regions += 1;
+    bytes += parseInt(m[2], 16) - parseInt(m[1], 16);
   }
-  return Number(execFileSync('ps', ['-o', 'vsz=', '-p', String(process.pid)]).toString().trim()) * 1024;
+  return { regions, bytes };
 }
 
 test('a store taken and kept maps its room, not the whole reservation its walk wrote into: on Linux a fork is refused ENOMEM once kept reservations side by side pass memory and swap, as CI\'s Autopilot spawn was after 25 scans (BQR-1 A1)', { skip: process.platform === 'win32' && 'Windows reserves a room without charging it, and starts a child without a fork' }, async (t) => {
@@ -151,17 +174,19 @@ test('a store taken and kept maps its room, not the whole reservation its walk w
   const core = loadCore(t);
   if (!core) return;
   const kept: NativeCore.NativeStore[] = [];
-  const before = addressSpaceBytes();
+  const before = readWriteMappings();
   for (let i = 0; i < KEPT; i++) {
     const handle = core.scanStart(rootFor(core, `kept-${String(i)}`), options({ store: storeOptions(room) }));
     await done(core, handle);
     kept.push(await core.storeTake(handle));
   }
-  const grew = addressSpaceBytes() - before;
+  const after = readWriteMappings();
+  const grew = after.bytes - before.bytes;
+  assert.ok(before.regions > 0 && after.regions > 0, `control: the listing names this process's read-write regions (${String(before.regions)}, then ${String(after.regions)})`);
   for (const s of kept) {
     assert.deepEqual([s.n, s.capacity, s.parent.length, s.parent[0]], [ENTRIES + 1, ENTRIES + 1 + HEADROOM, ENTRIES + 1 + HEADROOM, -1], 'control: each kept store has its rows and headroom, the root first');
   }
-  assert.ok(grew < room.nameBytes, `${String(KEPT)} stores taken and kept grew the address space by ${String(grew)} bytes, more than one room's name pool (${String(room.nameBytes)}): each still maps the reservation its walk wrote into`);
+  assert.ok(grew < room.nameBytes, `${String(KEPT)} stores taken and kept grew the read-write mappings by ${String(grew)} bytes, more than one room's name pool (${String(room.nameBytes)}): each still maps the reservation its walk wrote into`);
 });
 
 test('scanTake frees a memory-mode scan and throws: its rows are in its store', async (t) => {
