@@ -44,6 +44,10 @@ const SRC = path.join(__dirname, '..', 'src');
  * mid-flight. Each entry is a claim, and the reason is the argument for it.
  */
 const NOT_A_RACE: Record<string, string> = {
+  'mcp/index.ts::shutdownOnce':
+    'the MCP process ending on a signal or on its client closing stdin (hunt C58): it waits, bounded, for a cancelled offload and a trash_paths call, then exits — no request owns it and nothing reads state after it',
+  'middleware/idempotency.ts::admit':
+    'the Idempotency-Key middleware\'s own continuation (hunt C50): it replays a stored answer or calls next() for the very request that started it, so it never runs after that request has answered',
   'api/scanRoutes.ts::sendFinalEvent':
     'the progress stream sending its own last frame (Phase 4 T9b): it writes the response that asked for it, and no stored state',
   'api/indexRoutes.ts::buildIndex':
