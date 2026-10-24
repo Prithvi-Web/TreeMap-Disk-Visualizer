@@ -382,6 +382,19 @@ test('ScanQueue: a scan the page started itself holds the queue until it reports
   assert.equal(q.next(), null, 'finishing twice is harmless');
 });
 
+test('ScanQueue (review F1.8): a scan the page started names its folder, which is then the one being scanned — asked for again it is not queued; a scan of no folder here names none', () => {
+  const q = new desktop.ScanQueue((p: string) => p);
+  q.markBusy('/Users/x/Downloads');
+  assert.equal(q.current, '/Users/x/Downloads');
+  assert.deepEqual(q.enqueue(['/Users/x/Downloads', '/b']), { queued: ['/b'], ignored: ['/Users/x/Downloads'] }, 'not walked again straight after itself');
+  q.markBusy(null);
+  assert.equal(q.current, null, 'a scan of something that is no folder here (a cloud account) names none');
+  q.finished();
+  assert.equal(q.next(), '/b');
+  q.markBusy();
+  assert.equal(q.current, '/b', 'told nothing of its folder, the folder handed over stays the one scanning');
+});
+
 /* ═══════════════════════ copy-4: the crash dialog ═══════════════════════ */
 
 test('the crash dialog is calm, keeps the stack for the clipboard and the log, and offers Copy details', () => {
@@ -578,6 +591,7 @@ test('preload exposes the documented desktop bridge and routes each call to its 
   await api.requestScans(['/a', '/b']);
   assert.equal(await api.openPrivacySettings('full-disk-access'), 'invoked', 'the page gets the shell\'s answer back');
   api.scanProgress(0.4);
+  api.scanProgress(2, '/Users/x/Downloads');
   assert.equal(await api.scanFinished({ ok: true, path: '/a' }), 'invoked',
     'the page gets the shell\'s answer to a scan\'s end back: after a Stop, how many folders it held were dropped (review F1.1)');
   assert.deepEqual(invoked.map((i) => i.channel), ['treemap:resolve-scan-path', 'treemap:request-scans', 'treemap:open-privacy-settings', 'treemap:scan-finished']);
@@ -585,8 +599,9 @@ test('preload exposes the documented desktop bridge and routes each call to its 
   assert.deepEqual(invoked[2].args, ['full-disk-access'], 'the pane goes by name, untouched: the shell holds the URL');
   assert.deepEqual(invoked[3].args, [{ ok: true, path: '/a' }]);
   assert.deepEqual(sent, [
-    { channel: 'treemap:scan-progress', args: [0.4] },
-  ]);
+    { channel: 'treemap:scan-progress', args: [0.4, undefined] },
+    { channel: 'treemap:scan-progress', args: [2, '/Users/x/Downloads'] },
+  ], 'a scan starting names the folder it scans (review F1.8)');
   const got: string[] = [];
   api.onScanPath((p: string) => got.push(`scan:${p}`));
   api.onCommand((n: string) => got.push(`cmd:${n}`));
@@ -805,13 +820,14 @@ test('main: folders handed over by the OS before the window exists (dock drop, s
 /**
  * A page that keeps the preload contract, as src/ui now does (hunt C01; the
  * page's own calls are tests/desktopScanBridge.test.ts): every folder the
- * shell pushes starts a scan — scanProgress(2) — and ends with scanFinished.
+ * shell pushes starts a scan — scanProgress(2), with the folder it scans
+ * (review F1.8) — and ends with scanFinished.
  */
 function contractPage(h: Awaited<ReturnType<typeof loadMain>>) {
   const pushed = () => h.win().webContents.on_channel('treemap:scan-path') as string[];
   return {
     pushed,
-    start: () => h.stub.ipcMain.fire('treemap:scan-progress', 2),
+    start: (folder?: string) => (folder === undefined ? h.stub.ipcMain.fire('treemap:scan-progress', 2) : h.stub.ipcMain.fire('treemap:scan-progress', 2, folder)),
     finish: (result: Record<string, unknown>) => h.stub.ipcMain.invoke('treemap:scan-finished', result),
   };
 }
@@ -853,7 +869,7 @@ test('main (C01): the queue cycle — a folder handed over while a scan runs wai
   } finally { h.dispose(); }
 });
 
-test('main (review HA-L3/HA-L11): a folder the shell holds behind a running scan is said to the page, with its place among the folders the shell holds, and one asked for again while it is scanned is said to be; the page\'s own request is answered, never told', async () => {
+test('main (review HA-L3/HA-L11): a folder the shell holds behind a running scan is said to the page, with its place among the folders the shell holds, and one asked for again while it is scanned is said to be; a folder the page hands over is said as the shell\'s own are', async () => {
   const dir = mkTmp();
   const [a, b, c, d, x] = ['a', 'b', 'c', 'd', 'x'].map((n) => path.join(dir, n));
   for (const f of [a, b, c, d, x]) fs.mkdirSync(f);
@@ -871,14 +887,14 @@ test('main (review HA-L3/HA-L11): a folder the shell holds behind a running scan
     assert.deepEqual(told().slice(1), [{ path: b, before: 1 }, { path: c, before: 2 }], 'each with the folders the shell holds before it, and each once');
     h.stub.app.emit('open-file', { preventDefault() {} }, a); // the same folder again
     assert.deepEqual(told().slice(3), [{ path: a, before: 0 }], 'asked again, its place is said again — it is not queued twice');
-    await h.stub.ipcMain.invoke('treemap:request-scans', [d]); // the page's own call
-    assert.equal(told().length, 4, 'the page\'s own request gets its answer, and nothing is told it twice');
+    await h.stub.ipcMain.invoke('treemap:request-scans', [d]); // the page's own call: a folder dropped on the window
+    assert.deepEqual(told().slice(4), [{ path: d, before: 3 }], 'the page\'s own folder is said as the shell\'s are, in its place in the one queue — the page says nothing of it itself (review F1.2)');
     assert.deepEqual(page.finish({ ok: true, path: x }), { dropped: 0 });
     await new Promise((r) => setTimeout(r, 400));
     assert.deepEqual(page.pushed(), [x, a]);
     page.start();
     h.stub.app.emit('open-file', { preventDefault() {} }, a); // asked for while it is the folder being scanned
-    assert.deepEqual(told().slice(4), [{ path: a, scanning: true }], 'it is said to be scanning already, and not queued again');
+    assert.deepEqual(told().slice(5), [{ path: a, scanning: true }], 'it is said to be scanning already, and not queued again');
   } finally { h.dispose(); }
 });
 
@@ -930,6 +946,59 @@ test('main (review HA-L2): a window closed while it scans a folder the shell han
     assert.equal(h.windows().length, 1, 'the drop opens a window');
     await h.loadPage();
     assert.deepEqual(h.win().webContents.on_channel('treemap:scan-path'), [a], 'and its page scans the folder — not a blank window with the request lost');
+  } finally { h.dispose(); }
+});
+
+test('main (review F1.8): a folder asked for while the page scans it — a scan the page started itself — is said to be scanning already, and is not walked again after it', async () => {
+  const dir = mkTmp();
+  const [a, b] = ['a', 'b'].map((n) => path.join(dir, n));
+  for (const f of [a, b]) fs.mkdirSync(f);
+  const h = await loadMain({ dataDir: dir });
+  try {
+    await h.loadPage();
+    const page = contractPage(h);
+    const told = () => h.win().webContents.on_channel('treemap:scan-queued');
+    page.start(`${a}${path.sep}`); // typed in the window, with a separator at its end
+    h.stub.app.emit('open-file', { preventDefault() {} }, a); // File › Scan folder…, the tray, a dock drop: the same folder
+    assert.deepEqual(told(), [{ path: a, scanning: true }], 'said to be scanning already — the shell knows the folder the page scans');
+    page.finish({ ok: true, path: a });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.deepEqual(page.pushed(), [], 'and not walked again behind itself');
+    page.start(a);
+    h.stub.app.emit('open-file', { preventDefault() {} }, b);
+    assert.deepEqual(told().slice(1), [{ path: b, before: 0 }], 'control: another folder waits behind it');
+    page.finish({ ok: true, path: a });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.deepEqual(page.pushed(), [b]);
+    page.start('cloud://drive');
+    h.stub.app.emit('open-file', { preventDefault() {} }, b);
+    assert.deepEqual(told().slice(2), [{ path: b, before: 0 }], 'a scan of something that is no folder here names no folder: the one pushed before it is not called the one scanning');
+  } finally { h.dispose(); }
+});
+
+test('main (review F1.2): a folder the page hands over while it scans waits in the one queue with the shell\'s own, in the order asked, and is said as the shell\'s are — only the first "scans next"', async () => {
+  const dir = mkTmp();
+  const [a, b, c] = ['a', 'b', 'c'].map((n) => path.join(dir, n));
+  for (const f of [a, b, c]) fs.mkdirSync(f);
+  const h = await loadMain({ dataDir: dir });
+  try {
+    await h.loadPage();
+    const page = contractPage(h);
+    const told = () => h.win().webContents.on_channel('treemap:scan-queued');
+    page.start(path.join(dir, 'running'));
+    h.stub.app.emit('open-file', { preventDefault() {} }, b); // File › Scan folder… while it runs
+    await h.stub.ipcMain.invoke('treemap:request-scans', [c]); // then a drop on the window, handed over by the page
+    assert.deepEqual(told(), [{ path: b, before: 0 }, { path: c, before: 1 }], 'each said with the folders before it in the one queue');
+    page.finish({ ok: true, path: path.join(dir, 'running') });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.deepEqual(page.pushed(), [b], 'the first asked scans first');
+    page.start(b);
+    page.finish({ ok: true, path: b });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.deepEqual(page.pushed(), [b, c], 'then the page\'s');
+    page.start(c);
+    await h.stub.ipcMain.invoke('treemap:request-scans', [a]);
+    assert.deepEqual(page.finish({ ok: false, path: c, stopped: true }), { dropped: 1 }, 'a Stop drops the folder the page handed over, and counts it');
   } finally { h.dispose(); }
 });
 

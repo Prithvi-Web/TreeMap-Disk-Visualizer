@@ -153,16 +153,17 @@ function pumpSoon() {
 
 /**
  * Every way a folder reaches the shell lands here: dock drops, "Open With",
- * the CLI / "Scan with TreeMap" argv, the tray, the File menu, and the page's
- * own multi-folder drop via `treemap:request-scans`. Folders queue and scan
- * one at a time; the page is pushed the next one when it reports the last
- * finished (see preload.js for the contract).
+ * the CLI / "Scan with TreeMap" argv, the tray, the File menu, and the
+ * folders dropped on the window while a scan runs, which the page hands over
+ * via `treemap:request-scans` so that one queue orders every folder (review
+ * F1.2). Folders queue and scan one at a time; the page is pushed the next
+ * one when it reports the last finished (see preload.js for the contract).
  */
-function requestScans(rawPaths, { tell = true } = {}) {
+function requestScans(rawPaths) {
   const running = scanQueue.current;
   const result = scanQueue.enqueue(rawPaths);
   if (result.queued.length > 0) pumpScanQueue();
-  if (tell) tellHeld([...result.queued, ...result.ignored.map((raw) => (typeof raw === 'string' && raw ? toScannableDir(raw) : null))], running);
+  tellHeld([...result.queued, ...result.ignored.map((raw) => (typeof raw === 'string' && raw ? toScannableDir(raw) : null))], running);
   return result;
 }
 
@@ -171,10 +172,10 @@ function requestScans(rawPaths, { tell = true } = {}) {
  * says it as its own queue says its folders (review HA-L3, HA-L11): nothing
  * was said until a Stop called it dropped, or it started on its own.
  * `treemap:scan-queued` carries { path, before } — `before`, the folders the
- * shell holds ahead of it (the page counts its own queue in, which scans
- * first) — or { path, scanning: true } for a folder asked for again while it
- * is the one being scanned. A folder pushed to the page at once is not
- * "queued", and the page's own request-scans call is answered, never told.
+ * shell holds ahead of it — or { path, scanning: true } for a folder asked
+ * for again while it is the one being scanned. A folder pushed to the page
+ * at once is not "queued". The folders the page hands over are told too: the
+ * page says nothing of them itself, so each is said once (review F1.2).
  */
 function tellHeld(dirs, running = null) {
   if (!pageReady()) return;
@@ -230,7 +231,7 @@ ipcMain.handle('treemap:resolve-scan-path', (_event, p) => {
 
 ipcMain.handle('treemap:request-scans', (_event, paths) => {
   if (!Array.isArray(paths)) return null;
-  return requestScans(paths.filter((p) => typeof p === 'string'), { tell: false });
+  return requestScans(paths.filter((p) => typeof p === 'string'));
 });
 
 /**
@@ -253,7 +254,7 @@ ipcMain.handle('treemap:open-privacy-settings', async (_event, pane) => {
 
 /* ───────────────────── Dock progress and "scan finished" ───────────────────── */
 
-ipcMain.on('treemap:scan-progress', (_event, value) => {
+ipcMain.on('treemap:scan-progress', (_event, value, folder) => {
   const progress = desktop.progressBarValue(value);
   if (progress === -1) {
     // A cleared bar is a scan that ended: never let the queue wait on a page
@@ -261,7 +262,11 @@ ipcMain.on('treemap:scan-progress', (_event, value) => {
     scanQueue.finished();
     pumpSoon();
   } else {
-    scanQueue.markBusy();
+    // A scan starting names its folder (review F1.8): the page's own scans
+    // too, which the shell never knew, so the same folder asked for again was
+    // queued and walked twice. A spelling with a separator at its end is the
+    // folder; a name that is no absolute path here (a cloud account) is none.
+    scanQueue.markBusy(folder === undefined ? undefined : typeof folder === 'string' && path.isAbsolute(folder) ? path.resolve(folder) : null);
   }
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(progress);
 });

@@ -10,14 +10,20 @@
  *  - requestScans(paths)         → Promise<{ queued, ignored } | null>. Every path is
  *                                  resolved to a folder, repeats are dropped, and the
  *                                  folders are scanned ONE AT A TIME in the order
- *                                  given: the shell pushes each over onScanPath when
- *                                  the previous one has finished. Use this for a
- *                                  multi-folder drop instead of calling startScan.
- *  - scanProgress(fraction)      dock / taskbar progress. 0…1 shows that fraction,
+ *                                  given, behind the folders the shell already holds:
+ *                                  the shell pushes each over onScanPath when the
+ *                                  previous one has finished. Use this for folders
+ *                                  dropped while a scan runs, so one queue orders
+ *                                  every folder. Each one held is told over
+ *                                  onScanQueued, as the shell's own are; say nothing
+ *                                  of them from the answer.
+ *  - scanProgress(fraction, folder?)  dock / taskbar progress. 0…1 shows that fraction,
  *                                  any number above 1 (use 2) shows an indeterminate
  *                                  bar, -1 (or null) clears it. Send it at scan start
- *                                  (2), a few times a second at most while scanning,
- *                                  and it is cleared for you by scanFinished.
+ *                                  (2) with the folder being scanned ('' for none the
+ *                                  shell can name), which the shell then does not queue
+ *                                  again behind itself; a few times a second at most
+ *                                  while scanning; it is cleared for you by scanFinished.
  *  - scanFinished(result)        → Promise<{ dropped }>. { ok, path, files?, bytes?,
  *                                  refused?, error?, stopped? } (files: the files
  *                                  count; refused: folders that could not be read)
@@ -48,8 +54,8 @@
  *                                  of it (the page's own queue scans first); or
  *                                  cb({ path, scanning: true }) — asked for again while it
  *                                  is the folder being scanned. Say it as the page's own
- *                                  queue says its folders. Never sent for requestScans,
- *                                  whose answer the page has.
+ *                                  queue says its folders, once a scan. Sent for the
+ *                                  folders requestScans hands over too.
  *  - onCommand(cb)               cb(name) for a menu item the page owns:
  *                                  'settings' | 'palette' | 'sidebar' | 'shortcuts' | 'rescan'.
  *                                  One chosen while the page is still loading is sent
@@ -86,9 +92,9 @@ contextBridge.exposeInMainWorld('treemapDesktop', {
   onCommand(callback) {
     ipcRenderer.on('treemap:command', (_event, name) => callback(name));
   },
-  /** Dock / taskbar progress: 0…1, above 1 = indeterminate, -1 = clear. */
-  scanProgress(fraction) {
-    ipcRenderer.send('treemap:scan-progress', fraction);
+  /** Dock / taskbar progress: 0…1, above 1 = indeterminate, -1 = clear; at a scan's start, with its folder. */
+  scanProgress(fraction, folder) {
+    ipcRenderer.send('treemap:scan-progress', fraction, folder);
   },
   /** Every terminal path of a scan: { ok, path, files, bytes, error, stopped } → { dropped }. */
   scanFinished(result) {

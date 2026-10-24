@@ -755,8 +755,10 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   state.abortScan = null; // no stream yet — Stop before the request answers has no scanId
   state.scanGen++; // this scan's identity while its request is in flight
   // The desktop shell's dock bar spins, and it holds the folders it is handed
-  // until this scan ends (tellDesktop, hunt C01). Guarded: a page reader may lift this without it.
-  if (typeof tellDesktop === 'function') tellDesktop('scanProgress', 2);
+  // until this scan ends (tellDesktop, hunt C01) — told which folder this is,
+  // so the same folder asked for there is not walked again behind it (review
+  // F1.8). Guarded: a page reader may lift this without it.
+  if (typeof tellDesktop === 'function') tellDesktop('scanProgress', 2, state.scanningPath || '');
   // A scan paints the Full Disk Access notice only if it sets one itself
   // (startScanRequest → preScanAccessNotice, after this): a cloud scan never
   // does, and must not inherit the last disk scan's (U-11, review F1.2).

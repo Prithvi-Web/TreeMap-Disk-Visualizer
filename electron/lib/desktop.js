@@ -296,8 +296,18 @@ class ScanQueue {
     return this.current;
   }
 
-  markBusy() {
+  /**
+   * A scan is running. `dir` is the folder the page says it scans — then the
+   * one being scanned, which is not queued to be walked again behind itself
+   * (review F1.8): a scan the page started itself reached the shell with no
+   * folder, so the same folder asked for from File › Scan folder…, the tray
+   * or the Dock was queued, called "it scans next" and walked twice. `null`
+   * is a scan of no folder the shell can name (a cloud account); leaving it
+   * out keeps the folder the shell handed over.
+   */
+  markBusy(dir) {
     this.busy = true;
+    if (dir !== undefined) this.current = dir;
   }
 
   finished() {

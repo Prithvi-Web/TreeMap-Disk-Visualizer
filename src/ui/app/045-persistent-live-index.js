@@ -2034,6 +2034,18 @@ function queueScan(p) {
   // — two files dropped from one folder scanned it twice, the second called
   // "it scans next" — and it is said once a scan, not once a file (review HA-L12).
   if (sameFolder(p, state.scanningPath)) { sayOnceThisScan(ALREADY_SCANNING, `Already scanning ${p}`); return; }
+  // In the desktop app the shell holds the folders it is handed behind the
+  // scan running — File › Scan folder…, the tray, a dock drop — so a folder
+  // dropped here waits in that one queue too, in the order asked, and the
+  // shell's notice says it (sayShellQueued). Kept here, it waited in a second
+  // queue that always went first: two folders were each told "it scans next"
+  // (review F1.2). One the shell gives no answer for waits here.
+  const handed = typeof tellDesktop === 'function' ? tellDesktop('requestScans', [p]) : undefined;
+  if (handed !== undefined) { void Promise.resolve(handed).then((answer) => { if (!answer) waitHere(p); }); return; }
+  waitHere(p);
+}
+/** A folder waiting in this queue (a browser tab's, or one the shell did not take), said with its place. */
+function waitHere(p) {
   if (scanQueue.some((q) => sameFolder(q, p))) return;
   scanQueue.push(p);
   toast(queuedSentence(p, scanQueue.length - 1), 'success', 5000);
@@ -2069,18 +2081,20 @@ function queuedSentence(p, before) {
 }
 /**
  * A folder the desktop shell holds behind the scan running — File › Scan
- * folder…, the tray, a dock drop, "Scan with TreeMap", a second launch — is
- * said as this queue says its own (review HA-L3, HA-L11): it went unsaid
- * until a Stop called it dropped. This queue scans before the shell's
- * folders, so its waiting folders are counted ahead of it, and `before`
- * counts the shell's own. One asked for again while it is being scanned is
- * said to be. A Stop counts the shell's folders with this queue's (stopScan).
+ * folder…, the tray, a dock drop, "Scan with TreeMap", a second launch, and
+ * the folders this page hands it (queueScan) — is said as this queue says
+ * its own (review HA-L3, HA-L11): it went unsaid until a Stop called it
+ * dropped. `before` counts the folders the shell holds ahead of it, and any
+ * waiting here go first. Each folder is said once a scan: asked for again —
+ * a second file from it — the shell says its place again, unchanged (review
+ * F1.2). One asked for again while it is being scanned is said to be. A Stop
+ * counts the shell's folders with this queue's (stopScan).
  */
 function sayShellQueued(held) {
   if (!held || typeof held.path !== 'string' || !held.path) return;
   if (held.scanning === true) { sayOnceThisScan(ALREADY_SCANNING, `Already scanning ${held.path}`); return; }
   const ahead = Number.isInteger(held.before) && held.before > 0 ? held.before : 0;
-  toast(queuedSentence(held.path, scanQueue.length + ahead), 'success', 5000);
+  sayOnceThisScan(held.path, queuedSentence(held.path, scanQueue.length + ahead));
 }
 function drainScanQueue() {
   if (state.scanning) return;
@@ -2110,10 +2124,10 @@ subscribe(TOPIC.scan, (scanId) => { if (scanId) setTimeout(drainScanQueue, 0); }
    browser tab has no bridge, and nothing is said. The shell's answer is
    handed back (scanFinished's: how many folders a Stop dropped, review
    F1.1); one that fails is no answer, never an unhandled rejection. */
-function tellDesktop(method, arg) {
+function tellDesktop(method, ...args) {
   const bridge = typeof window === 'undefined' || !window ? null : window.treemapDesktop;
   if (!bridge || typeof bridge[method] !== 'function') return undefined;
-  const answer = bridge[method](arg);
+  const answer = bridge[method](...args);
   return answer && typeof answer.then === 'function' ? answer.then((v) => v, () => null) : answer;
 }
 

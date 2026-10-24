@@ -88,10 +88,12 @@ function page(decls: string[], given: Record<string, unknown>, returns: string) 
 /** A bridge that records what the page tells the shell, in order. */
 function bridge() {
   const told: Array<[string, unknown]> = [];
+  const folders: unknown[] = []; // the folder each scanProgress names (review F1.8)
   return {
     told,
+    folders,
     api: {
-      scanProgress: (v: unknown) => { told.push(['scanProgress', v]); },
+      scanProgress: (v: unknown, folder?: unknown) => { told.push(['scanProgress', v]); folders.push(folder); },
       scanFinished: (r: unknown) => { told.push(['scanFinished', r]); },
     },
   };
@@ -104,12 +106,17 @@ const TELL = 'function tellDesktop(';
 test('C01: a real scan starting tells the shell (scanProgress 2) — its dock bar spins and it holds the folders it is handed', () => {
   const b = bridge();
   const { $ } = makeDom();
-  const state = { scanning: false, scanGen: 0, root: null, whatsNew: { seq: 0 } };
+  const state: Record<string, unknown> = { scanning: false, scanGen: 0, root: null, whatsNew: { seq: 0 }, scanningPath: '/Users/x/Downloads' };
   const fns = page([TELL, 'function beginScanChrome('], { state, $, window: { treemapDesktop: b.api } }, 'beginScanChrome');
   fns.beginScanChrome({ quiet: false });
   assert.deepEqual(b.told, [['scanProgress', 2]]);
   fns.beginScanChrome({ quiet: true, message: 'Starting scan…' });
   assert.deepEqual(b.told, [['scanProgress', 2], ['scanProgress', 2]], 'a quiet scan is a scan too: it is as long, and the shell must hold its folders as well');
+  assert.deepEqual(b.folders, ['/Users/x/Downloads', '/Users/x/Downloads'],
+    'each names the folder it scans, so the shell does not queue that folder to be walked again behind it (review F1.8)');
+  state.scanningPath = null;
+  fns.beginScanChrome({ quiet: false });
+  assert.equal(b.folders[2], '', 'a scan with no folder named names none');
 });
 
 test('C01: in a browser tab there is no bridge, and nothing is said or thrown', () => {
@@ -390,21 +397,40 @@ test('C19: only the first folder waiting scans next; the others are told how man
   assert.equal(q.clearScanQueue(), 0);
 });
 
-test('review HA-L3/HA-L11: a folder the desktop shell holds behind the scan running is said as the page\'s own queue says its folders, the page\'s waiting folders counted before it; one being scanned already is said to be', () => {
-  const { q, toasts } = pageQueue();
+test('review HA-L3/HA-L11: a folder the desktop shell holds behind the scan running is said as the page\'s own queue says its folders; one being scanned already is said to be', () => {
+  const { q, toasts } = pageQueue({ requestScans: async (paths) => ({ queued: paths, ignored: [] }) });
   assert.equal(typeof q.sayShellQueued, 'function', 'the page answers the shell\'s notice');
   const say = q.sayShellQueued!;
   q.queueScan('/Running');
   say({ path: '/Dock', before: 0 });
   assert.deepEqual(toasts, ['Queued /Dock — it scans next'], 'a dock drop behind the scan running, with nothing else waiting');
-  q.queueScan('/Mine'); // the page's own drop: its queue scans before the shell's folders
   say({ path: '/Second', before: 1 });
-  assert.deepEqual(toasts.slice(1), ['Queued /Mine — it scans next', 'Queued /Second — 2 folders before it'],
-    'the page\'s one waiting folder and the shell\'s one before it');
+  assert.deepEqual(toasts.slice(1), ['Queued /Second — 1 folder before it'], 'with the folders before it');
   say({ path: '/Running', scanning: true });
-  assert.deepEqual(toasts.slice(3), ['Already scanning /Running'], 'asked for again while it scans');
+  assert.deepEqual(toasts.slice(2), ['Already scanning /Running'], 'asked for again while it scans');
   for (const junk of [null, {}, { path: 5, before: 0 }, { path: '', before: 0 }]) say(junk);
-  assert.equal(toasts.length, 4, 'a notice that names no folder says nothing');
+  assert.equal(toasts.length, 3, 'a notice that names no folder says nothing');
+});
+
+test('review F1.2: in the desktop app a folder dropped on the window while a scan runs waits in the shell\'s queue, behind the folders the shell holds — one queue, in the order asked — and is said once, by the shell\'s notice', async () => {
+  const asked: string[][] = [];
+  const { q, toasts, started } = pageQueue({ requestScans: async (paths) => { asked.push(paths); return { queued: paths, ignored: [] }; } });
+  const say = q.sayShellQueued!;
+  q.queueScan('/A'); // the scan running
+  say({ path: '/B', before: 0 }); // File › Scan folder… while it runs: the shell holds it
+  q.queueScan('/C'); // a drop on the window
+  assert.deepEqual(asked, [['/C']], 'handed to the shell, to wait behind /B');
+  assert.deepEqual(toasts, ['Queued /B — it scans next'], 'the page says nothing of it itself');
+  say({ path: '/C', before: 1 }); // the shell's notice for it
+  assert.deepEqual(toasts.slice(1), ['Queued /C — 1 folder before it'], 'only /B is told it scans next');
+  q.queueScan('/C'); say({ path: '/C', before: 1 }); // a second file from /C: the shell says its place again
+  q.queueScan('/A'); say({ path: '/A', scanning: true }); // a file from the folder being scanned, by the window and by the Dock
+  assert.deepEqual(toasts.slice(2), ['Already scanning /A'], 'each folder said once for the scan');
+  assert.deepEqual([started, q.clearScanQueue()], [['/A'], 0], 'the page holds nothing of its own: a Stop counts what the shell drops');
+  const gone = pageQueue({ requestScans: async () => null }); // the shell gave no answer
+  gone.q.queueScan('/A'); gone.q.queueScan('/C');
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual([gone.toasts, gone.q.clearScanQueue()], [['Queued /C — it scans next'], 1], 'a folder the shell did not take waits here, said as this queue says its own');
 });
 
 test('review HA-L3/HA-L11: the page registers for the shell\'s queued notices', () => {
