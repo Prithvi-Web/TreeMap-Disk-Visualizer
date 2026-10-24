@@ -2188,6 +2188,7 @@ function dashboardPage() {
   const p = viewsPage(['dashboard'], ['elsewhere'], ['function keepAccessFocus(', 'function paintAccessNotice(', 'function renderRefusedFolders(',
     'function paintRefusedRow(', 'function fullDiskAccessInfo(', 'function accessHintFor(', 'function lastPathSegment('], {
     state: st, donutHandle: null, renderBudgetWidget: noop, fxBudgetGaugesDrop: noop, fxDriveGaugeDrop: noop,
+    skeletonRows: () => '', fxDonutLoadingSync: noop, // its mount while a scan runs: the skeletons
   });
   return { ...p, st, live: p.$('accessSaid') };
 }
@@ -2263,6 +2264,42 @@ test('with no visit back, the Dashboard\'s row is not said again: nothing howeve
   e.fns.switchView('dashboard');
   for (let i = 0; i < 4; i++) e.frame();
   assert.deepEqual(e.live.said.filter(Boolean), [], 'words kept from an earlier going are not said once the row has been hidden since');
+});
+
+const MOUNTS_SAID = 'A drive is mounted inside this folder (/Users/x/Simulator). The scan stayed on this drive, so nothing on it is counted.';
+
+test('a scan that starts brings the Dashboard back saying nothing of what its boxes said of the last scan — its refused-folder row and its note on drives mounted inside stand for that scan while this one runs, whether the scan\'s own start brings the Dashboard back or the person does — and the scan\'s end says what it paints, once (review F1.1, F1.4)', () => {
+  const d = dashboardPage();
+  const mounts = d.$('mountsNoteSaid');
+  d.fns.switchView('dashboard');
+  d.frame();
+  d.fns.renderRefusedFolders(); // scan A ends: its row
+  d.fns.sayAloud('mountsNoteSaid', MOUNTS_SAID); // and its note on drives mounted inside
+  d.frame();
+  d.frame();
+  assert.equal(d.live.textContent, ACCESS_SAID, 'control: the row said');
+  assert.equal(mounts.textContent, MOUNTS_SAID, 'control: the note said');
+  d.fns.switchView('elsewhere'); // the person goes to the Treemap
+  for (const r of [d.live, mounts]) r.said.length = 0;
+  d.frame();
+  // A scan of another folder starts there: beginScanChrome sets `scanning`, and its full chrome brings the Dashboard
+  // back (switchView('dashboard')) — as a tab back to it would while the scan runs.
+  d.st.scanning = true;
+  d.fns.switchView('dashboard');
+  for (let i = 0; i < 4; i++) d.frame();
+  assert.equal(d.$('accessRow').hidden, false, 'control: the last scan\'s row is on screen still, beside the skeletons');
+  assert.deepEqual([d.live, mounts].map((r) => r.said.filter(Boolean)), [[], []],
+    'neither the folders the last scan could not read ("then scan again", to a person who just did) nor the drives mounted inside its folder are said as another scan runs');
+  // The scan ends: TOPIC.scan paints its row, then finishScan re-enters the view that is up.
+  d.st.scanning = false;
+  d.st.scanStats = { refused: { dirs: 12, examples: ['/Users/x/Library/Mail', '/Users/x/Library/Safari'] } };
+  d.fns.renderRefusedFolders();
+  d.fns.switchView('dashboard');
+  for (let i = 0; i < 4; i++) d.frame();
+  const said = d.live.said.filter(Boolean);
+  assert.equal(said.length, 1, 'control: the row this scan painted is said, once');
+  assert.match(said[0], /^12 folders could not be read/, 'control: in this scan\'s words');
+  assert.deepEqual(mounts.said.filter(Boolean), [], 'and what the last scan\'s note said is not kept to be said at this scan\'s end: it was that scan\'s');
 });
 
 /** History as the page registers it, on its calendar, with the calendar's own loader; `api` answers the count. */

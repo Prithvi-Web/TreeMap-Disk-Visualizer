@@ -8738,11 +8738,21 @@ function viewUnsay(view) {
  * on screen again (sayAloud) — unless something has spoken for the region
  * since, its box hidden or given other words while the view was away, which
  * stand as they were said.
+ *
+ * Never while a scan runs, and not kept for after it (review F1.1, F1.4): a
+ * scan's start brings the Dashboard back, and a person may, while its boxes
+ * still stand for the last scan — nothing takes the refused-folder row or the
+ * note on drives mounted inside down as a scan starts — so their words, said
+ * again then, would tell of folders another scan could not read, and "then
+ * scan again" to a person who just did. The scan's end paints and says them
+ * (TOPIC.scan), and a Stop or a failure the refused row
+ * (restoreDashboardPanels).
  */
 function viewSayAgain(view) {
   const kept = viewSaidAsItWent.get(view.id);
   if (!kept) return;
   viewSaidAsItWent.delete(view.id);
+  if (state.scanning) return;
   for (const [id, words] of kept) if (!aloudSaid.has(id)) sayAloud(id, words);
 }
 
