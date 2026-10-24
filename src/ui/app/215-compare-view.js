@@ -328,6 +328,8 @@ function cmpCountsDrop() {
 }
 
 function renderCompare(r) {
+  /** The most difference rows Compare draws: the biggest, by how much they changed (hunt C48). */
+  const CMP_ROWS_SHOWN = 200;
   cmpSplit = null; // a fresh card owns the canvas; a stale draw must find nothing
   cmpCountsDrop();
   const counts = { added: 0, removed: 0, grew: 0, shrank: 0 };
@@ -345,6 +347,14 @@ function renderCompare(r) {
     : `Total ${up ? 'grew' : 'shrank'} by
         <b class="cmp-total" style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(r.totalDelta))}</b>`;
   const maxD = Math.abs(r.entries[0]?.delta ?? 0) || 1;
+  // What is drawn, said as drawn (hunt C48): the biggest CMP_ROWS_SHOWN rows of what the server
+  // returned, which is itself the biggest 1,000 when it cut the list — and counts taken over a cut list
+  // say so, never read as totals.
+  const shown = Math.min(r.entries.length, CMP_ROWS_SHOWN);
+  const listedNote = r.entries.length > shown
+    ? ` · the biggest ${formatCount(shown)} of ${r.truncated ? 'more than 1,000' : formatCount(r.entries.length)} differences are listed below`
+    : '';
+  const countsLead = r.truncated ? 'among the biggest 1,000 differences: ' : '';
   const splitCard = r.splitRoot ? `
     <div class="card glass" id="cmpSplitCard">
       <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>Split view</h2>
@@ -363,12 +373,12 @@ function renderCompare(r) {
     <div class="card glass">
       <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>${cmpWhenPair(r.whenA, r.whenB).join(' → ')}${r.deep ? '' : ' · top-level folders only'}</h2>
       <div class="muted num" style="margin-bottom:12px;">${total}
-        &nbsp;·&nbsp; <span class="cmp-ct" data-n="${counts.added}">${counts.added}</span> added · <span class="cmp-ct" data-n="${counts.removed}">${counts.removed}</span> removed · <span class="cmp-ct" data-n="${counts.grew}">${counts.grew}</span> grew · <span class="cmp-ct" data-n="${counts.shrank}">${counts.shrank}</span> shrank${
-        ruled ? ` · ${ruled} changed by your “Don’t scan” rules` : ''}${r.truncated ? ' · biggest 1,000 shown' : ''}</div>
+        &nbsp;·&nbsp; ${countsLead}<span class="cmp-ct" data-n="${counts.added}">${counts.added}</span> added · <span class="cmp-ct" data-n="${counts.removed}">${counts.removed}</span> removed · <span class="cmp-ct" data-n="${counts.grew}">${counts.grew}</span> grew · <span class="cmp-ct" data-n="${counts.shrank}">${counts.shrank}</span> shrank${
+        ruled ? ` · ${ruled} changed by your “Don’t scan” rules` : ''}${listedNote}</div>
       ${r.rules ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} Your “Don’t scan” rules changed between these two scans, so part of this difference is what was scanned, not what is on disk.</div>` : ''}
       ${r.entries.length ? '<div id="cmpCounts"></div>' : ''}
       ${r.entries.length
-        ? r.entries.slice(0, 200).map(en => deltaRow(en, maxD, { offerSnapshots: true, rules: r.rules || null })).join('')
+        ? r.entries.slice(0, shown).map(en => deltaRow(en, maxD, { offerSnapshots: true, rules: r.rules || null })).join('')
         : `<div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No differences — nothing changed between these two.</div>`}
     </div>`;
   // Animated counts: the from-zero roll the quick stats use, on the totals
