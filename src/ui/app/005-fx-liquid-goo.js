@@ -1020,6 +1020,9 @@ async function api(url, options, opts = {}) {
       err.status = res.status;
       throw err;
     }
+    // A read of the scan on hand pushes its expiry on: the warning moves with
+    // it (hunt C17). Guarded, as scanResultsExpired is above.
+    if (typeof noteScanUsed === 'function') noteScanUsed(url, options && options.body);
     return body;
   }
 }

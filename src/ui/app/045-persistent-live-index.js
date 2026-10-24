@@ -2069,16 +2069,56 @@ function tellDesktop(method, arg) {
 function armScanExpiry() {
   clearTimeout(state.scanExpiryTimer);
   state.scanExpiryTimer = 0;
-  const at = Number((state.scanStats || {}).expiresAt);
-  if (!state.scanId || !Number.isFinite(at) || at <= 0) return;
-  const warnIn = Math.max(0, at - Date.now() - 2 * 60_000);
+  if (!state.scanId) return;
   const scanId = state.scanId;
+  // When the results leave the server's memory, as far as the page can tell:
+  // the landed stats' `expiresAt`, pushed on by every read of the scan since
+  // (hunt C17). The server keeps a settled scan 30 minutes after it was last
+  // read ("Every read of the scan pushes it out by 30 minutes", GET
+  // /api/openapi.json), and stamps a read at most once a minute, so a read
+  // the page made counts from a minute before it. A timer fixed when the scan
+  // landed told someone still using the results that they were about to
+  // expire, when they were not. 0: the server said nothing (an older server).
+  const expiresAt = () => {
+    const at = Number((state.scanStats || {}).expiresAt);
+    if (!Number.isFinite(at) || at <= 0) return 0;
+    const used = state.scanUsed && state.scanUsed.scanId === scanId ? state.scanUsed.at - 60_000 + 30 * 60_000 : 0;
+    return Math.max(at, used);
+  };
+  const at = expiresAt();
+  if (!at) return;
+  const warnIn = Math.max(0, at - Date.now() - 2 * 60_000);
   state.scanExpiryTimer = setTimeout(() => {
     if (scanId !== state.scanId || state.scanning) return;
-    const mins = Math.max(1, Math.round((at - Date.now()) / 60_000));
+    const left = expiresAt() - Date.now();
+    // Read since this was armed: the warning moves with it.
+    if (left > 2 * 60_000) { armScanExpiry(); return; }
+    // Gone already, by all the page knows — an older tree put back by a Stop,
+    // not read since: no "about 1 minute" for it. A later read says what
+    // happened (scanResultsExpired), and a read that answers arms this again.
+    if (left <= 0) return;
+    const mins = Math.max(1, Math.round(left / 60_000));
     toastAction(`These results expire in about ${mins} minute${mins === 1 ? '' : 's'} — scan again to keep them fresh.`,
       'Scan again', () => rescan(), 'success', 20000);
   }, warnIn);
+}
+
+/**
+ * A request the server answered (api()) that named the scan on hand — in its
+ * URL, or as `scanId` in its JSON body — read that scan, and pushed its
+ * expiry on (hunt C17): noted, and the warning armed from it again, at most
+ * once a minute (the server's own grain).
+ */
+function noteScanUsed(url, body) {
+  const scanId = state.scanId;
+  if (!scanId) return;
+  let named = null;
+  if (typeof body === 'string' && body.includes(scanId)) { try { named = JSON.parse(body).scanId; } catch { /* not JSON: it names no scan */ } }
+  if (!(String(url).includes(scanId) || named === scanId)) return;
+  const prev = state.scanUsed;
+  const now = Date.now();
+  state.scanUsed = { scanId, at: now };
+  if (!prev || prev.scanId !== scanId || now - prev.at >= 60_000) armScanExpiry();
 }
 subscribe(TOPIC.scan, (scanId) => { if (scanId) armScanExpiry(); });
 

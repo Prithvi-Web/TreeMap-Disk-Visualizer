@@ -1113,27 +1113,101 @@ test('an "expired scanId" error becomes a plain sentence with a one-click Scan a
   assert.match(braced('async function api('), /SCAN_NOT_FOUND/, 'api() is where every such error passes through');
 });
 
-test('when the server says when results expire, the page warns two minutes ahead', () => {
-  const fn = braced('function armScanExpiry(');
-  const timers: Array<{ fn: () => void; ms: number }> = [];
+/** armScanExpiry and noteScanUsed, lifted, over a clock the test moves and timers it fires. */
+function expiryHarness(state: Record<string, unknown>) {
+  const clock = { t: 1_000_000 };
+  const timers: Array<{ fn: () => void; ms: number; at: number; cleared: boolean }> = [];
   const offers: string[] = [];
+  const fns = new Function('state', 'toastAction', 'rescan', 'setTimeout', 'clearTimeout', 'Date',
+    `'use strict'; ${braced('function armScanExpiry(')}\n${braced('function noteScanUsed(')} return { armScanExpiry, noteScanUsed };`)(
+    state, (m: string) => offers.push(m), () => {},
+    (cb: () => void, ms: number) => { timers.push({ fn: cb, ms, at: clock.t, cleared: false }); return timers.length; },
+    (id: number) => { if (id && timers[id - 1]) timers[id - 1].cleared = true; },
+    { now: () => clock.t }) as { armScanExpiry: () => void; noteScanUsed: (url: string, body?: string) => void };
+  /** Move the clock to the live timer's moment and run it. */
+  const fire = () => {
+    const live = timers.filter((x) => !x.cleared);
+    const t = live[live.length - 1];
+    assert.ok(t, 'a warning is armed');
+    t.cleared = true;
+    clock.t = t.at + t.ms;
+    t.fn();
+  };
+  const live = () => timers.filter((x) => !x.cleared).length;
+  return { ...fns, clock, timers, offers, fire, live };
+}
+
+test('when the server says when results expire, the page warns two minutes ahead', () => {
   const state: Record<string, unknown> = { scanId: 's1', scanStats: { expiresAt: 1_000_000 + 10 * 60_000 } };
-  const arm = new Function('state', 'toastAction', 'rescan', 'setTimeout', 'clearTimeout', 'Date',
-    `'use strict'; ${fn} return armScanExpiry;`)(
-    state, (m: string) => offers.push(m), () => {}, (cb: () => void, ms: number) => { timers.push({ fn: cb, ms }); return timers.length; }, () => {},
-    { now: () => 1_000_000 }) as () => void;
-  arm();
-  assert.equal(timers.length, 1);
-  assert.equal(timers[0].ms, 8 * 60_000, 'ten minutes to expiry: the warning is scheduled two minutes before');
-  timers[0].fn();
-  assert.equal(offers.length, 1);
-  assert.match(offers[0], /expire/i);
+  const h = expiryHarness(state);
+  h.armScanExpiry();
+  assert.equal(h.timers.length, 1);
+  assert.equal(h.timers[0].ms, 8 * 60_000, 'ten minutes to expiry: the warning is scheduled two minutes before');
+  h.fire();
+  assert.equal(h.offers.length, 1);
+  assert.match(h.offers[0], /expire in about 2 minutes/i);
   state.scanStats = { fileCount: 3 };
-  arm();
-  assert.equal(timers.length, 1, 'an older server without expiresAt schedules nothing');
-  state.scanStats = { expiresAt: 1_000_000 + 30_000 };
-  arm();
-  assert.equal(timers[timers.length - 1].ms, 0, 'already inside the two-minute window: warn now');
+  h.armScanExpiry();
+  assert.equal(h.live(), 0, 'an older server without expiresAt schedules nothing');
+  state.scanStats = { expiresAt: h.clock.t + 30_000 };
+  h.armScanExpiry();
+  assert.equal(h.timers[h.timers.length - 1].ms, 0, 'already inside the two-minute window: warn now');
+});
+
+test('the expiry warning moves with every read of the scan: someone still using the results is never told they are about to expire (hunt C17)', () => {
+  const landed = 1_000_000;
+  const MIN = 60_000;
+  const state: Record<string, unknown> = { scanId: 's1', scanStats: { expiresAt: landed + 30 * MIN } };
+  const h = expiryHarness(state);
+  h.armScanExpiry();
+  assert.equal(h.timers[0].ms, 28 * MIN, 'armed as it landed: 28 minutes on');
+  // Ten minutes in, the person drills into the map: the server pushed the expiry on.
+  h.clock.t = landed + 10 * MIN;
+  h.noteScanUsed('/api/scan/s1/subtree?path=%2FUsers');
+  assert.equal(h.timers[0].cleared, true, 'the warning armed as it landed is taken back');
+  h.fire();
+  assert.equal(h.clock.t, landed + 37 * MIN, 'it comes two minutes before 30 minutes after that read, less the server\'s one-minute grain');
+  assert.deepEqual(h.offers, ['These results expire in about 2 minutes — scan again to keep them fresh.']);
+  // A read the once-a-minute grain did not re-arm for still moves the warning when its moment comes.
+  const st = { scanId: 's1', scanStats: { expiresAt: landed + 30 * MIN }, scanUsed: { scanId: 's1', at: landed + 20 * MIN } };
+  const k = expiryHarness(st);
+  k.armScanExpiry(); // armed from the read at 20: 47 minutes
+  st.scanUsed = { scanId: 's1', at: landed + 40 * MIN }; // read again, re-arm skipped
+  k.fire();
+  assert.deepEqual(k.offers, [], 'read since it was armed: no warning yet');
+  assert.equal(k.live(), 1, 'it is armed again, from the newer read');
+  k.fire();
+  assert.equal(k.clock.t, landed + 67 * MIN);
+  assert.equal(k.offers.length, 1);
+});
+
+test('api() notes each read of a scan the server answered, and never one it refused (hunt C17)', async () => {
+  const noted: unknown[] = [];
+  const make = (status: number) => new Function('fetch', 'noteScanUsed', `${braced('async function api(')} return api;`)(
+    async () => ({ status, ok: status >= 200 && status < 300, text: async () => (status < 300 ? '{"a":1}' : '{"error":"no","code":"X"}') }),
+    (u: string, b: unknown) => { noted.push([u, b]); }) as (url: string, o?: Record<string, unknown>) => Promise<unknown>;
+  await make(200)('/api/query', { method: 'POST', body: '{"scanId":"s1"}' });
+  assert.deepEqual(noted, [['/api/query', '{"scanId":"s1"}']]);
+  await assert.rejects(make(403)('/api/scan/s1/subtree'));
+  assert.equal(noted.length, 1, 'a refusal is no read that counts');
+});
+
+test('a read named in a POST body counts; another scan\'s read does not; a scan gone already gets no "about 1 minute" (hunt C17)', () => {
+  const state: Record<string, unknown> = { scanId: 's1', scanStats: { expiresAt: 1_000_000 + 30 * 60_000 } };
+  const h = expiryHarness(state);
+  h.noteScanUsed('/api/scan/OTHER/subtree');
+  assert.equal(state.scanUsed, undefined, 'another scan\'s read does not push this one');
+  h.clock.t += 5 * 60_000;
+  h.noteScanUsed('/api/query', JSON.stringify({ scanId: 's1', q: 'size>1gb' }));
+  assert.deepEqual(state.scanUsed, { scanId: 's1', at: h.clock.t }, 'the query names it in its body');
+  // A Stop puts back an older tree whose stats expired before now, not read since.
+  const old: Record<string, unknown> = { scanId: 'old', scanStats: { expiresAt: 1_000_000 - 60_000 } };
+  const g = expiryHarness(old);
+  g.armScanExpiry();
+  g.fire();
+  assert.deepEqual(g.offers, [], 'gone already, by all the page knows: no warning that it is about to go');
+  g.noteScanUsed('/api/scan/old/treemap'); // and yet it answered: read now, so warned of in time
+  assert.equal(g.live(), 1, 'a read that answers arms the warning again');
 });
 
 /* ══════════════ a11y-keyboard-5 — a screen reader hears the scan ══════════════ */

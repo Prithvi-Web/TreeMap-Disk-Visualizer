@@ -2390,6 +2390,7 @@ const SCAN_ON_HAND: Record<string, string> = {
   finishScan: 'sets the scan on hand for the tree it paints, in the same breath, then asks of it',
   putBackHeldTree: 'puts the older tree back with its scan, then asks for its cards of that scan',
   armScanExpiry: 'warns before the landed scan\'s results expire, and says nothing while a scan runs',
+  noteScanUsed: 'notes a read of the landed scan, which pushed its expiry on, and arms armScanExpiry\'s warning from it (hunt C17)',
   startOffloadFlow: 'a destructive act the server refuses for a running scan, in words',
   dockDrop: 'a destructive act the server refuses for a running scan, in words',
   "$('tmExportBtn').addEventListener('click', (e) => {": 'offers the report (downloadReport) only while no scan runs, when the scan on hand is the tree\'s',
