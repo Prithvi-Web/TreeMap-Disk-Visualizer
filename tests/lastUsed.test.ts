@@ -21,6 +21,8 @@ import {
   windowsLastAccessReason,
 } from '../src/platform/atime';
 import { parseMdlsBatch, parseMdutilStatus } from '../src/platform/macos/lastUsed';
+import { PlistConversionError, parseXmlPlist, plistToJson } from '../src/platform/macos/plist';
+import { execFileSync } from 'node:child_process';
 import { lastUsedProvider } from '../src/services/facts/lastUsedProvider';
 import { clearFactCache, computeFacts } from '../src/services/facts';
 
@@ -105,6 +107,85 @@ test('mdutil: only a recognisably enabled answer counts as enabled', () => {
   assert.equal(parseMdutilStatus(''), false);
   assert.equal(parseMdutilStatus('Error: invalid operation.'), false);
   assert.equal(parseMdutilStatus('/Volumes/X:\n\tIndexing enabled but not searchable.'), true);
+});
+
+/* ====================== macOS: a plist that holds a date ====================== */
+
+/**
+ * What `mdls -plist -` writes for two files, one of which Spotlight has a last-opened date for
+ * (HC-L8). `plutil -convert json` refuses any plist holding a <date> ("Invalid object in plist for
+ * JSON format"), so the whole batch failed and Spotlight dropped out of every answer it was in.
+ */
+const DATED_MDLS = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+	<dict>
+		<key>kMDItemLastUsedDate</key>
+		<date>2026-03-04T05:06:07Z</date>
+		<key>kMDItemUseCount</key>
+		<integer>7</integer>
+	</dict>
+	<dict/>
+</array>
+</plist>
+`;
+
+test('plist: an XML property list parses to JSON-shaped values, a date as its ISO text (HC-L8)', () => {
+  assert.deepEqual(parseXmlPlist(DATED_MDLS), [{ kMDItemLastUsedDate: '2026-03-04T05:06:07Z', kMDItemUseCount: 7 }, {}]);
+  const every = parseXmlPlist(`<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+  <key>s</key><string>a &lt;b&gt; &amp; &quot;c&quot; &apos;d&apos; &#233;&#x00E9;</string>
+  <key>empty</key><string/>
+  <key>n</key><integer>-42</integer>
+  <key>r</key><real>1.5</real>
+  <key>t</key><true/>
+  <key>f</key><false/>
+  <key>d</key><data>
+    AAEC
+    Aw==
+  </data>
+  <key>a</key><array><string>x</string><array/><dict/></array>
+</dict></plist>`);
+  assert.deepEqual(every, { s: 'a <b> & "c" \'d\' éé', empty: '', n: -42, r: 1.5, t: true, f: false, d: 'AAECAw==', a: ['x', [], {}] });
+  const proto = parseXmlPlist('<plist version="1.0"><dict><key>__proto__</key><string>x</string></dict></plist>') as Record<string, unknown>;
+  assert.equal(Object.getPrototypeOf(proto), Object.prototype, 'a key named __proto__ is a key, never the object\'s prototype');
+  assert.deepEqual(Object.keys(proto), ['__proto__']);
+});
+
+test('plist: anything not a whole property list is refused, never half-read (HC-L8)', () => {
+  for (const bad of [
+    '',
+    '<plist version="1.0"><dict><key>a</key></dict></plist>',
+    '<plist version="1.0"><dict><string>a</string><string>b</string></dict></plist>',
+    '<plist version="1.0"><array><string>a</array></plist>',
+    '<plist version="1.0"><integer></integer></plist>',
+    '<plist version="1.0"><integer>4x</integer></plist>',
+    '<plist version="1.0"><date/></plist>',
+    '<plist version="1.0"><string>a</string><string>b</string></plist>',
+    '<plist version="1.0"><string>a</string><dict/>',
+    '<plist version="1.0"><string>a</string>',
+    '<plist version="1.0"><string>a</string></plist>trailing',
+    '<plist version="1.0"><blob>a</blob></plist>',
+  ]) {
+    assert.throws(() => parseXmlPlist(bad), PlistConversionError, JSON.stringify(bad));
+  }
+});
+
+test('plist: a real dated plist goes through macOS\'s own plutil, XML and binary alike, and mdls\'s batch keeps its date (HC-L8)', { skip: process.platform !== 'darwin' && 'plutil is macOS\'s' }, async (t) => {
+  const xml = Buffer.from(DATED_MDLS);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-plist-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const xmlFile = path.join(dir, 'dated.plist');
+  fs.writeFileSync(xmlFile, xml);
+  const binFile = path.join(dir, 'dated.bin');
+  execFileSync('plutil', ['-convert', 'binary1', '-o', binFile, xmlFile], { env: { ...process.env } });
+  for (const [kind, body] of [['xml', xml], ['binary', fs.readFileSync(binFile)]] as const) {
+    const raw = await plistToJson<unknown>(body);
+    const batch = parseMdlsBatch(raw, ['/a.mov', '/b.mov']);
+    assert.ok(batch, `${kind}: the batch is read, not discarded`);
+    assert.deepEqual([...batch], [['/a.mov', { lastUsedMs: Date.parse('2026-03-04T05:06:07Z'), useCount: 7 }]], `${kind}: the dated file has its date, the other has none`);
+  }
 });
 
 /* ============================ Linux: /proc/mounts ============================ */

@@ -281,8 +281,12 @@ shipped a confidently wrong answer.
    written**, in the direction of more accurate data.
 
 6. **`diskutil` and `mdls` have no `--json`, but do have `-plist`.** Output is
-   piped through `plutil -convert json` (`src/platform/macos/plist.ts`) rather
-   than hand-parsed, so §10's no-regex-over-human-output rule holds. Also:
+   piped through `plutil -convert xml1` and read as the structured XML plist it
+   is (`src/platform/macos/plist.ts`), so §10's no-regex-over-human-output rule
+   holds. Not `plutil -convert json`: JSON has no date, and plutil refuses any
+   plist that holds one, so every `mdls` batch with a file Spotlight has a
+   last-opened date for failed whole (HC-L8). A `<date>` is read as its ISO 8601
+   text. Also:
    `diskutil list -plist` answers the whole topology question in one call, and
    synthesised APFS containers (`disk1`…) are told from real hardware by
    carrying `APFSPhysicalStores`. A container's drive is its physical store with
