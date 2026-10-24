@@ -401,7 +401,16 @@ export async function encodeOne(
   const media = mediaTools();
   // A link is kept as it is: an encode reads the file it names, from wherever that is, and its result
   // would be renamed into the link's place (the final review, F1.10). The scan lists a link as itself.
-  const own = await fs.promises.lstat(file);
+  let own: fs.Stats;
+  try {
+    own = await fs.promises.lstat(file);
+  } catch (err) {
+    // Gone (or unreadable) since the scan: this file is skipped with the reason, the batch goes on (hunt C51).
+    const why = (err as NodeJS.ErrnoException).code === 'ENOENT'
+      ? `${path.basename(file)} is no longer there — it was moved or removed since the scan`
+      : describeFsError(err);
+    return { path: file, ok: false, originalBytes: 0, newBytes: 0, savedBytes: 0, error: `Skipped — ${why}.` };
+  }
   if (own.isSymbolicLink()) {
     return {
       path: file, ok: false, originalBytes: own.size, newBytes: 0, savedBytes: 0,
@@ -445,7 +454,15 @@ export async function encodeOne(
 
     // Only now is anything of the user's touched, and it goes to the Trash.
     const placeBefore = await identityOf(file);
-    const trashed = await moveToTrash([file]);
+    let trashed: Awaited<ReturnType<typeof moveToTrash>>;
+    try {
+      trashed = await moveToTrash([file]);
+    } catch (err) {
+      // The Trash step refused before it moved anything — a program holds the file open
+      // (OPEN_HANDLE_CONFLICT, naming it), or a rule refuses the path: the original stays, this
+      // encode goes, and the batch goes on to the next file (hunt C51).
+      return { ...base, newBytes, error: `Kept the original — ${err instanceof Error ? err.message : String(err)}` };
+    }
     if (!trashed.deleted.includes(file)) {
       // A reported failure is judged by the disk, as the Undo Vault judges one (FG3b): the step can
       // move the original and still report failure. Only the same original still in place, the step
@@ -627,6 +644,9 @@ export function startEncodeJob(jobId: string, paths: string[], encoder: string):
             // shutdown between files never signals a stale pid.
             (child) => { activeChildren.set(jobId, child); },
           );
+        } catch (err) {
+          // One file's failure is that file's outcome: the job goes on to the next (hunt C51).
+          outcome = { path: file, ok: false, originalBytes: 0, newBytes: 0, savedBytes: 0, error: `Kept the original — ${err instanceof Error ? err.message : String(err)}` };
         } finally {
           activeChildren.delete(jobId);
         }

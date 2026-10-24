@@ -46,7 +46,7 @@ import { sseSend } from '../utils/sse';
 import { randomUUID } from 'crypto';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { ONE_MB } from '../utils/formatBytes';
-import { getPolicy, assertPathsAllowed } from '../services/policy';
+import { getPolicy, assertPathsAllowed, assertBytesCapOver, knownSizeOf } from '../services/policy';
 import { ruleCatalogStatus } from '../services/rulePacks';
 import { getIgnoreMatchers } from '../services/settings';
 import { AppError } from '../middleware/errorHandler';
@@ -590,18 +590,23 @@ insightRouter.post('/compression/encode', idempotency, guardBodyPaths, async (re
     throw new AppError(503, 'ENCODER_UNAVAILABLE', availability.reason || 'No hardware encoder is available');
   }
   const policy = await getPolicy();
+  // Every original goes to the Trash once its encode verifies: one operation, held to the byte cap
+  // as every other route that trashes is (hunt C52), each file sized by the completed scans.
+  const sized = paths.map((p) => ({ path: p, bytes: knownSizeOf(p) }));
+  const knownBytes = sized.reduce((sum, s) => sum + (s.bytes ?? 0), 0);
   try {
     assertPathsAllowed(policy, paths);
+    assertBytesCapOver(policy, sized);
   } catch (err) {
     // Recorded, as the relocation's and every destructive route's policy refusal is (F1.21).
     if (err instanceof AppError) {
-      await appendAudit({ action: 'compression.encode', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: null, dryRun: false, outcome: 'refused', code: err.code });
+      await appendAudit({ action: 'compression.encode', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: knownBytes, dryRun: false, outcome: 'refused', code: err.code });
     }
     throw err;
   }
   const jobId = randomUUID();
   startEncodeJob(jobId, paths, availability.encoder);
-  await appendAudit({ action: 'compression.encode', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: null, dryRun: false, outcome: 'ok' });
+  await appendAudit({ action: 'compression.encode', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: knownBytes, dryRun: false, outcome: 'ok' });
   res.status(202).json({ jobId, total: paths.length, encoder: availability.encoder });
 });
 
