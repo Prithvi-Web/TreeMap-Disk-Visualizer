@@ -168,8 +168,10 @@ export async function budgetHistorySeries(budgetPath: string): Promise<BudgetHis
 
 /**
  * Project when a budget will be breached, through computeForecast's own
- * gates. Every non-'ok' status passes through with the forecast's own reason
- * string — nothing here rephrases, weakens, or second-guesses a refusal.
+ * gates — all but the disk's absolute "flat" floor, which a budget's headroom
+ * replaces (the hunt, C40). Too little history and erratic growth pass through
+ * with the forecast's own reason; flat, shrinking and years-away are said of the
+ * folder, never of a disk.
  */
 export function computeBudgetProjection(
   budget: { path: string; maxBytes: number },
@@ -201,17 +203,49 @@ export function computeBudgetProjection(
     topEntries: [],
     ...(p.boundary ? { boundary: p.boundary } : {}),
   }));
-  const f = computeForecast(snaps, budget.maxBytes - currentBytes, now);
+  const headroom = budget.maxBytes - currentBytes;
+  const first = computeForecast(snaps, headroom, now);
+  // The forecast's "flat" gate is a whole disk's noise floor — under 1 MiB a day is flat, checked before
+  // the headroom is — and a folder 1 MB from its budget, growing 500 KB a day, read "flat — no breach in
+  // sight" two days from its breach (the hunt, C40). For a budget the series and its headroom are scaled
+  // together past that floor, which changes no breach date and no fit quality, so every other gate is
+  // still the forecast's own: too erratic, shrinking, or years away.
+  const f = first.status === 'stable' && first.bytesPerDay > 0 && first.bytesPerDay < BUDGET_FLAT_FLOOR
+    ? computeForecast(snaps.map((s) => ({ ...s, totalSize: s.totalSize * budgetScale(first.bytesPerDay) })),
+      headroom * budgetScale(first.bytesPerDay), now)
+    : first;
   if (f.status === 'ok' && f.fullInDays !== undefined) {
     return {
       status: 'ok',
       confidence: f.confidence,
-      bytesPerDay: f.bytesPerDay,
+      bytesPerDay: first.bytesPerDay,
       breachInDays: f.fullInDays,
       breachAtMs: now + Math.round(f.fullInDays * DAY_MS),
     };
   }
-  return { status: f.status, reason: f.reason, confidence: f.confidence, bytesPerDay: f.bytesPerDay };
+  return { status: f.status, reason: budgetReason(f.status, first.bytesPerDay, f.reason), confidence: f.confidence, bytesPerDay: first.bytesPerDay };
+}
+
+/** The forecast's own flat floor, in bytes a day (forecast.ts STABLE_BYTES_PER_DAY). */
+const BUDGET_FLAT_FLOOR = 1_048_576;
+
+/** How far a slow folder's series is scaled so its slope clears the disk's flat floor (the hunt, C40). */
+function budgetScale(bytesPerDay: number): number {
+  return Math.ceil((2 * BUDGET_FLAT_FLOOR) / bytesPerDay);
+}
+
+/**
+ * The forecast's reasons speak of a disk filling up. A budget is a folder against its limit, so the two
+ * that say so are said of the folder (the hunt, C40); every other refusal passes through as it is.
+ */
+function budgetReason(status: string, bytesPerDay: number, reason: string | undefined): string | undefined {
+  if (status === 'stable') {
+    return bytesPerDay > 0
+      ? 'At the current rate this folder will not reach its budget for years.'
+      : 'This folder’s size is essentially flat — no breach of its budget in sight.';
+  }
+  if (status === 'shrinking') return 'This folder is shrinking — no breach of its budget in sight.';
+  return reason;
 }
 
 /**

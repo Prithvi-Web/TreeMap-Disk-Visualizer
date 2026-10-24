@@ -104,7 +104,8 @@ function shortProjectionReason(p) {
   if (p.status === 'insufficient') return 'no projection yet — needs more scan history';
   if (p.status === 'erratic') return 'growth too erratic to project honestly';
   if (p.status === 'shrinking') return 'shrinking — no breach in sight';
-  if (p.status === 'stable') return 'flat — no breach in sight';
+  // "Flat" only for a folder that is not growing: one growing too slowly to breach for years is not flat (the hunt, C40).
+  if (p.status === 'stable') return p.bytesPerDay > 0 ? 'no breach for years at this pace' : 'flat — no breach in sight';
   return p.reason || '';
 }
 

@@ -366,3 +366,33 @@ test('the dashboard projection line shows dates only for ok — and refusals wit
     assert.ok(reasons.includes(`'${status}'`), `the ${status} refusal has its own sentence`);
   }
 });
+
+/* ---------- the hunt (C40): a budget is not a disk ---------- */
+
+test('a folder growing under 1 MiB a day toward a near budget projects its breach, never "flat" (hunt C40)', () => {
+  // +500,000 B/day over 6 scans and 5 days, 1,000,000 B of headroom: a breach about 2 days away.
+  const series = Array.from({ length: 6 }, (_, i) => pt(5 - i, 996_500_000 + i * 500_000));
+  const p = computeBudgetProjection({ path: '/b', maxBytes: 1_000_000_000 }, 999_000_000, series, NOW);
+  assert.equal(p.status, 'ok', `${p.status}: ${p.reason}`);
+  assert.ok(Math.abs(p.breachInDays! - 2) < 0.1, `expected ~2 days, got ${p.breachInDays}`);
+  assert.equal(p.bytesPerDay, 500_000);
+});
+
+test('a slow grower whose breach is years off says the folder will not reach its budget for years — never the disk (hunt C40)', () => {
+  const series = Array.from({ length: 6 }, (_, i) => pt(5 - i, 100 * GB + i * 1000));
+  const p = computeBudgetProjection({ path: '/b', maxBytes: 200 * GB }, 100 * GB + 5000, series, NOW);
+  assert.equal(p.status, 'stable');
+  assert.doesNotMatch(String(p.reason), /disk|fill-up/, String(p.reason));
+  assert.match(String(p.reason), /budget/, String(p.reason));
+  const flat = computeBudgetProjection({ path: '/b', maxBytes: 200 * GB }, 100 * GB, Array.from({ length: 8 }, (_, i) => pt(7 - i, 100 * GB)), NOW);
+  assert.doesNotMatch(String(flat.reason), /disk|fill-up/, String(flat.reason));
+});
+
+test('the gauge row says "flat" only for a folder that is not growing (hunt C40)', () => {
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const at = page.indexOf('function shortProjectionReason(');
+  const src = page.slice(at, page.indexOf('\n}\n', at) + 2);
+  const short = new Function(`${src}; return shortProjectionReason;`)() as (p: Record<string, unknown>) => string;
+  assert.equal(short({ status: 'stable', bytesPerDay: 0 }), 'flat — no breach in sight');
+  assert.doesNotMatch(short({ status: 'stable', bytesPerDay: 1000 }), /flat/, 'a folder growing slowly is not flat');
+});

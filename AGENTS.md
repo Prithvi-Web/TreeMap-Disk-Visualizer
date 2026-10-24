@@ -1129,10 +1129,12 @@ read-what-you-saw) permission to act.
 - **Budget gauges (v4 §9.4).** `GET /api/scan/{scanId}/budget-gauges` pairs
   each in-scan folder budget with a projected breach date — a NEW endpoint
   because `/budgets` is under byte-identity lock. The projection reuses
-  `computeForecast` verbatim with the budget's headroom standing in for free
-  space, so its refusals are the disk-full forecast's own: too little
-  history, erratic growth and shrinking usage return their reasons instead
-  of a date. A series read from shallow snapshot trees says so in `caveat`.
+  `computeForecast` with the budget's headroom standing in for free
+  space, so its refusals are the disk-full forecast's: too little history
+  and erratic growth return its reasons instead of a date, and flat,
+  shrinking or years-away growth is said of the folder. The disk's
+  1 MiB-a-day "flat" floor does not apply: a folder growing more slowly than
+  that toward a near budget gets its breach date. A series read from shallow snapshot trees says so in `caveat`.
   Like the forecast, it fits only the scans since the drives mounted inside
   the budget folder that a scan stopped at last changed (Track U, U-24).
 - **Plain-words translation (v4 §9.6).** `POST /api/nl-query { text }`
