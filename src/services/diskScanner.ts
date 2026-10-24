@@ -1993,9 +1993,11 @@ export interface EmptyFolderCandidates {
    * walk built is held while the folders are looked at again on disk.
    */
   folders: { name: string; path: string; counted: number }[];
-  /** Every reportable empty folder, nested ones included. */
+  /** Every reportable empty folder, nested ones included, but those a pausing note leaves out. */
   totalCount: number;
   truncated: boolean;
+  /** The reportable empty folders a pausing note left out — covered by a noted folder or holding one (review F1.12). */
+  paused: number;
 }
 
 /**
@@ -2011,7 +2013,11 @@ export interface EmptyFolderCandidates {
  * it is never offered or counted, and no folder above it is empty; a folder
  * the scan did list inside it still can be.
  */
-export function findEmptyFolders(source: TreeSource, ignoreJunk: boolean): EmptyFolderCandidates {
+export function findEmptyFolders(
+  source: TreeSource,
+  ignoreJunk: boolean,
+  paused?: { covers(p: string): boolean; holds(p: string): boolean },
+): EmptyFolderCandidates {
   const store = asStore(source);
   const count = store.count;
 
@@ -2065,9 +2071,20 @@ export function findEmptyFolders(source: TreeSource, ignoreJunk: boolean): Empty
     id !== store.rootId && store.isDir(id) && empty[id] === 1 &&
     toolOwned[id] === 0 && !OS_OWNED_EMPTY_DIRS.has(store.name(id).toLowerCase());
 
+  // A folder a pausing note covers, or one holding a noted folder, is neither offered nor counted (the
+  // hunt, C39): judged here, before the list is cut and the count is taken, so paused folders do not
+  // crowd free ones out of the list nor stay counted past its cap (review F1.12).
+  const pausedHere = (id: number): boolean => {
+    if (!paused) return false;
+    const p = store.path(id);
+    return paused.covers(p) || paused.holds(p);
+  };
   let totalCount = 0;
+  let pausedCount = 0;
   for (let id = 0; id < count; id++) {
-    if (reached[id] === 1 && reportable(id)) totalCount++;
+    if (reached[id] !== 1 || !reportable(id)) continue;
+    if (pausedHere(id)) pausedCount++;
+    else totalCount++;
   }
 
   // Pass 2, top-down: report only topmost empty dirs (their whole subtree is
@@ -2103,6 +2120,12 @@ export function findEmptyFolders(source: TreeSource, ignoreJunk: boolean): Empty
       // into — its whole subtree is empty by definition, so there is nothing
       // reportable below it either.
       if (!reportable(c)) continue;
+      if (paused) {
+        const p = store.path(c);
+        if (paused.covers(p)) continue; // it and everything in it are paused
+        // It holds a noted folder: not offered whole, but the free empty folders in it still are.
+        if (paused.holds(p)) { stack.push({ kids: store.childIds(c), next: 0 }); continue; }
+      }
       if (topmost.length < EMPTY_FOLDERS_CAP) topmost.push({ name: store.name(c), path: store.path(c), counted: countedUnder(c) });
       else truncated = true;
     } else {
@@ -2110,7 +2133,7 @@ export function findEmptyFolders(source: TreeSource, ignoreJunk: boolean): Empty
     }
   }
 
-  return { folders: topmost, totalCount, truncated };
+  return { folders: topmost, totalCount, truncated, paused: pausedCount };
 }
 
 /** findEmptyFolders as the tree alone answers it: the topmost empty folders, the count, and whether the list was cut. */

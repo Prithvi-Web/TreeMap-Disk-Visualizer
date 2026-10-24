@@ -149,23 +149,28 @@ export function shortlistFromScan(
   ignore: CompiledIgnore[],
   limit = 200,
   paused: { covers(p: string): boolean } = { covers: () => false },
+  tally?: { paused: number },
 ): Array<{ path: string; name: string; size: number; modifiedAt: number }> {
   const store: ScanStore = asStore(source);
   const out: Array<{ path: string; name: string; size: number; modifiedAt: number }> = [];
-  const visit = (node: number, nodePath: string): void => {
+  // `inPause`: a folder a note pauses holds this node. Its videos are counted in `tally` when one is
+  // given — the pane says how many a note left out (review F1.6) — and never offered.
+  const visit = (node: number, nodePath: string, inPause: boolean): void => {
     for (const child of store.childIds(node)) {
       const name = store.name(child);
       const childPath = store.childPath(child, nodePath);
       if (matchesAny(ignore, childPath, name)) continue;
-      if (paused.covers(childPath)) continue;
-      if (store.isDir(child)) { visit(child, childPath); continue; }
+      const pausedNow = inPause || paused.covers(childPath);
+      if (pausedNow && !tally) continue;
+      if (store.isDir(child)) { visit(child, childPath, pausedNow); continue; }
       if (store.size(child) < MIN_CANDIDATE_BYTES) continue;
       const ext = store.extension(child);
       if (!ext || !VIDEO_EXT.has(ext)) continue;
+      if (pausedNow) { tally!.paused++; continue; }
       out.push({ path: childPath, name, size: store.size(child), modifiedAt: store.modifiedAt(child) });
     }
   };
-  visit(store.rootId, store.rootPath);
+  visit(store.rootId, store.rootPath, false);
   out.sort((a, b) => b.size - a.size);
   return out.slice(0, limit);
 }

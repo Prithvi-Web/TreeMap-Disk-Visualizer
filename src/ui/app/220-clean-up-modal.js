@@ -221,15 +221,20 @@ async function loadVideoCandidates() {
   const unreadable = Number(data.unreadable) || 0;
   const looked = Number(data.shortlisted) || 0;
   const unreadSentence = (lead) => `${lead} large video${unreadable === 1 ? '' : 's'} couldn’t be read, so TreeMap can’t say whether re-encoding ${unreadable === 1 ? 'it' : 'them'} would help`;
+  // Large videos a pausing note left out (review F1.6): said, never an absence with no stated cause.
+  const paused = Number(data.paused) || 0;
+  const pausedSentence = paused
+    ? `${formatCount(paused)} large video${paused === 1 ? ' was' : 's were'} left out because a note pauses the folder${paused === 1 ? ' it is' : 's they are'} in.`
+    : '';
   if (!videoCandidates.length) {
     const efficient = Math.max(0, looked - unreadable);
     const said = unreadable
       ? `${unreadSentence(formatCount(unreadable))}${efficient ? `; the other ${formatCount(efficient)} ${efficient === 1 ? 'is' : 'are'} already in an efficient format` : ''}.`
       : looked
         ? `No video worth re-encoding — the large ${looked === 1 ? 'one here is' : 'ones here are'} already in an efficient format.`
-        : 'No large videos in this scan to re-encode.';
-    host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon(unreadable ? 'alert' : 'checkCircle', 15)}
-      ${escapeHtml(said)}</div>`;
+        : paused ? '' : 'No large videos in this scan to re-encode.';
+    host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon(unreadable ? 'alert' : paused ? 'doc' : 'checkCircle', 15)}
+      ${escapeHtml([said, pausedSentence].filter(Boolean).join(' '))}</div>`;
     return;
   }
 
@@ -237,6 +242,7 @@ async function loadVideoCandidates() {
     `<div class="vid-warn">${icon('alert', 15)}<span><b>Re-encoding is lossy.</b> The picture is compressed again, so a little
       quality is lost for good. TreeMap checks the new file opens and runs the full length before it touches anything, then the
       original goes to your <b>Trash</b> — recoverable until you empty it. Sizes below are <b>estimates</b>.</span></div>` +
+    (pausedSentence ? `<div class="muted" style="padding:2px 2px 8px;">${escapeHtml(pausedSentence)}</div>` : '') +
     `<div class="vid-list">` + videoCandidates.map((c, i) => `
       <div class="clean-item">
         <input type="checkbox" class="vid-ck" data-i="${i}" aria-label="Select ${escapeHtml(c.name)}">
@@ -422,11 +428,17 @@ async function loadEmptyFolders() {
     // none with a reason: "tidy already" would be a claim nobody could make.
     const withheld = data.withheld > 0 ? data.withheld : 0;
     const leftOut = (lead) => `${lead} looked empty to the scan but ${withheld === 1 ? 'was' : 'were'} left out: looked at again, ${whyLeftOut(data.withheldBy, withheld)}.`;
+    // Folders a pausing note left out (review F1.6): said, never "tidy already" over them.
+    const paused = data.paused > 0 ? data.paused : 0;
+    const pausedSentence = paused
+      ? `${formatCount(paused)} empty folder${paused === 1 ? ' was' : 's were'} left out because a note pauses ${paused === 1 ? 'it or a folder inside it' : 'them or a folder inside them'}.`
+      : '';
     if (!emptyFolders.length) {
       const said = data.reason
         ? escapeHtml(data.reason)
-        : withheld ? leftOut(`${formatCount(withheld)} folder${withheld === 1 ? '' : 's'}`) : 'No empty folders found — tidy already.';
-      host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon(data.reason || withheld ? 'alert' : 'checkCircle', 15)} ${said}</div>`;
+        : [withheld ? leftOut(`${formatCount(withheld)} folder${withheld === 1 ? '' : 's'}`) : '', pausedSentence].filter(Boolean).join(' ')
+          || 'No empty folders found — tidy already.';
+      host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon(data.reason || withheld ? 'alert' : paused ? 'doc' : 'checkCircle', 15)} ${said}</div>`;
       updateCleanSummary();
       return;
     }
@@ -446,7 +458,8 @@ async function loadEmptyFolders() {
         <input type="checkbox" id="emptyAll" checked>
         <label for="emptyAll" class="muted">${selectAllLabel}</label>
       </div>` + (withheld ? `
-      <div class="muted" style="padding:2px 2px 8px;">${leftOut(`${formatCount(withheld)} more folder${withheld === 1 ? '' : 's'}`)}</div>` : '') + `
+      <div class="muted" style="padding:2px 2px 8px;">${leftOut(`${formatCount(withheld)} more folder${withheld === 1 ? '' : 's'}`)}</div>` : '') + (paused ? `
+      <div class="muted" style="padding:2px 2px 8px;">${pausedSentence}</div>` : '') + `
       <div class="clean-list">` + emptyFolders.map((f, i) => `
         <div class="clean-item">
           <input type="checkbox" class="empty-ck" data-i="${i}" checked aria-label="Select ${escapeHtml(f.name)}">

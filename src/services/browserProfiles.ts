@@ -84,6 +84,23 @@ function buildGroup(store: ScanStore, browser: string, profileDir: number, profi
 }
 
 /**
+ * The profiles with every cache area a pausing note covers or holds left out, and a profile with none
+ * left left out whole (review F1.15): the list sits in Smart suggestions, which a note pauses.
+ */
+export function profilesOutsidePauses(
+  groups: BrowserProfileGroup[],
+  paused: { covers(p: string): boolean; holds(p: string): boolean },
+): BrowserProfileGroup[] {
+  return groups
+    .map((g) => {
+      const items = g.items.filter((i) => !paused.covers(i.path) && !paused.holds(i.path));
+      return items.length === g.items.length ? g : { ...g, items, totalBytes: items.reduce((sum, i) => sum + i.bytes, 0) };
+    })
+    .filter((g) => g.items.length > 0)
+    .sort((a, b) => b.totalBytes - a.totalBytes);
+}
+
+/**
  * Walk the scan tree and surface every browser profile with reclaimable areas.
  * A profile dir is reported once and not descended into.
  */

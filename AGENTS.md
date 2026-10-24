@@ -436,7 +436,9 @@ OpenAPI 3 spec).
      out (a "don't scan" pattern, a failed stat) is not empty, and neither is
      any folder above it. Each folder offered was also looked at again on disk
      just now; one that holds something, refuses or does not answer is left
-     out and counted in `withheld`, and `withheldBy` counts them by reason
+     out and counted in `withheld` (one a pausing folder note covers or
+     holds is left out before the list is cut and counted, and counted in
+     `paused` instead, present only then), and `withheldBy` counts them by reason
      (`content`, `unreadable`, `no-answer`, `out-of-time`, `too-many`,
      `not-a-folder`, `gone`). A folder that does not answer is not
      asked again until its call answers, and the root of the drive it is on
@@ -1189,11 +1191,17 @@ read-what-you-saw) permission to act.
   only). The consequential half: a note with `suppress: true` (the default)
   excludes its whole subtree from `GET /api/cleanup/suggestions`, from the
   agent summary, from MCP `cleanup_suggestions`, from the package leftovers,
-  re-encode candidates and empty folders (`GET /api/packages/orphans`,
-  `/api/compression/candidates`, `/api/empty-folders`, which also leave out
-  a folder holding a noted one), and from **every Autopilot
+  re-encode candidates, empty folders, Git repositories and browser caches
+  (`GET /api/packages/orphans`, `/api/compression/candidates`,
+  `/api/empty-folders`, `/api/git/repos`, `/api/cleanup/browser-profiles`,
+  which also leave out a folder holding a noted one; the re-encode and
+  empty-folders answers count what a note left out in `paused`, present
+  only then), and from **every Autopilot
   match kind** — and Autopilot lists what it left alone in `skipped`, with
-  the note as the stated reason, in previews and run records alike. Both
+  the note as the stated reason, in previews and run records alike. The
+  custom Clean Up rules, Cloud-safe, the game and media libraries
+  (`/api/games`, `/api/media`) and the duplicates still list what is inside
+  a noted folder, and no note pauses a cloud listing. Both
   mutating routes are in the pinned destructive list because writing or
   deleting a note arms or disarms automation over real files. A `notes.json`
   that cannot be parsed, or parses but is not the store TreeMap writes (an

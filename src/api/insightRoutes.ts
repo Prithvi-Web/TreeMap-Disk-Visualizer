@@ -291,10 +291,21 @@ insightRouter.get('/missing-gigabytes', async (req: Request, res: Response) => {
   }
 });
 
-/** GET /api/git/repos?scanId= — pack/loose/LFS breakdown of every .git in the scan. */
-insightRouter.get('/git/repos', storageModeGate, (req: Request, res: Response) => {
+/**
+ * GET /api/git/repos?scanId= — pack/loose/LFS breakdown of every .git in the scan.
+ *
+ * Listed in Smart suggestions with "Run git gc", so never a repository whose git folder a pausing note
+ * covers or holds (review F1.15); an unreadable notes.json refuses (NOTES_UNREADABLE).
+ */
+insightRouter.get('/git/repos', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
-  res.json({ repos: findGitRepos(storeOf(scan)) });
+  const paused = await notePausedTest(scan.rootPath);
+  res.json({
+    repos: findGitRepos(storeOf(scan)).filter((r) => {
+      const gitDir = path.join(r.repoPath, '.git');
+      return !paused.covers(gitDir) && !paused.holds(gitDir);
+    }),
+  });
 });
 
 /**
@@ -532,8 +543,10 @@ insightRouter.get('/compression/candidates', storageModeGate, async (req: Reques
     return;
   }
   const ignore = await getIgnoreMatchers('suggest');
-  // Nothing inside a folder a note pauses is offered for a re-encode, which trashes the original (the hunt, C39).
-  const shortlist = shortlistFromScan(storeOf(scan), ignore, clampInt(req.query.limit, 60, 1, 200), await notePausedTest(scan.rootPath));
+  // Nothing inside a folder a note pauses is offered for a re-encode, which trashes the original (the hunt, C39),
+  // and how many large videos were left out is said in `paused` (review F1.6).
+  const tally = { paused: 0 };
+  const shortlist = shortlistFromScan(storeOf(scan), ignore, clampInt(req.query.limit, 60, 1, 200), await notePausedTest(scan.rootPath), tally);
   const candidates: CompressionCandidate[] = [];
   // A file ffprobe could not read as video was never judged. Counted, so an
   // empty list is not read as "everything here is already efficient" (D56).
@@ -560,6 +573,7 @@ insightRouter.get('/compression/candidates', storageModeGate, async (req: Reques
     totalSaving: candidates.reduce((s, c) => s + c.estimatedSaving, 0),
     shortlisted: shortlist.length,
     unreadable,
+    ...(tally.paused > 0 ? { paused: tally.paused } : {}),
   });
 });
 

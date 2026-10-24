@@ -640,6 +640,8 @@ export interface EmptyFoldersAnswer extends EmptyFoldersResult {
   withheldBy: Partial<Record<'content' | 'unreadable' | 'no-answer' | 'out-of-time' | 'too-many' | 'not-a-folder' | 'gone', number>>;
   /** Why nothing is offered, for a scan whose tree cannot tell an empty folder from one it never read (gdu); absent otherwise. */
   reason?: string;
+  /** Empty folders a pausing note left out, nested ones included (review F1.6); present only when there are any. */
+  paused?: number;
 }
 
 /* ---------- Snapshots (size history / Trends) ---------- */

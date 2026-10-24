@@ -366,3 +366,12 @@ test('a folder that is no longer empty is reported as that, not as a failure', a
   assert.ok(toasts.some((m) => /1 folder/.test(m) && /no longer empty/.test(m)), `named as no longer empty (${toasts.join(' | ')})`);
   assert.ok(toasts.some((m) => /1 could not be trashed/.test(m)), 'the real failure is still its own line, counted once');
 });
+
+test('empty folders a pausing note left out are said on the pane — never "tidy already" over them (review F1.6)', async () => {
+  const none = await renderPane({ folders: [], totalCount: 0, truncated: false, withheld: 0, withheldBy: {}, paused: 3 });
+  assert.doesNotMatch(none, /tidy already/, none);
+  assert.match(none, /3 empty folders were left out because a note pauses them or a folder inside them\./, none);
+  const some = await renderPane({ folders: [{ name: 'a', path: '/r/a' }], totalCount: 1, truncated: false, withheld: 0, withheldBy: {}, paused: 1 });
+  assert.match(some, /1 empty folder was left out because a note pauses it or a folder inside it\./, some);
+  assert.match(some, /class="empty-ck"/, 'and the offered folder is still listed');
+});

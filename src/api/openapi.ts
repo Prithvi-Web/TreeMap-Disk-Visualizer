@@ -471,7 +471,7 @@ const schemas: Json = {
   EmptyFoldersResult: obj(
     {
       folders: arr(obj({ name: str(), path: str() }, ['name', 'path']), 'Topmost recursively-empty dirs. Never a folder the scan did not list in full (refused, unreadable, vanished, never entered, entries left out by a "don\'t scan" pattern or a failed stat), nor one above it; each was looked at again on disk and found still empty'),
-      totalCount: int('All empty dirs found, nested included'),
+      totalCount: int('All empty dirs found, nested included, but those a pausing folder note left out'),
       truncated: bool(),
       withheld: int('Folders the scan saw empty that a second look on disk did not find still empty — they hold something now, could not be read, or did not answer — left out of folders, and their nested ones out of totalCount'),
       withheldBy: {
@@ -480,6 +480,7 @@ const schemas: Json = {
         additionalProperties: { type: 'integer' },
       },
       reason: str('Present only when the scan cannot offer empty folders at all, and why: a gdu scan shows a folder it could not read as an empty one'),
+      paused: int('Empty folders, nested ones included, left out because a folder note pauses them or a folder inside them — judged before the list is cut and the count taken. Present only when there are any'),
     },
     ['folders', 'totalCount', 'truncated', 'withheld', 'withheldBy'],
   ),
@@ -1538,7 +1539,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/git/repos',
-    summary: 'Git repositories in the scan with pack/loose/LFS breakdown',
+    summary: 'Git repositories in the scan with pack/loose/LFS breakdown — never one whose git folder a pausing folder note covers or holds (500 NOTES_UNREADABLE when notes.json cannot be read)',
     tag: 'insights',
     destructive: false,
     parameters: [scanIdQuery],
@@ -1624,6 +1625,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             totalSaving: int('Sum of the estimates — an estimate, not a promise'),
             shortlisted: int('Large video files looked at, biggest first (up to `limit`)'),
             unreadable: int('Of those, how many could not be read as video — not judged, so never counted as already efficient'),
+            paused: int('Large video files left out because a folder note pauses the folder they are in. Present only when there are any'),
           },
           ['scanId', 'available', 'candidates'],
         ),
@@ -2039,7 +2041,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/cleanup/browser-profiles',
-    summary: 'Browser profiles with their reclaimable cache sub-areas',
+    summary: 'Browser profiles with their reclaimable cache sub-areas — never an area a pausing folder note covers or holds (500 NOTES_UNREADABLE when notes.json cannot be read)',
     tag: 'cleanup',
     destructive: false,
     parameters: [scanIdQuery],

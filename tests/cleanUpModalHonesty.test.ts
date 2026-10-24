@@ -1140,6 +1140,15 @@ async function videoPane(data: Record<string, unknown>): Promise<string> {
   return els.videoBody.innerHTML.replace(/\s+/g, ' ');
 }
 
+test('large videos a pausing note left out are said on the pane — never "no large videos" over them (review F1.6)', async () => {
+  const none = await videoPane({ shortlisted: 0, unreadable: 0, paused: 2 });
+  assert.doesNotMatch(none, /No large videos in this scan/, none);
+  assert.match(none, /2 large videos were left out because a note pauses the folders they are in\./, none);
+  const efficient = await videoPane({ shortlisted: 1, unreadable: 0, paused: 1 });
+  assert.match(efficient, /already in an efficient format/, efficient);
+  assert.match(efficient, /1 large video was left out because a note pauses the folder it is in\./, efficient);
+});
+
 test('videos that could not be read are counted and named as unjudged, never as efficient', async () => {
   const html = await videoPane({ shortlisted: 4, unreadable: 2 });
   assert.match(html, /2 large videos couldn’t be read/, html);

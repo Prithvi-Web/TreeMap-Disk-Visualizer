@@ -1,13 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { requireScan, clampInt } from './scanRoutes';
 import { engineSettingRefusal, getSettings, updateSettings, getIgnoreMatchers, scanBoundaryRefusal } from '../services/settings';
-import { suppressedNoteRoots } from '../services/notes';
+import { notePausedTest, suppressedNoteRoots } from '../services/notes';
 import { markBoundaryChanged } from '../services/indexEngine';
 import { cleanupSuggestionsFor } from '../services/cleanupMemo';
 import { ruleCatalogStatus } from '../services/rulePacks';
 import { collectCloudPlaceholders, matchCustomRules, CustomRules } from '../services/scanQueries';
 import { storeOf } from '../services/scanStore';
-import { collectBrowserProfiles } from '../services/browserProfiles';
+import { collectBrowserProfiles, profilesOutsidePauses } from '../services/browserProfiles';
 import { listNotifications } from '../services/scheduler';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
@@ -164,15 +164,19 @@ settingsRouter.get('/cleanup/suggestions', storageModeGate, async (req: Request,
   });
 });
 
-/** GET /api/cleanup/browser-profiles?scanId= — per-profile cache breakdown. */
-settingsRouter.get('/cleanup/browser-profiles', storageModeGate, (req: Request, res: Response) => {
+/**
+ * GET /api/cleanup/browser-profiles?scanId= — per-profile cache breakdown. Listed in Smart suggestions, so
+ * a cache area a pausing note covers or holds is left out (review F1.15); an unreadable notes.json refuses.
+ */
+settingsRouter.get('/cleanup/browser-profiles', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireScan(req, req.query.scanId);
   if (scan.status === 'running') {
     res.status(202).json({ status: 'running' });
     return;
   }
   if (!scan.store && !scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
-  res.json({ scanId: scan.scanId, profiles: collectBrowserProfiles(storeOf(scan)) });
+  const paused = await notePausedTest(scan.rootPath);
+  res.json({ scanId: scan.scanId, profiles: profilesOutsidePauses(collectBrowserProfiles(storeOf(scan)), paused) });
 });
 
 /**
@@ -203,7 +207,7 @@ settingsRouter.get('/cleanup/cloud-safe', storageModeGate, (req: Request, res: R
  * holds would miss most of the duplicates.
  */
 // Note-suppression (v4 §9.5) is DELIBERATELY not applied to the custom-rules
-// matcher below (nor to browser-profiles / cloud-safe above): these lists are
+// matcher below (nor to cloud-safe above): these lists are
 // the user's own explicit filters, typed in by hand for this one look — not
 // the engine volunteering deletions. The note pauses what the machine
 // suggests, never what the person asks to see.

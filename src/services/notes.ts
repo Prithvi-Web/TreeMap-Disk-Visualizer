@@ -195,11 +195,11 @@ export async function deleteNote(rawPath: string): Promise<boolean> {
 }
 
 /**
- * The paths whose notes suppress — read by Smart suggestions, the agent
- * summary, MCP cleanup_suggestions and Autopilot. (The Reclaim Score, the
- * custom Clean Up rules and the browser/cloud caches deliberately do NOT
- * read it: the score explains and never selects, and those lists are the
- * user's own explicit filters — the exemptions are commented at each site.)
+ * The paths whose notes suppress — read by Smart suggestions (its cleanup groups, Git repositories,
+ * browser caches and package leftovers), the agent summary, MCP cleanup_suggestions, Shrink video, Empty
+ * folders and Autopilot. (The Reclaim Score, the custom Clean Up rules and Cloud-safe deliberately do NOT
+ * read it: the score explains and never selects, and those lists are the user's own explicit filters —
+ * the exemptions are commented at each site.)
  *
  * FAILS CLOSED (review round 1, finding 2): a suppressing note is a guard
  * rail on unattended deletion, and a notes.json that cannot be parsed must
@@ -321,11 +321,20 @@ export interface NotePause {
  * does, so a list never offers what an unreadable file may pause.
  */
 export async function notePausedTest(walkRoot: string): Promise<NotePause> {
+  // A cloud listing has no local path a note could pause (setNote refuses cloud:// ids), and path.resolve
+  // placed its ids under the server's working folder, where a note over that folder covered every one of
+  // them (review F1.3).
+  if (isCloudId(walkRoot)) return { covers: () => false, holds: () => false };
   const prepared = prepareSuppressed(await suppressedNoteRoots(), walkRoot);
   return {
-    covers: (p) => suppressedRootCovering(p, prepared) !== null,
-    holds: (p) => noteRootInside(p, prepared) !== null,
+    covers: (p) => !isCloudId(p) && suppressedRootCovering(p, prepared) !== null,
+    holds: (p) => !isCloudId(p) && noteRootInside(p, prepared) !== null,
   };
+}
+
+/** A cloud provider's listing id, which names no local path. */
+function isCloudId(p: string): boolean {
+  return typeof p === 'string' && p.startsWith('cloud://');
 }
 
 /**

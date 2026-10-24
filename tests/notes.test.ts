@@ -913,3 +913,156 @@ test('a pausing note keeps its folder out of Shrink video\'s shortlist and out o
     await fsp.rm(fx, { recursive: true, force: true });
   }
 });
+
+/* ══════════════════════ The review of the hunt fixes (F1.1, F1.3, F1.6, F1.7, F1.11, F1.12, F1.15) ══════════════════════ */
+
+import { setMediaTools, type MediaTools } from '../src/services/compressionAdvisor';
+
+test('a pausing note covers no cloud listing — not even a note over the folder the server runs in (review F1.3)', async () => {
+  await clearNotes();
+  try {
+    await setNote(path.dirname(process.cwd()), 'over the server\'s own folder');
+    const cloud = await notePausedTest('cloud://gdrive');
+    assert.equal(cloud.covers('cloud://gdrive/Photos'), false, 'a cloud id is no path under the server\'s folder');
+    assert.equal(cloud.covers('cloud://gdrive'), false);
+    assert.equal(cloud.holds('cloud://gdrive'), false);
+    const local = await notePausedTest(process.cwd());
+    assert.equal(local.covers(path.join(process.cwd(), 'src')), true, 'control: the note covers local paths under it');
+    assert.equal(local.covers('cloud://gdrive/Photos'), false, 'and no cloud id, whatever walk asks');
+    // No note can pause a cloud listing, so a notes.json that cannot be read does not refuse one either.
+    fs.writeFileSync(path.join(process.env.TREEMAP_DATA_DIR!, 'notes.json'), '{ not json');
+    assert.equal((await notePausedTest('cloud://gdrive')).covers('cloud://gdrive/Photos'), false, 'a cloud listing is not refused for notes that cannot pause it');
+  } finally {
+    fs.rmSync(path.join(process.env.TREEMAP_DATA_DIR!, 'notes.json'), { force: true });
+    for (const f of fs.readdirSync(process.env.TREEMAP_DATA_DIR!)) {
+      if (f.startsWith('notes.json.corrupt')) fs.rmSync(path.join(process.env.TREEMAP_DATA_DIR!, f), { force: true });
+    }
+    await clearNotes();
+  }
+});
+
+test('Empty folders judges the pause before its cap and its count: a free folder past a thousand paused ones is still offered, and totalCount and paused say which is which (review F1.12, F1.11)', async () => {
+  await clearNotes();
+  const fx = await mkTmp();
+  try {
+    const real = fs.realpathSync(fx);
+    const archive = path.join(real, 'archive');
+    fs.mkdirSync(path.join(real, 'zz-free'));
+    fs.mkdirSync(path.join(real, 'holder', 'free-inner'), { recursive: true });
+    const empties = Array.from({ length: 1100 }, (_, i) => dir(`e${String(i).padStart(4, '0')}`, []));
+    // `holder` is empty but holds a noted empty folder: not offered whole, while the free folder beside the noted one is.
+    const root = tree([dir('archive', [file('keep.txt', 10), ...empties]), dir('holder', [dir('paused-empty', []), dir('free-inner', [])]), dir('zz-free', [])], real);
+    await setNote(archive, 'keep these');
+    await setNote(path.join(real, 'holder', 'paused-empty'), 'keep this empty folder');
+    const scan = createScanRecord(real);
+    scan.store = buildStoreFromTree(root);
+    scan.status = 'complete';
+    const answer = await emptyFoldersForScan(scan, true, await notePausedTest(real));
+    assert.deepEqual(answer.folders.map((f) => path.basename(f.path)), ['free-inner', 'zz-free'], 'the free folders are offered, not crowded out of the list');
+    assert.equal(answer.totalCount, 2, 'only what may be offered is counted');
+    assert.equal(answer.truncated, false, 'nothing that may be offered was cut');
+    assert.equal(answer.paused, 1102, 'and how many a note left out is said: the archive\'s 1,100, the noted folder and the one holding it');
+  } finally {
+    await clearNotes();
+    await fsp.rm(fx, { recursive: true, force: true });
+  }
+});
+
+test('Shrink video and Empty folders, asked over HTTP, leave a paused folder out and say how many; with Package leftovers, Git repositories and browser caches they refuse NOTES_UNREADABLE (review F1.11, F1.6)', async () => {
+  await clearNotes();
+  const fx = await mkTmp();
+  const dataDir = process.env.TREEMAP_DATA_DIR!;
+  const notesFile = path.join(dataDir, 'notes.json');
+  const fake: MediaTools = {
+    availability: async () => ({ available: true, encoder: 'hevc_videotoolbox', hardwareCodecs: ['hevc'], mechanism: 'test' }),
+    probe: async () => ({ durationSeconds: 60, videoCodec: 'h264', width: 1920, height: 1080, bitrateBps: 8e6, frameCount: 1440 }),
+    encode: async () => { throw new Error('this test never encodes'); },
+  };
+  setMediaTools(fake);
+  const { port, close } = await listen();
+  try {
+    for (const v of [['kept', 'a.mov'], ['loose', 'b.mov']]) {
+      fs.mkdirSync(path.join(fx, v[0]), { recursive: true });
+      const fd = fs.openSync(path.join(fx, ...v), 'w');
+      fs.ftruncateSync(fd, 80 * 1024 * 1024); // over the shortlist's floor, and sparse: nothing is written
+      fs.closeSync(fd);
+    }
+    fs.mkdirSync(path.join(fx, 'kept', 'empty'));
+    fs.mkdirSync(path.join(fx, 'free'));
+    const scanId = await scannedFixture(port, fx);
+    await setNote(path.join(fx, 'kept'), 'keep these');
+
+    const videos = await req(port, 'GET', `/api/compression/candidates?scanId=${scanId}`);
+    assert.equal(videos.status, 200, JSON.stringify(videos.body));
+    assert.deepEqual(videos.body.candidates.map((c: any) => c.name), ['b.mov'], 'the paused folder\'s video is not offered for a re-encode, which trashes it');
+    assert.equal(videos.body.paused, 1, 'and is counted as left out by a note');
+
+    const empties = await req(port, 'GET', `/api/empty-folders?scanId=${scanId}`);
+    assert.equal(empties.status, 200, JSON.stringify(empties.body));
+    assert.deepEqual(empties.body.folders.map((f: any) => path.basename(f.path)), ['free'], JSON.stringify(empties.body));
+    assert.equal(empties.body.totalCount, 1);
+    assert.equal(empties.body.paused, 1);
+
+    fs.writeFileSync(notesFile, '{ not json');
+    for (const route of ['/api/empty-folders', '/api/compression/candidates', '/api/packages/orphans', '/api/git/repos', '/api/cleanup/browser-profiles']) {
+      const r = await req(port, 'GET', `${route}?scanId=${scanId}`);
+      assert.equal(r.status, 500, `${route}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.code, 'NOTES_UNREADABLE', `${route} never offers what an unreadable notes.json may pause`);
+    }
+  } finally {
+    setMediaTools(null);
+    await close();
+    fs.rmSync(notesFile, { force: true });
+    for (const f of fs.readdirSync(dataDir)) {
+      if (f.startsWith('notes.json.corrupt')) fs.rmSync(path.join(dataDir, f), { force: true });
+    }
+    await clearNotes();
+    await fsp.rm(fx, { recursive: true, force: true });
+  }
+});
+
+test('Smart suggestions leave a paused folder out of every list in the pane: Git repositories, browser caches, and a package folder holding a noted one (review F1.15, F1.1, F1.7, F1.11)', async () => {
+  await clearNotes();
+  const home = path.join(os.homedir(), 'tm-review-pause-fixture');
+  const repo = (): FileNode => dir('repo', [dir('.git', [dir('objects', [dir('pack', [file('p.pack', 2_000_000)])]), file('HEAD', 30)])]);
+  const chrome = (): FileNode => dir('Library', [dir('Application Support', [dir('Google', [dir('Chrome', [dir('Default', [dir('Cache', [file('data_1', 500_000)])])])])])]);
+  const modules = (): FileNode => dir('node_modules', [file('.package-lock.json', 1), file('big.js', 3_000_000)]);
+  const root = tree([dir('archive', [repo(), chrome()]), dir('other', [repo(), chrome()]), dir('proj2', [modules()]), dir('proj3', [modules()])], home);
+  const scan = createScanRecord(home);
+  scan.store = buildStoreFromTree(root);
+  scan.status = 'complete';
+  const at = (...p: string[]) => path.join(home, ...p);
+  const lists = async (port: number) => {
+    const repos = (await req(port, 'GET', `/api/git/repos?scanId=${scan.scanId}`)).body.repos.map((r: any) => r.repoPath);
+    const profiles = (await req(port, 'GET', `/api/cleanup/browser-profiles?scanId=${scan.scanId}`)).body.profiles.flatMap((g: any) => g.items.map((i: any) => i.path));
+    const packages = (await req(port, 'GET', `/api/packages/orphans?scanId=${scan.scanId}`)).body.ecosystems.flatMap((g: any) => g.entries.map((e: any) => e.path));
+    return { repos, profiles, packages };
+  };
+  const { port, close } = await listen();
+  try {
+    const before = await lists(port);
+    assert.ok(before.repos.includes(at('archive', 'repo')) && before.repos.includes(at('other', 'repo')), `control: both repositories listed: ${before.repos}`);
+    assert.equal(before.profiles.filter((p: string) => p.startsWith(at('archive'))).length, 1, `control: the archive's browser cache listed: ${before.profiles}`);
+    assert.ok(before.packages.includes(at('proj2', 'node_modules')), `control: proj2's leftover listed: ${before.packages}`);
+
+    await setNote(at('archive'), 'client archive, keep');
+    await setNote(at('proj2', 'node_modules', 'keep-me'), 'a patched dependency, keep');
+    const after = await lists(port);
+    assert.deepEqual(after.repos, [at('other', 'repo')], 'no "Run git gc" offered inside the paused folder');
+    assert.deepEqual(after.profiles.filter((p: string) => p.startsWith(at('archive'))), [], 'no browser cache offered inside it');
+    assert.equal(after.profiles.length, 1, 'control: the other folder\'s browser cache is still offered');
+    assert.ok(!after.packages.includes(at('proj2', 'node_modules')), 'a leftover holding a noted folder is not offered whole');
+    assert.ok(after.packages.includes(at('proj3', 'node_modules')), 'control: the other leftover still is');
+  } finally {
+    await close();
+    await clearNotes();
+  }
+});
+
+test('the note sheet names the lists a pausing note keeps a folder out of, and the views that still show what is inside it (review F1.1, F1.7, F1.15)', () => {
+  const at = INDEX_HTML.indexOf('id="noteSuppress"');
+  const region = INDEX_HTML.slice(at, INDEX_HTML.indexOf('class="modal-foot"', at));
+  assert.doesNotMatch(region, /nothing inside this folder is ever suggested for cleanup/, 'not a promise the Libraries and Duplicates views break');
+  for (const list of ['Smart suggestions', 'Empty folders', 'Shrink video', 'Autopilot']) assert.match(region, new RegExp(list), `names ${list}`);
+  for (const view of ['Custom rules', 'Cloud-safe', 'Libraries', 'Duplicates']) assert.match(region, new RegExp(view), `names ${view}`);
+});

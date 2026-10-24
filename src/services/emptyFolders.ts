@@ -52,12 +52,11 @@ export async function emptyFoldersForScan(
   // A second name the system gives a path (macOS /.nofollow, /.resolve, /.vol), which a walk of /
   // lists as an empty folder, is never among them nor counted: `findEmptyFolders` owns it like a
   // tool's folder, before its list is cut (the SEC-2 review, F4; the SEC-3 brief, item 7).
-  const found = findEmptyFolders(storeOf(scan), ignoreJunk);
   // Never one inside a folder a note pauses, nor one holding a paused folder, which its Trash step would
-  // take too (the hunt, C39): neither offered nor counted, as the note sheet promises.
-  const candidates = found.folders.filter((f) => !paused.covers(f.path) && !paused.holds(f.path));
-  const kept = new Set(candidates);
-  const pausedCount = found.folders.reduce((n, f) => (kept.has(f) ? n : n + f.counted), 0);
+  // take too (the hunt, C39): neither offered nor counted, as the note sheet promises — judged before the
+  // list is cut (review F1.12), and how many were left out said in `paused` (review F1.6).
+  const found = findEmptyFolders(storeOf(scan), ignoreJunk, paused);
+  const candidates = found.folders;
   // A cloud provider's listing lives at the provider: there is no folder on this disk to look at again.
   const verdicts: EmptyVerdict[] = scan.engine === 'cloud'
     ? candidates.map(() => ({ empty: true }))
@@ -66,7 +65,7 @@ export async function emptyFoldersForScan(
   let withheld = 0;
   // Why each was left out, counted (the U-4b review, L-5): the page says it rather than guessing.
   const withheldBy: EmptyFoldersAnswer['withheldBy'] = {};
-  let totalCount = found.totalCount - pausedCount;
+  let totalCount = found.totalCount;
   candidates.forEach((f, i) => {
     const verdict = verdicts[i];
     if (verdict.empty) {
@@ -77,7 +76,7 @@ export async function emptyFoldersForScan(
       totalCount -= f.counted;
     }
   });
-  return { folders, totalCount, truncated: found.truncated, withheld, withheldBy };
+  return { folders, totalCount, truncated: found.truncated, withheld, withheldBy, ...(found.paused > 0 ? { paused: found.paused } : {}) };
 }
 
 /**
