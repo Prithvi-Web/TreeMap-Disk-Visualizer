@@ -342,7 +342,8 @@ test('a Smart suggestions badge counts every match, not the 200 listed, and says
 
 test('the cut-list note says the order the rows are in, and names Select all only where there is one (review F1.3/F1.18)', () => {
   const items = Array.from({ length: 200 }, (_, i) => ({ path: `/p${i}/node_modules`, size: 1 }));
-  const noteIn = (sort: string) => declared<(g: unknown) => string>('function smartListedNote(g) {', { formatCount: String }, `let smartSort = '${sort}';`);
+  const noteIn = (sort: string, scoreFor: (p: string) => unknown = () => ({ score: 50 })) =>
+    declared<(g: unknown) => string>('function smartListedNote(g) {', { formatCount: String, scoreFor }, `let smartSort = '${sort}';`);
   const bySize = text(noteIn('size')({ items, count: 1800 }));
   assert.match(bySize, /listed, the first the scan found, largest first\./, `control: under Biggest first the rows are largest first: ${bySize}`);
   const byScore = text(noteIn('reclaim')({ items, count: 1800 }));
@@ -351,6 +352,19 @@ test('the cut-list note says the order the rows are in, and names Select all onl
   const advisory = text(noteIn('size')({ items, count: 1800, advisory: true }));
   assert.match(advisory, /^200 of 1800 listed/, `control: an advice-only group's list is cut too: ${advisory}`);
   assert.doesNotMatch(advisory, /Select all/, 'it has no Select all to name');
+});
+
+test('the cut-list note names the reclaim order only of rows that carry a score: none scored yet is largest first, some is said as some (HC-L5)', () => {
+  const items = Array.from({ length: 200 }, (_, i) => ({ path: `/p${i}/node_modules`, size: 200 - i }));
+  const noteIn = (scoreFor: (p: string) => unknown) =>
+    declared<(g: unknown) => string>('function smartListedNote(g) {', { formatCount: String, scoreFor }, "let smartSort = 'reclaim';");
+  const none = text(noteIn(() => undefined)({ items, count: 1800 }));
+  assert.match(none, /listed, the first the scan found, largest first\./, `no row has a score, so the rows are largest first: ${none}`);
+  assert.doesNotMatch(none, /safest/, none);
+  const some = text(noteIn((p) => (p === '/p0/node_modules' || p === '/p1/node_modules' ? { score: 80 } : undefined))({ items, count: 1800 }));
+  assert.match(some, /listed, the first the scan found: the 2 scored safest to reclaim first, then the rest largest first\./, some);
+  const all = text(noteIn(() => ({ score: 10 }))({ items, count: 1800 }));
+  assert.match(all, /listed, the first the scan found, safest to reclaim first\./, `control: every row scored: ${all}`);
 });
 
 /* ═════════ C73 — "could not be trashed" says why ═════════ */
