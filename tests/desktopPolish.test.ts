@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import Module from 'node:module';
 
@@ -393,6 +394,30 @@ test('ScanQueue (review F1.8): a scan the page started names its folder, which i
   assert.equal(q.next(), '/b');
   q.markBusy();
   assert.equal(q.current, '/b', 'told nothing of its folder, the folder handed over stays the one scanning');
+});
+
+test('ScanQueue (review HA2-L1): a folder the shell holds that the page then starts itself is the one scanning — not left waiting to be walked again after it', () => {
+  const q = new desktop.ScanQueue((p: string) => p);
+  q.markBusy('/A');
+  assert.deepEqual(q.enqueue(['/B']).queued, ['/B'], 'held behind the scan of /A');
+  q.markBusy('/B'); // /A landed in the page, which started /B itself before the shell heard /A end
+  assert.deepEqual(q.pending, [], 'the one scan of /B serves the folder that was waiting');
+  assert.deepEqual(q.enqueue(['/B']), { queued: [], ignored: ['/B'] }, 'asked for again, it is the folder being scanned');
+  q.finished();
+  assert.equal(q.next(), null, 'and /B is not walked a second time when it ends');
+});
+
+test('scannedFolder (review HA2-L2/L3): what the page names as its scan is read the way the server reads it — ~ is the home folder, a relative path is resolved, a separator at the end is the folder, a cloud account is none', () => {
+  const home = '/Users/x';
+  assert.equal(desktop.scannedFolder('~/Downloads', home, path.posix), '/Users/x/Downloads');
+  assert.equal(desktop.scannedFolder('~', home, path.posix), '/Users/x');
+  assert.equal(desktop.scannedFolder('~/Downloads/', home, path.posix), '/Users/x/Downloads');
+  assert.equal(desktop.scannedFolder('/Users/x/Downloads/', home, path.posix), '/Users/x/Downloads');
+  assert.equal(desktop.scannedFolder('~\\Downloads', 'C:\\Users\\x', path.win32), 'C:\\Users\\x\\Downloads', 'Windows: ~\\ too');
+  assert.equal(desktop.scannedFolder('Downloads', home, path), path.resolve('Downloads'), 'a relative path, resolved as the server resolves it, in the same process');
+  assert.equal(desktop.scannedFolder('~other/x', home, path.posix), path.posix.resolve('~other/x'), 'only ~ alone or ~ and a separator is the home folder, as the server reads it');
+  for (const none of ['cloud://drive', 'cloud://gdrive/Photos', '', 5, null]) assert.equal(desktop.scannedFolder(none, home, path.posix), null, `${String(none)} names no folder here`);
+  assert.equal(desktop.scannedFolder(undefined, home, path.posix), undefined, 'told nothing of its folder');
 });
 
 /* ═══════════════════════ copy-4: the crash dialog ═══════════════════════ */
@@ -992,6 +1017,26 @@ test('main (review F1.8): a folder asked for while the page scans it — a scan 
     h.stub.app.emit('open-file', { preventDefault() {} }, b);
     assert.deepEqual(told().slice(2), [{ path: b, before: 0 }], 'a scan of something that is no folder here names no folder: the one pushed before it is not called the one scanning');
   } finally { h.dispose(); }
+});
+
+test('main (review HA2-L2/L3): a scan the page names with ~ is of the home folder\'s folder — asked for by its full path it is said to be scanning already, not queued and walked again', async () => {
+  const dir = mkTmp();
+  const a = path.join(dir, 'a');
+  fs.mkdirSync(a);
+  const realHome = os.homedir;
+  const h = await loadMain({ dataDir: dir });
+  try {
+    os.homedir = () => dir; // a stand-in home folder: nothing is written to the real one
+    await h.loadPage();
+    const page = contractPage(h);
+    const told = () => h.win().webContents.on_channel('treemap:scan-queued');
+    page.start('~/a'); // typed in the Scan box as ~/a
+    h.stub.app.emit('open-file', { preventDefault() {} }, a); // the same folder from the Dock, by its full path
+    assert.deepEqual(told(), [{ path: a, scanning: true }], 'the shell knows ~/a is the folder it is asked for');
+    page.finish({ ok: true, path: a });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.deepEqual(page.pushed(), [], 'and it is not walked again behind itself');
+  } finally { os.homedir = realHome; h.dispose(); }
 });
 
 test('main (review F1.2): a folder the page hands over while it scans waits in the one queue with the shell\'s own, in the order asked, and is said as the shell\'s are — only the first "scans next"', async () => {

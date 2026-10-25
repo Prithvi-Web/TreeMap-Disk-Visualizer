@@ -272,9 +272,10 @@ ipcMain.on('treemap:scan-progress', (_event, value, folder) => {
   } else {
     // A scan starting names its folder (review F1.8): the page's own scans
     // too, which the shell never knew, so the same folder asked for again was
-    // queued and walked twice. A spelling with a separator at its end is the
-    // folder; a name that is no absolute path here (a cloud account) is none.
-    scanQueue.markBusy(folder === undefined ? undefined : typeof folder === 'string' && path.isAbsolute(folder) ? path.resolve(folder) : null);
+    // queued and walked twice. It is read as the server reads it — `~/x` is
+    // the home folder's, a separator at its end is the folder — and a cloud
+    // account is none (desktop.scannedFolder, review HA2-L2/L3).
+    scanQueue.markBusy(desktop.scannedFolder(folder));
   }
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(progress);
 });

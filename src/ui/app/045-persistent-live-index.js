@@ -2072,8 +2072,11 @@ function sayOnceThisScan(key, words) {
  * folder, and calling it the folder being scanned dropped it (review F1.3).
  */
 function sameFolder(a, b) {
+  // `~` alone or before a separator is the home folder, as the server reads it (review HA2-L2).
+  const home = state.system && state.system.homeDir;
+  const tilde = (s) => (home && (s === '~' || s.startsWith('~/') || s.startsWith('~\\')) ? home + s.slice(1) : s);
   const end = (s) => s.replace(/^(?:[A-Za-z]:|\\\\)/.test(s) ? /(.)[\\/]+$/ : /(.)\/+$/, '$1');
-  return typeof a === 'string' && typeof b === 'string' && end(a) === end(b);
+  return typeof a === 'string' && typeof b === 'string' && end(tilde(a)) === end(tilde(b));
 }
 /** What the queue says of a folder waiting with `before` folders ahead of it (hunt C19). */
 function queuedSentence(p, before) {

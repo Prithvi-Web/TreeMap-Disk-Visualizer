@@ -391,7 +391,7 @@ function pageQueue(opts: { requestScans?: (paths: string[]) => unknown } = {}) {
   const { $ } = makeDom();
   const started: string[] = [];
   const toasts: string[] = [];
-  const state: { scanning: boolean; scanningPath?: string; scanGen: number } = { scanning: false, scanGen: 1 };
+  const state: { scanning: boolean; scanningPath?: string; scanGen: number; system?: { homeDir: string } } = { scanning: false, scanGen: 1 };
   const startScan = async (p: string) => {
     started.push(p); state.scanning = true; state.scanningPath = p; state.scanGen++; // startScan's beginScanChrome
     await new Promise((r) => setImmediate(r)); // the index probe
@@ -452,6 +452,30 @@ test('review F1.2: in the desktop app a folder dropped on the window while a sca
   gone.q.queueScan('/A'); gone.q.queueScan('/C');
   await new Promise((r) => setImmediate(r));
   assert.deepEqual([gone.toasts, gone.q.clearScanQueue()], [['Queued /C — it scans next'], 1], 'a folder the shell did not take waits here, said as this queue says its own');
+});
+
+test('review HA2-L4: a folder the shell holds is said with the folders waiting in this page ahead of it — they go first', async () => {
+  const { q, toasts } = pageQueue({ requestScans: async () => null }); // a shell that gives no answer: the folder waits here
+  q.queueScan('/A'); // the scan running
+  q.queueScan('/C');
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(toasts, ['Queued /C — it scans next'], 'waiting in this page');
+  q.sayShellQueued!({ path: '/Dock', before: 0 }); // the shell holds a dock drop, with none of its own ahead
+  assert.deepEqual(toasts.slice(1), ['Queued /Dock — 1 folder before it'], '/C, waiting here, goes first');
+});
+
+test('review HA2-L2: a folder the page scans as ~/… is the home folder\'s — asked for by its full path it is said to be scanning already, not queued', () => {
+  const { q, started, toasts, state } = pageQueue();
+  state.system = { homeDir: '/Users/x' };
+  q.queueScan('~/Photos');
+  q.queueScan('/Users/x/Photos'); // the same folder dropped on the window
+  q.queueScan('/Users/x/Photos/');
+  assert.deepEqual([started, toasts, q.clearScanQueue()], [['~/Photos'], ['Already scanning /Users/x/Photos'], 0], 'one folder however it is spelled');
+  state.scanning = false;
+  q.queueScan('/Users/x/Docs');
+  q.queueScan('~/Docs');
+  q.queueScan('~');
+  assert.deepEqual(toasts.slice(1), ['Already scanning ~/Docs', 'Queued ~ — it scans next'], 'the other way round too; ~ alone is the home folder, another folder');
 });
 
 test('review HA-L3/HA-L11: the page registers for the shell\'s queued notices', () => {

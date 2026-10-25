@@ -7,6 +7,8 @@
  * main.js stays a thin layer that hands these results to Electron.
  */
 const crypto = require('crypto');
+const os = require('os');
+const path = require('path');
 
 const REPO_URL = 'https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer';
 const RELEASES_URL = `${REPO_URL}/releases`;
@@ -263,6 +265,23 @@ function updateDialogCopy({ version, current, arch }) {
  * reports the scan finished. `reset()` is for a page reload: whatever was
  * running is gone with the page, but what was asked for is still wanted.
  */
+/**
+ * The folder a scan the page started is of, read the way the server reads
+ * what the page sent (review HA2-L2/L3): `~` alone or before a separator is
+ * the home folder, a relative path is resolved in this process (the server's
+ * own), and a separator at the end is the folder. A cloud account, an empty
+ * name or anything but text is no folder here (null); told nothing, nothing
+ * (undefined). The page sends the text as typed, so `~/Downloads` reached the
+ * shell as no folder, and the same folder asked for by its full path was
+ * queued, told "it scans next" and walked twice.
+ */
+function scannedFolder(folder, home = os.homedir(), p = path) {
+  if (folder === undefined) return undefined;
+  if (typeof folder !== 'string' || !folder || folder.startsWith('cloud://')) return null;
+  const named = folder === '~' || folder.startsWith('~/') || folder.startsWith('~\\') ? p.join(home, folder.slice(1)) : folder;
+  return p.resolve(named);
+}
+
 class ScanQueue {
   /** @param resolve (rawPath) → folder to scan, or null to ignore it */
   constructor(resolve) {
@@ -307,7 +326,11 @@ class ScanQueue {
    */
   markBusy(dir) {
     this.busy = true;
-    if (dir !== undefined) this.current = dir;
+    if (dir === undefined) return;
+    this.current = dir;
+    // A folder the shell holds that the page then starts itself is served by
+    // that one scan, not walked again after it (review HA2-L1).
+    if (typeof dir === 'string') this.pending = this.pending.filter((p) => p !== dir);
   }
 
   finished() {
@@ -352,4 +375,5 @@ module.exports = {
   updateOffer,
   updateDialogCopy,
   ScanQueue,
+  scannedFolder,
 };
