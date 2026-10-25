@@ -267,13 +267,22 @@ function refuseUnknownKinds(policyName: string, groupIds: readonly string[]): vo
     `so it would never match ${one ? 'it' : 'them'}. A cleanup-suggestion policy may name: ${mayName.join(', ')}.`);
 }
 
+/** Whether a policy names only kinds no rule here has, so it can match nothing. */
+function namesOnlyUnknownKinds(match: AutopilotMatch): boolean {
+  const unknown = unknownGroupIds(match);
+  return unknown.length > 0 && match.kind === 'suggestion' && unknown.length === match.groupIds.length;
+}
+
 /**
  * What a run says of a policy naming kinds no rule here has (BQL-b1 review F3.1): "Nothing matched"
- * alone read as a policy working as meant, run after run.
+ * alone read as a policy working as meant, run after run. Null for a policy naming none. Built here
+ * alone for a run's record, a preview and an approval, so the three say it alike (review HD2 F1.7).
  */
-function unknownKindsSentence(unknown: readonly string[], only: boolean): string {
+function unknownKindsSentence(match: AutopilotMatch): string | null {
+  const unknown = unknownGroupIds(match);
+  if (unknown.length === 0) return null;
   const kinds = unknown.length === 1 ? 'a kind of file' : `${unknown.length} kinds of file`;
-  return only
+  return namesOnlyUnknownKinds(match)
     ? `This policy names only ${kinds} TreeMap does not have (${unknown.join(', ')}), so it matches nothing: edit the policy and pick again.`
     : `This policy also names ${kinds} TreeMap does not have (${unknown.join(', ')}), which ${unknown.length === 1 ? 'matches' : 'match'} nothing: edit the policy and pick again.`;
 }
@@ -986,11 +995,8 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
   }
   // A policy an earlier build saved with kinds no rule here has: the preview says so as every run of
   // it does (runPolicyNow's record), after whatever else it says (BQL item 14).
-  const unknown = unknownGroupIds(policy.match);
-  if (unknown.length > 0) {
-    const onlyUnknown = policy.match.kind === 'suggestion' && unknown.length === policy.match.groupIds.length;
-    wouldBlockReason = withSentence(wouldBlockReason, unknownKindsSentence(unknown, onlyUnknown));
-  }
+  const unknownKinds = unknownKindsSentence(policy.match);
+  if (unknownKinds !== null) wouldBlockReason = withSentence(wouldBlockReason, unknownKinds);
 
   return {
     policyName: policy.name,
@@ -1097,11 +1103,11 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
   let spentAllowance: number | undefined;
   // Kinds no rule here has, which an earlier build saved and the evaluator never matches: every run
   // record says so, whatever else it says, never only "Nothing matched" (BQL-b1 review F3.1).
-  const unknown = unknownGroupIds(policy.match);
-  const onlyUnknown = unknown.length > 0 && policy.match.kind === 'suggestion' && unknown.length === policy.match.groupIds.length;
+  const unknownKinds = unknownKindsSentence(policy.match);
+  const onlyUnknown = namesOnlyUnknownKinds(policy.match);
 
   const record = (): Promise<AutopilotRun> => withAutopilotStore(async () => {
-    if (unknown.length > 0) run.blockedReason = withSentence(run.blockedReason, unknownKindsSentence(unknown, onlyUnknown));
+    if (unknownKinds !== null) run.blockedReason = withSentence(run.blockedReason, unknownKinds);
     const fresh = await loadStore();
     fresh.runs.unshift(run);
     const live = fresh.policies.find((p) => p.id === policy.id);
@@ -1410,14 +1416,13 @@ export async function approvePolicy(policyId: string, runId: string): Promise<Au
     // it again and GET /api/autopilot/runs told agents it still needed one.
     run.status = 'completed';
     run.approvedAt = now;
-    // Nor does it keep the sentence that asked for the approval (review F1.13) — but what every run record
-    // of a policy naming kinds no rule here has states, it keeps (review HD-L8).
+    // Nor does it keep the cap's refusal, which only a run awaiting approval carries (review HD2 F1.4, F1.5).
+    delete run.capRefusal;
+    // Nor the sentence that asked for the approval (review F1.13) — but what every run record of a policy
+    // naming kinds no rule here has states, it keeps (review HD-L8), in the words its run said it (HD2 F1.7).
     run.blockedReason = approvedRunSentence(policy);
-    const unknown = unknownGroupIds(policy.match);
-    if (unknown.length > 0) {
-      const only = policy.match.kind === 'suggestion' && unknown.length === policy.match.groupIds.length;
-      run.blockedReason = withSentence(run.blockedReason, unknownKindsSentence(unknown, only));
-    }
+    const unknownKinds = unknownKindsSentence(policy.match);
+    if (unknownKinds !== null) run.blockedReason = withSentence(run.blockedReason, unknownKinds);
     await saveStore(store);
     return policy;
   });

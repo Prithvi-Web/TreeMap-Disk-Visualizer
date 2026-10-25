@@ -836,6 +836,62 @@ test('an approved run still says its policy names a kind TreeMap does not have, 
   }
 });
 
+/*
+ * The test above named only kinds no rule has, so approvePolicy's "names only" and "also names" were never
+ * told apart through an approval: forcing "only" left every test green while an approved record said a
+ * policy that also matches node_modules folders "matches nothing" (review HD2 F1.7).
+ */
+test('an approved run of a policy naming a real kind and one TreeMap does not have says it ALSO names that one, as its run did (review HD2 F1.7)', async () => {
+  const dir = folder('mixed-kind', { 'package.json': 2 });
+  fs.mkdirSync(path.join(dir, 'node_modules'));
+  fs.writeFileSync(path.join(dir, 'node_modules', 'x.js'), Buffer.alloc(1000, 7));
+  const mixed: AutopilotPolicy = {
+    id: 'mixed-kind', name: 'Mixed boxes', path: dir, match: { kind: 'suggestion', groupIds: ['regen-node-modules', 'cache-general'] },
+    maxBytesPerRun: null, maxBytesPerWeek: null, cooldownDays: 7, dryRunFirst: false, requireConfirmationAbove: null, enabled: true,
+  };
+  await writeJsonFile('autopilot.json', { version: 1, policies: [mixed], runs: [] });
+  const ALSO = 'This policy also names a kind of file TreeMap does not have (cache-general), which matches nothing: edit the policy and pick again.';
+  try {
+    const seen = await runOnce('mixed-kind');
+    assert.ok(seen.bytesMatched > 0, `control: the real kind matches the node_modules folder: ${seen.blockedReason}`);
+    assert.ok(String(seen.blockedReason).endsWith(ALSO), `control: the run says so: ${seen.blockedReason}`);
+    await approvePolicy('mixed-kind', seen.id);
+    const after = (await listRuns()).find((r) => r.id === seen.id);
+    assert.ok(after);
+    assert.match(String(after.blockedReason), /^Approved\b/, String(after.blockedReason));
+    assert.ok(String(after.blockedReason).endsWith(ALSO), `approved, it says the policy also names that kind: ${after.blockedReason}`);
+    assert.doesNotMatch(String(after.blockedReason), /names only/, `never that the policy matches nothing: ${after.blockedReason}`);
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+/*
+ * capRefusal is documented as set on a run awaiting approval and absent otherwise, and approvePolicy left it on
+ * the run it completed: GET /api/autopilot/runs served an approved run still saying a cap refuses it, beside a
+ * blockedReason that no longer did (review HD2 F1.4, F1.5).
+ */
+test('an approved run no longer carries the cap\'s refusal, which only a run awaiting approval does (review HD2 F1.4, F1.5)', async () => {
+  const dir = folder('cap-approved', { 'a.log': 1000 });
+  await writeJsonFile('agent-policy.json', { allowedRoots: [], protectedPaths: [], maxBytesPerOperation: 500 });
+  await savePolicies([{ id: 'cap-approved', name: 'Logs', path: dir, match: { kind: 'custom', exts: ['log'] }, dryRunFirst: false, enabled: true }]);
+  try {
+    const seen = await runOnce('cap-approved');
+    assert.equal(seen.status, 'awaiting-approval', String(seen.blockedReason));
+    assert.match(String(seen.capRefusal), /per-operation cap in agent-policy\.json$/, `control: the run awaiting approval carries the cap: ${seen.capRefusal}`);
+    await approvePolicy('cap-approved', seen.id);
+    const after = (await listRuns()).find((r) => r.id === seen.id);
+    assert.ok(after);
+    assert.equal(after.status, 'completed', 'control: the run is approved');
+    assert.equal(after.capRefusal, undefined, 'an approved run carries no cap refusal');
+    const stored = await readJsonFile<{ runs: AutopilotRun[] }>('autopilot.json', { runs: [] });
+    assert.equal(stored.runs.find((r) => r.id === seen.id)?.capRefusal, undefined, 'nor does its stored record');
+  } finally {
+    await writeJsonFile('agent-policy.json', {});
+    await savePolicies([]);
+  }
+});
+
 test('the page labels an approved run "Approved" and offers no Approve on it; a repeat confirm never says "more than 0 B asks again" (hunt C37)', () => {
   const policy = { id: 'P', name: 'Logs', path: '/home/me/logs', match: { kind: 'custom', exts: ['log'] }, requireConfirmationAbove: null, approvedAt: 9, cooldownDays: 7, enabled: true };
   const approved = { id: 'r1', policyId: 'P', policyName: 'Logs', at: 1, mode: 'dry-run', status: 'completed', approvedAt: 9, items: [], bytesMatched: 2000, bytesDeleted: 0, skipped: [], scope: { path: policy.path, match: policy.match } };

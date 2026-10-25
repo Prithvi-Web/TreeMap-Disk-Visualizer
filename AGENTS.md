@@ -1093,7 +1093,8 @@ read-what-you-saw) permission to act.
   refusal, and its preview says so in `wouldBlockReason`, as does the
   `blockedReason` of a run awaiting approval — the first run's, and one
   held for its size, each of which carries the refusal alone in
-  `capRefusal` too — so no run is approved blind to it. Violations are
+  `capRefusal` too until it is approved — so no run is approved blind to
+  it. Violations are
   `403 { code: "POLICY_ROOT_NOT_ALLOWED" | "POLICY_PROTECTED_PATH" |
   "POLICY_BYTES_EXCEEDED" | "POLICY_BYTES_UNKNOWN" }`. An entry may begin with `~` for your home
   folder, and every gate reads an entry alike — where it lives and where it
