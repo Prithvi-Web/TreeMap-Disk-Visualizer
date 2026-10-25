@@ -127,11 +127,13 @@ clear what nothing is using.
 
 What an advice rule covers: by default the folder it claims and everything in
 it — a VM disk in Docker's data folder is the data, so MCP `trash_paths`
-refuses the folder, any file in it and any folder holding it. A rule whose
-advice is about its folder itself carries `"adviceCovers": "folder"`
-(advice rules only; `folder` is the one value): `trash_paths` then refuses
-that folder and a folder holding it, never a file or folder in it. The Temp
-rule carries it: the folder must stay, while a file in it is a file.
+refuses the folder, any file in it, and a folder that a completed scan lists
+it inside (an item a "Don't scan" pattern keeps out of a scan is not listed by
+that scan, so that scan refuses no folder for holding it). A rule whose advice
+is about its folder itself carries `"adviceCovers": "folder"` (advice rules
+only; `folder` is the one value): `trash_paths` then refuses that folder and a
+folder that a completed scan lists it inside, never a file or folder in it.
+The Temp rule carries it: the folder must stay, while a file in it is a file.
 
 ## Deliberately absent
 

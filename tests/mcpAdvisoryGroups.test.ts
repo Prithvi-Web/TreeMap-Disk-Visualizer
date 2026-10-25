@@ -101,6 +101,21 @@ test('the cleanup_suggestions description says advisory groups are never trashed
   assert.match(trash, /advisory/, 'trash_paths says it refuses an advisory group\'s paths');
 });
 
+test('trash_paths, the rule-pack README and AGENTS.md say a folder holding an advice-only item is refused where a completed scan lists the item inside it, and that a "Don\'t scan" pattern hides it (review F1.3)', async () => {
+  // A folder is refused for what it holds only through a completed scan's claims: a scan lists no item a
+  // scan-scope "Don't scan" pattern keeps out of it, so that scan claims nothing for the folder holding it.
+  const words = (text: string): string => text.replace(/\s+/g, ' ');
+  const trash = words((await client.listTools()).tools.find((t) => t.name === 'trash_paths')?.description ?? '');
+  const readme = words(fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'rulepacks', 'README.md'), 'utf8'));
+  const agents = words(fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8'));
+  for (const [name, text] of [['trash_paths', trash], ['the rule-pack README', readme], ['AGENTS.md', agents]] as const) {
+    assert.doesNotMatch(text, /(?:any|a) folder holding it(?! that a completed scan)/, `${name} no longer promises every folder holding one`);
+    const said = text.match(/a folder (?:holding one )?that a completed scan lists (?:it )?inside/g) ?? [];
+    assert.equal(said.length, 2, `${name} says which folders holding one are refused, for a rule covering what its folder holds and for one about its folder itself`);
+    assert.match(text, /"Don't scan" pattern keeps out of a scan is not listed by that scan, so that scan refuses no folder for holding it/, `${name} says a "Don't scan" pattern hides an item from it`);
+  }
+});
+
 test('an advisory group is marked, left out of totalBytes and counted in advisoryBytes; itemCount is every match', async () => {
   const r = await call('cleanup_suggestions', { scanId, itemsPerGroup: 1 });
   assert.ok(!r.isError, JSON.stringify(r.content));

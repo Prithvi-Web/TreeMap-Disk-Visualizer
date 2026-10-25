@@ -246,8 +246,10 @@ function advisoryRefusal(p: string, relation: 'is in' | 'holds', hit: { path: st
  * against the rules (adviceGuard), whatever folder a scan started at: the cleanup walk examines only
  * what lies below a scan's root, so a scan rooted at an advice-only folder, or inside one, claimed
  * nothing (review F1.2, F1.5). A folder holding one is refused where a completed scan's walk finds it
- * inside. A rule whose advice is about its folder itself (`adviceCovers: "folder"`: Windows' Temp
- * folder) refuses that folder and a folder holding it, not what is in it (hunt HF-L1). Fails closed
+ * inside — an item a "Don't scan" pattern keeps out of a scan is not listed by that scan, so that scan
+ * refuses no folder for holding it (review F1.3). A rule whose advice is about its folder itself
+ * (`adviceCovers: "folder"`: Windows' Temp folder) refuses that folder and a folder a completed scan
+ * lists it inside, not what is in it (hunt HF-L1). Fails closed
  * when the rule packs cannot be read: then nothing can say which paths are advice only.
  */
 async function refuseAdvicePaths(paths: string[]): Promise<void> {
@@ -982,9 +984,11 @@ export function buildMcpServer(): McpServer {
         'is not an all-clear — the check could not see every program, and its note says why; tell the user. A real ' +
         'run carries the same openHandles for the check it made before moving anything (none with ' +
         'ignoreOpenHandles, which skips the check). A path of a cleanup_suggestions group with advisory: true — the ' +
-        'item, anything inside it or a folder holding it — is refused (ADVISORY_PATH): its files are data or the ' +
-        'operating system\'s, and its adviceCommand is the way to reclaim them. Where the rule\'s advice is about ' +
-        'the folder itself (Windows\' Temp folder), only that folder and a folder holding it are refused, not what is in it.',
+        'item, anything inside it, or a folder that a completed scan lists it inside — is refused (ADVISORY_PATH): its ' +
+        'files are data or the operating system\'s, and its adviceCommand is the way to reclaim them. An item a ' +
+        '"Don\'t scan" pattern keeps out of a scan is not listed by that scan, so that scan refuses no folder for ' +
+        'holding it. Where the rule\'s advice is about the folder itself (Windows\' Temp folder), only that folder ' +
+        'and a folder that a completed scan lists it inside are refused, not what is in it.',
       inputSchema: {
         paths: z.array(z.string().min(1)).min(1).max(MAX_PATHS).describe('Files/folders to trash (inside a scanned root)'),
         dryRun: z.boolean().default(false).describe('true = report the manifest, act on nothing'),
