@@ -490,7 +490,9 @@ function splitRace() {
   };
   const aloud = /\nconst (\w+) = new Map\(\);[^\n]*\nfunction sayAloud\(/.exec(INDEX);
   assert.ok(aloud, 'control: sayAloud keeps what each region says in a map declared right above it');
-  const names = ['lastPathSegment', 'loadCompareOptions', 'parseCmp', 'cmpSyncResult', 'cmpOptionLabels', 'cmpPairRefusal', 'cmpWhenPair', 'initCmpSplit', 'cmpSplitDraw', 'sayAloud', 'asSentences'];
+  // snapshotRulesUnknown: the Compare button's handler calls it for every snapshot pair; left out, the handler's own
+  // catch writes "Compare failed: snapshotRulesUnknown is not defined" where the card would be, and no card is drawn.
+  const names = ['lastPathSegment', 'loadCompareOptions', 'parseCmp', 'cmpSyncResult', 'cmpOptionLabels', 'cmpPairRefusal', 'cmpWhenPair', 'initCmpSplit', 'cmpSplitDraw', 'sayAloud', 'asSentences', 'snapshotRulesUnknown'];
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const page = new Function(...keys, `'use strict';\nlet cmpSplit = null; let cmpSplitSeq = 0; const ${aloud[1]} = new Map();\n${names.map(declOf).join('\n')}\n${runButtonSource()}\n` +
@@ -500,7 +502,10 @@ function splitRace() {
   initSplit = page.init;
   // As the page wires them.
   for (const id of ['cmpA', 'cmpB']) (els[id] as ReturnType<typeof fakeSelect>).addEventListener('change', page.sync);
-  /** The comparison still out answers, with the two moments its picks name. */
+  /**
+   * The comparison still out answers, with the two moments its picks name — and no `sameRules`, as the server answers
+   * for two snapshots that record the same "Don't scan" rules (it sends `sameRules: false` only when they differ).
+   */
   const answerCompare = () => {
     const i = held.findIndex((h) => h.url.startsWith('/api/snapshots/compare?'));
     assert.notEqual(i, -1, 'control: a comparison is out');
@@ -519,7 +524,7 @@ function splitRace() {
       else h.ok({ snapshot: { takenAt: Number(/[?&]at=(\d+)/.exec(h.url)![1]) }, nodes: [] });
     }
   };
-  return { page, frame, turns, said, text: () => text, cards, card: () => card, answerCompare, answerMaps, cmpA: els.cmpA as ReturnType<typeof fakeSelect>, click: () => button.click!() };
+  return { page, frame, turns, said, text: () => text, body: () => html, cards, card: () => card, answerCompare, answerMaps, cmpA: els.cmpA as ReturnType<typeof fakeSelect>, click: () => button.click!() };
 }
 
 test('a split view still loading for a card that is gone says nothing when its maps answer — Compare pressed again, or a pick changed, while they load — so #cmpSaid never says "No split view: …" of a card no longer on screen, nor of a split view drawn fine (review F1.1, BQU item 37)', async () => {
@@ -531,7 +536,7 @@ test('a split view still loading for a card that is gone says nothing when its m
       await r.turns();
       r.answerCompare();
       await r.turns();
-      assert.equal(r.cards.length, 1, `${maps}, ${how}: control: the first compare drew its card, whose split view asks for its maps`);
+      assert.equal(r.cards.length, 1, `${maps}, ${how}: control: the first compare drew its card, whose split view asks for its maps — the panel reads: ${r.body()}`);
       if (how === 'Compare pressed again') {
         void r.click(); // a double-click, or the same picks pressed again, while the maps load
         await r.turns();
