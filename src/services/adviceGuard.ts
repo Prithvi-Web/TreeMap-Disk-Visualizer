@@ -69,8 +69,8 @@ export function namesLeadTo(outer: readonly string[], inner: readonly string[]):
   return outer.length <= inner.length && outer.every((name, i) => name === inner[i]);
 }
 
-/** A run of folded names as one key: NUL is in no file name. */
-const KEY_JOIN = '\u0000';
+/** A run of folded names as one key: NUL is in no file name. Exported so a test counts the keys built (review F1.14 of HZ). */
+export const KEY_JOIN = '\u0000';
 
 /** Each rule's names and paths, folded once per catalog: a batch of 500 paths judges every folder above each. */
 interface FoldedRules {

@@ -14,7 +14,7 @@ import { startScan, getScan } from '../src/services/diskScanner';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { updateSettings } from '../src/services/settings';
 import { resetRuleCatalog, ruleCatalogStatus } from '../src/services/rulePacks';
-import { adviceHitAlong } from '../src/services/adviceGuard';
+import { adviceHitAlong, KEY_JOIN } from '../src/services/adviceGuard';
 import { readAudit } from '../src/services/audit';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
@@ -385,22 +385,28 @@ test('a deep path folds each of its names once, not once for every folder above 
 
   // A location rule's key is built only for a folder with as many names as some location rule's folder has
   // (rules.depths): built for every folder above a deep path, the path was joined once a folder (review HF2-L3).
-  const KEY_JOIN = '\u0000';
-  const proto = Array.prototype as { join: (sep?: string) => string };
-  const join = proto.join;
-  let keys = 0;
-  proto.join = function (this: unknown[], sep?: string): string {
-    if (sep === KEY_JOIN) keys += 1;
-    return join.call(this, sep);
+  // The key's separator is the guard's own, not a copy that could drift from it (review F1.14 of HZ).
+  const keysDuring = (body: () => unknown): number => {
+    const proto = Array.prototype as { join: (sep?: string) => string };
+    const join = proto.join;
+    let keys = 0;
+    proto.join = function (this: unknown[], sep?: string): string {
+      if (sep === KEY_JOIN) keys += 1;
+      return join.call(this, sep);
+    };
+    try {
+      body();
+    } finally {
+      proto.join = join;
+    }
+    return keys;
   };
-  try {
-    adviceHitAlong(deep, catalog);
-  } finally {
-    proto.join = join;
-  }
+  const keys = keysDuring(() => adviceHitAlong(deep, catalog));
   assert.ok(catalog.location.length > 0, 'control: the packs hold location rules');
   assert.ok(keys <= 4, `${keys} location keys built for a path of ${names} names: only at the depths a location rule's folder has`);
   const data = path.join(LOCAL, 'dockerish', 'data');
+  // A path under a location rule's folder builds that folder's key: the count counts (review F1.14 of HZ).
+  assert.ok(keysDuring(() => adviceHitAlong(path.join(data, 'x'), catalog)) >= 1, 'control: a path under a location rule\'s folder builds its key, and the count sees it');
   const under = foldsDuring(() => adviceHitAlong(path.join(data, ...Array<string>(DEPTH).fill('d')), catalog));
   assert.deepEqual([under.value?.path, under.value?.adviceCommand], [data, 'vmtool reclaim'], 'the location rule\'s folder far above it still claims it');
   assert.ok(under.folds <= names + 2, `${under.folds} folds for a path of ${names + 2} names`);
