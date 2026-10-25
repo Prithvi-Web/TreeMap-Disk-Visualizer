@@ -54,6 +54,8 @@ function writePacks(): void {
       rule({ id: 'test-renders', kind: 'project-directory', title: 'Test renders', description: 'Renders beside a project file.', action: 'advice', adviceCommand: 'Delete renders in the editor', names: ['Renders'], requiresSibling: ['project.*'], restoreCommand: 'Render again' }),
       rule({ id: 'test-build', kind: 'project-directory', title: 'Test build output', description: 'Build output beside a manifest.', category: 'regenerable', names: ['build'], requiresSibling: ['package.json'], restoreCommand: 'npm run build' }),
       rule({ id: 'test-locked-build', kind: 'location', title: 'Test locked build', description: 'A build folder another tool owns.', action: 'advice', adviceCommand: 'buildtool clean', paths: ['{localAppData}/lockedparent/build'] }),
+      // Review F1.4: a location rule whose folder's last name holds an s, which a volume may fold from ſ.
+      rule({ id: 'test-vm-store', kind: 'location', title: 'Test VM store', description: 'A virtual machine store.', action: 'advice', adviceCommand: 'vmtool prune', paths: ['{localAppData}/vmstore'] }),
     ],
   }));
   for (const pack of ['macos', 'linux', 'windows']) {
@@ -368,4 +370,17 @@ test('a deep path folds each of its names once, not once for every folder above 
   const under = foldsDuring(() => adviceHitAlong(path.join(data, ...Array<string>(DEPTH).fill('d')), catalog));
   assert.deepEqual([under.value?.path, under.value?.adviceCommand], [data, 'vmtool reclaim'], 'the location rule\'s folder far above it still claims it');
   assert.ok(under.folds <= 2 * (names + 2), `${under.folds} folds for a path of ${names + 2} names`);
+});
+
+test('a location rule\'s folder named with a last name the volume folds (ſ for s) is refused, judged from the path itself (review F1.4)', async (t) => {
+  const store = path.join(LOCAL, 'vmstore');
+  fs.mkdirSync(store, { recursive: true });
+  fs.writeFileSync(path.join(store, 'disk.raw'), Buffer.alloc(4_096, 5));
+  const folded = path.join(LOCAL, 'vm\u017ftore');
+  // The guard folds the name itself, whatever this volume does with it.
+  assert.deepEqual([adviceHitAlong(folded, catalogHere())?.adviceCommand, adviceHitAlong(path.join(folded, 'disk.raw'), catalogHere())?.adviceCommand],
+    ['vmtool prune', 'vmtool prune'], 'the location rule\'s folder and a file in it, by the folder\'s folded name');
+  if (!volumeFolds(store, folded)) return t.skip('this volume does not fold ſ to s');
+  await scanAt(store); // rooted AT the folder: no scan's walk lists it as an item, so the path alone must say so
+  await assertRefused([folded, path.join(folded, 'disk.raw')], 'vmtool prune');
 });
