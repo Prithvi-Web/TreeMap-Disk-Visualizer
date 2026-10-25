@@ -244,6 +244,9 @@ test('review HA-L6: the right-click button says what became of what was asked �
   assert.equal(r.status, 'Not removed — the entry is still in the right-click menu. reg.exe did not answer within 10 s.');
   r = await pressed(true, { installed: false, targets: ['finder-quick-action'] });
   assert.equal(r.status, 'Removed.', 'control: a Remove that removed it');
+  // Said aloud, as an Add that added it is, never as an error (review HA2-L5, HA2-L6): the status line is no live region.
+  assert.deepEqual(r.toasts, ['Removed from the right-click menu'], 'a Remove that removed it is said aloud, once');
+  assert.ok(!r.kinds.includes('error'), `and not as an error (${r.kinds.join(', ')})`);
   r = await pressed(false, { installed: true, targets: ['finder-quick-action'] });
   assert.deepEqual([r.status, r.toasts], ['Added (finder-quick-action).', ['Added — your file manager may take a moment to show it']], 'control: an Add that added it');
 });

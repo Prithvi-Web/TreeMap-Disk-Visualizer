@@ -44471,7 +44471,10 @@ async function renderShellIntegration(carryStatus = '') {
         else toast(message, 'error');
       } else {
         message = result.installed ? `Not removed — the entry is still in the right-click menu.${why}` : 'Removed.';
+        // Said aloud either way, as an Add is: the status line is no live region, and where this build
+        // cannot add the entry again the button hides, so focus moves on with nothing said (review HA2-L6).
         if (result.installed) toast(message, 'error');
+        else toast('Removed from the right-click menu');
       }
     } catch (e) {
       message = 'Failed: ' + e.message;
