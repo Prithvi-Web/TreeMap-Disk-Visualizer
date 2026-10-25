@@ -1239,7 +1239,7 @@ read-what-you-saw) permission to act.
   only then), and from **every Autopilot
   match kind** — and Autopilot lists what it left alone in `skipped`, with
   the note as the stated reason, in previews and run records alike. The
-  custom Clean Up rules, Cloud-safe, the game and media libraries
+  custom Clean Up rules, Online-only files, the game and media libraries
   (`/api/games`, `/api/media`) and the duplicates still list what is inside
   a noted folder, and no note pauses a cloud listing. Both
   mutating routes are in the pinned destructive list because writing or

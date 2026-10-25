@@ -1143,5 +1143,6 @@ test('the note sheet names the lists a pausing note keeps a folder out of, and t
   const region = INDEX_HTML.slice(at, INDEX_HTML.indexOf('class="modal-foot"', at));
   assert.doesNotMatch(region, /nothing inside this folder is ever suggested for cleanup/, 'not a promise the Libraries and Duplicates views break');
   for (const list of ['Smart suggestions', 'Empty folders', 'Shrink video', 'Autopilot']) assert.match(region, new RegExp(list), `names ${list}`);
-  for (const view of ['Custom rules', 'Cloud-safe', 'Libraries', 'Duplicates']) assert.match(region, new RegExp(view), `names ${view}`);
+  // The tab is "Online-only files" (CL-1): its old name, "Cloud-safe", is no name a person can find.
+  for (const view of ['Custom rules', 'Online-only files', 'Libraries', 'Duplicates']) assert.match(region, new RegExp(view), `names ${view}`);
 });

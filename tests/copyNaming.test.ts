@@ -826,6 +826,21 @@ test('the page, every sentence the server writes and the docs name a Clean Up ta
   for (const doc of DOCS) assert.deepEqual(oldTabNamings(fs.readFileSync(path.join(ROOT, doc), 'utf8')), [], doc);
 });
 
+/** Each place `text` calls the Online-only files tab by its old name, "Cloud-safe" — a route or a setting key (`/api/cleanup/cloud-safe`, `cloudSafe`) is a program's name, not it. */
+function cloudSafeNamings(text: string): string[] {
+  const said = oneLine(text);
+  return [...said.matchAll(/(?<![/\w-])cloud[- ]safe\b/gi)].map((m) => JSON.stringify(said.slice(Math.max(0, (m.index ?? 0) - 40), (m.index ?? 0) + 40)));
+}
+
+test('the Clean Up tab "Online-only files" is never called by its old name, "Cloud-safe", wherever a person reads it: the page, every string the server writes, README, SECURITY and AGENTS (CL-1)', () => {
+  assert.equal(cloudSafeNamings('Custom rules, Cloud-safe, Libraries').length, 1, 'control: the old name is found');
+  assert.deepEqual(cloudSafeNamings('GET /api/cleanup/cloud-safe?scanId= and cloudSafe'), [], 'control: a route and a key are not');
+  assert.ok(pageText(INDEX).includes('Online-only files'), 'control: the page names the tab');
+  assert.deepEqual(cloudSafeNamings(pageText(INDEX)), [], 'public/index.html');
+  assert.deepEqual(sourceStrings(['src']).flatMap((s) => cloudSafeNamings(s.text).map((hit) => `${s.at}: ${hit}`)), [], 'the server\'s strings');
+  for (const doc of DOCS) assert.deepEqual(cloudSafeNamings(fs.readFileSync(path.join(ROOT, doc), 'utf8')), [], doc);
+});
+
 test('the Undo Vault tab prints a copy\'s reason in the cart\'s words, and an older copy\'s "staged in the cleanup cart" as the cart says it now (G18 review F1.1)', () => {
   // A copy keeps the reason it was stored with (timecapsule.json), so a copy
   // the cart made before the name was settled still holds the old words.

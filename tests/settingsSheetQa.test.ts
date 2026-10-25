@@ -811,3 +811,12 @@ test('Settings promises up to three quick wins, as the tour offers — fewer, or
   assert.doesNotMatch(sheet, />Three quick wins/, 'the tour slices to at most three; it is not always three');
   assert.match(sheet, />Up to three quick wins, staged only when you click, nothing deleted\.</);
 });
+
+test('the Undo Vault size cap says what it is a share of: the free space on its disk, counting what the Undo Vault already holds — not "this disk" (CL-3)', () => {
+  // timeCapsule.capFor: the percentage is of free space plus what the Undo Vault holds (SECURITY.md says so too).
+  const at = INDEX.indexOf('<label for="capsuleMaxPercent">');
+  assert.notEqual(at, -1, 'control: the cap is in the sheet');
+  const row = INDEX.slice(at, INDEX.indexOf('</div>', at)).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  assert.match(row, /Never use more than % of the free space on this disk, counting what the Undo Vault holds — oldest copies go first/, row);
+  assert.match(INDEX.slice(at, INDEX.indexOf('</div>', at)), /aria-label="Undo Vault size cap as a percentage of the free space on this disk, counting what it already holds"/, 'and so does its name');
+});

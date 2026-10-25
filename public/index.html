@@ -5387,7 +5387,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <input type="checkbox" id="noteSuppress" checked>
         <span>Pause Smart suggestions and Autopilot here</span>
       </label>
-      <div class="muted" style="margin-top:6px;font-size:12px;">While this is on, nothing inside this folder is listed in Clean Up’s Smart suggestions, Empty folders or Shrink video, or matched by an Autopilot rule. Custom rules, Cloud-safe, Libraries and Duplicates still show what is inside it, and you can still delete things here by hand.</div>
+      <div class="muted" style="margin-top:6px;font-size:12px;">While this is on, nothing inside this folder is listed in Clean Up’s Smart suggestions, Empty folders or Shrink video, or matched by an Autopilot rule. Custom rules, Online-only files, Libraries and Duplicates still show what is inside it, and you can still delete things here by hand.</div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-danger" id="noteRemoveBtn" style="display:none;"><span data-icon="trash"></span>Remove note</button>
@@ -5586,8 +5586,8 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       </div>
       <div class="rule-row" style="margin-top:8px;">
         <span data-icon="gauge"></span><label for="capsuleMaxPercent">Never use more than</label>
-        <input type="number" id="capsuleMaxPercent" min="1" max="90" value="10" aria-label="Undo Vault size cap as a percentage of disk space">
-        <span class="muted">% of this disk — oldest copies go first, and anything too big to fit is left undeleted rather than deleted unprotected</span>
+        <input type="number" id="capsuleMaxPercent" min="1" max="90" value="10" aria-label="Undo Vault size cap as a percentage of the free space on this disk, counting what it already holds">
+        <span class="muted">% of the free space on this disk, counting what the Undo Vault holds — oldest copies go first, and anything too big to fit is left undeleted rather than deleted unprotected</span>
       </div>
 
       <!-- v4 §3.2: "a score the user cannot inspect or adjust is an oracle, and
