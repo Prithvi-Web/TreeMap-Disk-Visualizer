@@ -1223,7 +1223,7 @@ function cleanUpPage(state: Record<string, unknown>, answer: (url: string) => un
     reportError: (e: Error) => { toasts.push(e.message); }, selectedSavedView: () => ({ id: 'v', q: 'size>1gb' }), cleanOnDiskOf: async () => new Map(),
     whyLeftOut: () => '', MB: 1e6, cleanWaiting: new Set(), cleanFindWaiting: null, CLEAN_NO_SCAN: liftPage<Record<string, [string, string]>>(['CLEAN_NO_SCAN'], 'CLEAN_NO_SCAN'),
     emptyFolders: [], videoCandidates: [], smartGroups: [], packageOrphans: [], cleanMatches: [], cleanOnDisk: new Map(),
-    loadEmptyFoldersSeq: 0, loadVideoSeq: 0, loadSmartSeq: 0, cleanRuleSource: 'simple', smartSort: 'size',
+    loadEmptyFoldersSeq: 0, loadVideoSeq: 0, loadSmartSeq: 0, cleanRuleSource: 'simple', smartSort: 'size', smartNoteLine: '',
     cleanUpWhereItGoes: () => '', cleanFunnelDrop: noop, setCleanRuleSource: noop, cleanPane: 'rules', videoJobStream: null, cleanFindNoList: true,
     ...extra.given,
   };

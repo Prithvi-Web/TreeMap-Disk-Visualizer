@@ -2694,6 +2694,7 @@ function smartGroupsHtml(groups: Array<Record<string, unknown>>): string {
     reclaimBadge: () => '', scoreFor: () => null, cartButtonHtml: () => '<button class="icon-btn"></button>', refreshCartButtons() {}, updateCleanSummary() {},
     byReclaimDesc: () => () => 0, ensureScores: async () => {}, toast() {}, RECLAIM_BATCH: 2000,
     smartPicked: { ticked: new Set(), cat: 'all', why: new Set() }, // nothing ticked, filtered or opened (review HC2-L9)
+    smartNoteLine: '', // no note pauses a folder (review F1.7 of HZ)
   }, 'renderSmartGroups');
   render(null);
   return host.innerHTML;

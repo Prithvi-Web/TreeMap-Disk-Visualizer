@@ -1731,7 +1731,7 @@ async function loadSuggestions(orphans: unknown, suggestions: unknown, notes: Ar
   const load = runnable(bodyOf('async function loadSmartSuggestions() {'), {
     ...page, renderPackageOrphans,
     renderGitRepos: () => {}, renderBrowserProfiles: async () => false, skeletonRows: () => '<skeleton>',
-    updateCleanSummary: () => {}, smartGroups: [] as unknown[], renderSmartGroups: () => assert.fail('no group to paint'), loadSmartSeq: 0,
+    updateCleanSummary: () => {}, smartGroups: [] as unknown[], renderSmartGroups: () => assert.fail('no group to paint'), loadSmartSeq: 0, smartNoteLine: '',
     smartPickedReset: () => {},
   });
   await load();
@@ -1915,7 +1915,7 @@ function smartCards(groups: unknown[], picked?: (p: { ticked: Set<string>; cat: 
     ['escapeHtml', 'confidenceWording', 'catalogNote', 'smartItemsOf', 'REMEDY_PROSE_WORDS', 'remedyIsCommand', 'remedyHtml', ...fill, 'smartListedNote', 'smartPicked', 'renderSmartGroups'],
     {
       $: (id: string) => { assert.equal(id, 'smartResults'); return host; },
-      smartGroups: groups, smartSort: sort, icon: () => '', sizeInk: () => '#888', formatBytes: (n: number) => `${n} B`,
+      smartGroups: groups, smartSort: sort, smartNoteLine: '', icon: () => '', sizeInk: () => '#888', formatBytes: (n: number) => `${n} B`,
       formatCount: String,
       formatDate: () => 'Oct 2, 2026', chipFor: () => '', reclaimBadge: () => '', scoreFor: () => null, cartButtonHtml: () => '',
       refreshCartButtons() {}, updateCleanSummary() {}, byReclaimDesc: () => () => 0, ensureScores: async () => {}, toast() {}, RECLAIM_BATCH: 2000,
@@ -1945,6 +1945,7 @@ test('the Smart suggestions list keeps what the person ticked, the type shown an
   assert.match(html, /class="icon-btn why-btn on" data-why="1" aria-expanded="true"/, 'an open "Why?" stays open');
   assert.match(html, /<div class="smart-why" id="smartWhy1">/, 'its panel is shown');
   assert.match(html, /<div class="smart-why" id="smartWhy0" hidden>/, 'control: a closed one stays closed');
+  assert.doesNotMatch(html, /class="smart-all" data-g="1"[^>]*checked>/, 'a group with only some rows ticked has its Select all not ticked (review F1.12 of HZ)');
   const allTicked = smartCards(groups, (p) => { for (const i of [0, 1, 2]) p.ticked.add(`1:${i}`); });
   assert.match(allTicked, /class="smart-all" data-g="1"[^>]*checked>/, 'a group whose rows are all ticked has its Select all ticked');
   assert.doesNotMatch(allTicked, /class="smart-all" data-g="0"[^>]*checked>/, 'control: one with none ticked has not');
@@ -1962,7 +1963,11 @@ test('a sort pill pressed, or the scores landing, rebuilds the Smart suggestions
   });
   const host = {
     contains: (x: unknown) => x !== doc.body && x !== null,
-    querySelector: (sel: string) => { asked.push(sel); return sel.includes('data-smartsort="reclaim"') || sel.includes('data-i="4"') ? ctl(`new ${sel}`, {}) : null; },
+    // The rebuilt list has a twin for each of these (review F1.11 of HZ: every kind of control the key names).
+    querySelector: (sel: string) => {
+      asked.push(sel);
+      return ['data-smartsort="reclaim"', 'data-i="4"', '.pill[data-cat="cache"]', '.why-btn[data-why="1"]', '.smart-all[data-g="1"]'].some((k) => sel.includes(k)) ? ctl(`new ${sel}`, {}) : null;
+    },
   };
   const repaint = pageDecls<(catalog: unknown) => void>(['smartFocusKey', 'repaintSmart'], {
     $: () => host, document: doc, smartSort: 'reclaim', renderSmartGroups: () => { painted++; doc.activeElement = doc.body; }, // the rebuild destroys the focused control
@@ -1974,6 +1979,15 @@ test('a sort pill pressed, or the scores landing, rebuilds the Smart suggestions
   doc.activeElement = ctl('row', { g: '1', i: '4' }, ['smart-ck']);
   repaint(null);
   assert.equal((doc.activeElement as Ctl).name, 'new .smart-ck[data-g="1"][data-i="4"]', 'a row ticked while the scores were worked out keeps focus as they land');
+  for (const [what, focused, twin] of [
+    ['a type pill', ctl('caches', { cat: 'cache' }, ['pill']), 'new .pill[data-cat="cache"]'],
+    ['a "Why?" button', ctl('why', { why: '1' }, ['icon-btn', 'why-btn']), 'new .why-btn[data-why="1"]'],
+    ['a Select all box', ctl('all', { g: '1' }, ['smart-all']), 'new .smart-all[data-g="1"]'],
+  ] as const) {
+    doc.activeElement = focused;
+    repaint(null);
+    assert.equal((doc.activeElement as Ctl).name, twin, `${what} keeps focus as the list is rebuilt (review F1.11 of HZ)`);
+  }
   doc.activeElement = ctl('cart', {}, ['cart-btn']);
   repaint(null);
   assert.equal((doc.activeElement as Ctl).name, 'new .pill[data-smartsort="reclaim"]', 'a control with no twin hands focus to the order that is on');
@@ -1987,6 +2001,36 @@ test('a sort pill pressed, or the scores landing, rebuilds the Smart suggestions
   assert.equal(sortHandler.split('repaintSmart(catalog)').length - 1, 3, `every rebuild a sort pill makes keeps focus: ${sortHandler}`);
   assert.doesNotMatch(sortHandler, /renderSmartGroups\(/, 'none rebuilds without it');
   assert.match(declOf('loadSmartSuggestions'), /smartGroups = data\.groups;\s*smartPickedReset\(\);/, 'a new list forgets what was ticked in the last one');
+});
+
+test('the line saying a note pauses folders stays under the Smart suggestions list through every repaint — a sort pill, the scores landing — and is said once (review F1.7 of HZ)', async () => {
+  const LINE = /excluded by a note that pauses suggestions/g;
+  for (const paused of [true, false]) {
+    const host = { innerHTML: '', querySelectorAll: () => [] as unknown[], insertAdjacentHTML(_where: string, html: string) { this.innerHTML += html; } };
+    const groups = [plainGroup('cache', 2, 'cache')];
+    const fill = ['shellWord', 'fillFolder'].filter((n) => new RegExp(`function ${n}\\s*\\(`).test(INDEX));
+    const page = pageDecls<{ load: () => Promise<void>; render: (catalog: unknown) => void }>(
+      ['escapeHtml', 'confidenceWording', 'catalogNote', 'smartItemsOf', 'REMEDY_PROSE_WORDS', 'remedyIsCommand', 'remedyHtml', ...fill, 'smartListedNote',
+        'smartPicked', 'smartPickedReset', 'renderSmartGroups', 'loadSmartSuggestions'],
+      {
+        ...sheet(), $: (id: string) => { assert.equal(id, 'smartResults'); return host; },
+        api: async (url: string) => (url.startsWith('/api/cleanup/suggestions?') ? { available: true, groups, catalog: null } : assert.fail(`an unexpected request: ${url}`)),
+        state: { scanId: 's1', notes: new Map(paused ? [['/r/kept', { path: '/r/kept', suppress: true }]] : []) },
+        smartGroups: [] as unknown[], loadSmartSeq: 0, smartNoteLine: '', smartSort: 'size',
+        renderGitRepos: () => {}, renderPackageOrphans: async () => false, renderBrowserProfiles: async () => false,
+        icon: () => '', sizeInk: () => '#888', formatBytes: (n: number) => `${n} B`, formatCount: String, formatDate: () => 'Oct 2, 2026', chipFor: () => '',
+        reclaimBadge: () => '', scoreFor: () => null, cartButtonHtml: () => '', refreshCartButtons() {}, updateCleanSummary() {},
+        byReclaimDesc: () => () => 0, ensureScores: async () => {}, toast() {}, RECLAIM_BATCH: 2000,
+      },
+      '{ load: loadSmartSuggestions, render: renderSmartGroups }',
+    );
+    const said = () => (host.innerHTML.match(LINE) || []).length;
+    await page.load();
+    assert.match(host.innerHTML, /data-g="0"/, `control (${paused ? 'a pausing note' : 'no note'}): the list is drawn`);
+    assert.equal(said(), paused ? 1 : 0, `${paused ? 'a pausing note is said once under the list' : 'control: no note, no line'} once it loads`);
+    page.render(null); // a sort pill pressed, or the scores landing (repaintSmart)
+    assert.equal(said(), paused ? 1 : 0, `${paused ? 'and still once' : 'control: and still none'} after the list is rebuilt`);
+  }
 });
 
 const VENV_TEMPLATE = 'python3 -m venv <folder>, then reinstall the packages it held';

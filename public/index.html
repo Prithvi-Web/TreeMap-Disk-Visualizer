@@ -42009,6 +42009,12 @@ let smartSort = 'size';
  */
 const smartPicked = { ticked: new Set(), cat: 'all', why: new Set() };
 function smartPickedReset() { smartPicked.ticked.clear(); smartPicked.cat = 'all'; smartPicked.why.clear(); }
+/**
+ * The line under the Smart suggestions list saying folders a note pauses are left out of it, as the
+ * notes stood when the list was loaded, or ''. renderSmartGroups draws it, so a repaint — a sort pill,
+ * the scores landing — keeps it (review F1.7 of HZ).
+ */
+let smartNoteLine = '';
 
 /**
  * One group's items in the active order, each paired with its index in
@@ -42974,7 +42980,7 @@ function renderSmartGroups(catalog) {
           ${adv ? '' : cartButtonHtml(it.path, it.name)}
         </div>`).join('') + `</div>
     </div>`;
-    }).join('');
+    }).join('') + smartNoteLine;
   host.querySelectorAll('.why-btn').forEach(b => b.addEventListener('click', () => {
     const panel = $(`smartWhy${b.dataset.why}`);
     const open = panel.hidden;
@@ -43104,18 +43110,17 @@ async function loadSmartSuggestions() {
     // server-side, and an absence with no stated cause reads as good news.
     // One line, only when a pausing note actually exists.
     const pausedNotes = [...state.notes.values()].filter((n) => n.suppress).length;
-    const noteHint = pausedNotes
+    smartNoteLine = pausedNotes
       ? `<div class="muted" style="font-size:11.5px;padding:2px 2px 8px;">${icon('doc', 13)} ${pausedNotes === 1 ? 'One folder is' : `${pausedNotes} folders are`} excluded by a note that pauses suggestions — edit the note to include ${pausedNotes === 1 ? 'it' : 'them'} again.</div>`
       : '';
     if (!smartGroups.length) {
       host.innerHTML = ((hadBrowsers || hadPackages) ? ''
         : `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon('checkCircle', 15)} Nothing in this scan matches the common-junk rules.</div>`)
-        + noteHint;
+        + smartNoteLine;
       updateCleanSummary();
       return;
     }
-    renderSmartGroups(data.catalog);
-    if (noteHint) host.insertAdjacentHTML('beforeend', noteHint);
+    renderSmartGroups(data.catalog); // draws smartNoteLine under the list
   } catch (e) {
     if (seq !== loadSmartSeq) return;
     if (scanId !== treeScanId()) { cleanAskAgain(loadSmartSuggestions); return; } // the older scan's failure
