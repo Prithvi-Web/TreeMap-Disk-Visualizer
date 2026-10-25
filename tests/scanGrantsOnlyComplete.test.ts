@@ -16,7 +16,7 @@ import { setTrashStepForTests } from '../src/services/cleaner';
 import { updateSettings } from '../src/services/settings';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { resetIdempotencyCache } from '../src/middleware/idempotency';
-import { insideAnyScanRoot } from '../src/middleware/pathGuard';
+import { insideAnyScanRoot, withUnfinishedScan } from '../src/middleware/pathGuard';
 import { POLICY_FILE } from '../src/services/policy';
 import { buildMcpServer } from '../src/mcp/server';
 import { relocateSecret } from '../src/services/securityHygieneScanner';
@@ -112,6 +112,23 @@ test('a scan still running grants nothing: its root is outside the scanned-root 
     assert.ok(fs.existsSync(big), 'nothing was moved');
   } finally {
     cancelScan(rec.scanId);
+  }
+});
+
+test('with a stopped scan and a running one of the same folder, the refusal names the running one — the scan that will grant — in either order (SMOKE-D1)', async () => {
+  for (const order of ['stopped first', 'running first'] as const) {
+    const { dir, big } = mkRoot(`both-${order.split(' ')[0]}`);
+    let running: ReturnType<typeof createScanRecord> | null = null;
+    const stopAScan = async () => { const s = await startScan(dir, {}); assert.equal(cancelScan(s.scanId), true); assert.equal(getScan(s.scanId)?.status, 'error'); };
+    try {
+      if (order === 'stopped first') { await stopAScan(); running = createScanRecord(dir); } else { running = createScanRecord(dir); await stopAScan(); }
+      assert.equal(running.status, 'running', 'control: one scan of the folder runs');
+      const said = withUnfinishedScan('Refused.', big);
+      assert.match(said, /has not finished yet/, `${order}: the scan that runs is the one named — ${said}`);
+      assert.doesNotMatch(said, /did not finish/, `${order}: not the stopped one`);
+    } finally {
+      if (running) cancelScan(running.scanId);
+    }
   }
 });
 

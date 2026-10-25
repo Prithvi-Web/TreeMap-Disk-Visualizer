@@ -246,7 +246,10 @@ export function outsideScanRootSentence(p: string): string {
 export function withUnfinishedScan(message: string, p: string): string {
   if (p.startsWith('cloud://')) return message;
   const where = whereUnlessSecondName(p);
-  const unfinished = where === null ? undefined : allScans().find((scan) => scan.status !== 'complete' && listedBy(scan, p, where));
+  const listing = where === null ? [] : allScans().filter((scan) => scan.status !== 'complete' && listedBy(scan, p, where));
+  // A scan still running is the one that will grant, so it is the one named — not an older one that was
+  // stopped or failed, which said "did not finish" while /stats read running (SMOKE-D1).
+  const unfinished = listing.find((scan) => scan.status === 'running') ?? listing[0];
   if (unfinished === undefined) return message;
   const state = unfinished.status === 'running' ? 'has not finished yet' : 'did not finish';
   const clause = `The scan of "${unfinished.rootPath}" ${state}, and only a completed scan lets TreeMap act on what it listed`;
