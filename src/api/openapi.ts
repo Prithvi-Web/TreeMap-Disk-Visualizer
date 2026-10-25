@@ -1968,7 +1968,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/forecast',
-    summary: 'Disk-full projection for a tracked root from snapshot history + free space, fitted only over the scans since the drives mounted inside the folder that a scan stopped at, or its “Don’t scan” rules (ignoreRules on GET /api/snapshots), last changed — a snapshot an earlier build saved records no rules and is not fitted with one that does; reason says how many earlier scans were set aside, and why',
+    summary: 'Disk-full projection for a tracked root from snapshot history + free space, fitted only over the scans since the drives mounted inside the folder that a scan stopped at, or its “Don’t scan” rules (ignoreRules on GET /api/snapshots), last changed — a snapshot an earlier build saved records no rules and is not fitted with one that does; while the history since then is too short, reason says how many earlier scans were set aside, and why',
     tag: 'history',
     destructive: false,
     parameters: [queryParam('path', 'Tracked root', { type: 'string' }, true)],

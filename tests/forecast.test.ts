@@ -176,10 +176,34 @@ test('when the drives and the rules changed at the same scan, the forecast says 
   ];
   const f = computeForecast(history, 150 * GB, NOW);
   assert.equal(f.snapshotCount, 1);
-  assert.match(f.reason ?? '', / 6 earlier scans stopped at different drives mounted inside this folder, and came before your “Don’t scan” rules changed, so they are not compared with these\.$/);
+  assert.match(f.reason ?? '', / 6 earlier scans came before a change in the drives mounted inside this folder that a scan stops at or enters, and came before your “Don’t scan” rules changed, so they are not compared with these\.$/);
   // One earlier scan is "it".
   const one = computeForecast([ruled(3, 40 * GB, '["a"]'), ruled(2, 40 * GB, '["b"]'), ruled(1, 40 * GB, '["b"]')], 150 * GB, NOW);
   assert.match(one.reason ?? '', / 1 earlier scan came before your “Don’t scan” rules changed, so it is not compared with these\.$/);
+});
+
+test('scans set aside behind a change of drives are said to come before it, not to have stopped at different drives: a drive left out and then back again (HE3 review F1.5)', () => {
+  const stay = { rule: 'stay' as const, notEntered: ['/r/mnt'] };
+  const none = JSON.stringify([]);
+  // Day -4 stopped at no drive, as the latest scans do; day -3 left /r/mnt out. Day -4 is set aside only
+  // because day -3 sits between it and the run, so it did not stop at different drives from these.
+  const history = [ruled(4, 40 * GB, none), { ...ruled(3, 30 * GB, none), boundary: stay }, ruled(2, 40 * GB, none), ruled(1, 40 * GB, none)];
+  const f = computeForecast(history, 150 * GB, NOW);
+  assert.equal(f.snapshotCount, 2);
+  assert.match(f.reason ?? '', / 2 earlier scans came before a change in the drives mounted inside this folder that a scan stops at or enters, so they are not compared with these\.$/, f.reason);
+  assert.doesNotMatch(f.reason ?? '', /stopped at different drives/, 'never said of a scan that stopped at the same drives as these');
+});
+
+test('the OpenAPI text says what AGENTS.md says of the forecast: the scans it fits, and that reason names those set aside only while the history is too short (HE3 review F1.7)', () => {
+  const openapi = fs.readFileSync(path.join(__dirname, '..', 'src', 'api', 'openapi.ts'), 'utf8');
+  assert.ok(openapi.includes('Disk-full projection for a tracked root from snapshot history + free space, fitted only over the scans since the drives mounted inside the folder that a scan stopped at, or its “Don’t scan” rules (ignoreRules on GET /api/snapshots), last changed — a snapshot an earlier build saved records no rules and is not fitted with one that does; while the history since then is too short, reason says how many earlier scans were set aside, and why'), 'GET /api/forecast');
+  assert.ok(openapi.includes('the journal and growth alerts compare a scan only with a snapshot whose key is the same, never with one that has none, and the forecast fits only the snapshots since the key last changed'), 'GET /api/snapshots');
+  // With enough history since the change, reason says nothing of the scans set aside: the rule the text states.
+  const nm = JSON.stringify(['node_modules']);
+  const none = JSON.stringify([]);
+  const settled = computeForecast([ruled(14, 40 * GB, nm), ...Array.from({ length: 10 }, (_, i) => ruled(10 - i, 100 * GB, none))], 150 * GB, NOW);
+  assert.equal(settled.status, 'stable', JSON.stringify(settled));
+  assert.doesNotMatch(settled.reason ?? '', /earlier scan/, settled.reason);
 });
 
 test('AGENTS.md says the forecast fits only the scans since the drives or the "Don\'t scan" rules last changed, and that an update starts the history again (leftover HE2-L2)', () => {

@@ -485,7 +485,7 @@ test('the forecast fits only the scans since the boundary last changed', () => {
   const f = computeForecast([...crossed, ...stayed], 100e9, now);
   assert.equal(f.snapshotCount, 2, 'the six earlier scans counted the mounted drives');
   assert.equal(f.status, 'insufficient');
-  assert.match(f.reason ?? '', /stopped at different drives/);
+  assert.match(f.reason ?? '', /6 earlier scans came before a change in the drives mounted inside this folder that a scan stops at or enters/);
   const allSame = computeForecast(crossed, 100e9, now);
   assert.equal(allSame.snapshotCount, 6, 'one boundary throughout: every scan counts');
 });

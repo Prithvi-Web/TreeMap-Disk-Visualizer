@@ -122,7 +122,7 @@ test('a budget\'s history starts again where the drives a scan stopped at change
   ];
   const p = computeBudgetProjection({ path: '/b', maxBytes: 200 * GB }, 106 * GB, series, NOW);
   assert.equal(p.status, 'insufficient', `the 35 GB step is a drive, not shrinkage (got ${p.status}: ${p.reason ?? ''})`);
-  assert.match(p.reason ?? '', /6 earlier scans stopped at different drives mounted inside this folder/);
+  assert.match(p.reason ?? '', /6 earlier scans came before a change in the drives mounted inside this folder that a scan stops at or enters, so they are not compared with these\./);
 });
 
 test('a budget\'s history starts again where the "Don\'t scan" rules changed, as the forecast\'s does (leftover HE2-L2)', () => {

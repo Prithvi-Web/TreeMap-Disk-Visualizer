@@ -103,14 +103,16 @@ function spanPhrase(spanDays: number): string {
 /**
  * Why the scans before the fitted run are set aside, as a sentence (Track U, U-24; leftover HE2-L2): the
  * scan just before the run stopped at other drives, or ran under other "Don't scan" rules, or one of the
- * two records no rules (a snapshot an earlier build saved). Every earlier scan came before that change.
+ * two records no rules (a snapshot an earlier build saved). Every earlier scan came before that change,
+ * so each clause says that, and no more: an earlier scan may have stopped at the same drives as these,
+ * with a scan that did not between them (HE3 review F1.5).
  */
 function setAsideSentence(snaps: readonly Snapshot[], run: readonly Snapshot[]): string {
   const earlier = snaps.length - run.length;
   const before = [...snaps].sort((a, b) => a.takenAt - b.takenAt)[earlier - 1];
   const first = run[0];
   const clauses: string[] = [];
-  if (boundaryKeyOf(before.boundary) !== boundaryKeyOf(first.boundary)) clauses.push('stopped at different drives mounted inside this folder');
+  if (boundaryKeyOf(before.boundary) !== boundaryKeyOf(first.boundary)) clauses.push('came before a change in the drives mounted inside this folder that a scan stops at or enters');
   if (before.ignoreRules !== first.ignoreRules) {
     clauses.push(before.ignoreRules === undefined ? 'came before TreeMap began recording the “Don’t scan” rules each scan runs under'
       : first.ignoreRules === undefined ? 'came before a scan that records no “Don’t scan” rules'
