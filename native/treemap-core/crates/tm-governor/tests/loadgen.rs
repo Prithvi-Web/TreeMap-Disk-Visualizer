@@ -244,3 +244,49 @@ fn a_hold_reports_how_idle_the_machine_was_over_its_last_half() {
     assert_eq!(run(Some(0.97)), Some(0.03));
     assert_eq!(run(None), None, "a machine without counters reports none");
 }
+
+#[test]
+fn a_hold_reports_the_machine_reading_it_took_at_each_sample() {
+    let _serial = serial();
+    let run = |machine: Option<f64>| {
+        let mut control = FakeSampler::new(4);
+        control.push_cpu(0.0);
+        let governor = Governor::start(
+            Budget {
+                preset: Preset::Balanced,
+                cpu_percent: None,
+                auto_base: Preset::Balanced,
+            },
+            false,
+            Box::new(control),
+            Box::new(FakeSignals::default()),
+        );
+        let mut measure = FakeSampler::new(4);
+        measure.push_cpu(0.0);
+        measure.set_machine(machine);
+        let report = hold(&governor, 0.4, &mut measure);
+        governor.stop();
+        report
+    };
+    let busy = run(Some(0.97));
+    assert_eq!(
+        busy.samples.len(),
+        4,
+        "control: a 0.4 s hold takes four samples"
+    );
+    assert_eq!(
+        busy.machine_busy,
+        vec![Some(0.97); 4],
+        "one machine reading a sample, as the sampler gave it"
+    );
+    assert_eq!(
+        busy.machine_idle_last_half,
+        machine_idle_last_half(&busy.machine_busy),
+        "and the idle share is read from those readings"
+    );
+    assert_eq!(
+        run(None).machine_busy,
+        vec![None; 4],
+        "a machine without counters gives none at each sample"
+    );
+}

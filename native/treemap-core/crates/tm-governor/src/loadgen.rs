@@ -232,6 +232,14 @@ pub struct HoldReport {
     /// when it published none or exposes none. A hold under its target on a
     /// machine with no idle CPU measured the machine, not the governor.
     pub machine_idle_last_half: Option<f64>,
+    /// The whole machine's busy share at each sample, as the OS published it: `None` at a
+    /// sample it published nothing new for (macOS publishes about once a second) and where it
+    /// exposes none. [`machine_idle_last_half`](Self::machine_idle_last_half) is one minus the
+    /// mean of the second half's; the readings themselves say how many of them found the
+    /// machine full, which the controller acts on one reading at a time and a mean cannot
+    /// show (`MACHINE_FULL_SHARE`). Rust-only, like [`intervals`](Self::intervals).
+    #[serde(skip_serializing)]
+    pub machine_busy: Vec<Option<f64>>,
 }
 
 /// Runs a synthetic load on `governor` for `seconds` and measures the share
@@ -281,6 +289,7 @@ pub fn hold(governor: &Governor, seconds: f64, sampler: &mut dyn CpuSampler) -> 
     let closing = governor.snapshot();
     HoldReport {
         machine_idle_last_half: machine_idle_last_half(&machine_busy),
+        machine_busy,
         ..summarise(target, series, cores, closing.workers, closing.duty)
     }
 }
@@ -390,6 +399,7 @@ fn summarise(
         allowed_last_half,
         workers_last_half,
         machine_idle_last_half: None,
+        machine_busy: Vec::new(),
     }
 }
 
