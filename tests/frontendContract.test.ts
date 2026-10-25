@@ -2025,7 +2025,16 @@ test('a run card shows every reason it left something alone, one line each with 
   const capped = apText(autopilotRunRow({ ...base, skipped: many }));
   assert.ok(many.slice(0, 5).every((s) => capped.includes(s.reason)), `five reasons are shown: ${capped}`);
   assert.ok(!capped.includes(many[5].reason), `control: the sixth is not: ${capped}`);
-  assert.match(capped, /…and 2 more left alone/, `and the two past them are counted: ${capped}`);
+  assert.match(capped, /…and 2 more reasons for leaving items alone/, `and the two past them are counted: ${capped}`);
+  // The rest are counted as reasons, never as items (review F1.6 of HZ): the server gives one entry for every
+  // note that paused items, its count in its reason, and one reason can cover many entries.
+  const notes = Array.from({ length: 7 }, (_, i) => ({ path: `/x/n${i}`, reason: `Left alone — your note on /x/n${i} pauses automatic cleanup around it (100 matched items).` }));
+  const noted = apText(autopilotRunRow({ ...base, skipped: notes }));
+  assert.match(noted, /…and 2 more reasons for leaving items alone/, `seven notes pausing 100 items each: the two past five are two reasons: ${noted}`);
+  assert.doesNotMatch(noted, /more left alone/, `never "2 more left alone" of 200 items: ${noted}`);
+  const shared = [...many.slice(0, 5), ...['/x/b1', '/x/b2', '/x/b3'].map((p) => ({ path: p, reason: LATER }))];
+  const later = apText(autopilotRunRow({ ...base, skipped: shared }));
+  assert.match(later, /…and 1 more reason for leaving items alone/, `three items past five reasons, all for one more reason, are one reason: ${later}`);
 });
 
 /** The editor's Preview, evaluated: what it shows for a simulate answer `result`. */

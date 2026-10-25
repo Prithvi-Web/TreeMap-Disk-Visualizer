@@ -1350,7 +1350,7 @@ test('Preview says aloud that it is working, what it would delete and why it fai
     for (let i = INDEX.indexOf('{', from); i < INDEX.length; i++) { if (INDEX[i] === '{') d++; else if (INDEX[i] === '}' && --d === 0) return INDEX.slice(from, i + 1); }
     throw new Error(name);
   };
-  const leftAloneWords = new Function('formatCount', `${decl('leftAloneReasons')}\n${decl('leftAloneWords')}\nreturn leftAloneWords;`)(String);
+  const leftAloneWords = new Function('formatCount', `${decl('leftAloneReasons')}\n${decl('leftAloneRest')}\n${decl('leftAloneWords')}\nreturn leftAloneWords;`)(String);
   const page = new Function('$', 'apEditorRefusal', 'toast', 'escapeHtml', 'policyFromEditor', 'api', 'fxOrbShow', 'fxOrbHide',
     'formatBytes', 'formatCount', 'icon', 'meantFolder', 'noFolderNamed', 'offerMeant', 'leftAloneHtml', 'sayAloud', 'leftAloneWords',
     `let apSaveSeq = 0; let apPreviewSeq = 0; return async () => ${INDEX.slice(open, end + 1)};`,
@@ -1386,6 +1386,15 @@ test('Preview says aloud that it is working, what it would delete and why it fai
     skipped: [{ path: '/x/kept', reason: NOTE }, { path: '/x/c', reason: GONE }, { path: '/x/d', reason: GONE }] });
   await press;
   assert.deepEqual(said, ['Checking what this would delete…', `What this would delete: 0 B across 0 items.\nEverything that matches is left alone — nothing would be deleted.\n${NOTE}\n${GONE} (2 items)`]);
+
+  // Past five reasons, the rest are said as reasons, never as items: seven notes, each pausing 100 (review F1.6 of HZ).
+  said.length = 0;
+  press = page();
+  const notes = Array.from({ length: 7 }, (_, i) => ({ path: `/x/n${i}`, reason: `Left alone — your note on /x/n${i} pauses automatic cleanup around it (100 matched items).` }));
+  pending.shift()!.ok({ items: [], bytesWouldDelete: 0, capBytes: null, skipped: notes });
+  await press;
+  assert.deepEqual(said, ['Checking what this would delete…', `What this would delete: 0 B across 0 items.\nEverything that matches is left alone — nothing would be deleted.\n${notes.slice(0, 5).map((n) => n.reason).join('\n')}\n…and 2 more reasons for leaving items alone.`],
+    'the two notes past five are said as two more reasons, not "2 more left alone"');
 
   // Nothing matches: said as the box says it.
   said.length = 0;

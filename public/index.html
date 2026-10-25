@@ -33943,22 +33943,28 @@ function ruleAgeText(ms) {
  * What a run or a Preview left alone: one line per reason, with how many items
  * it covers — never only the first reason beside "(and N more left alone)",
  * which hid every other reason from a run that left things alone for several
- * (review round 3, F3.6). Past five reasons the rest are counted.
+ * (review round 3, F3.6). Past five reasons the rest are counted, as reasons:
+ * the server gives one entry for every note or installed program that left
+ * items alone, its count in its reason, so a count of entries is no count of
+ * items (review F1.6 of HZ).
  */
-/** What a run or a preview left alone, one line per reason (the first five), and how many entries the rest are. */
 function leftAloneReasons(skipped) {
   const MAX_REASONS = 5;
   const counts = new Map();
   for (const s of skipped) counts.set(s.reason, (counts.get(s.reason) || 0) + 1);
   const shown = [...counts].slice(0, MAX_REASONS);
-  const rest = skipped.length - shown.reduce((n, [, c]) => n + c, 0);
+  const rest = counts.size - shown.length;
   return { lines: shown.map(([reason, n]) => `${reason}${n > 1 ? ` (${formatCount(n)} items)` : ''}`), rest };
+}
+/** "…and N more reasons for leaving items alone", for the reasons past the five shown. */
+function leftAloneRest(rest) {
+  return `…and ${formatCount(rest)} more reason${rest === 1 ? '' : 's'} for leaving items alone`;
 }
 function leftAloneHtml(skipped) {
   const { lines, rest } = leftAloneReasons(skipped);
   return lines.map((line) => `
       <div class="ap-skipped">${icon('alert', 12)} <span>${escapeHtml(line)}</span></div>`).join('') +
-    (rest > 0 ? `<div class="ap-skipped"><span>…and ${formatCount(rest)} more left alone</span></div>` : '');
+    (rest > 0 ? `<div class="ap-skipped"><span>${leftAloneRest(rest)}</span></div>` : '');
 }
 /**
  * The same, as words to say (review HD2-L1). A count of skipped entries is no count of items: the
@@ -33967,7 +33973,7 @@ function leftAloneHtml(skipped) {
  */
 function leftAloneWords(skipped) {
   const { lines, rest } = leftAloneReasons(skipped);
-  return [...lines, rest > 0 ? `…and ${formatCount(rest)} more left alone.` : ''].filter(Boolean).join('\n');
+  return [...lines, rest > 0 ? `${leftAloneRest(rest)}.` : ''].filter(Boolean).join('\n');
 }
 
 function renderAutopilotRuns(runs) {
