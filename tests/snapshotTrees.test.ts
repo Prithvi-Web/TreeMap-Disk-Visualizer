@@ -283,8 +283,22 @@ test('the time slider compares two snapshots only when their scans ran under the
     assert.equal(same.nodes.find((n) => n.path === at('b.txt'))?.prevSize, null, 'b.txt, made beside the rule\'s match, did not exist');
     assert.equal(same.nodes.find((n) => n.path === at('a.txt'))?.prevSize, 1000, 'a.txt is compared');
     const openapi = fs.readFileSync(path.join(__dirname, '..', 'src', 'api', 'openapi.ts'), 'utf8');
-    assert.ok(openapi.includes('or when the two scans ran under different “Don’t scan” rules (ignoreRules on GET /api/snapshots): what a rule hid or let back in is no change'), 'the OpenAPI document says when there is no previous snapshot to compare');
+    assert.ok(openapi.includes('or when the two do not record the same “Don’t scan” rules (ignoreRules on GET /api/snapshots; one an earlier build saved records none, and two such compare as before): what a rule hid or let back in is no change'), 'the OpenAPI document says when there is no previous snapshot to compare');
   } finally {
     await updateSettings({ ignore: [] });
   }
+});
+
+test('a snapshot that records its "Don\'t scan" rules is not compared with one an earlier build saved, which records none (review F1.1)', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-snapshotTrees-mixed-'));
+  const tree = (bytes: number): FileNode => dir(root, path.basename(root), [file(path.join(root, 'a.bin'), 'a.bin', bytes)]);
+  const scanOf = (t: FileNode, when: number, rules?: string): ScanResult => ({
+    scanId: `mixed-${when}`, rootPath: root, status: 'complete', scanned: 0, fileCount: 1, dirCount: 1, currentPath: '',
+    root: t, startedAt: when, finishedAt: when, createdAt: when, cancelled: false, ...(rules === undefined ? {} : { ignoreRules: rules }),
+  }) as unknown as ScanResult;
+  await saveSnapshot(scanOf(tree(100), 1_000_000));
+  await saveSnapshot(scanOf(tree(200), 2_000_000, JSON.stringify([])));
+  const layout = await newestLayout(root);
+  assert.equal(layout.prevTakenAt, null, 'the earlier snapshot does not say which rules it ran under');
+  assert.equal('prevSize' in (layout.nodes.find((n) => n.path === path.join(root, 'a.bin')) ?? {}), false);
 });

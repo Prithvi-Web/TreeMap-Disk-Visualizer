@@ -1945,7 +1945,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     ],
     responses: {
       '200': jsonResponse(
-        'Historical layout. prevTakenAt and every prevSize are absent (null) when no earlier snapshot exists, when the one before stopped at different drives mounted inside the folder (Track U, U-24), or when the two scans ran under different “Don’t scan” rules (ignoreRules on GET /api/snapshots): what a rule hid or let back in is no change',
+        'Historical layout. prevTakenAt and every prevSize are absent (null) when no earlier snapshot exists, when the one before stopped at different drives mounted inside the folder (Track U, U-24), or when the two do not record the same “Don’t scan” rules (ignoreRules on GET /api/snapshots; one an earlier build saved records none, and two such compare as before): what a rule hid or let back in is no change',
         opaque('snapshot, prevTakenAt, root, scanRootPath, maxDepth, minSize, nodes[], tree'),
       ),
       '404': errorResponse('No snapshot trees recorded'),

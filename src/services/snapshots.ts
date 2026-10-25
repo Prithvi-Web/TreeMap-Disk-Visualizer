@@ -314,7 +314,8 @@ export function closestSnapshot<T extends { takenAt: number }>(snaps: T[], at: n
  * overlay for this one — a drive left out would read as files freed. Nor when
  * the two scans ran under different "Don't scan" rules (review F1.1): what a
  * rule dropped since read as new and its folder as grown by all of it. Two
- * snapshots an earlier build saved record no rules, and compare as before.
+ * snapshots an earlier build saved record no rules, and compare as before; one
+ * that records its rules is not compared with one that does not.
  */
 export async function getSnapshotTreeAt(rootPath: string, at: number): Promise<{
   snapshot: Snapshot;
