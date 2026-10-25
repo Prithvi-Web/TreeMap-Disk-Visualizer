@@ -1732,6 +1732,7 @@ async function loadSuggestions(orphans: unknown, suggestions: unknown, notes: Ar
     ...page, renderPackageOrphans,
     renderGitRepos: () => {}, renderBrowserProfiles: async () => false, skeletonRows: () => '<skeleton>',
     updateCleanSummary: () => {}, smartGroups: [] as unknown[], renderSmartGroups: () => assert.fail('no group to paint'), loadSmartSeq: 0,
+    smartPickedReset: () => {},
   });
   await load();
   const text = (id: string) => $(id).innerHTML.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -1906,24 +1907,87 @@ function pageDecls<T>(names: string[], deps: Record<string, unknown>, returns: s
 }
 
 /** The markup the page's renderSmartGroups writes for `groups`, its remedy helpers and escapeHtml the page's own. */
-function smartCards(groups: unknown[]): string {
+function smartCards(groups: unknown[], picked?: (p: { ticked: Set<string>; cat: string; why: Set<number> }) => void, sort = 'size'): string {
   const host = { innerHTML: '', querySelectorAll: () => [] as unknown[] };
   // The fill helpers, lifted where the page has them (renderSmartGroups names them when it uses them).
   const fill = ['shellWord', 'fillFolder'].filter((n) => new RegExp(`function ${n}\\s*\\(`).test(INDEX));
-  const render = pageDecls<(catalog: unknown) => void>(
-    ['escapeHtml', 'confidenceWording', 'catalogNote', 'smartItemsOf', 'REMEDY_PROSE_WORDS', 'remedyIsCommand', 'remedyHtml', ...fill, 'smartListedNote', 'renderSmartGroups'],
+  const render = pageDecls<unknown>(
+    ['escapeHtml', 'confidenceWording', 'catalogNote', 'smartItemsOf', 'REMEDY_PROSE_WORDS', 'remedyIsCommand', 'remedyHtml', ...fill, 'smartListedNote', 'smartPicked', 'renderSmartGroups'],
     {
       $: (id: string) => { assert.equal(id, 'smartResults'); return host; },
-      smartGroups: groups, smartSort: 'size', icon: () => '', sizeInk: () => '#888', formatBytes: (n: number) => `${n} B`,
+      smartGroups: groups, smartSort: sort, icon: () => '', sizeInk: () => '#888', formatBytes: (n: number) => `${n} B`,
       formatCount: String,
       formatDate: () => 'Oct 2, 2026', chipFor: () => '', reclaimBadge: () => '', scoreFor: () => null, cartButtonHtml: () => '',
       refreshCartButtons() {}, updateCleanSummary() {}, byReclaimDesc: () => () => 0, ensureScores: async () => {}, toast() {}, RECLAIM_BATCH: 2000,
     },
-    'renderSmartGroups',
-  );
-  render(null);
+    '{ render: renderSmartGroups, picked: smartPicked }',
+  ) as unknown as { render: (catalog: unknown) => void; picked: { ticked: Set<string>; cat: string; why: Set<number> } };
+  if (picked) picked(render.picked);
+  render.render(null);
   return host.innerHTML;
 }
+
+/** A plain group of `n` items in `category`, as the server serves one. */
+function plainGroup(category: string, n: number, title = category) {
+  return { id: `g-${title}`, title, category, confidence: 'high', description: 'd', why: 'w', totalSize: n,
+    items: Array.from({ length: n }, (_, i) => ({ name: `${title}${i}`, path: `/r/${title}/${i}`, size: 1, type: 'file', modifiedAt: 1 })) };
+}
+
+test('the Smart suggestions list keeps what the person ticked, the type shown and the "Why?" panels open across a repaint — a sort pill or the scores landing — and the sort pills say which order is on (review HC2-L9, HC2-L10)', () => {
+  const groups = [plainGroup('regenerable', 2, 'build'), plainGroup('cache', 3, 'cache')];
+  const html = smartCards(groups, (p) => { p.ticked.add('1:2'); p.cat = 'cache'; p.why.add(1); });
+  const ticked = [...html.matchAll(/class="smart-ck" data-g="(\d+)" data-i="(\d+)"[^>]*?(checked)?>/g)].filter((m) => m[3]).map((m) => `${m[1]}:${m[2]}`);
+  assert.deepEqual(ticked, ['1:2'], 'the row ticked before the repaint is ticked after it, and only it');
+  assert.match(html, /<button class="pill active" data-cat="cache" aria-pressed="true">Caches<\/button>/, 'the type shown stays shown');
+  assert.match(html, /data-cat="all" aria-pressed="false">All</, 'and All is not');
+  assert.match(html, /<div class="smart-group cat-regenerable" data-cat="regenerable" style="display:none">/, 'the other type stays hidden');
+  assert.match(html, /<div class="smart-group cat-cache" data-cat="cache">/, 'the type shown is drawn');
+  assert.match(html, /class="icon-btn why-btn on" data-why="1" aria-expanded="true"/, 'an open "Why?" stays open');
+  assert.match(html, /<div class="smart-why" id="smartWhy1">/, 'its panel is shown');
+  assert.match(html, /<div class="smart-why" id="smartWhy0" hidden>/, 'control: a closed one stays closed');
+  const allTicked = smartCards(groups, (p) => { for (const i of [0, 1, 2]) p.ticked.add(`1:${i}`); });
+  assert.match(allTicked, /class="smart-all" data-g="1"[^>]*checked>/, 'a group whose rows are all ticked has its Select all ticked');
+  assert.doesNotMatch(allTicked, /class="smart-all" data-g="0"[^>]*checked>/, 'control: one with none ticked has not');
+  assert.match(smartCards(groups), /data-smartsort="size" aria-pressed="true">Biggest first<[\s\S]*data-smartsort="reclaim" aria-pressed="false">Safest to reclaim first</, 'Biggest first is on');
+  assert.match(smartCards(groups, undefined, 'reclaim'), /data-smartsort="size" aria-pressed="false">Biggest first<[\s\S]*data-smartsort="reclaim" aria-pressed="true">Safest to reclaim first</, 'Safest to reclaim first is on');
+});
+
+test('a sort pill pressed, or the scores landing, rebuilds the Smart suggestions list with focus on the same control, never on <body> (review HC2-L9)', () => {
+  type Ctl = { dataset: Record<string, string>; classList: { contains(c: string): boolean }; focus(): void; name: string };
+  const doc: { activeElement: unknown; body: unknown } = { activeElement: null, body: { name: 'body' } };
+  const asked: string[] = [];
+  let painted = 0;
+  const ctl = (name: string, dataset: Record<string, string>, classes: string[] = []): Ctl => ({
+    name, dataset, classList: { contains: (c: string) => classes.includes(c) }, focus() { doc.activeElement = this; },
+  });
+  const host = {
+    contains: (x: unknown) => x !== doc.body && x !== null,
+    querySelector: (sel: string) => { asked.push(sel); return sel.includes('data-smartsort="reclaim"') || sel.includes('data-i="4"') ? ctl(`new ${sel}`, {}) : null; },
+  };
+  const repaint = pageDecls<(catalog: unknown) => void>(['smartFocusKey', 'repaintSmart'], {
+    $: () => host, document: doc, smartSort: 'reclaim', renderSmartGroups: () => { painted++; doc.activeElement = doc.body; }, // the rebuild destroys the focused control
+  }, 'repaintSmart');
+  doc.activeElement = ctl('pill', { smartsort: 'reclaim' }, ['pill']);
+  repaint(null);
+  assert.equal(painted, 1);
+  assert.equal((doc.activeElement as Ctl).name, 'new .pill[data-smartsort="reclaim"]', 'the pressed pill, rebuilt, has focus');
+  doc.activeElement = ctl('row', { g: '1', i: '4' }, ['smart-ck']);
+  repaint(null);
+  assert.equal((doc.activeElement as Ctl).name, 'new .smart-ck[data-g="1"][data-i="4"]', 'a row ticked while the scores were worked out keeps focus as they land');
+  doc.activeElement = ctl('cart', {}, ['cart-btn']);
+  repaint(null);
+  assert.equal((doc.activeElement as Ctl).name, 'new .pill[data-smartsort="reclaim"]', 'a control with no twin hands focus to the order that is on');
+  doc.activeElement = doc.body;
+  asked.length = 0;
+  repaint(null);
+  assert.deepEqual(asked, [], 'control: focus outside the list is left where it is');
+  // The sort pills and the scores landing rebuild through repaintSmart, and a new list starts afresh.
+  const render = declOf('renderSmartGroups');
+  const sortHandler = render.slice(render.indexOf("host.querySelectorAll('[data-smartsort]')"), render.indexOf("host.querySelectorAll('.smart-filters .pill[data-cat]')"));
+  assert.equal(sortHandler.split('repaintSmart(catalog)').length - 1, 3, `every rebuild a sort pill makes keeps focus: ${sortHandler}`);
+  assert.doesNotMatch(sortHandler, /renderSmartGroups\(/, 'none rebuilds without it');
+  assert.match(declOf('loadSmartSuggestions'), /smartGroups = data\.groups;\s*smartPickedReset\(\);/, 'a new list forgets what was ticked in the last one');
+});
 
 const VENV_TEMPLATE = 'python3 -m venv <folder>, then reinstall the packages it held';
 /** A Python virtualenv group as the server serves it (rulepacks/common.json): the template, and its items by folder name. */

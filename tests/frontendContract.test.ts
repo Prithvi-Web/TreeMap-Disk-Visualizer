@@ -2306,8 +2306,9 @@ function smartGroupsFn(code: string): string {
 test('every suggestion group offers a "why is this suggested" affordance', () => {
   const code = appCode();
   const fn = smartGroupsFn(code);
-  assert.match(fn, /class="icon-btn why-btn" data-why=/, 'each group gets a why control');
-  assert.match(fn, /aria-expanded="false" aria-controls="smartWhy/, 'and it is announced as a disclosure');
+  assert.match(fn, /class="icon-btn why-btn\$\{whyOpen \? ' on' : ''\}" data-why=/, 'each group gets a why control');
+  // Open or closed as the person left it across a repaint (review HC2-L9).
+  assert.match(fn, /aria-expanded="\$\{whyOpen\}" aria-controls="smartWhy/, 'and it is announced as a disclosure');
   assert.match(fn, /What matched:/, 'the panel says what the rule matched');
   assert.match(fn, /confidenceWording\(g\.confidence, adv\)/, 'and states the rule pack confidence');
   assert.match(code, /function confidenceWording/, 'confidence is put into words, not shown as a bare level');

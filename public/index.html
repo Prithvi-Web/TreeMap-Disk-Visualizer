@@ -41960,6 +41960,13 @@ let smartGroups = [];    // Smart suggestions pane — rule groups from the API
  * is a way of looking at one set of results, not a preference.
  */
 let smartSort = 'size';
+/**
+ * What the person did in the Smart suggestions list, kept across its repaints (review HC2-L9): a
+ * sort pill or the scores landing rebuild the list, and the ticked rows ("group:item"), the type
+ * filter and the open "Why?" panels went with it. A new list starts afresh (smartPickedReset).
+ */
+const smartPicked = { ticked: new Set(), cat: 'all', why: new Set() };
+function smartPickedReset() { smartPicked.ticked.clear(); smartPicked.cat = 'all'; smartPicked.why.clear(); }
 
 /**
  * One group's items in the active order, each paired with its index in
@@ -42855,18 +42862,21 @@ function renderSmartGroups(catalog) {
   const host = $('smartResults');
   const catLabel = { regenerable: 'Regenerables', cache: 'Caches', junk: 'Junk' };
   const present = ['regenerable', 'cache', 'junk'].filter(c => smartGroups.some(g => g.category === c));
+  const cat = present.length > 1 && present.includes(smartPicked.cat) ? smartPicked.cat : 'all';
+  const catPill = (c, label) => `<button class="pill${cat === c ? ' active' : ''}" data-cat="${c}" aria-pressed="${cat === c}">${label}</button>`;
   const filterPills = present.length > 1
     ? `<div class="smart-filters" role="group" aria-label="Filter suggestions by type">
-        <button class="pill active" data-cat="all" aria-pressed="true">All</button>` +
-        present.map(c => `<button class="pill" data-cat="${c}" aria-pressed="false">${catLabel[c]}</button>`).join('') + `</div>`
+        ${catPill('all', 'All')}` +
+        present.map(c => catPill(c, catLabel[c])).join('') + `</div>`
     : '';
   // v4 §3.3 — every rule here already says a thing is safe to remove. The
   // score answers the next question: which of them is most worth removing.
   // A toggle rather than a default, because the rule order is what people
   // have learned to read.
+  // Toggle pills, said as such (review HC2-L10): which order is on was in a class only.
   const sortPills = `<div class="smart-filters" role="group" aria-label="Order suggestions">
-    <button class="pill${smartSort === 'size' ? ' active' : ''}" data-smartsort="size">Biggest first</button>
-    <button class="pill${smartSort === 'reclaim' ? ' active' : ''}" data-smartsort="reclaim">Safest to reclaim first</button>
+    <button class="pill${smartSort === 'size' ? ' active' : ''}" data-smartsort="size" aria-pressed="${smartSort === 'size'}">Biggest first</button>
+    <button class="pill${smartSort === 'reclaim' ? ' active' : ''}" data-smartsort="reclaim" aria-pressed="${smartSort === 'reclaim'}">Safest to reclaim first</button>
   </div>`;
   host.innerHTML = `<div class="muted" style="margin-bottom:8px;">Found by ${smartGroups.length} rule${smartGroups.length > 1 ? 's' : ''} — nothing is pre-selected, tick what you want gone.${catalogNote(catalog)}</div>` +
     filterPills + sortPills +
@@ -42886,20 +42896,22 @@ function renderSmartGroups(catalog) {
         adv && g.adviceCommand ? ['To reclaim', g.adviceCommand] : null,
         restore ? ['To put it back', restore] : null,
       ].filter(Boolean);
+      const whyOpen = smartPicked.why.has(gi);
+      const allTicked = !adv && g.items.length > 0 && g.items.every((_, i) => smartPicked.ticked.has(`${gi}:${i}`));
       return `
-    <div class="smart-group cat-${g.category}${adv ? ' advisory' : ''}" data-cat="${g.category}">
+    <div class="smart-group cat-${g.category}${adv ? ' advisory' : ''}" data-cat="${g.category}"${cat === 'all' || g.category === cat ? '' : ' style="display:none"'}>
       <div class="rule-row">
         ${adv
           ? `<span class="adv-mark" title="TreeMap will not offer to move this to the Trash" aria-label="Not safe to trash">${icon('alert', 14)}</span>`
-          : `<input type="checkbox" class="smart-all" data-g="${gi}" aria-label="Select all in ${escapeHtml(g.title)}">`}
+          : `<input type="checkbox" class="smart-all" data-g="${gi}" aria-label="Select all in ${escapeHtml(g.title)}"${allTicked ? ' checked' : ''}>`}
         <b class="smart-title">${escapeHtml(g.title)}</b>
-        <button class="icon-btn why-btn" data-why="${gi}" aria-expanded="false" aria-controls="smartWhy${gi}"
+        <button class="icon-btn why-btn${whyOpen ? ' on' : ''}" data-why="${gi}" aria-expanded="${whyOpen}" aria-controls="smartWhy${gi}"
           title="Why is this suggested?" aria-label="Why is ${escapeHtml(g.title)} suggested?">${icon('help', 13)}</button>
         <span class="size-badge num" style="color:${sizeInk(g.totalSize)}">${formatCount(g.count ?? g.items.length)} · ${formatBytes(g.totalSize)}</span>
       </div>
       <div class="smart-desc">${escapeHtml(g.description)}</div>${smartListedNote(g)}
       ${remedies.map(([what, text]) => `<div class="smart-remedy"><span class="rc-lbl">${what}:</span> ${remedyHtml(text)}</div>`).join('')}
-      <div class="smart-why" id="smartWhy${gi}" hidden>
+      <div class="smart-why" id="smartWhy${gi}"${whyOpen ? '' : ' hidden'}>
         <div class="smart-why-line"><b>What matched:</b> ${escapeHtml(g.why || 'This rule did not record what it matches.')}</div>
         <div class="smart-why-line"><b>Confidence:</b> ${escapeHtml(confidenceWording(g.confidence, adv))}</div>
         <div class="smart-why-line"><b>${adv ? 'What this is' : 'Why it is safe'}:</b> ${escapeHtml(g.description)}</div>
@@ -42908,7 +42920,7 @@ function renderSmartGroups(catalog) {
       </div>
       <div class="clean-list">` + smartItemsOf(g).map(({ it, i }) => `
         <div class="clean-item">
-          ${adv ? '<span class="adv-spacer"></span>' : `<input type="checkbox" class="smart-ck" data-g="${gi}" data-i="${i}" aria-label="Select ${escapeHtml(it.path)}">`}
+          ${adv ? '<span class="adv-spacer"></span>' : `<input type="checkbox" class="smart-ck" data-g="${gi}" data-i="${i}" aria-label="Select ${escapeHtml(it.path)}"${smartPicked.ticked.has(`${gi}:${i}`) ? ' checked' : ''}>`}
           ${chipFor({ type: it.type, extension: it.type === 'file' ? (it.name.split('.').pop() || '').toLowerCase() : undefined }, 13)}
           <div class="meta">
             <div class="nm">${escapeHtml(it.name)}</div>
@@ -42927,15 +42939,20 @@ function renderSmartGroups(catalog) {
     panel.hidden = !open;
     b.setAttribute('aria-expanded', String(open));
     b.classList.toggle('on', open);
+    if (open) smartPicked.why.add(Number(b.dataset.why)); else smartPicked.why.delete(Number(b.dataset.why));
   }));
+  const tick = (ck) => {
+    const key = `${ck.dataset.g}:${ck.dataset.i}`;
+    if (ck.checked) smartPicked.ticked.add(key); else smartPicked.ticked.delete(key);
+  };
   host.querySelectorAll('.smart-all').forEach(all => all.addEventListener('change', () => {
-    host.querySelectorAll(`.smart-ck[data-g="${all.dataset.g}"]`).forEach(ck => { ck.checked = all.checked; });
+    host.querySelectorAll(`.smart-ck[data-g="${all.dataset.g}"]`).forEach(ck => { ck.checked = all.checked; tick(ck); });
     updateCleanSummary();
   }));
-  host.querySelectorAll('.smart-ck').forEach(ck => ck.addEventListener('change', updateCleanSummary));
+  host.querySelectorAll('.smart-ck').forEach(ck => ck.addEventListener('change', () => { tick(ck); updateCleanSummary(); }));
   host.querySelectorAll('[data-smartsort]').forEach(p => p.addEventListener('click', () => {
     smartSort = p.dataset.smartsort === 'reclaim' ? 'reclaim' : 'size';
-    if (smartSort !== 'reclaim') { renderSmartGroups(catalog); return; }
+    if (smartSort !== 'reclaim') { repaintSmart(catalog); return; }
     // Score what is on screen, then repaint once. Bounded by the fact
     // route's own per-request cap: the suggestion list can run to
     // thousands of items across rules, and the count of what was not
@@ -42943,11 +42960,12 @@ function renderSmartGroups(catalog) {
     const paths = [];
     for (const g of smartGroups) for (const it of g.items) if (paths.length < RECLAIM_BATCH) paths.push(it.path);
     if (paths.length) toast('Working out reclaim scores…', 'success', 2000);
-    void ensureScores(paths, () => renderSmartGroups(catalog));
-    renderSmartGroups(catalog);
+    void ensureScores(paths, () => repaintSmart(catalog));
+    repaintSmart(catalog);
   }));
   host.querySelectorAll('.smart-filters .pill[data-cat]').forEach(p => p.addEventListener('click', () => {
     const cat = p.dataset.cat;
+    smartPicked.cat = cat;
     // Scoped to [data-cat]: the Reclaim ordering lives in a second
     // .smart-filters row, and an unscoped selector cleared its active state
     // every time someone picked a category.
@@ -42961,6 +42979,36 @@ function renderSmartGroups(catalog) {
   }));
   refreshCartButtons();
   updateCleanSummary();
+}
+
+/**
+ * The control focus was on in the Smart suggestions list, as a selector for the same control once
+ * the list is rebuilt, or null (review HC2-L9).
+ */
+function smartFocusKey(el) {
+  if (!el || !el.dataset || !el.classList) return null;
+  if (el.dataset.smartsort !== undefined) return `.pill[data-smartsort="${el.dataset.smartsort}"]`;
+  if (el.classList.contains('pill') && el.dataset.cat !== undefined) return `.pill[data-cat="${el.dataset.cat}"]`;
+  if (el.dataset.why !== undefined) return `.why-btn[data-why="${el.dataset.why}"]`;
+  if (el.classList.contains('smart-ck')) return `.smart-ck[data-g="${el.dataset.g}"][data-i="${el.dataset.i}"]`;
+  if (el.classList.contains('smart-all')) return `.smart-all[data-g="${el.dataset.g}"]`;
+  return null;
+}
+/**
+ * Rebuild the Smart suggestions list, keeping focus: a press on a sort pill destroyed the pill
+ * pressed, and focus fell to <body> (review HC2-L9). Focus on a control in the list goes to the
+ * same control rebuilt, or, for one with no twin, to the sort pill that is on. What the person
+ * ticked, filtered and opened is kept by renderSmartGroups itself (smartPicked).
+ */
+function repaintSmart(catalog) {
+  const host = $('smartResults');
+  const at = document.activeElement;
+  const inList = !!at && at !== document.body && host.contains(at);
+  const key = inList ? smartFocusKey(at) : null;
+  renderSmartGroups(catalog);
+  if (!inList) return;
+  const back = (key && host.querySelector(key)) || host.querySelector(`.pill[data-smartsort="${smartSort}"]`);
+  if (back) back.focus({ preventScroll: true });
 }
 
 /** Each load of Smart suggestions takes the next number, and only the latest paints. */
@@ -43009,6 +43057,7 @@ async function loadSmartSuggestions() {
       return;
     }
     smartGroups = data.groups;
+    smartPickedReset(); // a new list: nothing in it is ticked, filtered or opened yet
     // §9.5 honesty (QA finding 8): folders paused by a note are excluded
     // server-side, and an absence with no stated cause reads as good news.
     // One line, only when a pausing note actually exists.

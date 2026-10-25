@@ -1219,7 +1219,7 @@ function cleanUpPage(state: Record<string, unknown>, answer: (url: string) => un
     subscribe: (_topic: string, fn: (scanId: string | null) => void) => { subs.push(fn); }, TOPIC: { scan: 'scan' },
     state, $, document: { activeElement: null, body: null }, escapeHtml: esc, icon: () => '', skeletonRows: CLEAN_SKELETON, formatCount: String, formatBytes: String, formatDate: String,
     chipFor: () => '', cartButtonHtml: () => '', refreshCartButtons: noop, updateCleanSummary: noop, seedNodes: noop, sizeInk: () => '',
-    renderSmartGroups: noop, ecosystemLabel: String, renderCloudSafe: async () => { cloud.push(1); }, toast: (m: string) => { toasts.push(m); },
+    renderSmartGroups: noop, smartPickedReset: noop, ecosystemLabel: String, renderCloudSafe: async () => { cloud.push(1); }, toast: (m: string) => { toasts.push(m); },
     reportError: (e: Error) => { toasts.push(e.message); }, selectedSavedView: () => ({ id: 'v', q: 'size>1gb' }), cleanOnDiskOf: async () => new Map(),
     whyLeftOut: () => '', MB: 1e6, cleanWaiting: new Set(), cleanFindWaiting: null, CLEAN_NO_SCAN: liftPage<Record<string, [string, string]>>(['CLEAN_NO_SCAN'], 'CLEAN_NO_SCAN'),
     emptyFolders: [], videoCandidates: [], smartGroups: [], packageOrphans: [], cleanMatches: [], cleanOnDisk: new Map(),

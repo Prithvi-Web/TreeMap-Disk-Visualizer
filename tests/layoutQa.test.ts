@@ -2693,6 +2693,7 @@ function smartGroupsHtml(groups: Array<Record<string, unknown>>): string {
     sizeInk: () => '#888', formatBytes: (n: number) => `${(n / 1e6).toFixed(1)} MB`, formatDate: () => 'Oct 2, 2026', chipFor: () => '<span class="chip"></span>',
     reclaimBadge: () => '', scoreFor: () => null, cartButtonHtml: () => '<button class="icon-btn"></button>', refreshCartButtons() {}, updateCleanSummary() {},
     byReclaimDesc: () => () => 0, ensureScores: async () => {}, toast() {}, RECLAIM_BATCH: 2000,
+    smartPicked: { ticked: new Set(), cat: 'all', why: new Set() }, // nothing ticked, filtered or opened (review HC2-L9)
   }, 'renderSmartGroups');
   render(null);
   return host.innerHTML;
