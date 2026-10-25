@@ -2560,13 +2560,21 @@ test('the notes over and under the map are taken back as the Treemap view goes â
     treemap: { rootPath: '/r', altNote: '', altZoomRaf: 0, altZoom: null as unknown, cells: [] as unknown[] },
   };
   const map: { draw: () => void } = { draw: noop };
+  // What the registry caught from the view's own mount or unmount (020: it logs the error and goes on). A name the
+  // harness did not give threw there unseen: the unmount stopped at `tmLoadSeq++`, and the rest of its teardown never ran.
+  const caught: string[] = [];
   const p = viewsPage(['treemap'], ['elsewhere'], ['function tmSetEmpty(', 'function renderAltNote(', 'function altRefiningNote('], {
-    state: st, tmAnimFrame: 0, tmResizeDeb: 0, treeScanId: () => 's1',
+    state: st, tmAnimFrame: 0, tmResizeDeb: 0, tmLoadSeq: 0, treeScanId: () => 's1',
+    console: { ...console, error: (...args: unknown[]) => { caught.push(args.map(String).join(' ')); } },
     // Its unmount's teardown, and its mount's loads, the map's own landing (draw, below) among them.
     tmCancelQueries: noop, tmCloseHints: noop, tmClearHits: noop, nlClose: noop, exitCartPreview: noop, tmSetQueryMessage: noop, disableLive: noop,
     altRefineCancel: noop, lapseStop: noop, lassoCancel: noop, fxTmPillBeamsSync: noop, loadSavedViews: noop, refreshDock: noop, tmRejudgeQuery: noop,
-    loadTreemap: () => map.draw(),
+    tmStopMorph: noop, loadTreemap: () => map.draw(),
   });
+  const leave = (what: string): void => {
+    p.fns.switchView('elsewhere');
+    assert.deepEqual(caught, [], `${what}: control, the Treemap view's own unmount ran to its end â€” the registry caught nothing from it`);
+  };
   const empty = 'This folder is empty.';
   const cap = 'The map holds at most 250,000 items, and this folder reached that: 1.2 GB has no rectangle here â€” drill in, or open the Grid view, to see the rest.';
   // What drawTreemap gives the two notes: an empty folder's map, or one that reached the server's cap.
@@ -2580,7 +2588,7 @@ test('the notes over and under the map are taken back as the Treemap view goes â
     p.frame();
     p.frame();
     assert.equal(p.$(region).textContent, words, `${what}: control, said a frame after the map is drawn`);
-    p.fns.switchView('elsewhere');
+    leave(what);
     assert.equal(p.$(region).textContent, '', `${what}: taken back as the view goes, so nothing of it is left said in the hidden view`);
     p.$(region).said.length = 0;
     p.frame(); // the person on another view
@@ -2589,6 +2597,6 @@ test('the notes over and under the map are taken back as the Treemap view goes â
     p.frame();
     p.frame();
     assert.deepEqual(p.$(region).said.filter(Boolean), [words], `${what}: said again, once, a frame after the map is drawn on the way back in`);
-    p.fns.switchView('elsewhere');
+    leave(what);
   }
 });
