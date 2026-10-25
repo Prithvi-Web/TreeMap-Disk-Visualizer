@@ -249,7 +249,7 @@ test('a file made in a later selected folder while an earlier one goes to the Tr
   assert.equal(entry?.originalKept, true, 'and is recorded as a copy whose original stayed, never as space freed');
 });
 
-test('a later selected folder moved away while an earlier one goes to the Trash is said as its files removed, never as holding itself (review)', async () => {
+test('a later selected folder with files moved away while an earlier one goes to the Trash is said to be gone, its verified copies standing — never left in place, never holding itself (review)', async () => {
   const { root, folders: [projA, projB], scan } = projects('moved-away', ['projA', 'projB']);
   const dest = fileTempDir('treemap-offloadUnlisted-moved-away-dest-');
   const elsewhere = path.join(root, 'moved-projB');
@@ -266,7 +266,9 @@ test('a later selected folder moved away while an earlier one goes to the Trash 
     duringTrashStep = null;
   }
   assert.equal(job.status, 'complete', job.error);
-  assert.match(job.error ?? '', /^projB was left in place: a\.txt was removed after its copy was made, so it was not moved to the Trash\./, job.error);
+  // Its file's look at its own turn fails first, as the folder is gone: the folder is said to be gone,
+  // as one gone before the first trash step is, not "left in place" with "a.txt was removed".
+  assert.equal(job.error, `projB is no longer there, so it was not moved to the Trash. Its verified copies stand at ${dest}.`);
   assert.doesNotMatch(job.error ?? '', /now holds/, 'a folder that is gone holds nothing');
   assert.ok(fs.existsSync(path.join(elsewhere, 'a.txt')), 'what was moved away is untouched');
 });
@@ -378,7 +380,7 @@ test('where agents read the offload contract, a selected folder that cannot be l
   const read = (rel: string): string => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').replace(/\s+/g, ' ');
   const agents = read('AGENTS.md');
   assert.ok(agents.includes('(`409 OFFLOAD_NOT_FULLY_LISTED`, naming it, or saying that the selected folder itself could not be looked into or is gone)'), 'AGENTS.md, before anything is copied');
-  assert.ok(agents.includes('one that is gone by then is said to be gone, with no copies unless it had files to copy, and is not moved to the Trash'), 'AGENTS.md, at its own turn');
+  assert.ok(agents.includes('one that is gone by then, files and all, is said to be gone — its verified copies standing if it had files to copy — and is not moved to the Trash; a file whose size, modified time or file id moved, or that is gone from a selected folder that is still there, changed after its copy was made'), 'AGENTS.md, at its own turn (leftover HE2-L8)');
   assert.ok(read('src/api/openapi.ts').includes('naming the first such entry, or saying that the selected folder itself could not be looked into or is gone'), 'the OpenAPI 409');
 });
 

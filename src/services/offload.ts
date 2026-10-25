@@ -1368,17 +1368,26 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     try {
       // The files whose item went on to its trash step, by file rather than name (review F1.6).
       const sentOn = new Set<string>();
+      const atTurn = (top: string, unlisted: Unlisted): { reason: string; code: string } => {
+        unlistedAtTurn.set(top, unlisted);
+        return { code: FOLDER_GAINED, reason: unlisted.kind === 'gone' ? 'it is no longer there' : heldBecause(top, unlisted) };
+      };
       const checkEach = async (top: string): Promise<{ reason: string; code: string } | null> => {
-        // Its planned files first, so a folder gone by now is said as its files removed, not as unreadable.
+        // Its planned files first: a file that changed is said as such, never as something the folder now holds.
         const files = filesOf.get(top) ?? [];
         const verdict = await changedSinceCopy(top, files, looks, sentOn);
-        if (verdict !== null) return verdict;
+        if (verdict !== null) {
+          // A selected folder that is gone by its own turn fails its files' look first: it is said to be
+          // gone, as one gone before the first trash step is, never "left in place" (leftover HE2-L3).
+          if (folderSet.has(top) && verdict.code === ORIGINAL_CHANGED) {
+            const gone = await fsp.lstat(top).then(() => false, (err: unknown) => meansAbsent(err));
+            if (gone) return atTurn(top, { at: top, why: 'it is no longer there', kind: 'gone', detail: '' });
+          }
+          return verdict;
+        }
         if (folderSet.has(top)) {
           const unlisted = await firstUnlisted(top, listed.files);
-          if (unlisted !== null) {
-            unlistedAtTurn.set(top, unlisted);
-            return { code: FOLDER_GAINED, reason: unlisted.kind === 'gone' ? 'it is no longer there' : heldBecause(top, unlisted) };
-          }
+          if (unlisted !== null) return atTurn(top, unlisted);
         }
         for (const f of files) { const look = looks.get(f); if (look) sentOn.add(fileKeyOf(look)); }
         return null;

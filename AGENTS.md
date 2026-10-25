@@ -645,11 +645,12 @@ OpenAPI 3 spec).
      its trash step (no bytes are read): a selected folder is listed again,
      and one holding anything that was not copied, or holding a folder that
      cannot be listed, or that cannot be listed itself, stays; one that is
-     gone by then is said to be gone, with no copies unless it had files to
-     copy, and is not moved to the Trash; a file whose size,
-     modified time or file id moved, or that is gone from a selected folder,
-     changed after its copy was made — the copy holds it as it was then —
-     and one whose change time alone moved may have changed (a new
+     gone by then, files and all, is said to be gone — its verified copies
+     standing if it had files to copy — and is not moved to the Trash; a
+     file whose size, modified time or file id moved, or that is gone from a
+     selected folder that is still there, changed after its copy was made —
+     the copy holds it as it was then — and one whose change time alone
+     moved may have changed (a new
      permission or attribute moves it too); either way the item stays, and
      the job's warning names the file.
      A change time moved by this job itself — another name of the same file
