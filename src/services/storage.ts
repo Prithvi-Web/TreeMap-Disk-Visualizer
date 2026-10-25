@@ -171,8 +171,33 @@ export async function readJsonFile<T>(name: string, fallback: T): Promise<T> {
  * enforcement), so a corrupt file must not trigger a rename on every call.
  * Best-effort throughout: this runs while something is already wrong, and
  * failing to make a backup must not turn a degraded read into a hard error.
+ *
+ * One at a time per store (review HD2 F1.1): the check reads the copies there
+ * and only then copies, so readers of one still-bad file at the same moment —
+ * Smart suggestions asks its lists together, each reading notes.json — all
+ * found no copy and each claimed a name of its own. Queued, each later reader
+ * checks after the earlier one's copy exists. (Another TreeMap process sharing
+ * the folder, the MCP server, is not queued with this one.)
  */
-export async function preserveCorrupt(name: string, err: unknown, what = 'could not be parsed'): Promise<void> {
+export function preserveCorrupt(name: string, err: unknown, what = 'could not be parsed'): Promise<void> {
+  let key: string;
+  try {
+    key = path.join(appDataDir(), name);
+  } catch {
+    return Promise.resolve(); // best effort, as below
+  }
+  const next = (preserveQueues.get(key) ?? Promise.resolve()).then(() => preserveCorruptNow(name, err, what));
+  preserveQueues.set(key, next);
+  void next.then(() => {
+    if (preserveQueues.get(key) === next) preserveQueues.delete(key);
+  });
+  return next;
+}
+
+/** `preserveCorrupt`'s queue per store: the latest call for each path. */
+const preserveQueues = new Map<string, Promise<void>>();
+
+async function preserveCorruptNow(name: string, err: unknown, what: string): Promise<void> {
   try {
     const dir = appDataDir();
     const source = path.join(dir, name);

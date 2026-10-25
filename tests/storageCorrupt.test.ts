@@ -111,6 +111,40 @@ test('a later incident is copied once too, however many times the file is read (
   });
 });
 
+test('reads of one still-bad file at the same moment keep one copy per incident, and say so once (review HD2 F1.1)', async () => {
+  // The once-per-incident check reads the copies there, and only then copies. Readers at the same
+  // moment — Smart suggestions asks its package and Git lists together, beside GET /api/notes, and
+  // each reads notes.json — all found no copy, and each claimed a name of its own: six readers,
+  // six copies and six log lines of one incident. Before the copies were claimed they all wrote
+  // the same `<name>.corrupt`; the check and the copy now run one at a time per store.
+  await withDataDir(async (dir) => {
+    const { readJsonFile, preserveCorrupt } = await import('../src/services/storage');
+    const logged: string[] = [];
+    const realError = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args.map(String).join(' '));
+    };
+    try {
+      fs.writeFileSync(path.join(dir, 'notes.json'), '{ not json');
+      await Promise.all([
+        ...Array.from({ length: 3 }, () => readJsonFile('notes.json', {})),
+        ...Array.from({ length: 3 }, () => preserveCorrupt('notes.json', new Error('x'), 'is not a store')),
+      ]);
+      let copies = fs.readdirSync(dir).filter((f) => f.includes('.corrupt'));
+      assert.deepEqual(copies, ['notes.json.corrupt'], `the first incident is copied once, found: ${copies.join(', ')}`);
+      assert.equal(logged.filter((l) => l.includes('notes.json')).length, 1, `and said once: ${logged.join(' | ')}`);
+
+      fs.writeFileSync(path.join(dir, 'notes.json'), '{ a later incident');
+      await Promise.all(Array.from({ length: 6 }, () => readJsonFile('notes.json', {})));
+      copies = fs.readdirSync(dir).filter((f) => f.includes('.corrupt')).sort();
+      assert.equal(copies.length, 2, `a later incident is copied once too, found: ${copies.join(', ')}`);
+      assert.equal(logged.filter((l) => l.includes('notes.json')).length, 2, `and said once: ${logged.join(' | ')}`);
+    } finally {
+      console.error = realError;
+    }
+  });
+});
+
 test('two incidents in the same millisecond each keep their own copy', async () => {
   // A timestamped name alone let the second copy of a millisecond overwrite
   // the first: a different incident's only copy, gone.
