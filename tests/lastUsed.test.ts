@@ -371,6 +371,21 @@ test('within one request, files past the probe\'s sample are asked too when Spot
   assert.equal(next?.caveat, ATIME_CAVEAT, 'and so does the next request\'s: Spotlight is known to record openings here');
 });
 
+test('a request whose probe sample holds an opening asks only the files past the sample next — no file is asked twice — and keeps the sample\'s own answers (review F1.2 of HZ, the common first request)', { skip: process.platform !== 'darwin' && 'the macOS reader' }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-lu-found-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+  const files = Array.from({ length: 130 }, (_, i) => path.join(dir, `f${String(i).padStart(3, '0')}.txt`));
+  for (const p of files) fs.writeFileSync(p, 'x');
+  const OPENED = '2026-07-27T00:00:36Z';
+  const seen = stubbedMdls(t, (p) => (p === files[0] ? { kMDItemLastUsedDate: OPENED, kMDItemUseCount: 5 } : {}));
+  const got = await readLastUsedMac(files);
+  assert.equal(seen.runs[0]?.length, 128, 'control: the probe samples the first 128');
+  assert.deepEqual(got.get(files[0]), { lastUsedMs: Date.parse(OPENED), useCount: 5, source: 'spotlight' }, 'the opening in the sample is kept');
+  const asked = seen.runs.flat();
+  assert.equal(asked.length, new Set(asked).size, `no file is asked twice: ${seen.runs.map((r) => r.length).join(' + ')} paths`);
+  assert.equal(new Set(asked).size, 130, 'and every file is asked: the two past the sample too');
+});
+
 test('a sample Spotlight gives no date at all costs the request no more than the probe, and the next request probes again (review HC2-L1, HC2-L4, F1.2/F1.5 of HZ)', { skip: process.platform !== 'darwin' && 'the macOS reader' }, async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-lu-quiet-'));
   t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
