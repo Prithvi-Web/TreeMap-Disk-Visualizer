@@ -762,7 +762,9 @@ insightRouter.get('/snapshots', guardQueryPath('path'), async (req: Request, res
  * Serves the stored snapshot tree closest to `at` in exactly the shape of
  * /api/scan/:id/treemap, so the live renderer draws it unmodified. Each node
  * carries prevSize (size in the previous snapshot; null = didn't exist; left
- * out where that is not known, past a cut list) for the diff overlay.
+ * out where that is not known, past a cut list) for the diff overlay. There is
+ * no previous snapshot to compare across a change of boundary or of "Don't
+ * scan" rules (getSnapshotTreeAt).
  */
 insightRouter.get('/snapshots/tree', guardQueryPath('path'), async (req: Request, res: Response) => {
   const rootPath = req.query.path as string | undefined;

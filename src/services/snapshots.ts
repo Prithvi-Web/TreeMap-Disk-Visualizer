@@ -306,7 +306,10 @@ export function closestSnapshot<T extends { takenAt: number }>(snaps: T[], at: n
  * immediately before it (for the diff overlay). Null when no trees exist.
  * No `prev` when the snapshot before it stopped at other drives mounted inside
  * the folder (Track U, U-24): it counted another disk, so its sizes are no
- * overlay for this one — a drive left out would read as files freed.
+ * overlay for this one — a drive left out would read as files freed. Nor when
+ * the two scans ran under different "Don't scan" rules (review F1.1): what a
+ * rule dropped since read as new and its folder as grown by all of it. Two
+ * snapshots an earlier build saved record no rules, and compare as before.
  */
 export async function getSnapshotTreeAt(rootPath: string, at: number): Promise<{
   snapshot: Snapshot;
@@ -324,7 +327,7 @@ export async function getSnapshotTreeAt(rootPath: string, at: number): Promise<{
   if (!snapshot) return null;
   const before = withTrees.filter((s) => s.takenAt < snapshot.takenAt);
   const last = before.length ? before[before.length - 1] : null;
-  const prevSnap = last && boundaryKeyOf(last.boundary) === boundaryKeyOf(snapshot.boundary) ? last : null;
+  const prevSnap = last && boundaryKeyOf(last.boundary) === boundaryKeyOf(snapshot.boundary) && last.ignoreRules === snapshot.ignoreRules ? last : null;
   return {
     snapshot,
     tree: trees[snapshot.id],

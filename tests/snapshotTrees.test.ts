@@ -12,6 +12,11 @@ import { FileNode, ScanResult, SnapshotTreeNode } from '../src/models/types';
 import { buildSnapshotTree, inflateSnapshotTree, closestSnapshot, prevSizeLookup, saveSnapshot } from '../src/services/snapshots';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
+import { getScan, startScan } from '../src/services/diskScanner';
+import { updateSettings } from '../src/services/settings';
+import { settled } from '../src/utils/backgroundWrites';
+import { waitFor } from './fixtures/waitFor';
+process.env.TREEMAP_NO_GDU = '1';
 
 /** Unit tests for the time-slider snapshot-tree logic (pure functions). */
 
@@ -184,4 +189,70 @@ test('GET /api/snapshots/tree sends no "did not exist" for an item that only fel
   assert.equal(node(path.join(root, 'sub', 'b'))?.prevSize, null, 'an item missing from a whole list is new');
   const treeKid = body.tree.children?.find((c) => c.path === at('f31'));
   assert.equal(treeKid !== undefined && 'prevSize' in treeKid, false, 'the sunburst\'s tree says the same');
+});
+
+/* ---------- the overlay compares two snapshots only under the same "Don't scan" rules (review F1.1) ---------- */
+
+type Layout = { prevTakenAt: number | null; nodes: (FileNode & { prevSize?: number | null })[] };
+
+/** GET /api/snapshots/tree for `root`, at a time past every snapshot: the newest one and the one before. */
+async function newestLayout(root: string): Promise<Layout> {
+  resetRateLimiter();
+  const server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const port = (server.address() as { port: number }).port;
+    return await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port, path: `/api/snapshots/tree?path=${encodeURIComponent(root)}&at=${Date.now() + 86_400_000}` }, (res) => {
+        let buf = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: string) => { buf += c; });
+        res.on('end', () => resolve(JSON.parse(buf)));
+      }).on('error', reject);
+    });
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+}
+
+/** A real scan of `root` under the current settings, its snapshot and tree saved. */
+async function scanAndSave(root: string): Promise<void> {
+  const { scanId } = await startScan(root);
+  await waitFor(() => getScan(scanId)?.status !== 'running', 'the scan settling');
+  assert.equal(getScan(scanId)?.status, 'complete');
+  await settled();
+}
+
+test('the time slider compares two snapshots only when their scans ran under the same "Don\'t scan" rules: what a rule hid is never drawn as new, and under one rule a file made beside its match still is (review F1.1)', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-snapshotTrees-rule-'));
+  const proj = path.join(root, 'proj');
+  fs.mkdirSync(path.join(proj, 'node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 'node_modules', 'x.js'), Buffer.alloc(9000, 1));
+  fs.writeFileSync(path.join(proj, 'a.txt'), Buffer.alloc(1000, 1));
+  const rule = [{ pattern: 'node_modules', scope: 'scan' as const }];
+  const at = (rel: string): string => path.join(proj, rel);
+  try {
+    await updateSettings({ ignore: rule });
+    await scanAndSave(root);
+    await updateSettings({ ignore: [] });
+    await scanAndSave(root);
+    const across = await newestLayout(root);
+    const nm = across.nodes.find((n) => n.path === at('node_modules'));
+    assert.ok(nm, 'node_modules is drawn now');
+    assert.equal('prevSize' in nm, false, `node_modules, which the rule hid, is not drawn as new: ${JSON.stringify(nm)}`);
+    assert.equal(across.prevTakenAt, null, 'the snapshot before ran under another rule, so it is not compared at all');
+
+    await updateSettings({ ignore: rule });
+    await scanAndSave(root);
+    fs.writeFileSync(at('b.txt'), Buffer.alloc(500, 1));
+    await scanAndSave(root);
+    const same = await newestLayout(root);
+    assert.notEqual(same.prevTakenAt, null, 'the same rule both times: the snapshot before is compared');
+    assert.equal(same.nodes.find((n) => n.path === at('b.txt'))?.prevSize, null, 'b.txt, made beside the rule\'s match, did not exist');
+    assert.equal(same.nodes.find((n) => n.path === at('a.txt'))?.prevSize, 1000, 'a.txt is compared');
+    const openapi = fs.readFileSync(path.join(__dirname, '..', 'src', 'api', 'openapi.ts'), 'utf8');
+    assert.ok(openapi.includes('or when the two scans ran under different “Don’t scan” rules (ignoreRules on GET /api/snapshots): what a rule hid or let back in is no change'), 'the OpenAPI document says when there is no previous snapshot to compare');
+  } finally {
+    await updateSettings({ ignore: [] });
+  }
 });
