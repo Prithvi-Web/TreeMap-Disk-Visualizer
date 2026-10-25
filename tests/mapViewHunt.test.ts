@@ -1196,6 +1196,24 @@ test('HB2 review (F1.6): over Circles or Voronoi the box is worded once the layo
   assert.equal(box.textContent, said[0]);
 });
 
+test('HB2 review (F1.10): over the sunburst an empty box stays empty — a repaint never tells it the sunburst highlights no matches', () => {
+  for (const text of ['', '   ']) {
+    const t = rewordHarness('sunburst');
+    t.state.treemap.queryMode = 'bare';
+    t.state.treemap.query = text; // nothing typed, or only spaces
+    t.say(''); // the box as an empty query leaves it
+    t.said.length = 0;
+    t.reword();
+    assert.equal(t.box.textContent, '', `${JSON.stringify(text)}: nothing typed, nothing said in the box`);
+    assert.deepEqual(t.said, [], `${JSON.stringify(text)}: and nothing said aloud`);
+  }
+  const w = rewordHarness('sunburst');
+  w.state.treemap.queryMode = 'bare';
+  w.state.treemap.query = 'node_modules';
+  w.reword();
+  assert.equal(w.box.textContent, 'The sunburst does not highlight matches. Switch to Treemap, Circles or Voronoi to see what matches.', 'control: a word typed is told');
+});
+
 test('HB2 (L2, L7, L10): a plain word over the sunburst is told again on the way back into the Treemap', () => {
   const said: string[] = [];
   const box = { textContent: '' };
@@ -1297,8 +1315,8 @@ function morphLandHarness(mode: string) {
   };
   const names = ['tmAnimFrame', 'tmMorph', 'animateTreemapTo', 'animateSunburstTo', 'treeScanId', 'TM_MIN_SIZE', 'loadTreemap',
     ...['tmStopMorph'].filter((n) => INDEX.includes(`function ${n}(`))];
-  const page = load<{ animateTreemapTo: (n: unknown[]) => void; animateSunburstTo: (r: unknown) => void; loadTreemap: (p: string) => Promise<void> }>(
-    names, deps, '{ animateTreemapTo, animateSunburstTo, loadTreemap }', 'let tmLoadSeq = 0;');
+  const page = load<{ animateTreemapTo: (n: unknown[]) => void; animateSunburstTo: (r: unknown) => void; loadTreemap: (p: string) => Promise<void>; morph: () => unknown }>(
+    names, deps, '{ animateTreemapTo, animateSunburstTo, loadTreemap, morph: () => tmMorph }', 'let tmLoadSeq = 0;');
   return { state, page, frames, runFrames, sunDrawn, rect };
 }
 
@@ -1309,6 +1327,8 @@ test('HB2 (L4, L13): a map that lands during a morph stays — the morph\'s last
   await h.page.loadTreemap('/r/B'); // folder B clicked inside the morph: its map lands
   const landed = h.state.treemap.nodes;
   assert.deepEqual((landed as { path: string }[]).map((n) => n.path), ['/r/B/x'], 'control: B\'s map landed');
+  // HB2 review (F1.8): tmRewordQuery holds the box's words while a morph is set, so the landing leaves none set behind.
+  assert.equal(h.page.morph(), null, 'no morph is left set by the landing — the box\'s words, held while one runs, follow B\'s map');
   for (let i = 0; i < 10 && h.frames.size; i++) h.runFrames(50);
   assert.equal(h.state.treemap.nodes, landed, 'B\'s rectangles stay under B\'s crumbs — never /r\'s, for a click to jump sideways from');
   // The sunburst's sweep likewise: its frames draw the folder it began on.
