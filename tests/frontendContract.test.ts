@@ -2019,7 +2019,7 @@ test('a run card shows every reason it left something alone, one line each with 
   assert.ok(said.includes(ADVICE), `control: the first reason is shown: ${said}`);
   assert.ok(said.includes(APP), `the second reason is shown too: ${said}`);
   assert.ok(said.includes(`${LATER} (2 items)`), `and a reason given for two items once, with its count: ${said}`);
-  assert.doesNotMatch(said, /more left alone/, `nothing is left uncounted behind "more": ${said}`);
+  assert.doesNotMatch(said, /more reasons? for leaving items alone/, `three reasons, every one shown: no line counts more past them: ${said}`);
   // Past five reasons the rest are counted, never dropped silently.
   const many = Array.from({ length: 7 }, (_, i) => ({ path: `/x/p${i}`, reason: `"/x/p${i}" touches the protected path "/x" — remove it from agent-policy.json to allow this` }));
   const capped = apText(autopilotRunRow({ ...base, skipped: many }));
@@ -2031,7 +2031,10 @@ test('a run card shows every reason it left something alone, one line each with 
   const notes = Array.from({ length: 7 }, (_, i) => ({ path: `/x/n${i}`, reason: `Left alone — your note on /x/n${i} pauses automatic cleanup around it (100 matched items).` }));
   const noted = apText(autopilotRunRow({ ...base, skipped: notes }));
   assert.match(noted, /…and 2 more reasons for leaving items alone/, `seven notes pausing 100 items each: the two past five are two reasons: ${noted}`);
-  assert.doesNotMatch(noted, /more left alone/, `never "2 more left alone" of 200 items: ${noted}`);
+  // Five reasons fit, however many items they cover: five notes pausing 500 items in all have no line past them.
+  const fiveNotes = apText(autopilotRunRow({ ...base, skipped: notes.slice(0, 5) }));
+  assert.ok(notes.slice(0, 5).every((s) => fiveNotes.includes(s.reason)), `control: the five reasons are shown: ${fiveNotes}`);
+  assert.doesNotMatch(fiveNotes, /more reasons? for leaving items alone/, `five reasons, every one shown: no line counts more past them: ${fiveNotes}`);
   const shared = [...many.slice(0, 5), ...['/x/b1', '/x/b2', '/x/b3'].map((p) => ({ path: p, reason: LATER }))];
   const later = apText(autopilotRunRow({ ...base, skipped: shared }));
   assert.match(later, /…and 1 more reason for leaving items alone/, `three items past five reasons, all for one more reason, are one reason: ${later}`);
