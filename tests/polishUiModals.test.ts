@@ -1414,10 +1414,16 @@ function observedPage({ focusDropsFirst = true } = {}) {
     disconnect() {}
   }
   const src = slice('/* ── Focus discipline for every dialog ── */', '/* ── end focus discipline ── */');
-  const api = new Function('document', '$', 'MutationObserver', 'toastsRetire', 'getComputedStyle',
+  // The views' own focusLanding (020), as the page has it beside the net: no scan running and no
+  // tour card, so the start screen's control or the first control of the view that is up. Left
+  // out, the net's fallback for an opener that stopped painting never ran here (review F1.1 of HZ).
+  const landing = new Function('$', 'document', 'state', 'tourCardControl',
+    `'use strict'; ${braced('function activeViewControl(')} ${braced('function startLanding(')} ${braced('function focusLanding(')} return focusLanding;`,
+  )((id: string) => doc.getElementById(id), doc, { scanning: false }, () => null) as () => FEl | null;
+  const api = new Function('document', '$', 'MutationObserver', 'toastsRetire', 'getComputedStyle', 'focusLanding',
     `'use strict'; ${src}
      return { topModal, noteFocus };`,
-  )(doc, (id: string) => doc.getElementById(id), Observer, () => {}, (el: FEl) => ({ visibility: computedVisibility(el) })) as { topModal: () => FEl | null };
+  )(doc, (id: string) => doc.getElementById(id), Observer, () => {}, (el: FEl) => ({ visibility: computedVisibility(el) }), landing) as { topModal: () => FEl | null };
   assert.ok(deliver, 'the net observes the backdrops');
   const dropUnpainted = () => { if (at && at !== doc.body && !at.getClientRects().length) at = doc.body; }; // it stopped painting
   const flush = () => {
@@ -1426,7 +1432,7 @@ function observedPage({ focusDropsFirst = true } = {}) {
     if (batch.length) deliver!(batch);
     dropUnpainted();
   };
-  return { doc, api, flush };
+  return { doc, api, flush, landing };
 }
 
 /** The two orders a browser may take: focus off a sheet that stopped painting before the net's batch runs, or after it. */
@@ -1444,7 +1450,7 @@ const TRASH_PART_LEFT = { totalBytes: 2_000_000, itemCount: 1, complete: true, i
  * F2.2 of QA fourth pass E04), and `after` is what it answers.
  */
 function trashSheetHarness(net: { focusDropsFirst?: boolean; after?: unknown } = {}) {
-  const { doc, api, flush } = observedPage(net);
+  const { doc, api, flush, landing } = observedPage(net);
   const $ = (id: string) => doc.getElementById(id)!;
   const listeners = new Map<string, Array<() => unknown>>();
   for (const id of ['emptyTrashBtn', 'confirmOk']) $(id).addEventListener = ((type: string, fn: () => unknown) => {
@@ -1485,7 +1491,7 @@ function trashSheetHarness(net: { focusDropsFirst?: boolean; after?: unknown } =
   const fact = $('trashFact');
   for (let p: FEl | null = fact; p; p = p.parent) p.hidden = false;
   $('view-dashboard').cls.add('active');
-  return { doc, $, api, flush, press, settleLoads, calls, fact, ...page };
+  return { doc, $, api, flush, press, settleLoads, calls, fact, landing, ...page };
 }
 
 test('cancelling "Empty the Trash?" — Cancel or Escape — goes back to the Trash sheet, with focus on "Empty Trash…" (QA fourth pass E04)', async () => {
@@ -1539,6 +1545,9 @@ test('"Empty the Trash" confirmed empties it and closes both sheets, giving focu
       h.fact.focus();
       h.openTrashModal(); h.flush();
       const trash = h.$('trashModal'), confirm = h.$('confirmModal');
+      const landed = h.landing();
+      assert.ok(landed && landed !== h.fact && landed.getClientRects().length > 0,
+        `control (${at}): the views' landing the net is given is a control on screen other than the Trash row (it is <${landed?.tag} id=${landed?.id}>)`);
       h.$('emptyTrashBtn').focus();
       await h.press('emptyTrashBtn');
       assert.ok(confirm.classList.contains('open') && trash.classList.contains('open'), `control (${at}): asked, over the Trash sheet`);

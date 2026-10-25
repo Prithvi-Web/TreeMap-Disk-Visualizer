@@ -1009,6 +1009,11 @@ function modalClosed(el) {
   // So can one still in the page that stopped painting while the sheet was open — a cart's Move to
   // Trash, in the dock a commit emptied — which takes no focus (review HC2-L7).
   const onScreen = prev.isConnected !== false && (typeof prev.getClientRects !== 'function' || prev.getClientRects().length > 0);
+  // Not when it stopped painting because it sits in another sheet that closed in this same batch:
+  // "Empty the Trash" closes the question, whose opener is the Trash sheet's Empty button, and then
+  // the Trash sheet. That sheet's own close runs next and gives focus back to the Trash row it was
+  // opened from; landing focus here first left it on the Dashboard's first control (review F1.1 of HZ).
+  if (!onScreen && prev.isConnected !== false && typeof prev.closest === 'function' && prev.closest('.modal-backdrop')) return;
   const back = onScreen ? prev : (typeof focusLanding === 'function' ? focusLanding() : null);
   if (back) back.focus({ preventScroll: true });
 }
