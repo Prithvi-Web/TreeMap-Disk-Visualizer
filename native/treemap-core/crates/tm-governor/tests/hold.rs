@@ -43,14 +43,23 @@ const HOLD_ATTEMPTS: u32 = 3;
 const ROOM_DEADLINE: Duration = Duration::from_secs(60);
 /// How often it asks how busy the machine is while it waits.
 const ROOM_POLL: Duration = Duration::from_millis(250);
-/// Readings in a row the machine must have room at before a hold is run again.
+/// Readings in a row the machine must have room at before a hold is run again, at the least.
 const ROOM_READINGS_IN_A_ROW: usize = 3;
-/// Signs of a full machine over a hold's second half that call for another hold, of either kind
-/// (readings the OS published at or over [`MACHINE_FULL_SHARE`], wakeups a whole period late),
-/// each kind counted on its own. One alone may be a blip: macOS reads the machine over the time
-/// since it was last asked, however short, and here read 1.000 at a moment of a half that was
-/// 0.76 idle (and 0.000 at another).
+/// How long those readings must cover, from the first to the last: macOS publishes about one
+/// reading a second, Linux and Windows one at every poll ([`ROOM_POLL`]).
+const ROOM_SPAN: Duration = Duration::from_secs(2);
+/// Readings at or over [`MACHINE_FULL_SHARE`], and wakeups a whole period late, that a hold's
+/// second half must hold before either counts as a sign of a full machine. One alone may be a
+/// blip: macOS sometimes publishes its counters several times within a second, and a reading
+/// then covers only the few ticks since the last one; here one read 1.000 at a moment of a half
+/// that was 0.76 idle, and another 0.000.
 const FULL_MACHINE_SIGNS: usize = 2;
+/// The full readings must also be one in this many of the readings published over the half, at
+/// the least: the controller holds its duty from a full reading to the next one, so where readings
+/// come evenly this is the share of the half it held, and roughly so where macOS publishes several
+/// within a second. macOS published 9 to 15 readings over a half on this Mac, and
+/// Linux and Windows publish one at every sample, fifty, so two would be a different claim on each.
+const FULL_READINGS_ONE_IN: usize = 5;
 /// How far off the sampling period an interval must be for the report to list it: a fifth.
 const IRREGULAR_INTERVAL_S: f64 = 0.02;
 
@@ -268,7 +277,8 @@ fn full_readings_last_half(report: &HoldReport) -> (usize, usize) {
 
 /// The samples of a hold's second half at which the OS woke the sampling thread a whole
 /// [`HOLD_SAMPLE_PERIOD`] or more after it was due (an interval of two periods or more), and how
-/// many samples there were. A thread left waiting that long had no core to run on.
+/// many samples there were. A thread left waiting that long found no core free for it, or had
+/// its core taken away by whatever hosts the machine.
 fn late_wakeups_last_half(report: &HoldReport) -> (usize, usize) {
     let half = report
         .intervals
@@ -282,32 +292,67 @@ fn late_wakeups_last_half(report: &HoldReport) -> (usize, usize) {
     (late, half.len())
 }
 
-/// Whether a hold under the band was held back by the machine, as measured over its second half,
-/// in either of two ways, each seen at least [`FULL_MACHINE_SIGNS`] times. The machine was full
-/// at a reading the OS published, by the controller's own line ([`MACHINE_FULL_SHARE`]), and on
-/// such a reading the controller holds its duty rather than wind it up against work that is not
-/// its own (controller.rs, `held_by_machine`). Or the OS woke the sampling thread a whole period
-/// late ([`late_wakeups_last_half`]): every core was taken then, whatever the readings came to,
-/// and the controller's own ticks wait for a core on the same machine. Before 25 Oct 2026 only
-/// a mean idle share within the band counted: the macOS CI leg of that day held 0.139 of a 0.19
-/// target, its own decisions allowing 0.143 on average, over a half whose mean idle share was
-/// 0.057, more than the band, so it was not measured again, though four of the half's wakeups
-/// came more than a whole period late. This decides only whether a hold is measured again: the
-/// last one is held to the band whatever the machine did.
-fn machine_held_it_back(report: &HoldReport) -> bool {
-    report.mean_last_half < report.target - BAND
-        && (full_readings_last_half(report).0 >= FULL_MACHINE_SIGNS
-            || late_wakeups_last_half(report).0 >= FULL_MACHINE_SIGNS)
+/// The signs of a full machine a hold's second half shows; see [`machine_held_it_back`].
+struct Signs {
+    /// Readings at or over [`MACHINE_FULL_SHARE`], [`FULL_MACHINE_SIGNS`] of them at the least
+    /// and one in [`FULL_READINGS_ONE_IN`] of those published.
+    full_readings: bool,
+    /// Wakeups a whole period late, [`FULL_MACHINE_SIGNS`] of them at the least.
+    late_wakeups: bool,
+    /// A mean idle share no larger than the hold's shortfall and the band together.
+    no_room: bool,
 }
 
-/// How the machine held a hold back, in words: only the signs seen [`FULL_MACHINE_SIGNS`] times.
+fn signs(report: &HoldReport) -> Signs {
+    let (full, published) = full_readings_last_half(report);
+    let shortfall = report.target - report.mean_last_half;
+    Signs {
+        full_readings: full >= FULL_MACHINE_SIGNS && full * FULL_READINGS_ONE_IN >= published,
+        late_wakeups: late_wakeups_last_half(report).0 >= FULL_MACHINE_SIGNS,
+        no_room: report
+            .machine_idle_last_half
+            .is_some_and(|idle| idle <= shortfall + BAND),
+    }
+}
+
+/// Whether a hold under the band was held back by the machine, as measured over its second half,
+/// in any of three ways ([`Signs`]). The machine read full by the controller's own line
+/// ([`MACHINE_FULL_SHARE`]) for a fair share of the half, and from such a reading to the next the
+/// controller holds its duty rather than wind it up against work that is not its own
+/// (controller.rs, `held_by_machine`). Or the OS woke the sampling thread a whole period late
+/// ([`late_wakeups_last_half`]), and the controller's own ticks run on the same machine. Or the
+/// machine sat idle for no more than the hold fell short by, plus the band: too little was there
+/// to take. That last is the rule before 25 Oct 2026 (an idle share within the band)
+/// widened by the shortfall: the macOS CI leg of that day held 0.139 of a 0.19 target, its own
+/// decisions allowing 0.143 on average, over a half whose mean idle share was 0.057, more than
+/// the band, so it was not measured again, though four of the half's wakeups came more than a
+/// whole period late. This decides only whether a hold is measured again: the last one is held
+/// to the band whatever the machine did.
+fn machine_held_it_back(report: &HoldReport) -> bool {
+    let Signs {
+        full_readings,
+        late_wakeups,
+        no_room,
+    } = signs(report);
+    report.mean_last_half < report.target - BAND && (full_readings || late_wakeups || no_room)
+}
+
+/// How the machine held a hold back, in words: only the signs it showed.
 fn held_back_text(report: &HoldReport) -> String {
+    let Signs {
+        full_readings,
+        late_wakeups,
+        no_room,
+    } = signs(report);
     let mut how = Vec::new();
-    if full_readings_last_half(report).0 >= FULL_MACHINE_SIGNS {
+    if full_readings {
         how.push("the controller holds its duty at a full reading");
     }
-    if late_wakeups_last_half(report).0 >= FULL_MACHINE_SIGNS {
-        how.push("its own ticks wait for a core as the sampling thread did");
+    if late_wakeups {
+        how.push("its own ticks may have waited for a core as the sampling thread did");
+    }
+    if no_room {
+        how.push("the machine sat idle for no more than the hold fell short by, plus the band");
     }
     how.join(", and ")
 }
@@ -316,19 +361,27 @@ fn held_back_text(report: &HoldReport) -> String {
 fn readings_text(report: &HoldReport) -> String {
     let (full, published) = full_readings_last_half(report);
     let (late, samples) = late_wakeups_last_half(report);
+    let readings = match report.machine_idle_last_half {
+        Some(idle) => format!(
+            "idle for {idle:.4} of it, full at {full} of the {published} readings the OS published"
+        ),
+        None => "never read: the OS published no reading of it".to_owned(),
+    };
     format!(
-        "idle for {} of it, full at {full} of the {published} readings the OS published, and its \
-         sampling thread woken a whole period late at {late} of the {samples} samples",
-        idle_text(report)
+        "{readings}, and its sampling thread woken a whole period late at {late} of the \
+         {samples} samples"
     )
 }
 
-/// Counts the machine readings in a row that had room: idle for more than `needed` of its time.
-/// One reading with room on a machine kept full is a blip: with eight busy loops on this Mac's
-/// eight cores, the wait read 0.40 idle once in 50 s, ended, and the hold after it failed.
+/// Watches the machine readings for room that lasts: idle for more than `needed` of its time at
+/// every reading for [`ROOM_SPAN`], and at [`ROOM_READINGS_IN_A_ROW`] readings at the least. One
+/// reading with room on a machine kept full is a blip: with eight busy loops on this Mac's eight
+/// cores, the wait read 0.40 idle once in 50 s, ended, and the hold after it failed.
 struct RoomWatch {
     needed: f64,
     in_a_row: usize,
+    /// When the first reading of the current run with room came.
+    since: Option<Duration>,
 }
 
 impl RoomWatch {
@@ -336,24 +389,28 @@ impl RoomWatch {
         Self {
             needed,
             in_a_row: 0,
+            since: None,
         }
     }
 
-    /// Takes one reading of the machine's idle share; true once [`ROOM_READINGS_IN_A_ROW`]
-    /// readings in a row had room. A reading that is not a number has none.
-    fn saw(&mut self, idle: f64) -> bool {
-        self.in_a_row = if idle > self.needed {
-            self.in_a_row + 1
-        } else {
-            0
-        };
-        self.in_a_row >= ROOM_READINGS_IN_A_ROW
+    /// Takes one reading of the machine's idle share, `at` into the wait; true once the readings
+    /// in a row with room are enough and span [`ROOM_SPAN`]. A reading that is not a number has
+    /// no room.
+    fn saw(&mut self, idle: f64, at: Duration) -> bool {
+        let has_room = idle > self.needed;
+        if !has_room {
+            self.in_a_row = 0;
+            self.since = None;
+            return false;
+        }
+        self.in_a_row += 1;
+        let since = *self.since.get_or_insert(at);
+        self.in_a_row >= ROOM_READINGS_IN_A_ROW && at.saturating_sub(since) >= ROOM_SPAN
     }
 }
 
-/// Waits until the whole machine sits idle for more than `needed` of its time at
-/// [`ROOM_READINGS_IN_A_ROW`] readings in a row, so a hold could reach its target without taking
-/// anything from anyone, or until the deadline; says which.
+/// Waits until the whole machine has room that lasts ([`RoomWatch`]), so a hold could reach its
+/// target without taking anything from anyone, or until the deadline; says which.
 fn wait_for_room(label: &str, needed: f64) {
     let mut sampler = platform_sampler();
     let mut watch = RoomWatch::new(needed);
@@ -364,11 +421,10 @@ fn wait_for_room(label: &str, needed: f64) {
         if let Some(busy) = sampler.machine_busy_share() {
             let idle = 1.0 - busy;
             last_idle = Some(idle);
-            if watch.saw(idle) {
+            if watch.saw(idle, started.elapsed()) {
                 println!(
-                    "[{label}] the machine was idle for more than {needed:.2} of its time at \
-                     {ROOM_READINGS_IN_A_ROW} readings in a row, the last {idle:.3}, after {:.1} s \
-                     of waiting",
+                    "[{label}] the machine was idle for more than {needed:.2} of its time at every \
+                     reading for {ROOM_SPAN:?}, the last {idle:.3}, after {:.1} s of waiting",
                     started.elapsed().as_secs_f64()
                 );
                 return;
@@ -376,9 +432,8 @@ fn wait_for_room(label: &str, needed: f64) {
         }
     }
     println!(
-        "[{label}] the machine was never idle for more than {needed:.2} at \
-         {ROOM_READINGS_IN_A_ROW} readings in a row in {ROOM_DEADLINE:?} (last reading \
-         {last_idle:?}); holding anyway"
+        "[{label}] the machine was never idle for more than {needed:.2} at every reading for \
+         {ROOM_SPAN:?} in {ROOM_DEADLINE:?} (last reading {last_idle:?}); holding anyway"
     );
 }
 
@@ -450,34 +505,40 @@ fn assert_gate(label: &str, gate: &Gate, seconds: u32) {
     );
 }
 
+/// One ten-second hold at the default test's target.
+fn hold_nineteen(label: &str) -> Gate {
+    let gate = run_gate(
+        label,
+        Preset::Balanced,
+        Some(SHORT_HOLD_PERCENT),
+        SHORT_HOLD_S,
+    );
+    assert!(
+        (gate.report.target - f64::from(SHORT_HOLD_PERCENT) / 100.0).abs() < 1e-9,
+        "the target is the override: {}",
+        gate.report.target
+    );
+    gate
+}
+
 #[test]
 fn holds_nineteen_percent_of_this_machine_for_ten_seconds() {
     let label = "balanced@19%";
-    for attempt in 1..=HOLD_ATTEMPTS {
-        let gate = run_gate(
-            label,
-            Preset::Balanced,
-            Some(SHORT_HOLD_PERCENT),
-            SHORT_HOLD_S,
-        );
-        let report = &gate.report;
-        assert!(
-            (report.target - f64::from(SHORT_HOLD_PERCENT) / 100.0).abs() < 1e-9,
-            "the target is the override: {}",
-            report.target
-        );
-        if attempt < HOLD_ATTEMPTS && machine_held_it_back(report) {
-            println!(
-                "[{label}] attempt {attempt} of {HOLD_ATTEMPTS}: over the last half the machine was \
-                 {}, so the hold measured the machine; holding again once the machine has room",
-                readings_text(report)
-            );
-            wait_for_room(label, report.target + BAND);
-            continue;
+    for attempt in 1..HOLD_ATTEMPTS {
+        let gate = hold_nineteen(label);
+        if !machine_held_it_back(&gate.report) {
+            assert_gate(label, &gate, SHORT_HOLD_S);
+            return;
         }
-        assert_gate(label, &gate, SHORT_HOLD_S);
-        return;
+        println!(
+            "[{label}] attempt {attempt} of {HOLD_ATTEMPTS}: over the last half the machine was {}, \
+             so the hold measured the machine; holding again once the machine has room",
+            readings_text(&gate.report)
+        );
+        wait_for_room(label, gate.report.target + BAND);
     }
+    // The last hold is judged whatever the machine did.
+    assert_gate(label, &hold_nineteen(label), SHORT_HOLD_S);
 }
 
 /// A ten-second hold's report holding `mean_last_half` of a 0.19 target, the OS publishing the
@@ -511,23 +572,43 @@ fn report_with(mean_last_half: f64, last_half: &[f64]) -> HoldReport {
     }
 }
 
+/// `report` with the OS publishing a reading at every sample of the second half, as Linux and
+/// Windows do: `last_half` in order, from its first sample.
+fn read_at_every_sample(mut report: HoldReport, last_half: &[f64]) -> HoldReport {
+    let half = report.machine_busy.len() / 2;
+    for (sample, &busy) in last_half.iter().enumerate() {
+        if let Some(reading) = report.machine_busy.get_mut(half + sample) {
+            *reading = Some(busy);
+        }
+    }
+    report.machine_idle_last_half = machine_idle_last_half(&report.machine_busy);
+    report
+}
+
+/// `full` readings of 0.99 and the rest of the half's fifty at 0.70, one at every sample.
+fn full_at(full: usize) -> Vec<f64> {
+    (0..50)
+        .map(|sample| if sample < full { 0.99 } else { 0.70 })
+        .collect()
+}
+
 #[test]
 fn a_hold_short_of_its_target_while_the_machine_read_full_is_measured_again() {
-    // The macOS CI leg of 25 Oct 2026 held 0.1393 of 0.19 over a half the machine sat idle for
-    // 0.0572 of on average. Four full readings of five, and one with room, is one way to that mean.
-    let held_back = report_with(0.1393, &[0.97, 0.97, 0.97, 0.97, 0.834]);
-    let idle = held_back.machine_idle_last_half.unwrap_or(f64::NAN);
+    // Two full readings of five, on a half that sat idle for 0.192 on average: more than the
+    // shortfall and the band together (0.1007), so only the full readings speak.
+    let held_back = report_with(0.1393, &[0.97, 0.97, 0.70, 0.70, 0.70]);
+    let Signs {
+        late_wakeups,
+        no_room,
+        ..
+    } = signs(&held_back);
     assert!(
-        (idle - 0.0572).abs() < 1e-9,
-        "control: the CI leg's mean idle share, not {idle}"
-    );
-    assert!(
-        idle > BAND,
-        "control: a mean idle share over the band, which alone did not call for another hold"
+        !late_wakeups && !no_room,
+        "control: the full readings are the only sign"
     );
     assert!(
         machine_held_it_back(&held_back),
-        "four of its five readings found the machine full, and on each the controller held its \
+        "two of its five readings found the machine full, and from each the controller held its \
          duty: the hold measured the machine"
     );
     assert!(
@@ -537,7 +618,7 @@ fn a_hold_short_of_its_target_while_the_machine_read_full_is_measured_again() {
     assert!(
         machine_held_it_back(&report_with(
             0.1393,
-            &[MACHINE_FULL_SHARE, MACHINE_FULL_SHARE, 0.80, 0.80, 0.80]
+            &[MACHINE_FULL_SHARE, MACHINE_FULL_SHARE, 0.70, 0.70, 0.70]
         )),
         "a reading at the line itself is full, as the controller counts it"
     );
@@ -552,6 +633,73 @@ fn a_hold_short_of_its_target_while_the_machine_read_full_is_measured_again() {
     assert!(
         !machine_held_it_back(&report_with(0.1393, &[])),
         "where the OS published no reading, nothing says the machine held it back"
+    );
+}
+
+#[test]
+fn full_readings_count_by_their_share_of_those_published() {
+    let at_every_sample =
+        |full: usize| read_at_every_sample(report_with(0.1393, &[]), &full_at(full));
+    assert_eq!(
+        at_every_sample(2).machine_busy.iter().flatten().count(),
+        50,
+        "control: a reading at every sample of the half, as on Linux and Windows"
+    );
+    assert!(
+        !machine_held_it_back(&at_every_sample(2)),
+        "two full readings of fifty: the controller held its duty for a tenth of a second each"
+    );
+    assert!(
+        !machine_held_it_back(&at_every_sample(9)),
+        "nine of fifty is less than one in {FULL_READINGS_ONE_IN}"
+    );
+    assert!(
+        machine_held_it_back(&at_every_sample(10)),
+        "ten of fifty is one in {FULL_READINGS_ONE_IN}: the controller held its duty for a fifth \
+         of the half"
+    );
+}
+
+#[test]
+fn a_hold_short_of_its_target_on_a_machine_with_no_room_for_it_is_measured_again() {
+    // The macOS CI leg of 25 Oct 2026: 0.1393 of 0.19 over a half idle for 0.0572 on average.
+    // Readings all just under the controller's line come to that mean with no full one.
+    let ci = report_with(0.1393, &[0.9428; 5]);
+    let idle = ci.machine_idle_last_half.unwrap_or(f64::NAN);
+    assert!(
+        (idle - 0.0572).abs() < 1e-9,
+        "control: the CI leg's mean idle share, not {idle}"
+    );
+    assert!(
+        idle > BAND,
+        "control: more idle than the band, which alone did not call for another hold"
+    );
+    let Signs {
+        full_readings,
+        late_wakeups,
+        ..
+    } = signs(&ci);
+    assert!(
+        !full_readings && !late_wakeups,
+        "control: no full reading and no late wakeup"
+    );
+    assert!(
+        machine_held_it_back(&ci),
+        "0.0572 idle is less than the 0.0507 it fell short by and the band together: too little \
+         was there to take"
+    );
+    assert!(
+        !machine_held_it_back(&report_with(0.1393, &[0.85; 5])),
+        "0.15 idle had room for the shortfall and the band"
+    );
+    assert!(
+        machine_held_it_back(&report_with(0.0384, &[0.85; 5])),
+        "the same 0.15 idle did not have room for a shortfall of 0.15"
+    );
+    assert!(
+        !machine_held_it_back(&report_with(0.0384, &[0.15; 5])),
+        "a governor capped at a quarter of its duty held 0.038 on this Mac with the machine 0.85 \
+         idle: the shortfall is its own"
     );
 }
 
@@ -590,8 +738,8 @@ fn woken_late(mut report: HoldReport, at: &[usize], late_by: Duration) -> HoldRe
 fn a_hold_short_of_its_target_while_its_own_sampling_thread_waited_for_a_core_is_measured_again() {
     // The macOS CI leg of 25 Oct 2026 woke the sampling thread more than a whole period late at
     // four samples of the second half (intervals of 201 to 241 ms for a 100 ms period), and
-    // later than asked at most of the rest. A thread left waiting that long had no core to run
-    // on: the machine was full then, whatever the OS's readings came to.
+    // later than asked at most of the rest. A thread left waiting that long found no core free
+    // for it. The half here had 0.20 idle at every reading, so the wakeups are the only sign.
     let waited = woken_late(
         report_with(0.1393, &[0.80; 5]),
         &[62, 75],
@@ -599,8 +747,8 @@ fn a_hold_short_of_its_target_while_its_own_sampling_thread_waited_for_a_core_is
     );
     assert!(
         machine_held_it_back(&waited),
-        "a sampling thread woken a whole period late, twice over the second half: the machine was \
-         full then, so the hold measured the machine"
+        "a sampling thread woken a whole period late, twice over the second half: the hold \
+         measured the machine"
     );
     assert!(
         !machine_held_it_back(&woken_late(
@@ -609,6 +757,14 @@ fn a_hold_short_of_its_target_while_its_own_sampling_thread_waited_for_a_core_is
             Duration::from_millis(141),
         )),
         "one wakeup a whole period late is a blip"
+    );
+    assert!(
+        !machine_held_it_back(&woken_late(
+            report_with(0.1393, &[1.0, 0.70, 0.70, 0.70, 0.70]),
+            &[62],
+            Duration::from_millis(141),
+        )),
+        "one full reading and one late wakeup are a blip of each kind: the kinds are not added up"
     );
     assert!(
         !machine_held_it_back(&woken_late(
@@ -653,64 +809,100 @@ fn only_what_the_machine_did_over_the_second_half_calls_for_another_hold() {
 
 #[test]
 fn a_failure_the_machine_held_back_names_only_the_signs_it_saw() {
-    let full = report_with(0.0318, &[0.99; 5]);
-    let late = woken_late(
-        report_with(0.1393, &[0.80; 5]),
-        &[62, 75],
-        Duration::from_millis(101),
-    );
-    let both = woken_late(
-        report_with(0.1393, &[0.99; 5]),
-        &[62, 75],
-        Duration::from_millis(101),
-    );
+    let late = |report| woken_late(report, &[62, 75], Duration::from_millis(101));
+    let full = report_with(0.1393, &[0.97, 0.97, 0.70, 0.70, 0.70]);
+    let waited = late(report_with(0.1393, &[0.80; 5]));
+    let no_room = report_with(0.1393, &[0.9428; 5]);
+    let all = late(report_with(0.1393, &[0.99; 5]));
     assert_eq!(
         held_back_text(&full),
-        "the controller holds its duty at a full reading",
-        "full readings and no late wakeup: nothing said of wakeups (this Mac under ten busy loops)"
+        "the controller holds its duty at a full reading"
     );
     assert_eq!(
-        held_back_text(&late),
-        "its own ticks wait for a core as the sampling thread did",
-        "late wakeups and no full reading: nothing said of readings"
+        held_back_text(&waited),
+        "its own ticks may have waited for a core as the sampling thread did"
     );
     assert_eq!(
-        held_back_text(&both),
-        "the controller holds its duty at a full reading, and its own ticks wait for a core as \
-         the sampling thread did"
+        held_back_text(&no_room),
+        "the machine sat idle for no more than the hold fell short by, plus the band"
     );
-    assert!(
-        readings_text(&late).ends_with("woken a whole period late at 2 of the 50 samples"),
-        "and the counts behind it: {}",
-        readings_text(&late)
+    assert_eq!(
+        held_back_text(&all),
+        "the controller holds its duty at a full reading, and its own ticks may have waited for a \
+         core as the sampling thread did, and the machine sat idle for no more than the hold fell \
+         short by, plus the band"
+    );
+    assert_eq!(
+        readings_text(&waited),
+        "idle for 0.2000 of it, full at 0 of the 5 readings the OS published, and its sampling \
+         thread woken a whole period late at 2 of the 50 samples"
+    );
+    assert_eq!(
+        readings_text(&report_with(0.1393, &[])),
+        "never read: the OS published no reading of it, and its sampling thread woken a whole \
+         period late at 0 of the 50 samples"
     );
 }
 
 #[test]
-fn the_wait_for_room_ends_only_on_readings_in_a_row_that_have_it() {
+fn the_wait_for_room_ends_only_on_room_that_lasts() {
     let needed = f64::from(SHORT_HOLD_PERCENT) / 100.0 + BAND;
-    let watched = |idle: &[f64]| -> Vec<bool> {
+    // Each reading as (its idle share, seconds into the wait).
+    let watched = |readings: &[(f64, f64)]| -> Vec<bool> {
         let mut watch = RoomWatch::new(needed);
-        idle.iter().map(|&reading| watch.saw(reading)).collect()
+        readings
+            .iter()
+            .map(|&(idle, at)| watch.saw(idle, Duration::from_secs_f64(at)))
+            .collect()
     };
     // Eight busy loops on this Mac's eight cores: one reading of 0.40 idle in 50 s of waiting.
     assert_eq!(
-        watched(&[0.01, 0.40, 0.01, 0.02]),
+        watched(&[(0.01, 1.0), (0.40, 2.0), (0.01, 3.0), (0.02, 4.0)]),
         [false; 4],
         "one reading with room on a machine kept full is a blip"
     );
     assert_eq!(
-        watched(&[0.30, 0.30, 0.30]),
+        watched(&[(0.30, 1.0), (0.30, 2.0), (0.30, 3.0)]),
         [false, false, true],
-        "room at {ROOM_READINGS_IN_A_ROW} readings in a row ends the wait"
+        "about one reading a second, as macOS publishes: room at three readings over two seconds"
+    );
+    let every_poll: Vec<(f64, f64)> = (1..=9).map(|poll| (0.30, f64::from(poll) * 0.25)).collect();
+    assert_eq!(
+        watched(&every_poll),
+        [false, false, false, false, false, false, false, false, true],
+        "a reading at every poll, as Linux and Windows publish: room for two seconds, not three \
+         readings"
     );
     assert_eq!(
-        watched(&[0.30, 0.30, 0.01, 0.30, 0.30, 0.30]),
-        [false, false, false, false, false, true],
-        "a reading without room starts the count again"
+        watched(&[(0.30, 1.0), (0.30, 3.5), (0.30, 4.0)]),
+        [false, false, true],
+        "two readings over two seconds and more are not enough"
     );
     assert_eq!(
-        watched(&[needed, needed, needed, f64::NAN]),
+        watched(&[
+            (0.30, 1.0),
+            (0.30, 2.0),
+            (0.01, 3.0),
+            (0.30, 3.25),
+            (0.30, 3.5),
+            (0.30, 3.75)
+        ]),
+        [false; 6],
+        "a reading without room starts the count and the span again"
+    );
+    assert_eq!(
+        watched(&[
+            (0.30, 1.0),
+            (0.30, 2.0),
+            (0.01, 3.0),
+            (0.30, 4.0),
+            (0.30, 6.5)
+        ]),
+        [false; 5],
+        "the readings before one without room do not count towards the three"
+    );
+    assert_eq!(
+        watched(&[(needed, 1.0), (needed, 2.0), (needed, 3.0), (f64::NAN, 4.0)]),
         [false; 4],
         "a reading at the share needed, or one that is not a number, has no room"
     );
