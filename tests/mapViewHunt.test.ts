@@ -1238,13 +1238,14 @@ function expandHarness() {
   const toasts: string[] = [];
   const zip = { name: 'a.zip', path: '/r/a.zip', size: 10, type: 'file', container: 'zip' };
   const state = { view: 'treemap', scanId: 's1', treemap: { rootPath: '/r' }, pathIndex: new Map<string, unknown>([[zip.path, { ...zip }]]) };
-  const expand = load<(n: unknown) => Promise<void>>(['treeScanId', 'expandContainerNode'], {
+  // A map load takes the next tmLoadSeq as it is asked, as loadTreemap does; the folder's rootPath moves only when its map lands.
+  const page = load<{ expand: (n: unknown) => Promise<void>; click: (p: string) => void }>(['treeScanId', 'expandContainerNode'], {
     state, $: () => ({ textContent: '' }), api: () => new Promise((land) => { answer = land; }),
-    loadTreemap: (p: string) => { loaded.push(p); }, toast: (m: string) => { toasts.push(m); }, formatCount: String, updateTmStatus() {},
-  }, 'expandContainerNode');
-  const run = (arrange: (s: typeof state) => void) => {
-    const out = expand(zip);
-    arrange(state); // what happens while the archive is listed
+    noteLoad: (p: string) => { loaded.push(p); }, toast: (m: string) => { toasts.push(m); }, formatCount: String, updateTmStatus() {},
+  }, '{ expand: expandContainerNode, click: loadTreemap }', 'let tmLoadSeq = 0; function loadTreemap(p) { ++tmLoadSeq; noteLoad(p); }');
+  const run = (arrange: (s: typeof state, click: (p: string) => void) => void) => {
+    const out = page.expand(zip);
+    arrange(state, page.click); // what happens while the archive is listed
     answer({ children: [{ path: '/r/a.zip/x', name: 'x', size: 10, type: 'file', virtual: true }], entryCount: 1, truncated: false });
     return out;
   };
@@ -1260,8 +1261,13 @@ test('HB2 (L5): an archive opened in the Treemap is gone into only while the Tre
   assert.deepEqual(left.loaded, [], 'never a map load under the view that took its place — it rewrites the root Disk City stands on');
   assert.deepEqual(left.toasts, ['Opened a.zip — 1 entry'], 'the archive was opened, and is said to be: it opens at once next time');
   const moved = expandHarness();
-  await moved.run((s) => { s.treemap.rootPath = '/r/b'; }); // another folder clicked meanwhile
-  assert.deepEqual(moved.loaded, [], 'nor over the folder the user went to since');
+  await moved.run((s, click) => { click('/r/b'); s.treemap.rootPath = '/r/b'; }); // another folder clicked meanwhile, its map landed
+  assert.deepEqual(moved.loaded, ['/r/b'], 'nor over the folder the user went to since');
+  // HB2 review (F1.12): the folder's map still out when the listing answers.
+  const asked = expandHarness();
+  await asked.run((_s, click) => { click('/r/B'); }); // folder B clicked: its map is asked, rootPath still /r
+  assert.deepEqual(asked.loaded, ['/r/B'], 'the folder clicked last is where the user goes — the archive\'s load never supersedes the one asked after it');
+  assert.deepEqual(asked.toasts, ['Opened a.zip — 1 entry'], 'opened all the same, and said to be');
 });
 
 /** The real animateTreemapTo / animateSunburstTo and loadTreemap, over animation frames run by hand. */

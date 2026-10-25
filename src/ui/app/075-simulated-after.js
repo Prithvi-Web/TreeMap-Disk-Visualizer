@@ -724,7 +724,7 @@ async function expandContainerNode(n) {
   const node = state.pathIndex.get(n.path);
   if (node && node.children && node.children.length) { loadTreemap(n.path, true); return; }
   $('tmStatus').textContent = `Opening ${n.name}…`;
-  const rootAtClick = state.treemap.rootPath;
+  const seqAtClick = tmLoadSeq;
   try {
     const resp = await api('/api/container/expand', {
       method: 'POST',
@@ -746,9 +746,13 @@ async function expandContainerNode(n) {
     // Gone into only while the Treemap still shows the folder it was clicked
     // in (review L5): left for Disk City while it was listed, the load landed
     // there and rewrote the shared root the city stands on (C72's symptom);
-    // another folder clicked meanwhile is where the user is now. Opened all
-    // the same — its listing is kept, and a click goes straight in.
-    if (state.view !== 'treemap' || state.treemap.rootPath !== rootAtClick) return;
+    // another folder clicked meanwhile is where the user is now. A folder is
+    // known by the map load it asked, not by its landing (review F1.12):
+    // rootPath moves only when a map lands, so a folder whose map was still
+    // out was superseded by the archive's load. Any load asked since the
+    // click, landed or not, moved tmLoadSeq — the unmount bumps it too.
+    // Opened all the same — its listing is kept, and a click goes straight in.
+    if (state.view !== 'treemap' || tmLoadSeq !== seqAtClick) return;
     loadTreemap(n.path, true);
   } catch (e) {
     updateTmStatus();
