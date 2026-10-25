@@ -375,6 +375,37 @@ test('three selected folders with files gone before the first trash step are sai
   await assertRecordedGone([projB, projC, projD], [projA]);
 });
 
+test('folders with files and empty folders gone together: the copies are named for the folders that had files, never for an empty one (HE3 review F1.4)', async () => {
+  const { root, folders: [projA, projB, projC], scan } = projects('gone-mixed', ['projA', 'projB', 'projC']);
+  const emptyE = withEmptyFolder(root, scan, 'emptyE');
+  const emptyF = withEmptyFolder(root, scan, 'emptyF');
+  const before = trashedPaths.length;
+  const job = await offloadWith('gone-mixed', scan, [projA, projB, projC, emptyE, emptyF], {
+    during: (p) => {
+      if (p !== projA || !fs.existsSync(projB)) return;
+      for (const folder of [projB, projC]) fs.renameSync(folder, path.join(root, `moved-${path.basename(folder)}`));
+      for (const folder of [emptyE, emptyF]) fs.rmdirSync(folder);
+    },
+  });
+  assert.equal(job.status, 'complete', job.error);
+  assert.deepEqual(trashedPaths.slice(before), [projA], 'only projA was handed to the Trash');
+  assert.equal(job.error, `projB and 3 more selected folders are no longer there, so they were not moved to the Trash. The verified copies of projB and 1 more folder stand at ${job.destRoot}; emptyE and 1 more folder had nothing to copy.`);
+  for (const name of ['emptyE', 'emptyF']) assert.equal(fs.existsSync(path.join(job.destRoot, name)), false, `${name} has no copy`);
+});
+
+test('a folder with files and an empty folder left in place together: the copies are named for the one that had files (HE3 review F1.4)', async () => {
+  const { root, folders: [projA, projB], scan } = projects('kept-mixed', ['projA', 'projB']);
+  const emptyG = withEmptyFolder(root, scan, 'emptyG');
+  const job = await offloadWith('kept-mixed', scan, [projA, projB, emptyG], {
+    during: (p) => {
+      if (p !== projA) return;
+      for (const folder of [projB, emptyG]) if (!fs.existsSync(path.join(folder, 'late.txt'))) fs.writeFileSync(path.join(folder, 'late.txt'), 'made while projA went to the Trash');
+    },
+  });
+  assert.equal(job.status, 'complete', job.error);
+  assert.equal(job.error, `projB was left in place (and 1 more folder): it now holds late.txt, which was not copied (it was made after the offload was planned), so it was not moved to the Trash. The verified copies of projB stand at ${job.destRoot}; emptyG had nothing to copy.`);
+});
+
 const lockable = process.platform !== 'win32' && process.getuid?.() !== 0;
 
 /** Gives back the permissions a test took from `rel` in `folder`, wherever the folder is now: in place, or in the stand-in Trash. */

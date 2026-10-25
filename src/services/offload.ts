@@ -1416,10 +1416,16 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       // Copies are safe at the destination; report the leftovers honestly.
       job.error = `Offloaded ${everything}, but ${failedToTrash.length} original${failedToTrash.length === 1 ? '' : 's'} couldn't be moved to the Trash: ${failedToTrash[0].reason}`;
     }
-    // Copies stand only for a folder that had files to copy (review F1.6): an empty one has none.
+    // Copies stand only for a folder that had files to copy (review F1.6): an empty one has none. A
+    // group holding both says which had copies, never "their copies" of an empty one (HE3 review F1.4).
     const copiesOf = (group: { folder: string }[]): string => {
-      if (!group.some((l) => (filesOf.get(l.folder) ?? []).length > 0)) return '';
-      return ` ${group.length === 1 ? 'Its' : 'Their'} verified copies stand at ${destDir}.`;
+      const hadFiles = (l: { folder: string }): boolean => (filesOf.get(l.folder) ?? []).length > 0;
+      const copied = group.filter(hadFiles);
+      if (copied.length === 0) return '';
+      if (copied.length === group.length) return ` ${group.length === 1 ? 'Its' : 'Their'} verified copies stand at ${destDir}.`;
+      const named = (list: { folder: string }[]): string => path.basename(list[0].folder) +
+        (list.length > 1 ? ` and ${formatCount(list.length - 1)} more folder${list.length === 2 ? '' : 's'}` : '');
+      return ` The verified copies of ${named(copied)} stand at ${destDir}; ${named(group.filter((l) => !hadFiles(l)))} had nothing to copy.`;
     };
     const stillThere = leftInPlace.filter((l) => l.kind !== 'gone');
     if (stillThere.length > 0) {
