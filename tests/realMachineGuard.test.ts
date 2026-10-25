@@ -630,10 +630,11 @@ test("outside a test runner, emptying the Trash goes ahead: to the machine's own
     return;
   }
   // On Linux, with gio not run, the freedesktop fallback empties the Trash folders itself, and the disarmed machine
-  // refuses it the first of them, the home folder's. The answer names that folder, and only what the fallback could
-  // not clear: once the fallback ran, gio's absence is no reason the Trash stayed full (runTrashEmptiers).
+  // refuses it the home folder's. The answer names that folder, and only what the fallback could not clear: once the
+  // fallback ran, gio's absence is no reason the Trash stayed full (runTrashEmptiers). Not necessarily first: a Trash
+  // folder on another drive the fallback could not look at would be named before it (clearFreedesktopTrash).
   const homeTrash = path.join(child.home, '.local', 'share', 'Trash', 'files');
-  assert.equal(result.failed[0]?.location, homeTrash, `and the answer names the Trash folder the fallback could not clear: ${JSON.stringify(value)}`);
+  assert.ok(result.failed.some((f) => f.location === homeTrash), `and the answer names the Trash folder the fallback could not clear: ${JSON.stringify(value)}`);
   assert.ok(!result.failed.some((f) => f.location === cmd), `and not gio, which the fallback stood in for: ${JSON.stringify(value)}`);
 });
 

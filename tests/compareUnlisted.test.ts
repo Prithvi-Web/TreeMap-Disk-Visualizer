@@ -38,12 +38,17 @@ import { waitFor } from './fixtures/waitFor';
  * off the machine — the store takes it from the root's own spelling (separatorOf). A root spelled `\cmp-root`,
  * with no drive, as `path.join(path.sep, …)` spells it on Windows, is no Windows scan's root: separatorOf reads it
  * as a POSIX path, the store joins its children with "/", and no child spelled with "\" is found in it (the
- * Windows leg of 25 Oct 2026 failed every test here with "PackedScanStore: no node -1").
+ * Windows leg of 25 Oct 2026 failed each test here that looks a path up, with "PackedScanStore: no node -1").
+ * A scan of a whole drive, or of a Windows share, is rooted at a path that already ends in its separator, which the
+ * store joins without adding another: those roots are spelled here too.
  */
 interface Spelling { name: string; p: path.PlatformPath; root: string }
 const SPELLINGS: readonly Spelling[] = [
   { name: 'spelled as a Mac or Linux scan spells it', p: path.posix, root: '/cmp-root' },
   { name: 'spelled as a Windows scan spells it', p: path.win32, root: 'C:\\cmp-root' },
+  { name: 'a Mac or Linux scan of the whole drive', p: path.posix, root: '/' },
+  { name: 'a Windows scan of a whole drive', p: path.win32, root: 'C:\\' },
+  { name: 'a Windows scan of a share', p: path.win32, root: '\\\\srv\\share\\' },
 ];
 
 /** A complete scan of the spelling's root holding `tree` (relative path → bytes, a trailing / for a folder). */
@@ -73,8 +78,14 @@ function scanOf(s: Spelling, tree: Record<string, number>, unlisted: string[] = 
 
 const MAIL = { 'Mail/': 0, 'Mail/msg-0.emlx': 4000, 'Mail/msg-1.emlx': 4000, 'Mail/msg-2.emlx': 4000 };
 /** Each entry as "<path under the root, with / between names> <change>", whatever separator the scan spelled it with. */
-const rows = (s: Spelling, r: { entries: { path: string; change: string }[] }): string[] =>
-  r.entries.map((e) => `${s.p.relative(s.root, e.path).split(s.p.sep).join('/')} ${e.change}`).sort();
+const rows = (s: Spelling, r: { entries: { path: string; change: string }[] }): string[] => {
+  // Read off each path exactly as the store spelled it: path.relative would read a doubled separator away.
+  const base = s.root.endsWith(s.p.sep) ? s.root : s.root + s.p.sep;
+  return r.entries.map((e) => {
+    assert.ok(e.path.startsWith(base), `${s.name}: ${e.path} is spelled under ${base}`);
+    return `${e.path.slice(base.length).split(s.p.sep).join('/')} ${e.change}`;
+  }).sort();
+};
 
 test('files in a folder the newer scan could not list are not called removed, and the folder is counted', () => {
   for (const s of SPELLINGS) {

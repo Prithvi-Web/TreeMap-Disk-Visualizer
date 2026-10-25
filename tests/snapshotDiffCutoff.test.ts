@@ -22,7 +22,9 @@ import type { FileNode, Snapshot } from '../src/models/types';
  * one missing from a list that holds every item is removed or new, as before.
  */
 
-const ROOT = path.join(path.sep, 'snap-root');
+// On its drive, as every Windows scan's root is: path.join(path.sep, …) gives Windows the drive-less "\snap-root",
+// which no Windows scan has (the spelling compareUnlisted's fixtures failed with there).
+const ROOT = path.resolve(path.sep, 'snap-root');
 
 function scanWith(children: { name: string; size: number; dir?: boolean }[]) {
   const nodes: FileNode[] = children.map((c) => ({

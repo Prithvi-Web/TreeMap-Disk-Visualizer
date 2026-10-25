@@ -2078,7 +2078,10 @@ const noop = () => {};
  * `real`, each one's own object lifted, its mount and unmount with it — and `standIns`, which mount nothing and have
  * no unmount. Each view's section holds its live regions as the markup has them; every other live region stands in
  * the page's main part, on screen. Every view starts hidden. `decls`, `given` and `missing` as page() takes them; a
- * frame as waitingPage runs one.
+ * frame as waitingPage runs one. Every switch and every frame checks that the registry caught nothing from a view's
+ * own mount, unmount or onScanChange: it logs such an error and goes on (020), so a name the harness did not give
+ * threw there unseen and the rest of that view's code never ran (the Treemap view's unmount, until 25 Oct 2026,
+ * stopped at `tmLoadSeq++` on every leg of CI).
  */
 function viewsPage(real: string[], standIns: string[], decls: string[] = [], given: Record<string, unknown> = {}, missing: string[] = []) {
   const ro = resizeObservers();
@@ -2091,12 +2094,31 @@ function viewsPage(real: string[], standIns: string[], decls: string[] = [], giv
     ...real.map((id) => `VIEW_BY_ID.set('${id}', ${viewSrc(id)});`),
     ...standIns.map((id) => `VIEW_BY_ID.set('${id}', { id: '${id}', label: '${id}', icon: 'x', needsScan: false, mount() {} });`),
   ];
+  const caught: string[] = [];
+  const pageConsole = {
+    ...console,
+    error: (...args: unknown[]) => {
+      const line = args.map(String).join(' ');
+      if (/^\[treemap\] (?:unmount of|mount of|onScanChange for) "/.test(line)) caught.push(line);
+      else console.error(...args);
+    },
+  };
   const p = page([...WAIT, ...SWITCH, ...decls], {
     ResizeObserver: ro.ResizeObserver, MutationObserver: mo.MutationObserver,
     document: { body, activeElement: null, querySelectorAll: (sel: string) => (sel === '.view' ? sections : []) },
     tabs: [], hideTooltip: noop, hideCtxMenu: noop, selectionBarFollowView: noop, renderEmptyState: noop,
-    fxEmptyCtaSync: noop, fxScanHeroSync: noop, renderCapabilityNotice: noop, fxViewEnter: noop, toast: noop, ...given,
+    fxEmptyCtaSync: noop, fxScanHeroSync: noop, renderCapabilityNotice: noop, fxViewEnter: noop, toast: noop,
+    console: pageConsole, ...given,
   }, missing, run);
+  const nothingCaught = (when: string): void => {
+    assert.deepEqual(caught.splice(0), [], `control, ${when}: the registry caught nothing from a view's own code`);
+  };
+  const switchView = p.fns.switchView;
+  p.fns.switchView = (...args: unknown[]) => {
+    const out = switchView(...args);
+    nothingCaught(`switching to ${String(args[0])}`);
+    return out;
+  };
   for (const id of [...real, ...standIns]) {
     const section = p.$(`view-${id}`);
     section.id = `view-${id}`;
@@ -2112,7 +2134,7 @@ function viewsPage(real: string[], standIns: string[], decls: string[] = [], giv
     if (!live.parent) Object.assign(live, { id: r, parent: main });
     p.fns.aloudKnow(live);
   }
-  const frame = () => { mo.microtasks(); p.frame(mo.microtasks); ro.layout(); mo.microtasks(); };
+  const frame = () => { mo.microtasks(); p.frame(mo.microtasks); ro.layout(); mo.microtasks(); nothingCaught('in a frame'); };
   frame();
   return { ...p, frame };
 }
@@ -2560,20 +2582,21 @@ test('the notes over and under the map are taken back as the Treemap view goes �
     treemap: { rootPath: '/r', altNote: '', altZoomRaf: 0, altZoom: null as unknown, cells: [] as unknown[] },
   };
   const map: { draw: () => void } = { draw: noop };
-  // What the registry caught from the view's own mount or unmount (020: it logs the error and goes on). A name the
-  // harness did not give threw there unseen: the unmount stopped at `tmLoadSeq++`, and the rest of its teardown never ran.
-  const caught: string[] = [];
+  // The unmount's last step turns the mode pills' rings off (fxTmPillBeamsSync(false)): one more of those per visit away
+  // is the unmount reaching its end, counted, not inferred from the registry catching nothing (viewsPage checks that).
+  let pillsOff = 0;
   const p = viewsPage(['treemap'], ['elsewhere'], ['function tmSetEmpty(', 'function renderAltNote(', 'function altRefiningNote('], {
     state: st, tmAnimFrame: 0, tmResizeDeb: 0, tmLoadSeq: 0, treeScanId: () => 's1',
-    console: { ...console, error: (...args: unknown[]) => { caught.push(args.map(String).join(' ')); } },
     // Its unmount's teardown, and its mount's loads, the map's own landing (draw, below) among them.
     tmCancelQueries: noop, tmCloseHints: noop, tmClearHits: noop, nlClose: noop, exitCartPreview: noop, tmSetQueryMessage: noop, disableLive: noop,
-    altRefineCancel: noop, lapseStop: noop, lassoCancel: noop, fxTmPillBeamsSync: noop, loadSavedViews: noop, refreshDock: noop, tmRejudgeQuery: noop,
+    altRefineCancel: noop, lapseStop: noop, lassoCancel: noop, loadSavedViews: noop, refreshDock: noop, tmRejudgeQuery: noop,
+    fxTmPillBeamsSync: (on: boolean) => { if (on === false) pillsOff += 1; },
     tmStopMorph: noop, loadTreemap: () => map.draw(),
   });
   const leave = (what: string): void => {
+    const before = pillsOff;
     p.fns.switchView('elsewhere');
-    assert.deepEqual(caught, [], `${what}: control, the Treemap view's own unmount ran to its end — the registry caught nothing from it`);
+    assert.equal(pillsOff, before + 1, `${what}: control, the Treemap view's own unmount ran to its last step, once`);
   };
   const empty = 'This folder is empty.';
   const cap = 'The map holds at most 250,000 items, and this folder reached that: 1.2 GB has no rectangle here — drill in, or open the Grid view, to see the rest.';
