@@ -302,3 +302,31 @@ test('a snapshot that records its "Don\'t scan" rules is not compared with one a
   assert.equal(layout.prevTakenAt, null, 'the earlier snapshot does not say which rules it ran under');
   assert.equal('prevSize' in (layout.nodes.find((n) => n.path === path.join(root, 'a.bin')) ?? {}), false);
 });
+
+test('a snapshot that records no "Don\'t scan" rules is not compared with an earlier one that records them, nor two that record different rules (leftover HE2-L7)', async () => {
+  for (const [label, rules] of [['reversed', undefined], ['changed', JSON.stringify(['node_modules'])]] as const) {
+    const root = fs.realpathSync(fileTempDir(`treemap-snapshotTrees-${label}-`));
+    const tree = (bytes: number): FileNode => dir(root, path.basename(root), [file(path.join(root, 'a.bin'), 'a.bin', bytes)]);
+    const scanOf = (t: FileNode, when: number, key?: string): ScanResult => ({
+      scanId: `${label}-${when}`, rootPath: root, status: 'complete', scanned: 0, fileCount: 1, dirCount: 1, currentPath: '',
+      root: t, startedAt: when, finishedAt: when, createdAt: when, cancelled: false, ...(key === undefined ? {} : { ignoreRules: key }),
+    }) as unknown as ScanResult;
+    await saveSnapshot(scanOf(tree(100), 1_000_000, JSON.stringify([])));
+    await saveSnapshot(scanOf(tree(200), 2_000_000, rules));
+    const layout = await newestLayout(root);
+    assert.equal(layout.prevTakenAt, null, `${label}: the two do not record the same rules`);
+    assert.equal('prevSize' in (layout.nodes.find((n) => n.path === path.join(root, 'a.bin')) ?? {}), false, `${label}: no previous size`);
+  }
+  // The control: two that record the same rules are compared.
+  const root = fs.realpathSync(fileTempDir('treemap-snapshotTrees-same-key-'));
+  const tree = (bytes: number): FileNode => dir(root, path.basename(root), [file(path.join(root, 'a.bin'), 'a.bin', bytes)]);
+  for (const [bytes, when] of [[100, 1_000_000], [200, 2_000_000]]) {
+    await saveSnapshot({
+      scanId: `same-${when}`, rootPath: root, status: 'complete', scanned: 0, fileCount: 1, dirCount: 1, currentPath: '',
+      root: tree(bytes), startedAt: when, finishedAt: when, createdAt: when, cancelled: false, ignoreRules: JSON.stringify([]),
+    } as unknown as ScanResult);
+  }
+  const same = await newestLayout(root);
+  assert.equal(same.prevTakenAt, 1_000_000, 'control: the same rules are compared');
+  assert.equal(same.nodes.find((n) => n.path === path.join(root, 'a.bin'))?.prevSize, 100);
+});

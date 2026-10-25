@@ -480,6 +480,16 @@ test('a change of "Don\'t scan" rules between two scans is no change on disk: th
     const grown = { ...before(JSON.stringify([])), totalSize: 1 };
     assert.equal(growthAlertFor(sched, fixture, grown, scan), null, 'a rule dropped or added is not growth');
     assert.equal(growthAlertFor(sched, fixture, { ...grown, ignoreRules: undefined }, scan), null, 'nor against a snapshot that does not say');
+    // The other way round (leftover HE2-L7): a scan that does not say which rules it ran under (a cloud
+    // listing, one made by hand) is not known to match a snapshot that does not say either.
+    const keyed = scan.ignoreRules;
+    scan.ignoreRules = undefined;
+    try {
+      assert.equal(await recordScanJournal(scan, before(undefined)), 0, 'a scan that does not say is not compared with a snapshot that does not say');
+      assert.equal(growthAlertFor(sched, fixture, { ...grown, ignoreRules: undefined }, scan), null, 'nor raises a growth alert against it');
+    } finally {
+      scan.ignoreRules = keyed;
+    }
     // Under the same rules a change is a change.
     assert.equal(await recordScanJournal(scan, before(scan.ignoreRules)), 1, 'the same rules: 300 MB really went');
     assert.ok(growthAlertFor(sched, fixture, { ...grown, ignoreRules: scan.ignoreRules }, scan), 'the same rules: the folder grew');
