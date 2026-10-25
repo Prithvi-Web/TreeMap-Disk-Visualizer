@@ -169,9 +169,62 @@ test('a folder the previous scan could not list in full is read as not known, ne
   assert.equal(prevOf('/data/empty/new'), null, 'nor did an empty folder hold anything');
 });
 
+test('a folder whose contents one scan could not list in full and the other counted differently leaves every folder above it with no known previous size: refused then listed is no growth up the tree, listed then refused no shrinking (leftover HE2-L4)', () => {
+  const GB5 = 5_000_000_000;
+  /** /data holding Library (Mail and x) and y, Mail at `mail` bytes, marked unlisted when `refused`. */
+  const tree = (mail: number, refused: boolean): SnapshotTreeNode => ({
+    n: 'data', s: mail + 12, t: 1, m: 1, c: [
+      { n: 'Library', s: mail + 2, t: 1, c: [{ n: 'Mail', s: mail, t: 1, ...(refused ? { u: 1 as const } : {}) }, { n: 'x', s: 2 }] },
+      { n: 'y', s: 10 },
+    ],
+  });
+  const at = (prev: SnapshotTreeNode, curr: SnapshotTreeNode): Record<string, number | null | undefined> => {
+    const prevOf = prevSizeLookup(prev, '/data', curr);
+    return Object.fromEntries(['/data', '/data/Library', '/data/Library/Mail', '/data/Library/x', '/data/y'].map((p) => [p, prevOf(p)]));
+  };
+  // Full Disk Access granted between the scans: Mail, refused (0 stored), is listed at 5 GB.
+  assert.deepEqual(at(tree(0, true), tree(GB5, false)), { '/data': undefined, '/data/Library': undefined, '/data/Library/Mail': undefined, '/data/Library/x': 2, '/data/y': 10 },
+    'the folders above Mail are not drawn as grown by all of it, and what both scans listed is still compared');
+  // Taken away: Mail, listed at 5 GB, is refused now.
+  assert.deepEqual(at(tree(GB5, false), tree(0, true)), { '/data': undefined, '/data/Library': undefined, '/data/Library/Mail': undefined, '/data/Library/x': 2, '/data/y': 10 },
+    'nor drawn as shrunk by all of it');
+  // Refused in both: nothing about the folders above it changed for that reason, and they are compared.
+  assert.deepEqual(at(tree(0, true), tree(0, true)), { '/data': 12, '/data/Library': 2, '/data/Library/Mail': undefined, '/data/Library/x': 2, '/data/y': 10 },
+    'control: a folder refused in both scans leaves the folders above it compared');
+  // Gone from the current tree: what it held then is not known, so neither is the change above it.
+  const gone: SnapshotTreeNode = { n: 'data', s: 12, t: 1, m: 1, c: [{ n: 'Library', s: 2, t: 1, c: [{ n: 'x', s: 2 }] }, { n: 'y', s: 10 }] };
+  assert.equal(prevSizeLookup(tree(0, true), '/data', gone)('/data/Library'), undefined, 'an unlisted folder missing from the current tree');
+});
+
+test('the time slider draws no folder above one the previous scan was refused and this one listed as grown (leftover HE2-L4)', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-snapshotTrees-refused-listed-'));
+  const lib = path.join(root, 'Library');
+  const mail = path.join(lib, 'Mail');
+  const scanOf = (mailBytes: number, refused: boolean, when: number): ScanResult => {
+    const store = buildStoreFromTree(dir(root, path.basename(root), [
+      dir(lib, 'Library', [dir(mail, 'Mail', mailBytes > 0 ? [file(path.join(mail, 'm.emlx'), 'm.emlx', mailBytes)] : []), file(path.join(lib, 'x'), 'x', 2)]),
+      file(path.join(root, 'y'), 'y', 10),
+    ]));
+    if (refused) markUnlisted(store, store.findByPath(mail));
+    return { scanId: `refused-listed-${when}`, rootPath: root, status: 'complete', scanned: 0, fileCount: 3, dirCount: 3, currentPath: '',
+      store, startedAt: when, finishedAt: when, createdAt: when, cancelled: false, ignoreRules: JSON.stringify([]) } as unknown as ScanResult;
+  };
+  await saveSnapshot(scanOf(0, true, 1_000_000));
+  await saveSnapshot(scanOf(5_000_000, false, 2_000_000));
+  const layout = await newestLayout(root);
+  assert.equal(layout.prevTakenAt, 1_000_000, 'control: the two are compared');
+  const prevOfNode = (p: string): number | null | undefined => layout.nodes.find((n) => n.path === p)?.prevSize;
+  const has = (p: string): boolean => 'prevSize' in (layout.nodes.find((n) => n.path === p) ?? {});
+  assert.equal(has(lib), false, 'Library is not drawn as grown by what Mail held');
+  assert.equal(has(mail), false, 'nor Mail');
+  assert.equal(prevOfNode(path.join(lib, 'x')), 2, 'x, listed by both, is compared');
+  assert.equal(prevOfNode(path.join(root, 'y')), 10, 'and y');
+  assert.equal('prevSize' in layout.tree, false, 'the scanned folder itself is not drawn as grown either');
+});
+
 test('what the overlay\'s prevSize means is stated with every reason it can be absent, and null only where the folder holding it listed every child (review F1.3)', () => {
   const openapi = fs.readFileSync(path.join(__dirname, '..', 'src', 'api', 'openapi.ts'), 'utf8');
-  assert.ok(openapi.includes("prevSize: nullable(int('Historical layouts only: size in the previous snapshot; null = did not exist (the folder holding it in the previous snapshot listed every child with bytes, apart from what the same “Don’t scan” rules left out of both scans); absent when that is not known — the previous snapshot kept only its largest children there, or none at its depth limit, or could not list it, or the folder holding it, in full (refused, unreadable, not entered, or holding an entry it could not look at)')),"), 'the OpenAPI prevSize names the third cause');
+  assert.ok(openapi.includes("prevSize: nullable(int('Historical layouts only: size in the previous snapshot; null = did not exist (the folder holding it in the previous snapshot listed every child with bytes, apart from what the same “Don’t scan” rules left out of both scans); absent when that is not known — the previous snapshot kept only its largest children there, or none at its depth limit, or could not list it, or the folder holding it, in full (refused, unreadable, not entered, or holding an entry it could not look at), or, for a folder, a folder in it that either snapshot could not list in full holds a different amount in each')),"), 'the OpenAPI prevSize names the third cause, and the folders above one (leftover HE2-L4)');
 });
 
 test('a tree an earlier build stored, with no marks, is read as cut wherever it kept as many children as the narrowest shape keeps', () => {
@@ -225,7 +278,7 @@ test('GET /api/snapshots/tree sends no "did not exist" for an item that only fel
 
 /* ---------- the overlay compares two snapshots only under the same "Don't scan" rules (review F1.1) ---------- */
 
-type Layout = { prevTakenAt: number | null; nodes: (FileNode & { prevSize?: number | null })[] };
+type Layout = { prevTakenAt: number | null; nodes: (FileNode & { prevSize?: number | null })[]; tree: FileNode & { prevSize?: number | null } };
 
 /** GET /api/snapshots/tree for `root`, at a time past every snapshot: the newest one and the one before. */
 async function newestLayout(root: string): Promise<Layout> {

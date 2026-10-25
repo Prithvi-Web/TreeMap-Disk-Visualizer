@@ -240,8 +240,15 @@ const NARROWEST_PER_DIR = Math.min(...TREE_SHAPES.map((shape) => shape.perDir));
  * and read as its size it drew the folder as grown by all of it once listed. A tree an earlier
  * build stored carries no marks (`m`): there a folder that kept as many children as the narrowest shape
  * keeps is read as cut. An item that only fell past the cut is never drawn as new.
+ *
+ * Given the tree drawn now (`curr`), a folder that either scan could not list in full and that the two
+ * trees hold at different sizes — refused then listed (Full Disk Access granted between them), listed
+ * then refused, or missing from one — leaves every folder above it with no known previous size either
+ * (leftover HE2-L4): their sizes differ by what one scan could not see, and drawn as grown or shrunk by
+ * all of it they showed a change of coverage as a change on disk. A folder refused in both, at the same
+ * size, leaves them compared. One that only this scan could not list has no known size of its own.
  */
-export function prevSizeLookup(prev: SnapshotTreeNode, rootPath: string): (p: string) => number | null | undefined {
+export function prevSizeLookup(prev: SnapshotTreeNode, rootPath: string, curr?: SnapshotTreeNode): (p: string) => number | null | undefined {
   const sep = separatorOf(rootPath);
   const join = (parent: string, name: string): string => parent + (parent.endsWith(sep) ? '' : sep) + name;
   const marked = prev.m === 1;
@@ -259,7 +266,26 @@ export function prevSizeLookup(prev: SnapshotTreeNode, rootPath: string): (p: st
     for (const c of t.c ?? []) walk(c, join(p, c.n));
   };
   walk(prev, rootPath);
+  /** Folders whose previous size is not known for what one scan could not list below or at them (HE2-L4). */
+  const notKnown = new Set<string>();
+  if (curr) {
+    const now = new Map<string, number>();
+    const unlistedNow = new Set<string>();
+    const walkNow = (t: SnapshotTreeNode, p: string): void => {
+      now.set(p, t.s);
+      if (t.t === 1 && t.u === 1) unlistedNow.add(p);
+      for (const c of t.c ?? []) walkNow(c, join(p, c.n));
+    };
+    walkNow(curr, rootPath);
+    for (const p of new Set([...unlisted, ...unlistedNow])) {
+      if (sizes.has(p) && sizes.get(p) === now.get(p)) continue;
+      notKnown.add(p);
+      const names = p.slice(rootPath.length).split(sep).filter(Boolean);
+      for (let i = 0, at = rootPath; i < names.length; at = join(at, names[i]), i++) notKnown.add(at);
+    }
+  }
   return (p) => {
+    if (notKnown.has(p)) return undefined;
     const size = sizes.get(p);
     if (size !== undefined) return unlisted.has(p) ? undefined : size;
     if (p === rootPath || !p.startsWith(rootPath)) return undefined;

@@ -393,7 +393,7 @@ const schemas: Json = {
       container: ref('ContainerKind'),
       virtual: bool(),
       logicalSize: int(),
-      prevSize: nullable(int('Historical layouts only: size in the previous snapshot; null = did not exist (the folder holding it in the previous snapshot listed every child with bytes, apart from what the same “Don’t scan” rules left out of both scans); absent when that is not known — the previous snapshot kept only its largest children there, or none at its depth limit, or could not list it, or the folder holding it, in full (refused, unreadable, not entered, or holding an entry it could not look at)')),
+      prevSize: nullable(int('Historical layouts only: size in the previous snapshot; null = did not exist (the folder holding it in the previous snapshot listed every child with bytes, apart from what the same “Don’t scan” rules left out of both scans); absent when that is not known — the previous snapshot kept only its largest children there, or none at its depth limit, or could not list it, or the folder holding it, in full (refused, unreadable, not entered, or holding an entry it could not look at), or, for a folder, a folder in it that either snapshot could not list in full holds a different amount in each')),
     },
     ['name', 'path', 'size', 'type', 'modifiedAt', 'depth', 'expanded', 'x', 'y', 'w', 'h'],
   ),
