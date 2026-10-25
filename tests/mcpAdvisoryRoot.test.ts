@@ -383,6 +383,23 @@ test('a deep path folds each of its names once, not once for every folder above 
   // Each name once (review HF2-L3): a budget of twice that let one extra fold per folder pass.
   assert.ok(plain.folds <= names, `${plain.folds} folds for a path of ${names} names: each name once, not once for every folder above it`);
 
+  // A location rule's key is built only for a folder with as many names as some location rule's folder has
+  // (rules.depths): built for every folder above a deep path, the path was joined once a folder (review HF2-L3).
+  const KEY_JOIN = '\u0000';
+  const proto = Array.prototype as { join: (sep?: string) => string };
+  const join = proto.join;
+  let keys = 0;
+  proto.join = function (this: unknown[], sep?: string): string {
+    if (sep === KEY_JOIN) keys += 1;
+    return join.call(this, sep);
+  };
+  try {
+    adviceHitAlong(deep, catalog);
+  } finally {
+    proto.join = join;
+  }
+  assert.ok(catalog.location.length > 0, 'control: the packs hold location rules');
+  assert.ok(keys <= 4, `${keys} location keys built for a path of ${names} names: only at the depths a location rule's folder has`);
   const data = path.join(LOCAL, 'dockerish', 'data');
   const under = foldsDuring(() => adviceHitAlong(path.join(data, ...Array<string>(DEPTH).fill('d')), catalog));
   assert.deepEqual([under.value?.path, under.value?.adviceCommand], [data, 'vmtool reclaim'], 'the location rule\'s folder far above it still claims it');
