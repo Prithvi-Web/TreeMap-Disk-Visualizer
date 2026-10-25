@@ -21,14 +21,16 @@ import { mapConcurrent } from '../../utils/concurrency';
  *  - And yet `mdfind 'kMDItemLastUsedDate > "2020-01-01"'` matched **zero
  *    files on the entire machine** when this was written, and `mdls` returned
  *    an empty dict for every path tried, including `/Applications/Safari.app`.
- *  - Measured again on macOS 27 (review F1.2/F1.3): `mdls` now reports a
- *    `kMDItemLastUsedDate` for a file no app has opened — its content
- *    modification date, with no use count. A file touched to 2019 is "last
- *    used" in 2019, an append from a shell moves the date on and a read does
- *    not. That is no record of an opening, so a last-used date within a second
- *    of the file's own modification or creation date, with no use count, is
- *    dropped and the file falls through to its access time (`parseMdlsBatch`).
- *    An application bundle such as Safari.app still gets no date at all.
+ *  - Measured again on macOS 27 (review F1.2/F1.3, HC2-L3): for a path
+ *    Spotlight does not index, `mdls` reports a `kMDItemLastUsedDate` that is
+ *    its content modification date, with no use count. A file touched to 2019
+ *    is "last used" in 2019, an append from a shell moves the date on and a
+ *    read does not. An indexed file no app has opened (`/etc/hosts`) gets no
+ *    date at all, and bundles and documents an app opened get a date with a
+ *    use count (`/Applications/Claude.app`). A stand-in date is no record of
+ *    an opening, so a last-used date within a second of the file's own
+ *    modification or creation date, with no use count, is dropped and the
+ *    file falls through to its access time (`parseMdlsBatch`).
  *
  * A capability probe based on `mdutil` alone would therefore report this
  * feature as *available* and then answer "unknown" for every file forever —
@@ -74,8 +76,8 @@ export interface MdlsEntry {
 /**
  * The file's own dates, as Spotlight gives them beside its last-used date (review F1.2/F1.3).
  *
- * For a file no app has opened, mdls reports `kMDItemLastUsedDate` as the content modification
- * date, with no use count — measured on macOS 27. A last-used date within a second of any of these
+ * For a path Spotlight does not index, mdls reports `kMDItemLastUsedDate` as the content
+ * modification date, with no use count — measured on macOS 27 (review HC2-L3). A last-used date within a second of any of these
  * is therefore Spotlight's stand-in, not an opening: taken as one, the modification time became the
  * last-opened date, which §1.1 forbids outright. Within a second, because plist dates carry whole
  * seconds while the file system keeps fractions.
@@ -102,7 +104,11 @@ function isStandInDate(entry: MdlsEntry, lastUsedMs: number): boolean {
  * signature of trap 2 above, and guessing an alignment would attach one file's
  * date to another file's row.
  */
-export function parseMdlsBatch(raw: unknown, paths: string[]): Map<string, { lastUsedMs: number; useCount: number | null }> | null {
+export function parseMdlsBatch(
+  raw: unknown,
+  paths: string[],
+  tally?: { dated: number },
+): Map<string, { lastUsedMs: number; useCount: number | null }> | null {
   // With exactly ONE path, `mdls -plist -` emits a bare dict rather than a
   // one-element array — verified directly against the real tool.
   //
@@ -125,6 +131,8 @@ export function parseMdlsBatch(raw: unknown, paths: string[]): Map<string, { las
     if (typeof when !== 'string') continue;
     const parsed = Date.parse(when);
     if (!Number.isFinite(parsed) || parsed <= 0) continue;
+    // Spotlight gave this row a date, an opening or a stand-in: the probe reads that it answers (review HC2-L1).
+    if (tally) tally.dated++;
 
     const rawCount = entry.kMDItemUseCount;
     const useCount = typeof rawCount === 'number' && Number.isFinite(rawCount) && rawCount >= 0
@@ -193,7 +201,10 @@ const ATIME_CONCURRENCY = 32;
  */
 const MDLS_BATCH = 200;
 
-/** Cached per process: re-probing per batch would undo the point of probing. */
+/**
+ * Cached per process: re-probing per batch would undo the point of probing. Only a verdict that
+ * holds for every request is cached (spotlightIsProductive).
+ */
 let spotlightVerdict: { productive: boolean; note: string } | null = null;
 
 /** Test seam — resets the once-per-process Spotlight verdict. */
@@ -201,14 +212,28 @@ export function resetSpotlightVerdictForTests(): void {
   spotlightVerdict = null;
 }
 
-async function runMdls(paths: string[]): Promise<Map<string, { lastUsedMs: number; useCount: number | null }> | null> {
+/** Runs `mdls` with these arguments and answers its plist as JSON. */
+type MdlsRunner = (args: string[]) => Promise<unknown>;
+let mdlsRunner: MdlsRunner = (args) => runPlist<unknown>('mdls', args);
+
+/** Test seam — stands in for `mdls -plist -`; returns a function that puts the real one back. */
+export function setMdlsRunnerForTests(fn: MdlsRunner): () => void {
+  const previous = mdlsRunner;
+  mdlsRunner = fn;
+  return () => { mdlsRunner = previous; };
+}
+
+async function runMdls(
+  paths: string[],
+  tally?: { dated: number },
+): Promise<Map<string, { lastUsedMs: number; useCount: number | null }> | null> {
   try {
     // The file's own dates come too: a last-used date that is only one of them is no opening (review F1.2/F1.3).
-    const raw = await runPlist<unknown>('mdls', [
+    const raw = await mdlsRunner([
       '-plist', '-', '-name', 'kMDItemLastUsedDate', '-name', 'kMDItemUseCount',
       ...STAND_IN_DATE_KEYS.flatMap((key) => ['-name', key]), '--', ...paths,
     ]);
-    return parseMdlsBatch(raw, paths);
+    return parseMdlsBatch(raw, paths, tally);
   } catch {
     // Spotlight off, mdls absent, a timeout, or the plain-text error from a
     // vanished path. All of them mean "no Spotlight answer for this batch",
@@ -218,7 +243,8 @@ async function runMdls(paths: string[]): Promise<Map<string, { lastUsedMs: numbe
 }
 
 /**
- * Does Spotlight actually answer on this machine? Probed once, on real paths.
+ * Does Spotlight actually answer on this machine? Probed on real paths, and kept for the process
+ * once it has an answer that holds for every request (review HC2-L1).
  *
  * Deliberately not inferred from `mdutil`: on this Mac indexing is enabled and
  * the attribute is known, and Spotlight still has nothing to say — or, on
@@ -229,19 +255,25 @@ async function spotlightIsProductive(samplePaths: string[]): Promise<{ productiv
   if (spotlightVerdict) return spotlightVerdict;
 
   const sample = samplePaths.slice(0, SPOTLIGHT_PROBE_PATHS);
-  const hits = sample.length > 0 ? await runMdls(sample) : null;
+  const tally = { dated: 0 };
+  const hits = sample.length > 0 ? await runMdls(sample, tally) : null;
 
   if (hits && hits.size > 0) {
     spotlightVerdict = { productive: true, note: '' };
-  } else {
-    spotlightVerdict = {
-      productive: false,
-      note:
-        `Spotlight gave no record of an app opening any of a sample of ${sample.length} file${sample.length === 1 ? '' : 's'} here, ` +
-        'so TreeMap is using file access times instead.',
-    };
+    return spotlightVerdict;
   }
-  return spotlightVerdict;
+  const verdict = {
+    productive: false,
+    note:
+      `Spotlight gave no record of an app opening any of a sample of ${sample.length} file${sample.length === 1 ? '' : 's'} here, ` +
+      'so TreeMap is using file access times instead.',
+  };
+  // Kept for the process only when Spotlight gave this sample no date at all, or mdls did not answer:
+  // then it has nothing to say here and is not worth its cost. Dates that were all stand-ins (a path
+  // Spotlight does not index) say nothing of the next request's files, which may be opened ones — kept,
+  // the first request's sample decided for every later one, an opened app included (review HC2-L1).
+  if (!hits || tally.dated === 0) spotlightVerdict = verdict;
+  return verdict;
 }
 
 /**

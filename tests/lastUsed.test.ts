@@ -20,7 +20,7 @@ import {
   unescapeMountPoint,
   windowsLastAccessReason,
 } from '../src/platform/atime';
-import { parseMdlsBatch, parseMdutilStatus, readLastUsedMac, resetSpotlightVerdictForTests } from '../src/platform/macos/lastUsed';
+import { parseMdlsBatch, parseMdutilStatus, readLastUsedMac, resetSpotlightVerdictForTests, setMdlsRunnerForTests } from '../src/platform/macos/lastUsed';
 import { PlistConversionError, parseXmlPlist, plistToJson } from '../src/platform/macos/plist';
 import { execFileSync } from 'node:child_process';
 import { lastUsedProvider } from '../src/services/facts/lastUsedProvider';
@@ -120,6 +120,10 @@ test('mdls: a last-used date that is only the file\'s modification or creation d
   assert.deepEqual([...out.keys()], ['/opened', '/counted'], 'a date that is the modification or creation date, to within a second, is no record of an opening');
   assert.deepEqual(out.get('/opened'), { lastUsedMs: Date.parse('2019-01-02T09:04:01Z'), useCount: null });
   assert.deepEqual(out.get('/counted'), { lastUsedMs: Date.parse(T), useCount: 4 });
+  // A count of none is no count (review HC2-L5): the stand-in date is dropped; a count of one keeps it.
+  const own = { kMDItemContentModificationDate: T, kMDItemContentCreationDate: T, kMDItemFSContentChangeDate: T, kMDItemFSCreationDate: T };
+  const counts = parseMdlsBatch([{ kMDItemLastUsedDate: T, kMDItemUseCount: 0, ...own }, { kMDItemLastUsedDate: T, kMDItemUseCount: 1, ...own }], ['/zero', '/once']);
+  assert.deepEqual([...counts!], [['/once', { lastUsedMs: Date.parse(T), useCount: 1 }]], 'a use count of 0 makes no opening of a stand-in date; a count of 1 does');
 });
 
 test('mdutil: only a recognisably enabled answer counts as enabled', () => {
@@ -270,11 +274,66 @@ test('a file no app has opened is never given its modification time as its last-
   assert.ok(got, 'the file is answered about');
   assert.ok(got.lastUsedMs === null || Math.abs(got.lastUsedMs - st.mtimeMs) >= 1000,
     `the modification time is not a last-opened date: ${JSON.stringify(got)} (mtime ${st.mtimeMs})`);
-  if (got.source === 'atime') {
-    // The access time stands in (a read since the utimes may have moved it on, never back), with its caveat.
-    assert.ok(got.lastUsedMs !== null && got.lastUsedMs >= Math.floor(st.atimeMs), `the access time stands in: ${JSON.stringify(got)}`);
-    assert.ok(got.caveat && got.caveat.includes(ATIME_CAVEAT), 'with its caveat');
+  // The file's mtime is 2019 and its atime now: whatever Spotlight says of it (nothing, or its modification
+  // date), the access time is the only source (review HC2-L4).
+  assert.equal(got.source, 'atime', `the access time stands in: ${JSON.stringify(got)}`);
+  // A read since the utimes may have moved it on, never back.
+  assert.ok(got.lastUsedMs !== null && got.lastUsedMs >= Math.floor(st.atimeMs), `the access time stands in: ${JSON.stringify(got)}`);
+  assert.ok(got.caveat && got.caveat.includes(ATIME_CAVEAT), 'with its caveat');
+});
+
+/**
+ * readLastUsedMac over files that exist, with `mdls` answered by `rows` — keyed by path, so the answer is
+ * positional as the real tool's is. Each call counts as one mdls run.
+ */
+function stubbedMdls(t: { after(fn: () => void): void }, rows: (p: string) => Record<string, unknown>): { runs: string[][] } {
+  const seen = { runs: [] as string[][] };
+  const restore = setMdlsRunnerForTests(async (args: string[]) => {
+    const paths = args.slice(args.indexOf('--') + 1);
+    seen.runs.push(paths);
+    return paths.length === 1 ? rows(paths[0]) : paths.map(rows);
+  });
+  resetSpotlightVerdictForTests();
+  t.after(() => { restore(); resetSpotlightVerdictForTests(); });
+  return seen;
+}
+
+test('which file the process asked about first does not decide whether Spotlight is used: a never-opened file first, then an opened app, gives the app its Spotlight date and use count (review HC2-L1)', { skip: process.platform !== 'darwin' && 'the macOS reader' }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-lu-order-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+  const never = path.join(dir, 'never-opened.txt');
+  const app = path.join(dir, 'Bluebook.app');
+  fs.writeFileSync(never, 'x');
+  fs.mkdirSync(app);
+  const T = '2019-01-02T09:04:00Z';
+  const OPENED = '2026-07-27T00:00:36Z';
+  for (const order of [[never, app], [app, never]]) {
+    stubbedMdls(t, (p) => (p === app ? { kMDItemLastUsedDate: OPENED, kMDItemUseCount: 653 } : { kMDItemLastUsedDate: T, kMDItemContentModificationDate: T }));
+    const answers = new Map<string, unknown>();
+    for (const p of order) answers.set(p, (await readLastUsedMac([p])).get(p));
+    assert.deepEqual(answers.get(app), { lastUsedMs: Date.parse(OPENED), useCount: 653, source: 'spotlight' }, `the app's opening, asked ${order[0] === app ? 'first' : 'second'}`);
+    const plain = answers.get(never) as { source: string; caveat?: string };
+    assert.equal(plain.source, 'atime', 'the never-opened file has its access time');
+    if (order[0] === never) {
+      assert.match(plain.caveat ?? '', /^Spotlight gave no record of an app opening any of a sample of 1 file here, so TreeMap is using file access times instead\. /,
+        'and, asked first, the probe\'s note on its sample of one');
+    }
   }
+});
+
+test('a Spotlight that answers no date at all is not asked again in this process — the probe still bounds the cost — and its note says so (review HC2-L1, HC2-L4)', { skip: process.platform !== 'darwin' && 'the macOS reader' }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-lu-quiet-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+  const a = path.join(dir, 'a.txt');
+  const b = path.join(dir, 'b.txt');
+  fs.writeFileSync(a, 'x');
+  fs.writeFileSync(b, 'x');
+  const seen = stubbedMdls(t, () => ({}));
+  const first = (await readLastUsedMac([a])).get(a) as { source: string; caveat?: string };
+  assert.equal(first.source, 'atime');
+  assert.match(first.caveat ?? '', /^Spotlight gave no record of an app opening any of a sample of 1 file here/, 'the note on its sample');
+  await readLastUsedMac([b]);
+  assert.equal(seen.runs.length, 1, 'mdls is run once for the process: a second request does not probe again');
 });
 
 /* ============================ Linux: /proc/mounts ============================ */

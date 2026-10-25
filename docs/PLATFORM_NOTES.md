@@ -704,11 +704,15 @@ obvious design does not work here.
 - `mdfind 'kMDItemLastUsedDate > "2020-01-01"'` matched **zero files on the
   entire machine** when this was written, and `mdls` returned an empty dict for
   every path tried, including `/Applications/Safari.app`.
-- Measured again on macOS 27 (review F1.2/F1.3): `mdls` now reports a
-  `kMDItemLastUsedDate` for a file no app has opened, and it is the file's
-  content modification date, with no use count. A file touched to 2019 is
-  "last used" in 2019; an append from a shell moves the date on, a read does
-  not. That is no record of an opening, so TreeMap also asks `mdls` for the
+- Measured again on macOS 27 (review F1.2/F1.3, HC2-L3): for a path Spotlight
+  does not index (a folder under a dot-folder, the system's temporary folder)
+  `mdls` reports a `kMDItemLastUsedDate` that is the file's content
+  modification date, with no use count. A file touched to 2019 is "last used"
+  in 2019; an append from a shell moves the date on, a read does not. An
+  indexed file no app has opened (`/etc/hosts`) has no `kMDItemLastUsedDate`
+  at all, and application bundles and documents an app opened have a date
+  with a use count (`/Applications/Claude.app`: a date and a count of 37). A
+  stand-in date is no record of an opening, so TreeMap also asks `mdls` for the
   file's content and file-system modification and creation dates, and a
   last-used date within a second of any of them, with no use count, is
   dropped: the file falls through to its access time, with its caveat. A date
@@ -716,10 +720,13 @@ obvious design does not work here.
 
 A capability probe based on `mdutil` alone would therefore have reported this
 feature *available* and then answered "unknown" for every file forever. So
-availability is decided by whether Spotlight actually **answers** — probed once
-per process against up to 128 real paths — not by whether it is switched on.
-What that probe concludes is worded as what it is: "Spotlight gave no record of
-an app opening any of a sample of N files here."
+availability is decided by whether Spotlight actually **answers** — probed
+against up to 128 real paths — not by whether it is switched on. A sample it
+gives no date at all, or that `mdls` does not answer, switches Spotlight off
+for the rest of the process; a sample whose dates were all stand-ins is that
+request's answer only, since the next request's files may be opened ones
+(review HC2-L1). What that probe concludes is worded as what it is: "Spotlight
+gave no record of an app opening any of a sample of N files here."
 
 Cost, measured: `mdls -plist -` batched costs **~0.36 ms/path** (2,000 paths in
 717 ms, which alone exceeds §2.5's 400 ms sidecar budget). `lstat` costs
