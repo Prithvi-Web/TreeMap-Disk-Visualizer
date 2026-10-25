@@ -475,7 +475,14 @@ OpenAPI 3 spec).
      scans ran under the same "Don't scan" rules — then both left out the
      same; when they did not, what one scan's rule left out the other may
      have listed, so what only one scan listed there is not compared either,
-     and `ruleFolders` counts such folders.
+     and `ruleFolders` counts such folders. The forecast (and MCP `forecast`)
+     fits only the scans since the drives mounted inside the folder that a
+     scan stopped at, or its "Don't scan" rules, last changed: a rule added
+     or dropped changes what a scan counts, not what is on disk. A snapshot
+     an earlier build saved records no rules, so it is not fitted with one
+     this build saved: after an update the history starts again, and while
+     it is too short `reason` says how many earlier scans were set aside, and
+     why.
    - `GET`/`POST /api/platform/shell-integration` — the "Scan with TreeMap"
      right-click entry. Per-user, no elevation, and the installed flag is read
      from the OS every time rather than remembered. It starts the installed

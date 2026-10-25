@@ -1931,7 +1931,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'history',
     destructive: false,
     parameters: [queryParam('path', 'Root to list snapshots for'), queryParam('all', "'true' for every snapshot, slim", bool())],
-    responses: { '200': jsonResponse('History', opaque('{roots[]} | {rootPath, snapshots[]} | {snapshots[]}. A snapshot carries boundary — { rule: "stay", notEntered[] } or { rule: "cross", entered[] } — only when a drive was mounted inside its folder (Track U); history never compares across two different boundaries. A snapshot this build saved also carries ignoreRules, the “Don’t scan” patterns its scan ran under as one key (a sorted JSON list); the journal and growth alerts compare a scan only with a snapshot whose key is the same, never with one that has none')) },
+    responses: { '200': jsonResponse('History', opaque('{roots[]} | {rootPath, snapshots[]} | {snapshots[]}. A snapshot carries boundary — { rule: "stay", notEntered[] } or { rule: "cross", entered[] } — only when a drive was mounted inside its folder (Track U); history never compares across two different boundaries. A snapshot this build saved also carries ignoreRules, the “Don’t scan” patterns its scan ran under as one key (a sorted JSON list); the journal and growth alerts compare a scan only with a snapshot whose key is the same, never with one that has none, and the forecast fits only the snapshots since the key last changed')) },
   },
   {
     method: 'get',
@@ -1967,7 +1967,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/forecast',
-    summary: 'Disk-full projection for a tracked root from snapshot history + free space',
+    summary: 'Disk-full projection for a tracked root from snapshot history + free space, fitted only over the scans since the drives mounted inside the folder that a scan stopped at, or its “Don’t scan” rules (ignoreRules on GET /api/snapshots), last changed — a snapshot an earlier build saved records no rules and is not fitted with one that does; reason says how many earlier scans were set aside, and why',
     tag: 'history',
     destructive: false,
     parameters: [queryParam('path', 'Tracked root', { type: 'string' }, true)],

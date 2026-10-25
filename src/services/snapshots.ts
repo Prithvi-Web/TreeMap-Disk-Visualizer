@@ -390,13 +390,21 @@ export function sameRulesAsSnapshot(scan: ScanResult, prev: Snapshot): boolean {
   return scan.ignoreRules !== undefined && scan.ignoreRules === prev.ignoreRules;
 }
 
-/** The snapshots since the boundary last changed: the latest one's run of equal keys, oldest first. */
+/**
+ * The snapshots since the boundary or the "Don't scan" rules last changed: the latest one's run of equal
+ * keys, oldest first. A rule added or dropped between two scans changes what they counted, not what is on
+ * disk (leftover HE2-L2), so a fit across it reads the rule as growth or shrinkage. A snapshot an earlier
+ * build saved records no rules: not known to be the rules of one that records them, either way round,
+ * as the time slider and the journal read it; two that record none run on as before.
+ */
 export function currentBaseline(snaps: readonly Snapshot[]): Snapshot[] {
   const sorted = [...snaps].sort((a, b) => a.takenAt - b.takenAt);
   if (sorted.length === 0) return sorted;
-  const key = boundaryKeyOf(sorted[sorted.length - 1].boundary);
+  const last = sorted[sorted.length - 1];
+  const key = boundaryKeyOf(last.boundary);
+  const sameRun = (s: Snapshot): boolean => boundaryKeyOf(s.boundary) === key && s.ignoreRules === last.ignoreRules;
   let start = sorted.length - 1;
-  while (start > 0 && boundaryKeyOf(sorted[start - 1].boundary) === key) start--;
+  while (start > 0 && sameRun(sorted[start - 1])) start--;
   return sorted.slice(start);
 }
 

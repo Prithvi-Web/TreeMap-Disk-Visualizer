@@ -1,5 +1,5 @@
 import { Snapshot, ForecastGrower, ForecastResult } from '../models/types';
-import { currentBaseline, listSnapshots } from './snapshots';
+import { boundaryKeyOf, currentBaseline, listSnapshots } from './snapshots';
 import { diskUsage } from './diskUsage';
 
 /**
@@ -100,15 +100,35 @@ function spanPhrase(spanDays: number): string {
   return `${days} day${days === 1 ? '' : 's'}`;
 }
 
+/**
+ * Why the scans before the fitted run are set aside, as a sentence (Track U, U-24; leftover HE2-L2): the
+ * scan just before the run stopped at other drives, or ran under other "Don't scan" rules, or one of the
+ * two records no rules (a snapshot an earlier build saved). Every earlier scan came before that change.
+ */
+function setAsideSentence(snaps: readonly Snapshot[], run: readonly Snapshot[]): string {
+  const earlier = snaps.length - run.length;
+  const before = [...snaps].sort((a, b) => a.takenAt - b.takenAt)[earlier - 1];
+  const first = run[0];
+  const clauses: string[] = [];
+  if (boundaryKeyOf(before.boundary) !== boundaryKeyOf(first.boundary)) clauses.push('stopped at different drives mounted inside this folder');
+  if (before.ignoreRules !== first.ignoreRules) {
+    clauses.push(before.ignoreRules === undefined ? 'came before TreeMap began recording the “Don’t scan” rules each scan runs under'
+      : first.ignoreRules === undefined ? 'came before a scan that records no “Don’t scan” rules'
+      : 'came before your “Don’t scan” rules changed');
+  }
+  return `${earlier} earlier scan${earlier === 1 ? '' : 's'} ${clauses.join(', and ')}, so ${earlier === 1 ? 'it is' : 'they are'} not compared with these.`;
+}
+
 /** Pure forecast over a root's snapshots — everything testable lives here. */
 export function computeForecast(
   snaps: Snapshot[],
   freeBytes: number,
   now = Date.now(),
 ): Omit<ForecastResult, 'path'> {
-  // Only the scans since the boundary last changed (Track U, U-24): a scan
-  // that stopped at other drives counted another disk, and fitting a line
-  // through both would read the drive as growth or shrinkage.
+  // Only the scans since the boundary or the "Don't scan" rules last changed
+  // (Track U, U-24; leftover HE2-L2): a scan that stopped at other drives
+  // counted another disk, and one under other rules counted other files, so
+  // fitting a line through both would read the change as growth or shrinkage.
   const sorted = currentBaseline(snaps);
   const earlier = snaps.length - sorted.length;
   const count = sorted.length;
@@ -126,7 +146,7 @@ export function computeForecast(
     return {
       ...base,
       status: 'insufficient',
-      reason: `Not enough history yet — ${count} scan${count === 1 ? '' : 's'} over ${spanPhrase(spanDays)}. Forecasting needs at least ${MIN_SNAPSHOTS} scans spanning ${MIN_SPAN_DAYS}+ days.${earlier > 0 ? ` ${earlier} earlier scan${earlier === 1 ? '' : 's'} stopped at different drives mounted inside this folder, so ${earlier === 1 ? 'it is' : 'they are'} not compared with these.` : ''}`,
+      reason: `Not enough history yet — ${count} scan${count === 1 ? '' : 's'} over ${spanPhrase(spanDays)}. Forecasting needs at least ${MIN_SNAPSHOTS} scans spanning ${MIN_SPAN_DAYS}+ days.${earlier > 0 ? ` ${setAsideSentence(snaps, sorted)}` : ''}`,
     };
   }
 
