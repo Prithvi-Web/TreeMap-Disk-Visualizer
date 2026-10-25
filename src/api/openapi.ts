@@ -1931,7 +1931,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'history',
     destructive: false,
     parameters: [queryParam('path', 'Root to list snapshots for'), queryParam('all', "'true' for every snapshot, slim", bool())],
-    responses: { '200': jsonResponse('History', opaque('{roots[]} | {rootPath, snapshots[]} | {snapshots[]}. A snapshot carries boundary — { rule: "stay", notEntered[] } or { rule: "cross", entered[] } — only when a drive was mounted inside its folder (Track U); history never compares across two different boundaries')) },
+    responses: { '200': jsonResponse('History', opaque('{roots[]} | {rootPath, snapshots[]} | {snapshots[]}. A snapshot carries boundary — { rule: "stay", notEntered[] } or { rule: "cross", entered[] } — only when a drive was mounted inside its folder (Track U); history never compares across two different boundaries. A snapshot this build saved also carries ignoreRules, the “Don’t scan” patterns its scan ran under as one key (a sorted JSON list); the journal and growth alerts compare a scan only with a snapshot whose key is the same, never with one that has none')) },
   },
   {
     method: 'get',

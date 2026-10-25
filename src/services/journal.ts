@@ -6,7 +6,7 @@ import { appDataDir } from './storage';
 import { isEphemeral } from './portableMode';
 import { getAppAttribution } from './appAttribution';
 import { readAudit } from './audit';
-import { boundaryKeyOf, buildSnapshotTree, getSnapshotTreeAt, scanBoundaryKey } from './snapshots';
+import { boundaryKeyOf, buildSnapshotTree, getSnapshotTreeAt, sameRulesAsSnapshot, scanBoundaryKey } from './snapshots';
 import { storeOf } from './scanStore';
 import { isInside } from '../utils/pathSanitizer';
 import { separatorOf } from '../utils/pathSeparator';
@@ -318,6 +318,9 @@ export async function recordScanJournal(scan: ScanResult, prev: Snapshot): Promi
   // (Track U, U-24): the difference is a drive, not something a process did,
   // and the journal names no culprit for it. The next scan is the baseline.
   if (scanBoundaryKey(scan) !== boundaryKeyOf(prev.boundary)) return 0;
+  // Nor across a change of "Don't scan" rules (review F1.5), or rules the snapshot does not record: what a
+  // rule added hid read as "an unidentified process removed" it. The next scan is the baseline.
+  if (!sameRulesAsSnapshot(scan, prev)) return 0;
   const store = storeOf(scan);
   const curr = buildSnapshotTree(store);
 

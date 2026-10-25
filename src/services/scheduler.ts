@@ -3,7 +3,7 @@ import { GrowthNotification, ScanResult, ScheduleConfig, Snapshot } from '../mod
 import { startScan, getScan, scanRootPathOf } from './diskScanner';
 import { getSettings, patchSchedule } from './settings';
 import { runDuePolicies } from './autopilot';
-import { boundaryKeyOf, listSnapshots, scanBoundaryKey } from './snapshots';
+import { boundaryKeyOf, listSnapshots, sameRulesAsSnapshot, scanBoundaryKey } from './snapshots';
 import { getForecast } from './forecast';
 import { recordScanJournal } from './journal';
 import { sanitizePath } from '../utils/pathSanitizer';
@@ -228,7 +228,10 @@ export async function runScheduled(sched: ScheduleConfig): Promise<void> {
  * The growth alert a scheduled scan of `target` raises against the previous
  * snapshot, or null. None across a change of boundary (Track U, U-24): a
  * drive mounted inside the folder that joined or left the count would read as
- * the folder growing or shrinking by the size of a whole disk.
+ * the folder growing or shrinking by the size of a whole disk. Nor across a
+ * change of "Don't scan" rules, or against a snapshot that does not record its
+ * rules (review F1.5): a rule dropped would read as the folder growing by all
+ * it had hidden.
  */
 export function growthAlertFor(sched: ScheduleConfig, target: string, prev: Snapshot, done: ScanResult): Omit<GrowthNotification, 'id' | 'at'> | null {
   if (!done.store) return null;
@@ -236,6 +239,7 @@ export function growthAlertFor(sched: ScheduleConfig, target: string, prev: Snap
   // scheduler resolved and the scan then followed elsewhere (QA D78).
   if (prev.rootPath !== done.rootPath) return null;
   if (scanBoundaryKey(done) !== boundaryKeyOf(prev.boundary)) return null;
+  if (!sameRulesAsSnapshot(done, prev)) return null;
   const newSize = done.store.size(done.store.rootId);
   const delta = newSize - prev.totalSize;
   const pct = prev.totalSize > 0 ? (delta / prev.totalSize) * 100 : 0;

@@ -1197,7 +1197,12 @@ read-what-you-saw) permission to act.
   not entered, or holding an entry it could not look at) is not read as a
   change at all, there or in the folder above it; what both scans list
   inside it still is. A folder that left out only what a "Don't scan" rule
-  matched is read in full.
+  matched is read in full, since the journal compares only two scans that
+  ran under the same "Don't scan" rules: a scan whose rules differ from the
+  previous snapshot's, or a snapshot that does not record them (one an
+  earlier build saved), writes nothing — what a rule added or dropped hid or
+  let back in is no change on disk — and raises no growth alert; the next
+  scan is the baseline. Each snapshot records its rules as `ignoreRules`.
   `GET /api/journal?limit=100` reads it back, newest first; nothing writes it
   over HTTP.
 - **Folder notes (v4 §9.5).** `GET /api/notes` lists them; `PUT /api/notes`

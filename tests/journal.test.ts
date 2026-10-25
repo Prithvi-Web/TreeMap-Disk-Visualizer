@@ -18,6 +18,10 @@ import {
 } from '../src/services/journal';
 import { initPortableMode, resetPortableMode } from '../src/services/portableMode';
 import { startScan, getScan } from '../src/services/diskScanner';
+import { growthAlertFor } from '../src/services/scheduler';
+import { updateSettings } from '../src/services/settings';
+import { listSnapshots } from '../src/services/snapshots';
+import { settled } from '../src/utils/backgroundWrites';
 import { storeOf } from '../src/services/scanStore';
 import { formatBytes } from '../src/utils/formatBytes';
 
@@ -408,6 +412,7 @@ test('recordScanJournal turns a scan-vs-snapshot delta into an attributed entry'
       { name: 'small.txt', path: path.join(fixture, 'small.txt'), size: currentTotal, type: 'file' },
       { name: 'vanished', path: path.join(fixture, 'vanished'), size: 300 * MB, type: 'dir' },
     ],
+    ignoreRules: scan.ignoreRules,
   };
 
   const written = await recordScanJournal(scan, prev);
@@ -434,9 +439,60 @@ test('a scan that changed nothing significant writes nothing', async () => {
     id: 'prev-still', rootPath: fixture, takenAt: Date.now() - 60_000,
     totalSize: size, fileCount: 1, dirCount: 1,
     topEntries: [{ name: 'small.txt', path: path.join(fixture, 'small.txt'), size, type: 'file' }],
+    ignoreRules: scan.ignoreRules,
   };
   assert.equal(await recordScanJournal(scan, prev), 0);
   fs.rmSync(fixture, { recursive: true, force: true });
+});
+
+test('a change of "Don\'t scan" rules between two scans is no change on disk: the journal writes nothing and no growth alert is raised, and within the same rules both still do (review F1.5)', async () => {
+  const fixture = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tm-journal-rules-')));
+  fs.mkdirSync(path.join(fixture, 'proj', 'node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(fixture, 'proj', 'node_modules', 'x.js'), 'x');
+  fs.writeFileSync(path.join(fixture, 'proj', 'a.txt'), 'hello');
+  await updateSettings({ ignore: [{ pattern: 'node_modules', scope: 'scan' }] });
+  try {
+    const { scanId } = await startScan(fixture);
+    await waitFor(() => getScan(scanId)?.status !== 'running', 'the scan settling', 50);
+    const scan = getScan(scanId);
+    assert.ok(scan && scan.status === 'complete');
+    await settled();
+    const saved = (await listSnapshots(fixture)).at(-1);
+    assert.ok(saved, 'the scan saved its snapshot');
+    assert.equal(saved.ignoreRules, scan.ignoreRules, 'the snapshot keeps the rules its scan ran under, for the next scan to compare with');
+    assert.equal(saved.ignoreRules, JSON.stringify(['node_modules']), 'control: the scan ran under the rule');
+
+    const store = storeOf(scan);
+    const now = store.size(store.rootId);
+    // The scan before ran with no rule: 300 MB more, which node_modules held and the new rule hid.
+    const before = (rules: string | undefined): Snapshot => ({
+      id: `prev-rules-${String(rules)}`, rootPath: fixture, takenAt: Date.now() - 60_000,
+      totalSize: now + 300 * MB, fileCount: 3, dirCount: 3,
+      topEntries: [{ name: 'proj', path: path.join(fixture, 'proj'), size: now + 300 * MB, type: 'dir' }],
+      ...(rules === undefined ? {} : { ignoreRules: rules }),
+    });
+    const sched = { id: 'rules', path: fixture, intervalHours: 24, thresholdBytes: 1, enabled: true };
+    /** The journal's lines about this folder, read from the file itself (readJournal serves the newest 1,000). */
+    const aboutIt = (): number => (fs.existsSync(journalFilePath()) ? fileLines() : []).filter((l) => (JSON.parse(l) as { rootPath?: string }).rootPath === fixture).length;
+    assert.equal(await recordScanJournal(scan, before(JSON.stringify([]))), 0, 'a rule added is not a removal by some process');
+    assert.equal(await recordScanJournal(scan, before(undefined)), 0, 'nor against a snapshot that does not say which rules it ran under (an earlier build\'s)');
+    assert.equal(aboutIt(), 0, 'no line was written');
+    const grown = { ...before(JSON.stringify([])), totalSize: 1 };
+    assert.equal(growthAlertFor(sched, fixture, grown, scan), null, 'a rule dropped or added is not growth');
+    assert.equal(growthAlertFor(sched, fixture, { ...grown, ignoreRules: undefined }, scan), null, 'nor against a snapshot that does not say');
+    // Under the same rules a change is a change.
+    assert.equal(await recordScanJournal(scan, before(scan.ignoreRules)), 1, 'the same rules: 300 MB really went');
+    assert.ok(growthAlertFor(sched, fixture, { ...grown, ignoreRules: scan.ignoreRules }, scan), 'the same rules: the folder grew');
+  } finally {
+    await updateSettings({ ignore: [] });
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('where agents read the snapshot record, it says each snapshot keeps its "Don\'t scan" rules and that the journal and growth alerts never compare across them (review F1.5)', () => {
+  const read = (rel: string): string => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(read('src/api/openapi.ts').includes('A snapshot this build saved also carries ignoreRules, the “Don’t scan” patterns its scan ran under as one key (a sorted JSON list); the journal and growth alerts compare a scan only with a snapshot whose key is the same, never with one that has none'), 'the OpenAPI /api/snapshots text');
+  assert.ok(read('AGENTS.md').includes('a scan whose rules differ from the previous snapshot\'s, or a snapshot that does not record them (one an earlier build saved), writes nothing — what a rule added or dropped hid or let back in is no change on disk — and raises no growth alert; the next scan is the baseline. Each snapshot records its rules as `ignoreRules`.'), 'AGENTS.md\'s journal section');
 });
 
 /* ─────────────── The read-only HTTP surface ─────────────── */

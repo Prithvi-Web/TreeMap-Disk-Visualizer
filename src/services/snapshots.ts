@@ -372,6 +372,15 @@ export function scanBoundaryKey(scan: ScanResult): string {
   return boundaryKeyOf(snapshotBoundaryOf(scan));
 }
 
+/**
+ * Whether a scan ran under the same "Don't scan" rules as the snapshot before it (review F1.5): only then
+ * is a difference between them a change on disk rather than what a rule added or dropped hid or let back
+ * in. Not known — so not the same — when either does not record its rules (an earlier build's snapshot).
+ */
+export function sameRulesAsSnapshot(scan: ScanResult, prev: Snapshot): boolean {
+  return scan.ignoreRules !== undefined && scan.ignoreRules === prev.ignoreRules;
+}
+
 /** The snapshots since the boundary last changed: the latest one's run of equal keys, oldest first. */
 export function currentBaseline(snaps: readonly Snapshot[]): Snapshot[] {
   const sorted = [...snaps].sort((a, b) => a.takenAt - b.takenAt);
@@ -423,6 +432,7 @@ async function writeSnapshot(scan: ScanResult): Promise<Snapshot | null> {
   };
   const boundary = snapshotBoundaryOf(scan);
   if (boundary) snapshot.boundary = boundary;
+  if (scan.ignoreRules !== undefined) snapshot.ignoreRules = scan.ignoreRules;
 
   const store = await load();
   store.snapshots.push(snapshot);

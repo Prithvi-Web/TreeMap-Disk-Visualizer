@@ -426,6 +426,7 @@ test('a snapshot records the boundary when it left a drive out, and a scan with 
   assert.equal(Object.prototype.hasOwnProperty.call(plainSnap, 'boundary'), false, 'byte for byte as before');
 });
 
+/** A snapshot of a scan run with no "Don't scan" patterns, as the scans these tests compare it with are (review F1.5). */
 function snapshotFor(root: string, takenAt: number, totalSize: number, boundary?: Snapshot['boundary']): Snapshot {
   return {
     id: `snap-${takenAt}`,
@@ -437,6 +438,7 @@ function snapshotFor(root: string, takenAt: number, totalSize: number, boundary?
     topEntries: [{ name: 'other', path: path.join(root, 'other'), size: totalSize, type: 'dir' }],
     hasTree: false,
     ...(boundary ? { boundary } : {}),
+    ignoreRules: JSON.stringify([]),
   };
 }
 

@@ -684,6 +684,13 @@ export interface Snapshot {
    * disks, so history never compares across a change (`boundaryKeyOf`).
    */
   boundary?: SnapshotBoundary;
+  /**
+   * The "Don't scan" patterns its scan ran under, as one key (`ScanResult.ignoreRules`, review F1.5).
+   * The journal and growth alerts compare a scan with this snapshot only when their keys are the same:
+   * what a rule added or dropped between them hid or let back in is no change on disk. Absent on a
+   * snapshot an earlier build saved, or of a scan that records none (a cloud listing): not known.
+   */
+  ignoreRules?: string;
 }
 
 /** A snapshot's record of the drives mounted inside its folder. */
