@@ -175,10 +175,11 @@ export function parseMdutilStatus(text: string): boolean {
 /**
  * How many paths the Spotlight usefulness probe is allowed to cost.
  *
- * 128 paths is roughly 50 ms — cheap enough to spend once per scan, large
- * enough that a folder of genuinely-used files will trip it. It is a sample,
- * and what it concludes is worded as a sample ("in a sample of N files…"),
- * never as a claim about the whole disk.
+ * 128 paths is roughly 50 ms — cheap enough to spend on each request until
+ * Spotlight has shown it records openings here, large enough that a folder of
+ * genuinely-used files will trip it. It is a sample, and what it concludes is
+ * worded as a sample ("…any of a sample of N files here…"), never as a claim
+ * about the whole disk.
  */
 const SPOTLIGHT_PROBE_PATHS = 128;
 
@@ -202,25 +203,38 @@ const ATIME_CONCURRENCY = 32;
 const MDLS_BATCH = 200;
 
 /**
- * Cached per process: re-probing per batch would undo the point of probing. Only a verdict that
- * holds for every request is cached (spotlightIsProductive).
+ * Cached per process, once it holds for every request (spotlightIsProductive): Spotlight recorded an
+ * opening here, or `mdls` failed to answer MDLS_FAILURES_BEFORE_OFF probes in a row.
  */
 let spotlightVerdict: { productive: boolean; note: string } | null = null;
 
-/** Test seam — resets the once-per-process Spotlight verdict. */
+/**
+ * How many probes in a row `mdls` may fail to answer before it is not asked again in this process.
+ * One failure is often a file that vanished between the stat and `mdls` (trap 2), or a slow moment;
+ * three in a row is an `mdls` that does not work here, and each try can cost its whole timeout.
+ */
+const MDLS_FAILURES_BEFORE_OFF = 3;
+let mdlsFailuresInARow = 0;
+
+/** Test seam — resets the once-per-process Spotlight verdict and the count of probes mdls did not answer. */
 export function resetSpotlightVerdictForTests(): void {
   spotlightVerdict = null;
+  mdlsFailuresInARow = 0;
 }
 
 /** Runs `mdls` with these arguments and answers its plist as JSON. */
 type MdlsRunner = (args: string[]) => Promise<unknown>;
-let mdlsRunner: MdlsRunner = (args) => runPlist<unknown>('mdls', args);
+const realMdlsRunner: MdlsRunner = (args) => runPlist<unknown>('mdls', args);
+let mdlsRunner: MdlsRunner = realMdlsRunner;
 
-/** Test seam — stands in for `mdls -plist -`; returns a function that puts the real one back. */
+/**
+ * Test seam — stands in for `mdls -plist -`; returns a function that puts the real one back. The real
+ * one, not whatever was installed before: node:test runs a test's after hooks first in, first out, so
+ * a test that installs two stubs would otherwise restore the first stub last (review F1.3/F1.10 of HZ).
+ */
 export function setMdlsRunnerForTests(fn: MdlsRunner): () => void {
-  const previous = mdlsRunner;
   mdlsRunner = fn;
-  return () => { mdlsRunner = previous; };
+  return () => { mdlsRunner = realMdlsRunner; };
 }
 
 async function runMdls(
@@ -242,38 +256,63 @@ async function runMdls(
   }
 }
 
+/** What one request's probe found: whether to ask its other files, and what it already learnt of its sample. */
+interface SpotlightProbe {
+  /** Spotlight recorded an opening here (kept for the process). */
+  productive: boolean;
+  /** Said beside an access time that stands in, or '' when Spotlight answers here. */
+  note: string;
+  /** Ask the request's files past the sample too. */
+  askRest: boolean;
+  /** How many of the request's first files the probe asked, and the openings it found among them. */
+  sampled: number;
+  hits: Map<string, { lastUsedMs: number; useCount: number | null }> | null;
+}
+
 /**
- * Does Spotlight actually answer on this machine? Probed on real paths, and kept for the process
- * once it has an answer that holds for every request (review HC2-L1).
+ * Does Spotlight actually answer on this machine? Probed on real paths. Only an answer that holds for
+ * every request is kept for the process: Spotlight recorded an opening, or `mdls` failed to answer
+ * three probes running. A sample with no opening decides nothing for the next request, whose files
+ * may be opened ones — on macOS 27 only files an app opened have records (review HC2-L1, F1.2/F1.5 of HZ).
  *
  * Deliberately not inferred from `mdutil`: on this Mac indexing is enabled and
  * the attribute is known, and Spotlight still has nothing to say — or, on
  * macOS 27, says only the files' own modification dates, which
  * `parseMdlsBatch` does not count as openings (review F1.2/F1.3).
  */
-async function spotlightIsProductive(samplePaths: string[]): Promise<{ productive: boolean; note: string }> {
-  if (spotlightVerdict) return spotlightVerdict;
+async function spotlightIsProductive(samplePaths: string[]): Promise<SpotlightProbe> {
+  if (spotlightVerdict) return { ...spotlightVerdict, askRest: spotlightVerdict.productive, sampled: 0, hits: null };
 
   const sample = samplePaths.slice(0, SPOTLIGHT_PROBE_PATHS);
+  const files = `${sample.length} file${sample.length === 1 ? '' : 's'}`;
   const tally = { dated: 0 };
   const hits = sample.length > 0 ? await runMdls(sample, tally) : null;
 
-  if (hits && hits.size > 0) {
-    spotlightVerdict = { productive: true, note: '' };
-    return spotlightVerdict;
+  if (!hits) {
+    // mdls did not answer: said as that, never as "no record" (review F1.5 of HZ).
+    mdlsFailuresInARow++;
+    const off = mdlsFailuresInARow >= MDLS_FAILURES_BEFORE_OFF;
+    const note = off
+      ? `Spotlight did not answer the last ${MDLS_FAILURES_BEFORE_OFF} times TreeMap asked, so TreeMap is using file access times instead.`
+      : `Spotlight did not answer for a sample of ${files} here, so TreeMap is using file access times instead.`;
+    if (off) spotlightVerdict = { productive: false, note };
+    return { productive: false, note, askRest: false, sampled: sample.length, hits: null };
   }
-  const verdict = {
+  mdlsFailuresInARow = 0;
+  if (hits.size > 0) {
+    spotlightVerdict = { productive: true, note: '' };
+    return { productive: true, note: '', askRest: true, sampled: sample.length, hits };
+  }
+  return {
     productive: false,
-    note:
-      `Spotlight gave no record of an app opening any of a sample of ${sample.length} file${sample.length === 1 ? '' : 's'} here, ` +
-      'so TreeMap is using file access times instead.',
+    note: `Spotlight gave no record of an app opening any of a sample of ${files} here, so TreeMap is using file access times instead.`,
+    // Dates that were all stand-ins are a folder Spotlight does not index, and say nothing of the
+    // request's other files: they are asked too, so an opened one among them has its opening. A sample
+    // given no date at all costs the request no more than the probe (review F1.2 of HZ).
+    askRest: tally.dated > 0,
+    sampled: sample.length,
+    hits,
   };
-  // Kept for the process only when Spotlight gave this sample no date at all, or mdls did not answer:
-  // then it has nothing to say here and is not worth its cost. Dates that were all stand-ins (a path
-  // Spotlight does not index) say nothing of the next request's files, which may be opened ones — kept,
-  // the first request's sample decided for every later one, an opened app included (review HC2-L1).
-  if (!hits || tally.dated === 0) spotlightVerdict = verdict;
-  return verdict;
 }
 
 /**
@@ -319,14 +358,21 @@ export async function readLastUsedMac(paths: string[]): Promise<Map<string, Last
   const reasons = await mapConcurrent(alive, ATIME_CONCURRENCY, (p) => noatimeReason(p));
   for (let i = 0; i < alive.length; i++) noatimeByPath.set(alive[i], reasons[i]);
 
-  const verdict = await spotlightIsProductive(alive);
+  const probe = await spotlightIsProductive(alive);
+  let note = probe.note;
 
   let spotlight: Map<string, { lastUsedMs: number; useCount: number | null }> | null = null;
-  if (verdict.productive) {
-    spotlight = new Map();
-    for (let i = 0; i < alive.length; i += MDLS_BATCH) {
+  if (probe.askRest) {
+    // The sample's answers are kept, so no file is asked twice.
+    spotlight = new Map(probe.hits ?? []);
+    for (let i = probe.sampled; i < alive.length; i += MDLS_BATCH) {
       const chunk = await runMdls(alive.slice(i, i + MDLS_BATCH));
       if (chunk) for (const [k, v] of chunk) spotlight.set(k, v);
+    }
+    // An opening found past the sample shows Spotlight records them here.
+    if (spotlight.size > 0) {
+      spotlightVerdict = { productive: true, note: '' };
+      note = '';
     }
   }
 
@@ -344,8 +390,8 @@ export async function readLastUsedMac(paths: string[]): Promise<Map<string, Last
       continue;
     }
     const fallback = lastUsedFromAtime(atimes.get(p) ?? null);
-    if (fallback.source === 'atime' && verdict.note) {
-      fallback.caveat = `${verdict.note} ${ATIME_CAVEAT}`;
+    if (fallback.source === 'atime' && note) {
+      fallback.caveat = `${note} ${ATIME_CAVEAT}`;
     }
     out.set(p, fallback);
   }

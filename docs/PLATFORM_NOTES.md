@@ -721,12 +721,21 @@ obvious design does not work here.
 A capability probe based on `mdutil` alone would therefore have reported this
 feature *available* and then answered "unknown" for every file forever. So
 availability is decided by whether Spotlight actually **answers** — probed
-against up to 128 real paths — not by whether it is switched on. A sample it
-gives no date at all, or that `mdls` does not answer, switches Spotlight off
-for the rest of the process; a sample whose dates were all stand-ins is that
-request's answer only, since the next request's files may be opened ones
-(review HC2-L1). What that probe concludes is worded as what it is: "Spotlight
-gave no record of an app opening any of a sample of N files here."
+against up to 128 real paths, the first of each request — not by whether it
+is switched on. One opening in a sample, or among a request's other files,
+keeps Spotlight on for the rest of the process. A sample with no opening
+decides nothing for the next request, whose files may be opened ones (on
+macOS 27 only files an app opened have records): that request probes again
+(review HC2-L1, F1.2/F1.5 of HZ). Within a request, a sample whose dates were
+all stand-ins — a folder Spotlight does not index — has the request's other
+files asked too; a sample given no date at all costs the request no more than
+the probe, and its other files keep their access times. Only `mdls` failing
+to answer three probes running switches Spotlight off for the process, since
+one failure is often a file that vanished since the stat. What a probe
+concludes is worded as what it is: "Spotlight gave no record of an app opening
+any of a sample of N files here", or "Spotlight did not answer for a sample of
+N files here" (and, the third time running, "did not answer the last 3 times
+TreeMap asked").
 
 Cost, measured: `mdls -plist -` batched costs **~0.36 ms/path** (2,000 paths in
 717 ms, which alone exceeds §2.5's 400 ms sidecar budget). `lstat` costs

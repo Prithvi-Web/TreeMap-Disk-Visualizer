@@ -284,7 +284,8 @@ test('a file no app has opened is never given its modification time as its last-
 
 /**
  * readLastUsedMac over files that exist, with `mdls` answered by `rows` — keyed by path, so the answer is
- * positional as the real tool's is. Each call counts as one mdls run.
+ * positional as the real tool's is; a row that throws is an mdls that did not answer (a timeout, a file that
+ * vanished since the stat). Each call counts as one mdls run.
  */
 function stubbedMdls(t: { after(fn: () => void): void }, rows: (p: string) => Record<string, unknown>): { runs: string[][] } {
   const seen = { runs: [] as string[][] };
@@ -298,7 +299,24 @@ function stubbedMdls(t: { after(fn: () => void): void }, rows: (p: string) => Re
   return seen;
 }
 
-test('which file the process asked about first does not decide whether Spotlight is used: a never-opened file first, then an opened app, gives the app its Spotlight date and use count (review HC2-L1)', { skip: process.platform !== 'darwin' && 'the macOS reader' }, async (t) => {
+test('the mdls seam puts back the real mdls however many stubs one test installed, in the order node:test runs its after hooks (review F1.3/F1.10 of HZ)', { skip: process.platform !== 'darwin' && 'the macOS reader' }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-lu-seam-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); resetSpotlightVerdictForTests(); });
+  const file = path.join(dir, 'a.txt');
+  fs.writeFileSync(file, 'x');
+  const asked = { a: 0, b: 0 };
+  const restoreA = setMdlsRunnerForTests(async () => { asked.a++; return {}; });
+  const restoreB = setMdlsRunnerForTests(async () => { asked.b++; return {}; });
+  resetSpotlightVerdictForTests();
+  await readLastUsedMac([file]);
+  assert.deepEqual(asked, { a: 0, b: 1 }, 'control: the stub installed last answers');
+  restoreA(); restoreB(); // first in, first out, as t.after hooks run
+  resetSpotlightVerdictForTests();
+  await readLastUsedMac([file]);
+  assert.deepEqual(asked, { a: 0, b: 1 }, 'neither stub answers once both are restored: the real mdls does');
+});
+
+test('which file the process asked about first does not decide whether Spotlight is used — whether Spotlight gave that file a stand-in date, no date at all, or did not answer: a never-opened file first, then an opened app, gives the app its Spotlight date and use count (review HC2-L1, F1.2/F1.5 of HZ)', { skip: process.platform !== 'darwin' && 'the macOS reader' }, async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-lu-order-'));
   t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
   const never = path.join(dir, 'never-opened.txt');
@@ -307,33 +325,89 @@ test('which file the process asked about first does not decide whether Spotlight
   fs.mkdirSync(app);
   const T = '2019-01-02T09:04:00Z';
   const OPENED = '2026-07-27T00:00:36Z';
-  for (const order of [[never, app], [app, never]]) {
-    stubbedMdls(t, (p) => (p === app ? { kMDItemLastUsedDate: OPENED, kMDItemUseCount: 653 } : { kMDItemLastUsedDate: T, kMDItemContentModificationDate: T }));
-    const answers = new Map<string, unknown>();
-    for (const p of order) answers.set(p, (await readLastUsedMac([p])).get(p));
-    assert.deepEqual(answers.get(app), { lastUsedMs: Date.parse(OPENED), useCount: 653, source: 'spotlight' }, `the app's opening, asked ${order[0] === app ? 'first' : 'second'}`);
-    const plain = answers.get(never) as { source: string; caveat?: string };
-    assert.equal(plain.source, 'atime', 'the never-opened file has its access time');
-    if (order[0] === never) {
-      assert.match(plain.caveat ?? '', /^Spotlight gave no record of an app opening any of a sample of 1 file here, so TreeMap is using file access times instead\. /,
-        'and, asked first, the probe\'s note on its sample of one');
+  const kinds = [
+    ['a stand-in date', () => ({ kMDItemLastUsedDate: T, kMDItemContentModificationDate: T }), 'Spotlight gave no record of an app opening any of a sample of 1 file here'],
+    ['no date at all', () => ({}), 'Spotlight gave no record of an app opening any of a sample of 1 file here'],
+    ['no answer', () => { throw new Error('mdls timed out (a test)'); }, 'Spotlight did not answer for a sample of 1 file here'],
+  ] as const;
+  for (const [kind, plainRow, note] of kinds) {
+    for (const order of [[never, app], [app, never]]) {
+      const at = `${kind}, the app asked ${order[0] === app ? 'first' : 'second'}`;
+      stubbedMdls(t, (p) => (p === app ? { kMDItemLastUsedDate: OPENED, kMDItemUseCount: 653 } : plainRow()));
+      const answers = new Map<string, unknown>();
+      for (const p of order) answers.set(p, (await readLastUsedMac([p])).get(p));
+      assert.deepEqual(answers.get(app), { lastUsedMs: Date.parse(OPENED), useCount: 653, source: 'spotlight' }, `the app's opening (${at})`);
+      const plain = answers.get(never) as { source: string; caveat?: string };
+      assert.equal(plain.source, 'atime', `the never-opened file has its access time (${at})`);
+      if (order[0] === never) {
+        assert.ok((plain.caveat ?? '').startsWith(`${note}, so TreeMap is using file access times instead. `),
+          `and, asked first, the probe's note on its sample of one says what happened (${at}): ${plain.caveat}`);
+      }
     }
   }
 });
 
-test('a Spotlight that answers no date at all is not asked again in this process — the probe still bounds the cost — and its note says so (review HC2-L1, HC2-L4)', { skip: process.platform !== 'darwin' && 'the macOS reader' }, async (t) => {
+test('within one request, files past the probe\'s sample are asked too when Spotlight dated the sample — an opened app after 128 stand-ins has its opening — and no file is asked twice (review F1.2 of HZ)', { skip: process.platform !== 'darwin' && 'the macOS reader' }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-lu-past-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+  const plain = Array.from({ length: 128 }, (_, i) => path.join(dir, `f${String(i).padStart(3, '0')}.txt`));
+  for (const p of plain) fs.writeFileSync(p, 'x');
+  const app = path.join(dir, 'z-Opened.app');
+  fs.mkdirSync(app);
+  const T = '2019-01-02T09:04:00Z';
+  const OPENED = '2026-07-27T00:00:36Z';
+  const seen = stubbedMdls(t, (p) => (p === app ? { kMDItemLastUsedDate: OPENED, kMDItemUseCount: 653 } : { kMDItemLastUsedDate: T, kMDItemContentModificationDate: T }));
+  const got = await readLastUsedMac([...plain, app]);
+  assert.equal(seen.runs[0]?.length, 128, 'control: the probe samples the first 128');
+  assert.deepEqual(got.get(app), { lastUsedMs: Date.parse(OPENED), useCount: 653, source: 'spotlight' }, 'the 129th file, an opened app, has its opening');
+  assert.equal(got.get(plain[0])?.source, 'atime', 'control: a stand-in is no opening');
+  const asked = seen.runs.flat();
+  assert.equal(asked.length, new Set(asked).size, `no file is asked twice: ${seen.runs.map((r) => r.length).join(' + ')} paths`);
+  assert.equal(new Set(asked).size, 129, 'and every file is asked');
+  // The opening shows Spotlight records them here: a file with none has the access time's own caveat, with no
+  // note on a sample, in this request and the next, which is not probed again.
+  assert.equal(got.get(plain[0])?.caveat, ATIME_CAVEAT, 'a stand-in has the access time\'s caveat, with no note on the sample');
+  const next = (await readLastUsedMac([plain[1]])).get(plain[1]);
+  assert.equal(next?.caveat, ATIME_CAVEAT, 'and so does the next request\'s: Spotlight is known to record openings here');
+});
+
+test('a sample Spotlight gives no date at all costs the request no more than the probe, and the next request probes again (review HC2-L1, HC2-L4, F1.2/F1.5 of HZ)', { skip: process.platform !== 'darwin' && 'the macOS reader' }, async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-lu-quiet-'));
   t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
-  const a = path.join(dir, 'a.txt');
-  const b = path.join(dir, 'b.txt');
-  fs.writeFileSync(a, 'x');
-  fs.writeFileSync(b, 'x');
+  const files = Array.from({ length: 130 }, (_, i) => path.join(dir, `f${String(i).padStart(3, '0')}.txt`));
+  for (const p of files) fs.writeFileSync(p, 'x');
   const seen = stubbedMdls(t, () => ({}));
-  const first = (await readLastUsedMac([a])).get(a) as { source: string; caveat?: string };
-  assert.equal(first.source, 'atime');
-  assert.match(first.caveat ?? '', /^Spotlight gave no record of an app opening any of a sample of 1 file here/, 'the note on its sample');
-  await readLastUsedMac([b]);
-  assert.equal(seen.runs.length, 1, 'mdls is run once for the process: a second request does not probe again');
+  const first = await readLastUsedMac(files);
+  assert.deepEqual(seen.runs.map((r) => r.length), [128], 'one mdls run, of the probe\'s 128: the cost stays bounded');
+  const last = first.get(files[129]) as { source: string; caveat?: string };
+  assert.equal(last.source, 'atime');
+  assert.match(last.caveat ?? '', /^Spotlight gave no record of an app opening any of a sample of 128 files here, so TreeMap is using file access times instead\. /, 'the note on its sample');
+  await readLastUsedMac([files[0]]);
+  assert.deepEqual(seen.runs.map((r) => r.length), [128, 1], 'a second request probes its own files: the first one\'s sample decides nothing for it');
+});
+
+test('an mdls that does not answer three probes running is not asked again in this process, and the note says it did not answer; one that answers in between starts the count again (review F1.5 of HZ)', { skip: process.platform !== 'darwin' && 'the macOS reader' }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-lu-silent-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+  const a = path.join(dir, 'a.txt');
+  const ok = path.join(dir, 'answered.txt');
+  fs.writeFileSync(a, 'x');
+  fs.writeFileSync(ok, 'x');
+  const seen = stubbedMdls(t, (p) => { if (p === ok) return {}; throw new Error('mdls timed out (a test)'); });
+  const ask = async (p: string) => (await readLastUsedMac([p])).get(p) as { source: string; caveat?: string };
+  await ask(a); await ask(a);
+  await ask(ok); // answered: the count starts again
+  await ask(a);
+  const second = await ask(a);
+  assert.equal(seen.runs.length, 5, 'two failures, an answer, and two failures are five probes: the answer started the count again');
+  assert.match(second.caveat ?? '', /^Spotlight did not answer for a sample of 1 file here, so TreeMap is using file access times instead\. /, 'a probe that failed says so');
+  const third = await ask(a);
+  assert.equal(seen.runs.length, 6, 'the third failure in a row was asked');
+  assert.match(third.caveat ?? '', /^Spotlight did not answer the last 3 times TreeMap asked, so TreeMap is using file access times instead\. /, 'and its note says three in a row');
+  const after = await ask(a);
+  assert.equal(seen.runs.length, 6, 'after three in a row mdls is not asked again');
+  assert.equal(after.source, 'atime');
+  assert.equal(after.caveat, third.caveat, 'and the note says why');
 });
 
 /* ============================ Linux: /proc/mounts ============================ */
