@@ -27481,18 +27481,23 @@ function tmUndrawnBreakdown(paths, viewRoot, drawn, hidden = null) {
   let outside = 0;
   let inside = 0;
   let cloud = 0;
+  let cloudOutside = 0;
   for (const p of paths || []) {
+    const away = !!viewRoot && !tmIsInside(p, viewRoot);
     if (viewRoot && p === viewRoot) self = true;
-    else if (viewRoot && !tmIsInside(p, viewRoot)) outside++;
-    else if (hidden && hidden(p)) cloud++;
+    else if (hidden && hidden(p)) { cloud++; if (away) cloudOutside++; }
+    else if (away) outside++;
     else inside++;
   }
   // `hidden` answers whether Hide cloud hides a path (tmHiddenByCloud): no
-  // renderer draws one then, at any depth, so it is its own reason — counted
-  // as deeper, the advice to zoom in or raise Depth could not show it (review
-  // L15). A path can be drawn more than once in principle; never report a
+  // renderer draws one then, in this folder or above it, so it is its own
+  // reason — counted as deeper, the advice to zoom in or raise Depth could
+  // not show it (review L15), and counted as elsewhere, going up could not
+  // (review F1.1). `cloudOutside` says how many of those are also outside
+  // the folder on screen, so turning Hide cloud off is not offered alone for
+  // them. A path can be drawn more than once in principle; never report a
   // negative.
-  return { self, outside, cloud, deeper: Math.max(0, inside - drawn) };
+  return { self, outside, cloud, cloudOutside, deeper: Math.max(0, inside - drawn) };
 }
 
 /**
@@ -27541,15 +27546,20 @@ function tmUndrawnMessage(found, drawn, paths, viewRoot, hidden = null) {
   if (b.self) why.push('one is this folder itself, which has no rectangle of its own');
   if (b.outside) why.push(`${b.outside} ${b.outside === 1 ? 'is' : 'are'} elsewhere in the scan, outside this folder`);
   if (b.deeper) why.push(`${b.deeper} ${b.deeper === 1 ? 'is' : 'are'} deeper than this view draws`);
-  if (b.cloud) why.push(tmCloudHiddenWords(b.cloud));
+  if (b.cloud) why.push(tmCloudHiddenWords(b.cloud, b.cloudOutside));
   if (!why.length) return head; // nothing left to explain; do not invent a reason
   let advice;
   if (b.cloud) {
-    // Hide cloud's own advice beside the others, each naming the ones it shows.
+    // Hide cloud's own advice beside the others, each naming the ones it
+    // shows — and going up as well for the hidden ones outside this folder.
     const acts = [];
     if (b.deeper) acts.push('zoom in or raise Depth for the deeper ones');
     if (b.outside) acts.push('go up for the ones elsewhere');
-    acts.push(acts.length ? 'turn off Hide cloud for the online-only ones' : `turn off Hide cloud to see ${b.cloud === 1 ? 'it' : 'them'}`);
+    const them = b.cloud === 1 ? 'it' : 'them';
+    const all = b.cloudOutside === b.cloud;
+    const off = acts.length ? `turn off Hide cloud${all ? ' and go up' : ''} for the online-only ones`
+      : `turn off Hide cloud${all ? ' and go up' : ''} to see ${them}`;
+    acts.push(`${off}${tmCloudUpToo(b)}`);
     advice = ` ${acts.join('; ').replace(/^./, (c) => c.toUpperCase())}.`;
   } else {
     advice = b.deeper && b.outside ? ' Zoom in or raise Depth for those; go up for the rest.'
@@ -27560,9 +27570,20 @@ function tmUndrawnMessage(found, drawn, paths, viewRoot, hidden = null) {
   return `${head} ${why.join('; ').replace(/^./, (c) => c.toUpperCase())}.${advice}`;
 }
 
-/** "3 are online-only files hidden by Hide cloud" — the matches Hide cloud hides (review L15). */
-function tmCloudHiddenWords(n) {
-  return `${formatCount(n)} ${n === 1 ? 'is an online-only file' : 'are online-only files'} hidden by Hide cloud`;
+/**
+ * "3 are online-only files hidden by Hide cloud" — the matches Hide cloud
+ * hides (review L15) — and how many of them are outside the folder on
+ * screen, where turning Hide cloud off does not draw them either (review
+ * F1.1): ", outside this folder" for all, ", 1 of them outside this folder".
+ */
+function tmCloudHiddenWords(n, out = 0) {
+  const where = !out ? '' : out === n ? ', outside this folder' : `, ${formatCount(out)} of them outside this folder`;
+  return `${formatCount(n)} ${n === 1 ? 'is an online-only file' : 'are online-only files'} hidden by Hide cloud${where}`;
+}
+
+/** ", going up for those outside this folder" — the advice's tail when only some of the hidden matches are there (review F1.1). */
+function tmCloudUpToo(b) {
+  return b.cloudOutside && b.cloudOutside < b.cloud ? `, going up for ${b.cloudOutside === 1 ? 'the one' : 'those'} outside this folder` : '';
 }
 
 /**
@@ -27610,14 +27631,16 @@ function tmSunburstQueryWords(found, degraded, paths, viewRoot, truncated, hidde
       if (b.outside) why.push(`${formatCount(b.outside)} ${b.outside === 1 ? 'is' : 'are'} elsewhere in the scan, outside this folder`);
       if (here) why.push(`${formatCount(here)} ${here === 1 ? 'is' : 'are'} in this folder`);
       // Hidden by Hide cloud, which hides them in every renderer (review L15).
-      if (b.cloud) why.push(tmCloudHiddenWords(b.cloud));
+      if (b.cloud) why.push(tmCloudHiddenWords(b.cloud, b.cloudOutside));
       const ones = here === 1 ? 'the one' : 'the ones';
       const advice = here && b.outside ? ` Switch to Treemap, Circles or Voronoi to see ${ones} in this folder, and go up there for the rest.`
         : here ? ` Switch to Treemap, Circles or Voronoi to see ${ones} in this folder.`
         : b.outside ? ` Go up in Treemap, Circles or Voronoi to see ${b.outside === 1 ? 'it' : 'them'}.`
         : '';
-      const cloudAdvice = !b.cloud ? '' : here || b.outside ? ' Turn off Hide cloud to see the online-only ones.'
-        : ` Turn off Hide cloud and switch to Treemap, Circles or Voronoi to see ${b.cloud === 1 ? 'it' : 'them'}.`;
+      // Going up as well for the hidden ones outside this folder (review F1.1).
+      const all = b.cloudOutside === b.cloud;
+      const cloudAdvice = !b.cloud ? '' : here || b.outside ? ` Turn off Hide cloud${all ? ' and go up' : ''} to see the online-only ones${tmCloudUpToo(b)}.`
+        : ` Turn off Hide cloud and ${all ? 'go up in' : 'switch to'} Treemap, Circles or Voronoi to see ${b.cloud === 1 ? 'it' : 'them'}${tmCloudUpToo(b)}.`;
       said.push(`${head} ${why.join('; ').replace(/^./, (c) => c.toUpperCase())}.${advice}${cloudAdvice}`);
     }
   } else if (!degraded.length) {

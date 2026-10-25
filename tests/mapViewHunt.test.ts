@@ -1037,7 +1037,7 @@ test('HB2 (L1, L8, L14): a plain word typed over the sunburst is said once — t
 
 /** What the box says, and the real functions that word a query's answer for the map now drawn. */
 const REWORD_NAMES = ['TM_SUNBURST_BARE_WORDS', 'tmIsInside', 'tmUndrawnBreakdown', 'tmUndrawnMessage', 'tmSunburstQueryWords', 'tmQueryAnswerWords', 'tmRewordQuery',
-  ...['tmHiddenByCloud', 'tmCloudHiddenWords'].filter((n) => INDEX.includes(`function ${n}(`))];
+  ...['tmHiddenByCloud', 'tmCloudHiddenWords', 'tmCloudUpToo'].filter((n) => INDEX.includes(`function ${n}(`))];
 const NINE = ['/r', '/r/a/x1', '/r/a/x2', '/r/b/y1', '/r/b/y2', '/r/b/y3', '/r/c/z1', '/r/c/z2', '/r/c/z3'];
 
 function rewordHarness(mode: string) {
@@ -1580,4 +1580,57 @@ test('HB2 (L15): with Hide cloud on, the matches it hides are said as that — n
     'Switch to Treemap, Circles or Voronoi to see the one in this folder. Turn off Hide cloud to see the online-only ones.');
   assert.equal(words(1, [], ['/r/c/z1'], '/r', false, () => true),
     '1 match — the sunburst does not highlight it. 1 is an online-only file hidden by Hide cloud. Turn off Hide cloud and switch to Treemap, Circles or Voronoi to see it.');
+});
+
+test('HB2 review (F1.1, F1.9): a match Hide cloud hides outside the folder on screen is said as hidden, and where — "go up" alone is never offered for what going up cannot draw', () => {
+  const ctx = { state: {}, formatCount: String };
+  const msg = load<(...a: unknown[]) => string>(REWORD_NAMES, ctx, 'tmUndrawnMessage', 'let tmMorph = null; let tmLastHits = {};');
+  const words = load<(...a: unknown[]) => string>(REWORD_NAMES, ctx, 'tmSunburstQueryWords', 'let tmMorph = null; let tmLastHits = {};');
+  const mov = (p: string) => p.endsWith('.mov'); // the online-only files, hidden while Hide cloud is on
+  // F1.1: viewing /r/a, the one match not drawn is an online-only file in /r/b. Going up never draws it while Hide cloud is on.
+  assert.equal(msg(1, 0, ['/r/b/icloud.mov'], '/r/a', mov),
+    '1 match — 0 shown here. 1 is an online-only file hidden by Hide cloud, outside this folder. Turn off Hide cloud and go up to see it.',
+    'never "elsewhere in the scan … Go up to see them" — up there Hide cloud hides it all the same');
+  assert.equal(words(1, [], ['/r/b/icloud.mov'], '/r/a', false, mov),
+    '1 match — the sunburst does not highlight it. 1 is an online-only file hidden by Hide cloud, outside this folder. ' +
+    'Turn off Hide cloud and go up in Treemap, Circles or Voronoi to see it.');
+  // Some of them outside: each is told where it is.
+  assert.equal(msg(2, 0, ['/r/a/i1.mov', '/r/b/i2.mov'], '/r/a', mov),
+    '2 matches — 0 shown here. 2 are online-only files hidden by Hide cloud, 1 of them outside this folder. Turn off Hide cloud to see them, going up for the one outside this folder.');
+  assert.equal(msg(4, 0, ['/r/a/i1.mov', '/r/b/i2.mov', '/r/b/i3.mov', '/r/b/x'], '/r/a', mov),
+    '4 matches — 0 shown here. 1 is elsewhere in the scan, outside this folder; 3 are online-only files hidden by Hide cloud, 2 of them outside this folder. ' +
+    'Go up for the ones elsewhere; turn off Hide cloud for the online-only ones, going up for those outside this folder.');
+  assert.equal(msg(2, 0, ['/r/a/d', '/r/b/i.mov'], '/r/a', mov),
+    '2 matches — 0 shown here. 1 is deeper than this view draws; 1 is an online-only file hidden by Hide cloud, outside this folder. ' +
+    'Zoom in or raise Depth for the deeper ones; turn off Hide cloud and go up for the online-only ones.');
+  assert.equal(words(2, [], ['/r/a/i1.mov', '/r/b/i2.mov'], '/r/a', false, mov),
+    '2 matches — the sunburst does not highlight them. 2 are online-only files hidden by Hide cloud, 1 of them outside this folder. ' +
+    'Turn off Hide cloud and switch to Treemap, Circles or Voronoi to see them, going up for the one outside this folder.');
+  assert.equal(words(2, [], ['/r/a/d', '/r/b/i.mov'], '/r/a', false, mov),
+    '2 matches — the sunburst does not highlight them. 1 is in this folder; 1 is an online-only file hidden by Hide cloud, outside this folder. ' +
+    'Switch to Treemap, Circles or Voronoi to see the one in this folder. Turn off Hide cloud and go up to see the online-only ones.');
+  assert.equal(words(3, [], ['/r/a/d', '/r/a/i1.mov', '/r/b/i2.mov'], '/r/a', false, mov),
+    '3 matches — the sunburst does not highlight them. 1 is in this folder; 2 are online-only files hidden by Hide cloud, 1 of them outside this folder. ' +
+    'Switch to Treemap, Circles or Voronoi to see the one in this folder. Turn off Hide cloud to see the online-only ones, going up for the one outside this folder.');
+  // F1.9: Hide cloud's advice beside matches outside the folder, and one hidden match alone, each pinned.
+  assert.equal(msg(2, 0, ['/r/b/x', '/r/a/i.mov'], '/r/a', mov),
+    '2 matches — 0 shown here. 1 is elsewhere in the scan, outside this folder; 1 is an online-only file hidden by Hide cloud. ' +
+    'Go up for the ones elsewhere; turn off Hide cloud for the online-only ones.');
+  assert.equal(msg(4, 1, ['/r/a/d1', '/r/a/d2', '/r/b/x', '/r/a/i.mov'], '/r/a', mov),
+    '4 matches — 1 shown here. 1 is elsewhere in the scan, outside this folder; 1 is deeper than this view draws; 1 is an online-only file hidden by Hide cloud. ' +
+    'Zoom in or raise Depth for the deeper ones; go up for the ones elsewhere; turn off Hide cloud for the online-only ones.');
+  assert.equal(msg(1, 0, ['/r/a/i.mov'], '/r/a', mov),
+    '1 match — 0 shown here. 1 is an online-only file hidden by Hide cloud. Turn off Hide cloud to see it.', 'one hidden match is "it", never "them"');
+  const outsideOnly = words(2, [], ['/r/b/x', '/r/a/i.mov'], '/r/a', false, mov);
+  assert.doesNotMatch(outsideOnly, /switch to/i, 'no renderer switch shows a match outside the folder, nor one Hide cloud hides');
+  assert.equal(outsideOnly, '2 matches — the sunburst does not highlight them. 1 is elsewhere in the scan, outside this folder; 1 is an online-only file hidden by Hide cloud. ' +
+    'Go up in Treemap, Circles or Voronoi to see it. Turn off Hide cloud to see the online-only ones.');
+  // Through the page's own Hide cloud predicate: the online-only files of /r/b, seen from /r/a.
+  const t = rewordHarness('treemap');
+  t.state.treemap.hideCloud = true;
+  for (const p of ['/r/b/y1', '/r/b/y2', '/r/b/y3']) t.state.pathIndex.set(p, { cloudPlaceholder: true });
+  t.state.treemap.rootPath = '/r/a'; t.state.treemap.matches = 2;
+  t.reword();
+  assert.equal(t.box.textContent, '9 matches — 2 shown here. 4 are elsewhere in the scan, outside this folder; 3 are online-only files hidden by Hide cloud, outside this folder. ' +
+    'Go up for the ones elsewhere; turn off Hide cloud and go up for the online-only ones.');
 });
