@@ -915,8 +915,8 @@ test('the Dashboard\'s columns are balanced: Drive Health and Cost to Keep sit i
   const cols = view.split('<div class="dash-col">').slice(1);
   assert.equal(cols.length, 2, 'two columns');
   const cards = (col: string) => [...col.matchAll(/<h2><span data-icon="[^"]+"><\/span>([^<\n]+)/g)].map((m) => m[1].trim());
-  assert.deepEqual(cards(cols[0]), ['System', 'Scan a Folder', 'Quick Stats', 'Disk Topology', 'Held-Up Space']);
-  assert.deepEqual(cards(cols[1]), ['File Types by Size', 'Largest Files', 'Largest Folders', 'All Storage', 'Drive Health', 'Cost to Keep', 'Folder Budgets']);
+  assert.deepEqual(cards(cols[0]), ['System', 'Scan a folder', 'Quick stats', 'Disk topology', 'Held-up space']);
+  assert.deepEqual(cards(cols[1]), ['File types by size', 'Largest files', 'Largest folders', 'All storage', 'Drive health', 'Cost to keep', 'Folder budgets']);
 });
 
 /* ══════════════ states-errors-1 — a quiet rescan that fails ends the chrome ══════════════ */

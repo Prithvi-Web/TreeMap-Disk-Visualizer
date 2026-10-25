@@ -841,6 +841,38 @@ test('the Clean Up tab "Online-only files" is never called by its old name, "Clo
   for (const doc of DOCS) assert.deepEqual(cloudSafeNamings(fs.readFileSync(path.join(ROOT, doc), 'utf8')), [], doc);
 });
 
+/**
+ * The proper names a heading may carry in capitals (the copyNaming rule above): TreeMap and its features' own
+ * names — Clean Up, the Undo Vault, Autopilot, the Reclaim Score — and the system's Trash.
+ */
+const HEADING_PROPER = new Set(['TreeMap', 'Up', 'Vault', 'Autopilot', 'Score', 'Trash']);
+
+/** Each heading of the page's markup — an h1 to h6, or a Settings or sheet section head — whose words after the first are capitalised though no proper name. */
+function titleCaseHeadings(markup: string): string[] {
+  const out: string[] = [];
+  for (const m of markup.matchAll(/<(h[1-6])\b[^>]*>([\s\S]*?)<\/\1>|<div class="(?:set-h|tn-h|as-h)"[^>]*>([\s\S]*?)<\/div>/g)) {
+    // The heading's own words: the text before any control or aside it holds.
+    const title = (m[2] ?? m[3] ?? '').replace(/<span data-icon="[^"]*"><\/span>/g, '').split('<')[0].trim();
+    const words = title.match(/[A-Za-z][A-Za-z'’-]*/g) ?? [];
+    if (words.slice(1).some((w) => /^[A-Z]/.test(w) && !HEADING_PROPER.has(w))) out.push(title);
+  }
+  return out;
+}
+
+test('every heading on the page is in sentence case, but for proper names: "Largest files", "Drive health" — never "Largest Files" (CL-4, hunt S6)', () => {
+  assert.deepEqual(titleCaseHeadings('<h2><span data-icon="x"></span>Largest Files<span class="h2-aside">Size</span></h2>'), ['Largest Files'], 'control: Title Case is found');
+  assert.deepEqual(titleCaseHeadings('<h2>Largest files</h2><h3>Clean Up target</h3><div class="set-h">Undo Vault</div><h3>Move to Trash?</h3>'), [], 'control: sentence case, and proper names, are not');
+  const markup = fs.readdirSync(path.join(ROOT, 'src', 'ui', 'markup')).filter((f) => f.endsWith('.html'))
+    .map((f) => fs.readFileSync(path.join(ROOT, 'src', 'ui', 'markup', f), 'utf8')).join('\n');
+  assert.ok(markup.includes('Largest files'), 'control: the headings are read');
+  assert.deepEqual(titleCaseHeadings(markup), [], 'the markup\'s headings');
+  // The PDF report's section headings name the same cards, in the same case.
+  const report = fs.readFileSync(path.join(ROOT, 'src', 'services', 'reportExport.ts'), 'utf8');
+  const headings = [...report.matchAll(/text: `([^`$(]+)[^`]*`, style: 'h2'/g)].map((m) => m[1].trim());
+  assert.ok(headings.length >= 3, `control: the report's headings are read: ${headings.join(', ')}`);
+  assert.deepEqual(headings.filter((h) => (h.match(/[A-Za-z]+/g) ?? []).slice(1).some((w) => /^[A-Z]/.test(w) && !HEADING_PROPER.has(w))), [], 'the PDF report\'s headings');
+});
+
 test('the Undo Vault tab prints a copy\'s reason in the cart\'s words, and an older copy\'s "staged in the cleanup cart" as the cart says it now (G18 review F1.1)', () => {
   // A copy keeps the reason it was stored with (timecapsule.json), so a copy
   // the cart made before the name was settled still holds the old words.

@@ -292,7 +292,7 @@ test('J55: a folder of 1,234 files is said with its thousands separator — in i
 });
 
 test('H55: the "%" column says what it is a share of — the largest folder listed — in the card\'s heading and on each figure', () => {
-  const card = INDEX.slice(INDEX.indexOf('<span data-icon="folder"></span>Largest Folders'), INDEX.indexOf('id="bigFolders"'));
+  const card = INDEX.slice(INDEX.indexOf('<span data-icon="folder"></span>Largest folders'), INDEX.indexOf('id="bigFolders"'));
   assert.match(card, /% of the largest/, 'the heading says what the percentages are');
   const { html } = renderCard(apiFolders(cardLimit()));
   const pcts = [...html.matchAll(/<span class="fx-li-pct num"([^>]*)>(\d+)%<\/span>/g)];

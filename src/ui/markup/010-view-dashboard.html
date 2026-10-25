@@ -56,7 +56,7 @@
         </div>
 
         <div class="card glass">
-          <h2><span data-icon="play"></span>Scan a Folder</h2>
+          <h2><span data-icon="play"></span>Scan a folder</h2>
           <div class="scan-row">
             <div class="field">
               <span data-icon="folder"></span>
@@ -153,7 +153,7 @@
         </div>
 
         <div class="card glass">
-          <h2><span data-icon="activity"></span>Quick Stats</h2>
+          <h2><span data-icon="activity"></span>Quick stats</h2>
           <div class="quick-stats">
             <div class="stat-tile tile"><span class="chip" style="--tint:#0A84FF"><span data-icon="file"></span></span>
               <div><div class="v num" id="statFiles">–</div><div class="k">Files</div></div></div>
@@ -170,7 +170,7 @@
         <!-- A5: physical disks and the volumes on each, so "which physical
              drive is actually filling up" has a direct answer. -->
         <div class="card glass" id="topologyCard">
-          <h2><span data-icon="hardDrive"></span>Disk Topology
+          <h2><span data-icon="hardDrive"></span>Disk topology
             <button class="pill" id="topologyRefresh" style="margin-left:auto;"
                     title="Re-read the disk layout — after plugging in a drive, for example">Refresh</button>
           </h2>
@@ -184,7 +184,7 @@
              a process, not a file — so each row offers a restart, behind the
              shared confirmation with an explicit unsaved-work warning. -->
         <div class="card glass" id="zombieCard">
-          <h2><span data-icon="activity"></span>Held-Up Space
+          <h2><span data-icon="activity"></span>Held-up space
             <button class="pill" id="zombieRefresh" style="margin-left:auto;"
                     title="Look again for space held by programs that won’t let go">Refresh</button>
           </h2>
@@ -195,7 +195,7 @@
 
       <div class="dash-col">
         <div class="card glass">
-          <h2><span data-icon="pie"></span>File Types by Size</h2>
+          <h2><span data-icon="pie"></span>File types by size</h2>
           <div class="donut-row">
             <!-- FX wiring: the wrap anchors the 64px "searching" hero to the
                  donut's own centre — the dashboard's empty-while-scanning
@@ -208,7 +208,7 @@
           </div>
         </div>
         <div class="card glass">
-          <h2><span data-icon="trendUp"></span>Largest Files
+          <h2><span data-icon="trendUp"></span>Largest files
             <!-- v4 §3.3 — the same ten files, ordered by the question people
                  actually have. Sorting, not filtering: nothing leaves the list. -->
             <div class="seg" id="bigFilesSort" role="tablist" aria-label="Sort largest files by" style="margin-left:auto;">
@@ -220,11 +220,11 @@
         </div>
         <div class="card glass">
           <!-- Each row's percentage is its size against the first row's (sixth browser pass H55). -->
-          <h2><span data-icon="folder"></span>Largest Folders<span class="h2-aside">% of the largest</span></h2>
+          <h2><span data-icon="folder"></span>Largest folders<span class="h2-aside">% of the largest</span></h2>
           <div id="bigFolders"><div class="muted">Run a scan to find your biggest folders.</div></div>
         </div>
         <div class="card glass" id="allStorageCard">
-          <h2><span data-icon="hardDrive"></span>All Storage</h2>
+          <h2><span data-icon="hardDrive"></span>All storage</h2>
           <div id="allStorageList"><div class="muted">Local disk and any connected cloud accounts appear here.</div></div>
         </div>
         <!-- QA D19: Drive Health and Cost to Keep sit here, under All Storage,
@@ -235,7 +235,7 @@
              can see which limit arrives first — space or write endurance.
              It never renders a verdict of its own. -->
         <div class="card glass" id="driveHealthCard">
-          <h2><span data-icon="gauge"></span>Drive Health</h2>
+          <h2><span data-icon="gauge"></span>Drive health</h2>
           <div id="driveHealthBody"><div class="muted">Run a scan to check this drive.</div></div>
           <div id="driveHealthWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
@@ -245,7 +245,7 @@
              visible: a stale price shown as stale is honest, shown as current
              is not. -->
         <div class="card glass" id="costCard">
-          <h2><span data-icon="cloud"></span>Cost to Keep
+          <h2><span data-icon="cloud"></span>Cost to keep
             <select id="costCurrency" aria-label="Currency" style="margin-left:auto;">
               <option value="USD">USD $</option><option value="EUR">EUR €</option>
               <option value="GBP">GBP £</option><option value="INR">INR ₹</option>
@@ -256,7 +256,7 @@
           <div id="costWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
         <div class="card glass" id="budgetCard" hidden>
-          <h2><span data-icon="gauge"></span>Folder Budgets</h2>
+          <h2><span data-icon="gauge"></span>Folder budgets</h2>
           <div id="budgetList"></div>
         </div>
       </div>

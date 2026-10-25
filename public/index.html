@@ -4164,7 +4164,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         </div>
 
         <div class="card glass">
-          <h2><span data-icon="play"></span>Scan a Folder</h2>
+          <h2><span data-icon="play"></span>Scan a folder</h2>
           <div class="scan-row">
             <div class="field">
               <span data-icon="folder"></span>
@@ -4261,7 +4261,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         </div>
 
         <div class="card glass">
-          <h2><span data-icon="activity"></span>Quick Stats</h2>
+          <h2><span data-icon="activity"></span>Quick stats</h2>
           <div class="quick-stats">
             <div class="stat-tile tile"><span class="chip" style="--tint:#0A84FF"><span data-icon="file"></span></span>
               <div><div class="v num" id="statFiles">–</div><div class="k">Files</div></div></div>
@@ -4278,7 +4278,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <!-- A5: physical disks and the volumes on each, so "which physical
              drive is actually filling up" has a direct answer. -->
         <div class="card glass" id="topologyCard">
-          <h2><span data-icon="hardDrive"></span>Disk Topology
+          <h2><span data-icon="hardDrive"></span>Disk topology
             <button class="pill" id="topologyRefresh" style="margin-left:auto;"
                     title="Re-read the disk layout — after plugging in a drive, for example">Refresh</button>
           </h2>
@@ -4292,7 +4292,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
              a process, not a file — so each row offers a restart, behind the
              shared confirmation with an explicit unsaved-work warning. -->
         <div class="card glass" id="zombieCard">
-          <h2><span data-icon="activity"></span>Held-Up Space
+          <h2><span data-icon="activity"></span>Held-up space
             <button class="pill" id="zombieRefresh" style="margin-left:auto;"
                     title="Look again for space held by programs that won’t let go">Refresh</button>
           </h2>
@@ -4303,7 +4303,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 
       <div class="dash-col">
         <div class="card glass">
-          <h2><span data-icon="pie"></span>File Types by Size</h2>
+          <h2><span data-icon="pie"></span>File types by size</h2>
           <div class="donut-row">
             <!-- FX wiring: the wrap anchors the 64px "searching" hero to the
                  donut's own centre — the dashboard's empty-while-scanning
@@ -4316,7 +4316,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           </div>
         </div>
         <div class="card glass">
-          <h2><span data-icon="trendUp"></span>Largest Files
+          <h2><span data-icon="trendUp"></span>Largest files
             <!-- v4 §3.3 — the same ten files, ordered by the question people
                  actually have. Sorting, not filtering: nothing leaves the list. -->
             <div class="seg" id="bigFilesSort" role="tablist" aria-label="Sort largest files by" style="margin-left:auto;">
@@ -4328,11 +4328,11 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         </div>
         <div class="card glass">
           <!-- Each row's percentage is its size against the first row's (sixth browser pass H55). -->
-          <h2><span data-icon="folder"></span>Largest Folders<span class="h2-aside">% of the largest</span></h2>
+          <h2><span data-icon="folder"></span>Largest folders<span class="h2-aside">% of the largest</span></h2>
           <div id="bigFolders"><div class="muted">Run a scan to find your biggest folders.</div></div>
         </div>
         <div class="card glass" id="allStorageCard">
-          <h2><span data-icon="hardDrive"></span>All Storage</h2>
+          <h2><span data-icon="hardDrive"></span>All storage</h2>
           <div id="allStorageList"><div class="muted">Local disk and any connected cloud accounts appear here.</div></div>
         </div>
         <!-- QA D19: Drive Health and Cost to Keep sit here, under All Storage,
@@ -4343,7 +4343,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
              can see which limit arrives first — space or write endurance.
              It never renders a verdict of its own. -->
         <div class="card glass" id="driveHealthCard">
-          <h2><span data-icon="gauge"></span>Drive Health</h2>
+          <h2><span data-icon="gauge"></span>Drive health</h2>
           <div id="driveHealthBody"><div class="muted">Run a scan to check this drive.</div></div>
           <div id="driveHealthWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
@@ -4353,7 +4353,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
              visible: a stale price shown as stale is honest, shown as current
              is not. -->
         <div class="card glass" id="costCard">
-          <h2><span data-icon="cloud"></span>Cost to Keep
+          <h2><span data-icon="cloud"></span>Cost to keep
             <select id="costCurrency" aria-label="Currency" style="margin-left:auto;">
               <option value="USD">USD $</option><option value="EUR">EUR €</option>
               <option value="GBP">GBP £</option><option value="INR">INR ₹</option>
@@ -4364,7 +4364,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           <div id="costWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
         <div class="card glass" id="budgetCard" hidden>
-          <h2><span data-icon="gauge"></span>Folder Budgets</h2>
+          <h2><span data-icon="gauge"></span>Folder budgets</h2>
           <div id="budgetList"></div>
         </div>
       </div>
@@ -4650,7 +4650,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
   <!-- ═══════════ Apps ═══════════ -->
   <section class="view" id="view-apps" role="tabpanel" aria-label="Apps" hidden>
     <div class="card glass">
-      <h2><span data-icon="box"></span>Storage by Application</h2>
+      <h2><span data-icon="box"></span>Storage by application</h2>
       <div class="apps-info muted" id="appsInfo"></div>
       <div class="apps-scatter" id="appsScatter" hidden>
         <div class="as-h">Size against number of files</div>
@@ -4676,7 +4676,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
   <!-- ═══════════ Fleet (D1) ═══════════ -->
   <section class="view" id="view-fleet" role="tabpanel" aria-label="Fleet" hidden>
     <div class="card glass">
-      <h2><span data-icon="globe"></span>Other Machines</h2>
+      <h2><span data-icon="globe"></span>Other machines</h2>
       <!-- loadFleet writes its working rows here as the view opens, and says
            their sentence in fleetWorking: shipped in the markup, the sentence
            stood only in their label, and a screen reader announces a live
@@ -4715,7 +4715,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
   <!-- ═══════════ Games (C7) ═══════════ -->
   <section class="view" id="view-games" role="tabpanel" aria-label="Libraries — games and media" hidden>
     <div class="card glass">
-      <h2><span data-icon="play"></span>Game Libraries</h2>
+      <h2><span data-icon="play"></span>Game libraries</h2>
       <div class="apps-info muted" id="gamesInfo"></div>
       <div id="gamesBody"><div class="muted">Run a scan to see what your game libraries hold.</div></div>
       <div id="gamesWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -4723,7 +4723,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
     <!-- v4 §8.1 — media libraries: the same pattern, opaque bundles broken
          into originals / derivatives / database, only derivatives removable -->
     <div class="card glass">
-      <h2><span data-icon="image"></span>Media Libraries</h2>
+      <h2><span data-icon="image"></span>Media libraries</h2>
       <div class="apps-info muted" id="mediaInfo"></div>
       <div id="mediaBody"><div class="muted">Run a scan to see what your photo and video libraries hold — Photos, Final Cut, iMovie, Lightroom, Capture One.</div></div>
       <div id="mediaWorking" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -4799,11 +4799,11 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
     </div>
     <div class="trends-grid" id="trendGrid">
       <div class="card glass">
-        <h2><span data-icon="trendUp"></span>Total Size Over Time</h2>
+        <h2><span data-icon="trendUp"></span>Total size over time</h2>
         <div class="trend-chart-wrap"><canvas id="trendChart" height="300" aria-label="Folder size history chart" role="img"></canvas></div>
       </div>
       <div class="card glass">
-        <h2><span data-icon="activity"></span>Since Previous Scan</h2>
+        <h2><span data-icon="activity"></span>Since previous scan</h2>
         <div id="trendNet" hidden>
           <div class="tn-h">Net change per scan</div>
           <!-- The canvas keeps a wrapper of its own: the chart kit anchors its
@@ -4822,7 +4822,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
   <!-- ═══════════ Offloaded ═══════════ -->
   <section class="view" id="view-offloaded" role="tabpanel" aria-label="Offloaded" hidden>
     <div class="card glass">
-      <h2><span data-icon="archive"></span>Offloaded Files</h2>
+      <h2><span data-icon="archive"></span>Offloaded files</h2>
       <div class="apps-info muted" id="offloadInfo"></div>
       <!-- Hidden while the summary line above is empty, i.e. while there is
            nothing to search (design pass G02, the rule in 080). -->

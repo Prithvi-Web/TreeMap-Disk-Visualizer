@@ -389,7 +389,7 @@ function buildDoc(
     },
   ];
 
-  content.push({ text: `Largest Files (top ${topFiles.length})`, style: 'h2' });
+  content.push({ text: `Largest files (top ${topFiles.length})`, style: 'h2' });
   content.push({
     table: {
       headerRows: 1,
@@ -407,7 +407,7 @@ function buildDoc(
     margin: [0, 2, 0, 14],
   });
 
-  content.push({ text: `Largest Folders (top ${topFolders.length})`, style: 'h2' });
+  content.push({ text: `Largest folders (top ${topFolders.length})`, style: 'h2' });
   content.push({
     table: {
       headerRows: 1,
@@ -425,7 +425,7 @@ function buildDoc(
     margin: [0, 2, 0, 14],
   });
 
-  content.push({ text: `File Types by Size (top ${types.length})`, style: 'h2' });
+  content.push({ text: `File types by size (top ${types.length})`, style: 'h2' });
   content.push({
     table: {
       headerRows: 1,

@@ -737,7 +737,7 @@ test('the README says what Held-Up Space sees and that an open file it cannot ch
   // /proc show a program's open files only to the account it runs as (or to root), and what the probes
   // could not decide went uncounted, so the panel said "Nothing is stuck" over files it never checked.
   const readme = read('README.md');
-  const para = lineStarting(readme, '**Held-Up Space**');
+  const para = lineStarting(readme, '**Held-up space**');
   assert.doesNotMatch(para, /counted, not guessed/, 'nothing counts the programs TreeMap cannot see');
   assert.match(para, /It sees only the programs running under your account — every program when TreeMap runs as root — and an open file it cannot check, or a program of yours whose open files it cannot read, is \*\*counted and said, never claimed\*\* either way — except on Linux under a `\/proc` mounted with `hidepid=2`, where such a program is not listed at all, so nothing counts it\./,
     'the one place no count is kept is said (BQL-a review F3.5)');
