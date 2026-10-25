@@ -48,18 +48,42 @@ test('the older scan\'s unread folder is unknown the same way, and so is a scann
     'the scanned folder itself refused: nothing is known');
 });
 
-test('a snapshot tree marks a folder its scan did not list in full, and keeps it however small', () => {
-  const root = path.join(path.sep, 'tree-root');
-  const kids: FileNode[] = Array.from({ length: 40 }, (_, i) => ({ name: `f${i}`, path: path.join(root, `f${i}`), size: 1000 + i, type: 'file', modifiedAt: 1, isHidden: false }));
-  const mail: FileNode = { name: 'Mail', path: path.join(root, 'Mail'), size: 0, type: 'dir', modifiedAt: 1, isHidden: false, children: [] };
-  const top: FileNode = { name: 'tree-root', path: root, size: kids.reduce((s, k) => s + k.size, 0), type: 'dir', modifiedAt: 1, isHidden: false, children: [...kids, mail] };
+/**
+ * How a scan spells its paths: on a Mac or Linux from `/`, and on Windows from its drive, as every real scan of a
+ * folder there is rooted (the sanitizer resolves it). The stored-tree tests below build their trees both ways, on
+ * every system, so the Windows spelling is checked on the Mac and Linux legs too: the store takes its separator
+ * from the root's own spelling (separatorOf), never from the machine. A root spelled `\tree-root`, with no drive,
+ * as `path.join(path.sep, …)` spells it on Windows, is no Windows scan's root: separatorOf reads it as a POSIX
+ * path, and no child spelled with "\" is found in the store (the Windows leg of 25 Oct 2026 failed each test
+ * here with "PackedScanStore: no node -1").
+ */
+interface Spelling { name: string; p: path.PlatformPath; root: (name: string) => string }
+const SPELLINGS: readonly Spelling[] = [
+  { name: 'spelled as a Mac or Linux scan spells it', p: path.posix, root: (name) => `/${name}` },
+  { name: 'spelled as a Windows scan spells it', p: path.win32, root: (name) => `C:\\${name}` },
+];
+
+/** The store of `top`, after the control that it joins the tree's paths with the separator they were spelled with. */
+function storeSpelled(s: Spelling, top: FileNode): ReturnType<typeof buildStoreFromTree> {
   const store = buildStoreFromTree(top);
-  store.setFlag(store.findByPath(mail.path), Flag.Unlisted, true);
-  const tree = buildSnapshotTree(store);
-  const kept = tree.c?.find((c) => c.n === 'Mail');
-  assert.ok(kept, 'kept, though it is 0 bytes and 40 larger items stand beside it');
-  assert.equal(kept?.u, 1, 'marked as not listed in full');
-  assert.equal(tree.u, undefined, 'a folder listed in full carries no mark');
+  assert.equal(store.sep, s.p.sep, `control, ${s.name}: the store joins the tree's paths with the separator they were spelled with`);
+  return store;
+}
+
+test('a snapshot tree marks a folder its scan did not list in full, and keeps it however small', () => {
+  for (const s of SPELLINGS) {
+    const root = s.root('tree-root');
+    const kids: FileNode[] = Array.from({ length: 40 }, (_, i) => ({ name: `f${i}`, path: s.p.join(root, `f${i}`), size: 1000 + i, type: 'file', modifiedAt: 1, isHidden: false }));
+    const mail: FileNode = { name: 'Mail', path: s.p.join(root, 'Mail'), size: 0, type: 'dir', modifiedAt: 1, isHidden: false, children: [] };
+    const top: FileNode = { name: 'tree-root', path: root, size: kids.reduce((t, k) => t + k.size, 0), type: 'dir', modifiedAt: 1, isHidden: false, children: [...kids, mail] };
+    const store = storeSpelled(s, top);
+    store.setFlag(store.findByPath(mail.path), Flag.Unlisted, true);
+    const tree = buildSnapshotTree(store);
+    const kept = tree.c?.find((c) => c.n === 'Mail');
+    assert.ok(kept, `${s.name}: kept, though it is 0 bytes and 40 larger items stand beside it`);
+    assert.equal(kept?.u, 1, `${s.name}: marked as not listed in full`);
+    assert.equal(tree.u, undefined, `${s.name}: a folder listed in full carries no mark`);
+  }
 });
 
 test('in a folder listed only in part, a change in what both scans list is still found, and only the rest is left out (review F1.2)', () => {
@@ -98,28 +122,32 @@ test('a folder holding what a "Don\'t scan" rule left out is listed in full for 
 });
 
 /** A root holding `flagged` small folders its scan could not list, beside one large listed folder. */
-function rootWith(flagged: number): ReturnType<typeof buildStoreFromTree> {
-  const root = path.join(path.sep, 'slot-root');
-  const unread: FileNode[] = Array.from({ length: flagged }, (_, i) => ({ name: `refused-${i}`, path: path.join(root, `refused-${i}`), size: 10 + i, type: 'dir', modifiedAt: 1, isHidden: false, children: [] }));
-  const movies: FileNode = { name: 'Movies', path: path.join(root, 'Movies'), size: 1_000_000_000_000, type: 'dir', modifiedAt: 1, isHidden: false, children: [] };
-  const top: FileNode = { name: 'slot-root', path: root, size: movies.size + unread.reduce((s, k) => s + k.size, 0), type: 'dir', modifiedAt: 1, isHidden: false, children: [...unread, movies] };
-  const store = buildStoreFromTree(top);
+function rootWith(s: Spelling, flagged: number): ReturnType<typeof buildStoreFromTree> {
+  const root = s.root('slot-root');
+  const unread: FileNode[] = Array.from({ length: flagged }, (_, i) => ({ name: `refused-${i}`, path: s.p.join(root, `refused-${i}`), size: 10 + i, type: 'dir', modifiedAt: 1, isHidden: false, children: [] }));
+  const movies: FileNode = { name: 'Movies', path: s.p.join(root, 'Movies'), size: 1_000_000_000_000, type: 'dir', modifiedAt: 1, isHidden: false, children: [] };
+  const top: FileNode = { name: 'slot-root', path: root, size: movies.size + unread.reduce((t, k) => t + k.size, 0), type: 'dir', modifiedAt: 1, isHidden: false, children: [...unread, movies] };
+  const store = storeSpelled(s, top);
   for (const k of unread) store.setFlag(store.findByPath(k.path), Flag.Unlisted, true);
   return store;
 }
 
 test('folders a scan could not list never push the largest folders out of the stored tree (review F1.14)', () => {
-  const tree = buildSnapshotTree(rootWith(35)); // more than the 30 a folder keeps
-  const names = (tree.c ?? []).map((c) => c.n);
-  assert.ok(names.includes('Movies'), `the 1 TB folder is kept: ${names.join(', ')}`);
-  assert.equal(names.filter((n) => n.startsWith('refused-')).length, 35, 'and every folder it could not list, kept beside the largest');
-  assert.equal(tree.u, undefined, 'nothing was left out that the journal would misread');
+  for (const s of SPELLINGS) {
+    const tree = buildSnapshotTree(rootWith(s, 35)); // more than the 30 a folder keeps
+    const names = (tree.c ?? []).map((c) => c.n);
+    assert.ok(names.includes('Movies'), `${s.name}: the 1 TB folder is kept: ${names.join(', ')}`);
+    assert.equal(names.filter((n) => n.startsWith('refused-')).length, 35, `${s.name}: and every folder it could not list, kept beside the largest`);
+    assert.equal(tree.u, undefined, `${s.name}: nothing was left out that the journal would misread`);
+  }
 });
 
 test('past the room kept for them, a folder that leaves one out is itself marked, so its remainder is not read as removed (review F1.5)', () => {
-  const tree = buildSnapshotTree(rootWith(70));
-  const names = (tree.c ?? []).map((c) => c.n);
-  assert.ok(names.includes('Movies'), 'the largest folder is still kept');
-  assert.equal(names.length, 60, '30 largest, and 30 more of the folders it could not list');
-  assert.equal(tree.u, 1, 'a folder it could not list was left out of the stored tree, so this one\'s own change is not known');
+  for (const s of SPELLINGS) {
+    const tree = buildSnapshotTree(rootWith(s, 70));
+    const names = (tree.c ?? []).map((c) => c.n);
+    assert.ok(names.includes('Movies'), `${s.name}: the largest folder is still kept`);
+    assert.equal(names.length, 60, `${s.name}: 30 largest, and 30 more of the folders it could not list`);
+    assert.equal(tree.u, 1, `${s.name}: a folder it could not list was left out of the stored tree, so this one's own change is not known`);
+  }
 });

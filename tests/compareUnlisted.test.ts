@@ -31,94 +31,120 @@ import { waitFor } from './fixtures/waitFor';
  * counts such folders (`unlistedFolders`), which the card and the tool say.
  */
 
-/** A complete scan of `root` holding `tree` (relative path → bytes, a trailing / for a folder). */
-function scanOf(root: string, tree: Record<string, number>, unlisted: string[] = []): ScanResult {
-  const node = (p: string, isDir: boolean, size: number): FileNode => ({ name: path.basename(p), path: p, size, type: isDir ? 'dir' : 'file', modifiedAt: 1, isHidden: false, ...(isDir ? { children: [] } : {}) });
+/**
+ * How a scan spells its paths: on a Mac or Linux from `/`, and on Windows from its drive, as every real scan of a
+ * folder there is rooted (the sanitizer resolves it). Each test below builds its trees both ways, on every system,
+ * so the Windows spelling is checked on the Mac and Linux legs too: nothing these tests call reads the separator
+ * off the machine — the store takes it from the root's own spelling (separatorOf). A root spelled `\cmp-root`,
+ * with no drive, as `path.join(path.sep, …)` spells it on Windows, is no Windows scan's root: separatorOf reads it
+ * as a POSIX path, the store joins its children with "/", and no child spelled with "\" is found in it (the
+ * Windows leg of 25 Oct 2026 failed every test here with "PackedScanStore: no node -1").
+ */
+interface Spelling { name: string; p: path.PlatformPath; root: string }
+const SPELLINGS: readonly Spelling[] = [
+  { name: 'spelled as a Mac or Linux scan spells it', p: path.posix, root: '/cmp-root' },
+  { name: 'spelled as a Windows scan spells it', p: path.win32, root: 'C:\\cmp-root' },
+];
+
+/** A complete scan of the spelling's root holding `tree` (relative path → bytes, a trailing / for a folder). */
+function scanOf(s: Spelling, tree: Record<string, number>, unlisted: string[] = []): ScanResult {
+  const { p, root } = s;
+  const node = (at: string, isDir: boolean, size: number): FileNode => ({ name: p.basename(at), path: at, size, type: isDir ? 'dir' : 'file', modifiedAt: 1, isHidden: false, ...(isDir ? { children: [] } : {}) });
   const top = node(root, true, 0);
   const byPath = new Map<string, FileNode>([[root, top]]);
   for (const [rel, size] of Object.entries(tree)) {
     const isDir = rel.endsWith('/');
-    const p = path.join(root, rel.replace(/\/$/, ''));
-    const n = node(p, isDir, isDir ? 0 : size);
-    byPath.set(p, n);
-    (byPath.get(path.dirname(p)) as FileNode).children?.push(n);
+    const at = p.join(root, rel.replace(/\/$/, ''));
+    const n = node(at, isDir, isDir ? 0 : size);
+    byPath.set(at, n);
+    (byPath.get(p.dirname(at)) as FileNode).children?.push(n);
   }
-  const sum = (n: FileNode): number => (n.type === 'dir' ? (n.size = (n.children ?? []).reduce((s, c) => s + sum(c), 0)) : n.size);
+  const sum = (n: FileNode): number => (n.type === 'dir' ? (n.size = (n.children ?? []).reduce((t, c) => t + sum(c), 0)) : n.size);
   sum(top);
   const scan = createScanRecord(root);
   scan.status = 'complete';
   scan.root = top;
   const store = buildStoreFromTree(top); // kept on the scan, so the flags set below are the ones compared
+  assert.equal(store.sep, p.sep, `control, ${s.name}: the store joins the tree's paths with the separator they were spelled with`);
   scan.store = store;
-  for (const rel of unlisted) store.setFlag(store.findByPath(path.join(root, rel)), Flag.Unlisted, true);
+  for (const rel of unlisted) store.setFlag(store.findByPath(p.join(root, rel)), Flag.Unlisted, true);
   return scan;
 }
 
-const ROOT = path.join(path.sep, 'cmp-root');
 const MAIL = { 'Mail/': 0, 'Mail/msg-0.emlx': 4000, 'Mail/msg-1.emlx': 4000, 'Mail/msg-2.emlx': 4000 };
-/** Each entry as "<path under the root, with / between names> <change>", whatever this system's separator. */
-const rows = (r: { entries: { path: string; change: string }[] }): string[] =>
-  r.entries.map((e) => `${path.relative(ROOT, e.path).split(path.sep).join('/')} ${e.change}`).sort();
+/** Each entry as "<path under the root, with / between names> <change>", whatever separator the scan spelled it with. */
+const rows = (s: Spelling, r: { entries: { path: string; change: string }[] }): string[] =>
+  r.entries.map((e) => `${s.p.relative(s.root, e.path).split(s.p.sep).join('/')} ${e.change}`).sort();
 
 test('files in a folder the newer scan could not list are not called removed, and the folder is counted', () => {
-  const a = scanOf(ROOT, { ...MAIL, 'other.txt': 1 });
-  const b = scanOf(ROOT, { 'Mail/': 0, 'other.txt': 5 }, ['Mail']);
-  const r = compareTrees(storeOf(a), storeOf(b));
-  assert.deepEqual(rows(r), ['other.txt grew'], 'only what both scans could see is compared');
-  assert.equal(r.unlistedFolders, 1, 'the folder one scan could not list is counted');
+  for (const s of SPELLINGS) {
+    const a = scanOf(s, { ...MAIL, 'other.txt': 1 });
+    const b = scanOf(s, { 'Mail/': 0, 'other.txt': 5 }, ['Mail']);
+    const r = compareTrees(storeOf(a), storeOf(b));
+    assert.deepEqual(rows(s, r), ['other.txt grew'], `${s.name}: only what both scans could see is compared`);
+    assert.equal(r.unlistedFolders, 1, `${s.name}: the folder one scan could not list is counted`);
+  }
 });
 
 test('the other way round, files in a folder the older scan could not list are not called added', () => {
-  const a = scanOf(ROOT, { 'Mail/': 0, 'other.txt': 1 }, ['Mail']);
-  const b = scanOf(ROOT, { ...MAIL, 'other.txt': 1 });
-  const r = compareTrees(storeOf(a), storeOf(b));
-  assert.deepEqual(rows(r), []);
-  assert.equal(r.unlistedFolders, 1);
+  for (const s of SPELLINGS) {
+    const a = scanOf(s, { 'Mail/': 0, 'other.txt': 1 }, ['Mail']);
+    const b = scanOf(s, { ...MAIL, 'other.txt': 1 });
+    const r = compareTrees(storeOf(a), storeOf(b));
+    assert.deepEqual(rows(s, r), [], s.name);
+    assert.equal(r.unlistedFolders, 1, s.name);
+  }
 });
 
 test('in a folder listed only in part, what both scans list is still compared', () => {
-  const a = scanOf(ROOT, MAIL);
-  const b = scanOf(ROOT, { 'Mail/': 0, 'Mail/msg-0.emlx': 9000 }, ['Mail']); // msg-1 and msg-2 left out of its listing
-  const r = compareTrees(storeOf(a), storeOf(b));
-  assert.deepEqual(rows(r), ['Mail/msg-0.emlx grew']);
-  assert.equal(r.unlistedFolders, 1);
+  for (const s of SPELLINGS) {
+    const a = scanOf(s, MAIL);
+    const b = scanOf(s, { 'Mail/': 0, 'Mail/msg-0.emlx': 9000 }, ['Mail']); // msg-1 and msg-2 left out of its listing
+    const r = compareTrees(storeOf(a), storeOf(b));
+    assert.deepEqual(rows(s, r), ['Mail/msg-0.emlx grew'], s.name);
+    assert.equal(r.unlistedFolders, 1, s.name);
+  }
 });
 
 test('two scans that listed everything compare as before, with nothing counted', () => {
-  const r = compareTrees(storeOf(scanOf(ROOT, { ...MAIL, 'other.txt': 1 })), storeOf(scanOf(ROOT, { 'Mail/': 0, 'other.txt': 1 })));
-  assert.deepEqual(rows(r), ['Mail/msg-0.emlx removed', 'Mail/msg-1.emlx removed', 'Mail/msg-2.emlx removed']);
-  assert.equal(r.unlistedFolders, 0);
+  for (const s of SPELLINGS) {
+    const r = compareTrees(storeOf(scanOf(s, { ...MAIL, 'other.txt': 1 })), storeOf(scanOf(s, { 'Mail/': 0, 'other.txt': 1 })));
+    assert.deepEqual(rows(s, r), ['Mail/msg-0.emlx removed', 'Mail/msg-1.emlx removed', 'Mail/msg-2.emlx removed'], s.name);
+    assert.equal(r.unlistedFolders, 0, s.name);
+  }
 });
 
 test('a folder that left out only what a "Don\'t scan" rule matched is compared whole, unless a read failed in it too (review F1.3)', () => {
-  // Both scans ran under the same rules: what one of them left out by rule, the other did too.
-  const ruled = (tree: Record<string, number>, alsoUnread: false | 'after' | 'before' = false): ScanResult => {
-    const scan = scanOf(ROOT, tree);
-    const store = storeOf(scan);
-    const proj = store.findByPath(path.join(ROOT, 'proj'));
-    if (alsoUnread === 'before') markUnlisted(store, proj); // a read failure already marked, then the rule
-    markLeftOutByRule(store, proj);
-    if (alsoUnread === 'after') markUnlisted(store, proj); // an entry whose stat failed, after the rule
-    return scan;
-  };
-  const before = { 'proj/': 0, 'proj/a.txt': 1000, 'proj/b.txt': 3000 };
-  const now = { 'proj/': 0, 'proj/a.txt': 1000, 'proj/c.txt': 2000 };
-  const whole = compareTrees(storeOf(ruled(before)), storeOf(ruled(now)), { sameRules: true });
-  assert.deepEqual(rows(whole), ['proj/b.txt removed', 'proj/c.txt added']);
-  assert.equal(whole.unlistedFolders, 0, 'nothing in it is unknown');
-  assert.equal(whole.ruleFolders, 0);
-  // Rules not known to be the same: what one scan's rule left out the other may have listed.
-  const unsure = compareTrees(storeOf(ruled(before)), storeOf(ruled(now)));
-  assert.deepEqual(rows(unsure), [], 'nothing is called removed or added in a folder a rule may have left it out of');
-  assert.equal(unsure.ruleFolders, 1, 'the folder is counted as one a rule left entries out of');
-  assert.equal(unsure.unlistedFolders, 0, 'and not as one a scan could not list');
-  for (const order of ['after', 'before'] as const) {
-    const unread = compareTrees(storeOf(ruled(before)), storeOf(ruled(now, order)), { sameRules: true });
-    assert.deepEqual(rows(unread), ['proj/c.txt added'], `${order}: a read failure in the newer scan leaves b.txt unknown; c.txt is new to an older listing that held all the rest`);
-    assert.equal(unread.unlistedFolders, 1);
+  for (const s of SPELLINGS) {
+    // Both scans ran under the same rules: what one of them left out by rule, the other did too.
+    const ruled = (tree: Record<string, number>, alsoUnread: false | 'after' | 'before' = false): ScanResult => {
+      const scan = scanOf(s, tree);
+      const store = storeOf(scan);
+      const proj = store.findByPath(s.p.join(s.root, 'proj'));
+      if (alsoUnread === 'before') markUnlisted(store, proj); // a read failure already marked, then the rule
+      markLeftOutByRule(store, proj);
+      if (alsoUnread === 'after') markUnlisted(store, proj); // an entry whose stat failed, after the rule
+      return scan;
+    };
+    const before = { 'proj/': 0, 'proj/a.txt': 1000, 'proj/b.txt': 3000 };
+    const now = { 'proj/': 0, 'proj/a.txt': 1000, 'proj/c.txt': 2000 };
+    const whole = compareTrees(storeOf(ruled(before)), storeOf(ruled(now)), { sameRules: true });
+    assert.deepEqual(rows(s, whole), ['proj/b.txt removed', 'proj/c.txt added'], s.name);
+    assert.equal(whole.unlistedFolders, 0, `${s.name}: nothing in it is unknown`);
+    assert.equal(whole.ruleFolders, 0, s.name);
+    // Rules not known to be the same: what one scan's rule left out the other may have listed.
+    const unsure = compareTrees(storeOf(ruled(before)), storeOf(ruled(now)));
+    assert.deepEqual(rows(s, unsure), [], `${s.name}: nothing is called removed or added in a folder a rule may have left it out of`);
+    assert.equal(unsure.ruleFolders, 1, `${s.name}: the folder is counted as one a rule left entries out of`);
+    assert.equal(unsure.unlistedFolders, 0, `${s.name}: and not as one a scan could not list`);
+    for (const order of ['after', 'before'] as const) {
+      const unread = compareTrees(storeOf(ruled(before)), storeOf(ruled(now, order)), { sameRules: true });
+      assert.deepEqual(rows(s, unread), ['proj/c.txt added'], `${s.name}, ${order}: a read failure in the newer scan leaves b.txt unknown; c.txt is new to an older listing that held all the rest`);
+      assert.equal(unread.unlistedFolders, 1, `${s.name}, ${order}`);
+    }
+    const store = storeOf(ruled(now));
+    assert.equal(store.flag(store.findByPath(s.p.join(s.root, 'proj')), Flag.Unlisted), true, `${s.name}: still never offered as empty: what the rule left out is in it`);
   }
-  const store = storeOf(ruled(now));
-  assert.equal(store.flag(store.findByPath(path.join(ROOT, 'proj')), Flag.Unlisted), true, 'still never offered as empty: what the rule left out is in it');
 });
 
 test('two real scans under a "Don\'t scan" rule: a file deleted beside the rule\'s match is removed, one made there is added (review F1.13)', async () => {
