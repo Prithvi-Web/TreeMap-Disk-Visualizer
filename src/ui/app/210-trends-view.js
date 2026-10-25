@@ -250,7 +250,11 @@ async function renderTrendDeltas() {
     if (state.trends.path !== path || state.trends.snapshots !== snaps) return;
     const up = diff.totalDelta > 0;
     // A change of "Don't scan" rules between the two is what was scanned (B24).
-    const rules = coverageRules(coverageFor(a.rootPath, a.id), coverageFor(b.rootPath, b.id));
+    const before = coverageFor(a.rootPath, a.id), after = coverageFor(b.rootPath, b.id);
+    const rules = coverageRules(before, after);
+    // The server knows the two do not record the same rules, and this browser cannot say which each ran
+    // under (leftover HE2-L1): a row in only one list may be what a rule left out or let back in.
+    const rulesUnknown = diff.sameRules === false && !(before && after);
     // No change is said as none — not "grew by 0 B" in the growth colour (QA C07).
     const total = diff.totalDelta === 0 ? 'total did not change'
       : `total ${up ? 'grew' : 'shrank'} by
@@ -261,7 +265,8 @@ async function renderTrendDeltas() {
     const days = [formatDate(a.takenAt), formatDate(b.takenAt)];
     const [from, to] = days[0] === days[1] ? cmpWhenPair(a.takenAt, b.takenAt) : days;
     const head = `<div class="muted" style="margin-bottom:10px;" >${from} → ${to} — ${total}` +
-      (rules ? ' — your “Don’t scan” rules changed between these two, so part of this is what was scanned, not what is on disk' : '') +
+      (rules ? ' — your “Don’t scan” rules changed between these two, so part of this is what was scanned, not what is on disk'
+        : rulesUnknown ? ' — these two scans are not known to have run under the same “Don’t scan” rules, so part of this may be what was scanned, not what is on disk' : '') +
       `</div>` + (diff.notCompared ? snapshotNotComparedHtml(diff.notCompared) : '');
     if (!diff.entries.length) {
       // Items it could not compare (said in `head`) may be where the total moved (review F1.15).
@@ -273,7 +278,7 @@ async function renderTrendDeltas() {
     const maxD = Math.abs(diff.entries[0].delta) || 1;
     // Keyed by root path: the same folder's next comparison rolls whatever
     // digits survived in place; a different root snaps.
-    FxNum.rollHtml(host, head + diff.entries.slice(0, 12).map(en => deltaRow(en, maxD, { rules })).join(''), state.trends.path);
+    FxNum.rollHtml(host, head + diff.entries.slice(0, 12).map(en => deltaRow(en, maxD, { rules, rulesUnknown })).join(''), state.trends.path);
     fxBarsIn(host); // the diverging bars ride the kit's width-in
   } catch (e) {
     if (state.trends.path !== path || state.trends.snapshots !== snaps) return;
@@ -300,7 +305,12 @@ function deltaRow(en, maxD, opts = {}) {
   // is called that, and offered no snapshot hunt.
   const ruled = opts.rules ? coverageExplains(en, opts.rules) : null;
   // In only one list, the other cut (review F1.4): the change is at least the amount shown.
-  const label = ruled || (en.atLeast ? (up ? 'new, or grew by at least' : 'removed, or shrank by at least')
+  // Across rules not known to be the same (leftover HE2-L1), in only one list may be a rule's doing too.
+  const maybeRuled = opts.rulesUnknown && !ruled && (en.sizeA === null || en.sizeB === null);
+  const label = ruled || (maybeRuled
+    ? (en.sizeA === null ? (en.atLeast ? 'new, scanned again, or grew by at least' : 'new, or scanned again')
+      : (en.atLeast ? 'removed, no longer scanned, or shrank by at least' : 'removed, or no longer scanned'))
+    : en.atLeast ? (up ? 'new, or grew by at least' : 'removed, or shrank by at least')
     : en.sizeA === null ? 'new' : removed ? 'removed' : up ? 'grew' : 'shrank');
   const ext = en.type === 'file' ? (en.name.split('.').pop() || '').toLowerCase() : undefined;
   // B4: only a *removed* row has anything to recover, so only it gets the

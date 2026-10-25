@@ -578,7 +578,8 @@ function listFloor(s: Snapshot): number {
  * with its whole size as the change. Left out of a cut list, though, it was no larger than that list's
  * smallest kept item (review F1.4): an item larger than that changed by at least the difference, and is
  * a row saying so (`atLeast`); one no larger is not known to have changed at all, and is counted in
- * `notCompared`.
+ * `notCompared`. Two snapshots that do not record the same "Don't scan" rules say so (`sameRules: false`,
+ * leftover HE2-L1): an item in only one list may be one a rule left out or let back in.
  */
 export function diffSnapshots(a: Snapshot, b: Snapshot): SnapshotDiff {
   const inB = new Map(b.topEntries.map((e) => [e.path, e]));
@@ -613,5 +614,6 @@ export function diffSnapshots(a: Snapshot, b: Snapshot): SnapshotDiff {
     totalDelta: b.totalSize - a.totalSize,
     entries,
     ...(notCompared > 0 ? { notCompared } : {}),
+    ...(a.ignoreRules !== b.ignoreRules ? { sameRules: false as const } : {}),
   };
 }

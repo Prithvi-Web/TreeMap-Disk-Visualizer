@@ -762,6 +762,13 @@ export interface SnapshotDiff {
    * or went or came — and is not compared, never called removed or new.
    */
   notCompared?: number;
+  /**
+   * Present (false) when the two snapshots do not record the same "Don't scan" rules (`ignoreRules`;
+   * leftover HE2-L1): they changed between the scans, or one, saved by an earlier build, records none.
+   * An item in only one list may then be one a rule left out of a scan or let back in, not removed or
+   * new. Two that record none compare as before.
+   */
+  sameRules?: false;
 }
 
 /* ---------- Scan comparison ---------- */

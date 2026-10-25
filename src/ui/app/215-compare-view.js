@@ -200,7 +200,7 @@ $('cmpRunBtn').addEventListener('click', async () => {
       if (state.compare.result !== pair) return;
       fxHuntBeamSync('cmpBody', false);
       // §7.4 — a same-root snapshot pair also gets the split-slider maps.
-      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: false, notCompared: diff.notCompared || 0, deep: false, whenA: diff.a.takenAt, whenB: diff.b.takenAt, splitRoot: a.rootPath, rules });
+      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: false, notCompared: diff.notCompared || 0, deep: false, whenA: diff.a.takenAt, whenB: diff.b.takenAt, splitRoot: a.rootPath, rulesUnknown: diff.sameRules === false && !(cmpCoverage(a) && cmpCoverage(b)), rules });
     }
   } catch (e) {
     if (state.compare.result !== pair) return;
@@ -338,8 +338,11 @@ function renderCompare(r) {
   let ruled = 0;
   // Known only to have changed by at least their amount (review F1.4): neither added nor removed.
   let bounded = 0;
+  // In only one of two snapshots not known to share their rules (leftover HE2-L1): perhaps a rule's doing.
+  let unsure = 0;
   for (const en of r.entries) {
     if (coverageExplains(en, r.rules || null)) { ruled++; continue; }
+    if (r.rulesUnknown && (en.sizeA === null || en.sizeB === null)) { unsure++; continue; }
     if (en.atLeast) { bounded++; continue; }
     counts[en.sizeA === null ? 'added' : en.sizeB === null ? 'removed' : en.delta > 0 ? 'grew' : 'shrank']++;
   }
@@ -378,14 +381,16 @@ function renderCompare(r) {
       <div class="muted num" style="margin-bottom:12px;">${total}
         &nbsp;·&nbsp; ${countsLead}<span class="cmp-ct" data-n="${counts.added}">${counts.added}</span> added · <span class="cmp-ct" data-n="${counts.removed}">${counts.removed}</span> removed · <span class="cmp-ct" data-n="${counts.grew}">${counts.grew}</span> grew · <span class="cmp-ct" data-n="${counts.shrank}">${counts.shrank}</span> shrank${
         ruled ? ` · ${ruled} changed by your “Don’t scan” rules` : ''}${
-        bounded ? ` · ${formatCount(bounded)} in only one scan’s list of the largest 100, each changed by at least what is shown` : ''}${listedNote}</div>
+        bounded ? ` · ${formatCount(bounded)} in only one scan’s list of the largest 100, each changed by at least what is shown` : ''}${
+        unsure ? ` · ${formatCount(unsure)} in only one of these scans: removed or new, or left out or let back in by a “Don’t scan” rule` : ''}${listedNote}</div>
       ${r.rules ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} Your “Don’t scan” rules changed between these two scans, so part of this difference is what was scanned, not what is on disk.</div>` : ''}
+      ${r.rulesUnknown ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} These two scans are not known to have run under the same “Don’t scan” rules, so part of this difference may be what was scanned, not what is on disk.</div>` : ''}
       ${r.notCompared ? snapshotNotComparedHtml(r.notCompared) : ''}
       ${r.unlistedFolders ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} ${formatCount(r.unlistedFolders)} folder${r.unlistedFolders === 1 ? '' : 's'} one of these scans could not list in full (refused, unreadable, not entered, or holding an entry it could not look at), so what only one scan listed in ${r.unlistedFolders === 1 ? 'it' : 'them'} is not compared — not called removed or added.</div>` : ''}
       ${r.ruleFolders ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} ${formatCount(r.ruleFolders)} folder${r.ruleFolders === 1 ? '' : 's'} a “Don’t scan” rule left entries out of, under rules that are not the same for both scans, so what only one scan listed in ${r.ruleFolders === 1 ? 'it' : 'them'} is not compared — not called removed or added.</div>` : ''}
       ${r.entries.length ? '<div id="cmpCounts"></div>' : ''}
       ${r.entries.length
-        ? r.entries.slice(0, shown).map(en => deltaRow(en, maxD, { offerSnapshots: true, rules: r.rules || null })).join('')
+        ? r.entries.slice(0, shown).map(en => deltaRow(en, maxD, { offerSnapshots: true, rules: r.rules || null, rulesUnknown: !!r.rulesUnknown })).join('')
         // What it could not compare is said just above: then only what both scans list is known not to
         // differ, and "nothing changed" beside a total that moved was untrue (review F1.1).
         : r.notCompared || r.unlistedFolders || r.ruleFolders

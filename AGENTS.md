@@ -475,7 +475,12 @@ OpenAPI 3 spec).
      scans ran under the same "Don't scan" rules — then both left out the
      same; when they did not, what one scan's rule left out the other may
      have listed, so what only one scan listed there is not compared either,
-     and `ruleFolders` counts such folders. The forecast (and MCP `forecast`)
+     and `ruleFolders` counts such folders. `GET /api/snapshots/compare`
+     (Trends, and Compare for two snapshots) adds `sameRules: false` when
+     the two do not record the same "Don't scan" rules — they changed, or
+     one an earlier build saved records none: a top-level item in only one
+     list may then be one a rule left out or let back in, not removed or
+     new. The forecast (and MCP `forecast`)
      fits only the scans since the drives mounted inside the folder that a
      scan stopped at, or its "Don't scan" rules, last changed: a rule added
      or dropped changes what a scan counts, not what is on disk. A snapshot

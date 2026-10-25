@@ -182,6 +182,78 @@ test('the Compare button reads both picks\u2019 rules and hands them to the rend
   assert.equal((handler.match(/renderCompare\(\{[^}]*, rules \}\)/g) ?? []).length, 2, 'both the live-scan and the snapshot render get them');
 });
 
+/* ── a server that knows the rules differ, and a browser with no record of them (leftover HE2-L1) ── */
+
+const PLAIN_ROW_DEPS = { chipFor: () => '', escapeHtml: (s: unknown) => String(s), formatBytes: (n: number) => `${n} B` };
+const WIDE_GONE_AT_LEAST = { ...WIDE_GONE, delta: -1_000, atLeast: true };
+const WIDE_BACK_AT_LEAST = { ...WIDE_BACK, delta: 1_000, atLeast: true };
+const GREW = { name: 'docs', path: '/c/docs', type: 'dir', sizeA: 10, sizeB: 30, delta: 20 };
+
+test('a row in only one list, where the two snapshots do not record the same rules and this browser cannot say which, is never plainly removed or new (leftover HE2-L1)', () => {
+  const row = load<(en: unknown) => string>(['deltaRow'], { ...base(browserWith([])), ...PLAIN_ROW_DEPS }, '(en) => deltaRow(en, 5000000, { offerSnapshots: true, rulesUnknown: true })');
+  assert.match(row(WIDE_GONE), /· removed, or no longer scanned</, row(WIDE_GONE));
+  assert.match(row(WIDE_BACK), /· new, or scanned again</, row(WIDE_BACK));
+  assert.match(row(WIDE_GONE_AT_LEAST), /· removed, no longer scanned, or shrank by at least</);
+  assert.match(row(WIDE_BACK_AT_LEAST), /· new, scanned again, or grew by at least</);
+  assert.match(row(GREW), /· grew</, 'a row in both lists is compared as before');
+  assert.match(row(WIDE_GONE), /data-snap-check/, 'it may have been removed: the way to look for it stays');
+});
+
+test('Trends’ last-change list says when the two snapshots are not known to share their rules, and calls no row plainly removed; this browser’s record of the same rules still decides (leftover HE2-L1)', async () => {
+  const draw = async (ls: unknown, diff: Record<string, unknown>): Promise<string> => {
+    const host = { innerHTML: '' };
+    const render = load<() => Promise<void>>(['renderTrendDeltas', 'deltaRow'], {
+      ...base(ls),
+      state: { system: SYSTEM, trends: { snapshots: SNAPS.slice(0, 2), path: '/c' } },
+      $: () => host,
+      api: async () => diff,
+      formatDate: (t: number) => `d${t}`, formatBytes: (n: number) => `${n} B`, escapeHtml: (s: unknown) => String(s), chipFor: () => '',
+      FxNum: { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } }, fxBarsIn: () => {},
+    }, 'renderTrendDeltas');
+    await render();
+    return host.innerHTML;
+  };
+  const unknown = await draw(browserWith([]), { totalDelta: -5_000_000, entries: [WIDE_GONE], sameRules: false });
+  assert.match(unknown, /· removed, or no longer scanned</, unknown);
+  assert.match(unknown, / — these two scans are not known to have run under the same “Don’t scan” rules, so part of this may be what was scanned, not what is on disk/, 'the head says why');
+  const known = await draw(browserWith([{ snap: 's1', patterns: ['Wide folder'] }, { snap: 's2', patterns: ['Wide folder'] }]), { totalDelta: -5_000_000, entries: [WIDE_GONE], sameRules: false });
+  assert.match(known, /· removed</, 'this browser saw both scans run under the same rules: a missing folder is removed');
+  assert.doesNotMatch(known, /not known to have run/);
+  const same = await draw(browserWith([]), { totalDelta: -5_000_000, entries: [WIDE_GONE] });
+  assert.match(same, /· removed</, 'the server says nothing of the rules: as before');
+});
+
+test('Compare says when two snapshots are not known to share their rules: rows in only one list are counted apart from added and removed, and the cause is stated (leftover HE2-L1)', () => {
+  const els: Record<string, { innerHTML: string; querySelector: () => null; querySelectorAll: () => unknown[] }> = {};
+  const $ = (id: string) => (els[id] ??= { innerHTML: '', querySelector: () => null, querySelectorAll: () => [] });
+  const render = load<(r: unknown) => void>(['renderCompare', 'cmpWhenPair', 'cmpCountsDrop', 'deltaRow'], {
+    ...base(browserWith([])), $,
+    formatWhen: (t: number) => `t${t}`, formatWhenSeconds: (t: number) => `t${t}s`, formatBytes: (n: number) => `${n} B`, formatCount: String, icon: () => '',
+    escapeHtml: (s: unknown) => String(s), chipFor: () => '', countUp: () => {}, fxBarsIn: () => {},
+    FxCharts: { barSquares: () => ({ destroy() {} }) }, initCmpSplit: () => {}, wireSnapshotActions: () => {},
+  }, 'renderCompare', 'let cmpSplit = null; let cmpCountsHandle = null;');
+  render({ entries: [WIDE_GONE, WIDE_BACK_AT_LEAST, GREW], totalDelta: -4_999_000, truncated: false, deep: false, whenA: 1, whenB: 2, rules: null, rulesUnknown: true });
+  const html = els.cmpBody!.innerHTML;
+  assert.match(html, /data-n="0">0<\/span> added · <span class="cmp-ct" data-n="0">0<\/span> removed · <span class="cmp-ct" data-n="1">1<\/span> grew/, `none is counted as added or removed: ${html}`);
+  assert.match(html, / · 2 in only one of these scans: removed or new, or left out or let back in by a “Don’t scan” rule/, 'they are counted as what is known of them');
+  assert.match(html, /These two scans are not known to have run under the same “Don’t scan” rules, so part of this difference may be what was scanned, not what is on disk\./, 'and the cause is stated');
+  assert.match(html, /· removed, or no longer scanned</, 'the row says it too');
+  render({ entries: [WIDE_GONE], totalDelta: -5_000_000, truncated: false, deep: false, whenA: 1, whenB: 2, rules: null });
+  assert.match(els.cmpBody!.innerHTML, /data-n="1">1<\/span> removed/, 'control: without the flag a missing folder is removed');
+  assert.doesNotMatch(els.cmpBody!.innerHTML, /not known to have run/);
+});
+
+test('the Compare button hands a snapshot pair’s "not known to share rules" to the render only where this browser has no record of either pick’s rules (leftover HE2-L1)', () => {
+  const start = INDEX.indexOf("$('cmpRunBtn').addEventListener('click'");
+  const handler = INDEX.slice(start, INDEX.indexOf('/* ── §7.4', start));
+  assert.match(handler, /rulesUnknown: diff\.sameRules === false && !\(cmpCoverage\(a\) && cmpCoverage\(b\)\), rules \}\)/, 'the snapshot render reads the server\'s word and this browser\'s record');
+});
+
+test('AGENTS.md says GET /api/snapshots/compare answers sameRules: false across a change of "Don\'t scan" rules (leftover HE2-L1)', () => {
+  const agents = readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(agents.includes('`GET /api/snapshots/compare` (Trends, and Compare for two snapshots) adds `sameRules: false` when the two do not record the same "Don\'t scan" rules'), 'the rule is stated');
+});
+
 /* ── Trends ── */
 
 const SNAPS = ['s1', 's2', 's3', 's4', 's5'].map((id, i) => ({ id, rootPath: '/c', takenAt: (i + 1) * 100, totalSize: [100, 95, 100, 110, 130][i] }));

@@ -9,7 +9,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileTempDir } from './fixtures/dataDir';
 import { FileNode, ScanResult, SnapshotTreeNode } from '../src/models/types';
-import { buildSnapshotTree, inflateSnapshotTree, closestSnapshot, prevSizeLookup, saveSnapshot } from '../src/services/snapshots';
+import { buildSnapshotTree, inflateSnapshotTree, closestSnapshot, listSnapshots, prevSizeLookup, saveSnapshot } from '../src/services/snapshots';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { getScan, startScan } from '../src/services/diskScanner';
@@ -221,6 +221,54 @@ test('the time slider draws no folder above one the previous scan was refused an
   assert.equal(prevOfNode(path.join(root, 'y')), 10, 'and y');
   assert.equal('prevSize' in layout.tree, false, 'the scanned folder itself is not drawn as grown either');
 });
+
+test('GET /api/snapshots/compare says when the two snapshots do not record the same "Don\'t scan" rules, so a top-level item in only one list is not read as removed or new (leftover HE2-L1)', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-snapshotTrees-compare-rules-'));
+  const nm = path.join(root, 'node_modules');
+  const scanOf = (withNm: boolean, when: number, rules: string | undefined): ScanResult => ({
+    scanId: `compare-rules-${when}`, rootPath: root, status: 'complete', scanned: 0, fileCount: 2, dirCount: 2, currentPath: '',
+    root: dir(root, path.basename(root), [file(path.join(root, 'a.txt'), 'a.txt', 100), ...(withNm ? [dir(nm, 'node_modules', [file(path.join(nm, 'x.js'), 'x.js', 9000)])] : [])]),
+    startedAt: when, finishedAt: when, createdAt: when, cancelled: false, ...(rules === undefined ? {} : { ignoreRules: rules }),
+  }) as unknown as ScanResult;
+  await saveSnapshot(scanOf(true, 1_000_000, undefined)); // an earlier build's: records no rules
+  await saveSnapshot(scanOf(true, 2_000_000, JSON.stringify([])));
+  await saveSnapshot(scanOf(false, 3_000_000, JSON.stringify(['node_modules']))); // the owner added the rule
+  await saveSnapshot(scanOf(false, 4_000_000, JSON.stringify(['node_modules'])));
+  const [old, none, ruled, again] = (await listSnapshots(root)).sort((x, y) => x.takenAt - y.takenAt);
+  const compare = async (a: { id: string }, b: { id: string }): Promise<{ status: number; body: any }> => apiGet(`/api/snapshots/compare?a=${a.id}&b=${b.id}`);
+  const across = await compare(none, ruled);
+  assert.equal(across.status, 200, JSON.stringify(across.body));
+  assert.equal(across.body.sameRules, false, 'the rules changed between the two');
+  assert.deepEqual(across.body.entries.map((e: { name: string; sizeB: number | null }) => [e.name, e.sizeB]), [['node_modules', null]], 'the row is still there, with what each list holds');
+  const mixed = await compare(old, none);
+  assert.equal(mixed.body.sameRules, false, 'one records no rules: not known to be the same');
+  const within = await compare(ruled, again);
+  assert.equal('sameRules' in within.body, false, 'the same rules: the answer is as it was');
+  const bothOld = await compare(old, old);
+  assert.equal('sameRules' in bothOld.body, false, 'two that record none compare as before');
+  const openapi = fs.readFileSync(path.join(__dirname, '..', 'src', 'api', 'openapi.ts'), 'utf8');
+  assert.ok(openapi.includes('sameRules: false when the two do not record the same “Don’t scan” rules (ignoreRules on GET /api/snapshots; one an earlier build saved records none, and two such compare as before): then an item in only one list may be one a rule left out of a scan or let back in, not removed or new'), 'the OpenAPI document says so');
+});
+
+/** GET `url` from a fresh server; the body parsed. */
+async function apiGet(url: string): Promise<{ status: number; body: any }> {
+  resetRateLimiter();
+  const server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const port = (server.address() as { port: number }).port;
+    return await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port, path: url }, (res) => {
+        let buf = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: string) => { buf += c; });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: JSON.parse(buf) }));
+      }).on('error', reject);
+    });
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+}
 
 test('what the overlay\'s prevSize means is stated with every reason it can be absent, and null only where the folder holding it listed every child (review F1.3)', () => {
   const openapi = fs.readFileSync(path.join(__dirname, '..', 'src', 'api', 'openapi.ts'), 'utf8');
