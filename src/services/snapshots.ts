@@ -235,7 +235,9 @@ const NARROWEST_PER_DIR = Math.min(...TREE_SHAPES.map((shape) => shape.perDir));
  * its size where the tree stored it; null where it was not there — the nearest folder above it that the
  * tree stored listed every child with bytes; undefined where that is not known, because that folder's
  * list was cut to its largest children, it sat at the depth limit with none stored, or its scan could not
- * list it in full (`u`, as hunt C47 reads it for the journal). A tree an earlier
+ * list it in full (`u`, as hunt C47 reads it for the journal). A folder its scan could not list in full
+ * has no known size of its own either (review F1.2): the 0 stored for a refused one is not what it held,
+ * and read as its size it drew the folder as grown by all of it once listed. A tree an earlier
  * build stored carries no marks (`m`): there a folder that kept as many children as the narrowest shape
  * keeps is read as cut. An item that only fell past the cut is never drawn as new.
  */
@@ -245,8 +247,11 @@ export function prevSizeLookup(prev: SnapshotTreeNode, rootPath: string): (p: st
   const marked = prev.m === 1;
   const sizes = new Map<string, number>();
   const cut = new Set<string>();
+  /** Folders the previous scan could not list in full: their own size is not known either (review F1.2). */
+  const unlisted = new Set<string>();
   const walk = (t: SnapshotTreeNode, p: string): void => {
     sizes.set(p, t.s);
+    if (t.t === 1 && t.u === 1) unlisted.add(p);
     if (t.t === 1) {
       const atDepthLimit = t.c === undefined && t.s > 0;
       if (atDepthLimit || t.u === 1 || (marked ? t.k === 1 : (t.c?.length ?? 0) >= NARROWEST_PER_DIR)) cut.add(p);
@@ -256,7 +261,7 @@ export function prevSizeLookup(prev: SnapshotTreeNode, rootPath: string): (p: st
   walk(prev, rootPath);
   return (p) => {
     const size = sizes.get(p);
-    if (size !== undefined) return size;
+    if (size !== undefined) return unlisted.has(p) ? undefined : size;
     if (p === rootPath || !p.startsWith(rootPath)) return undefined;
     // The folders from the root down to the one holding `p`; the deepest the tree stored decides.
     const names = p.slice(rootPath.length).split(sep).filter(Boolean);

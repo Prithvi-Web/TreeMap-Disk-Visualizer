@@ -138,8 +138,15 @@ test('a folder the previous scan could not list in full is read as not known, ne
   const prev: SnapshotTreeNode = { n: 'data', s: 10, t: 1, m: 1, c: [{ n: 'Mail', s: 0, t: 1, u: 1 }, { n: 'docs', s: 10, t: 1, c: [{ n: 'a', s: 10 }] }, { n: 'empty', s: 0, t: 1 }] };
   const prevOf = prevSizeLookup(prev, '/data');
   assert.equal(prevOf('/data/Mail/msg.emlx'), undefined, 'what a refused folder held is not known');
+  assert.equal(prevOf('/data/Mail'), undefined, 'nor its own size: the 0 stored for it is not what it held (review F1.2)');
+  assert.equal(prevOf('/data/docs'), 10, 'a folder listed in full has its size');
   assert.equal(prevOf('/data/docs/b'), null, 'a folder listed in full held only what it lists');
   assert.equal(prevOf('/data/empty/new'), null, 'nor did an empty folder hold anything');
+});
+
+test('what the overlay\'s prevSize means is stated with every reason it can be absent, and null only where the folder holding it listed every child (review F1.3)', () => {
+  const openapi = fs.readFileSync(path.join(__dirname, '..', 'src', 'api', 'openapi.ts'), 'utf8');
+  assert.ok(openapi.includes("prevSize: nullable(int('Historical layouts only: size in the previous snapshot; null = did not exist (the folder holding it in the previous snapshot listed every child with bytes, apart from what the same “Don’t scan” rules left out of both scans); absent when that is not known — the previous snapshot kept only its largest children there, or none at its depth limit, or could not list it, or the folder holding it, in full (refused, unreadable, not entered, or holding an entry it could not look at)')),"), 'the OpenAPI prevSize names the third cause');
 });
 
 test('a tree an earlier build stored, with no marks, is read as cut wherever it kept as many children as the narrowest shape keeps (leftover HE-L4)', () => {
