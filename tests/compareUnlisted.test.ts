@@ -10,7 +10,7 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { compareTrees, createScanRecord, getScan, peekScan, sameIgnoreRules, startScan, unlistedFoldersNote } from '../src/services/diskScanner';
+import { compareTrees, createScanRecord, getScan, peekScan, ruleFoldersNote, sameIgnoreRules, startScan, unlistedFoldersNote } from '../src/services/diskScanner';
 import { buildStoreFromTree, Flag, storeOf } from '../src/services/scanStore';
 import { markLeftOutByRule, markUnlisted } from '../src/services/scanRefusals';
 import { updateSettings } from '../src/services/settings';
@@ -258,4 +258,15 @@ test('what a comparison says of folders a scan could not list names the causes t
   for (const [where, text] of [['the note', unlistedFoldersNote(1) ?? ''], ['the tool', tool], ['the OpenAPI document', openapi]] as const) {
     assert.doesNotMatch(text, /or with entries left out\)/, `${where} never counts a rule-only folder as one a scan could not list`);
   }
+});
+
+test('what a comparison says of folders a "Don\'t scan" rule left entries out of is pinned where agents read it: the MCP note in both numbers, the tool description and the OpenAPI document (review F1.7)', async () => {
+  assert.equal(ruleFoldersNote(0), null);
+  assert.equal(ruleFoldersNote(1), '1 folder a "Don\'t scan" rule left entries out of, under rules that are not the same for both scans, so what only one scan listed in it is not compared — neither removed nor added.');
+  assert.equal(ruleFoldersNote(2), '2 folders a "Don\'t scan" rule left entries out of, under rules that are not the same for both scans, so what only one scan listed in them is not compared — neither removed nor added.');
+  const { tools } = await client.listTools();
+  const description = tools.find((t) => t.name === 'compare_scans')?.description ?? '';
+  assert.ok(description.includes('So is what only one scan listed in a folder a "Don\'t scan" rule left entries out of, when the two scans did not run under the same rules (under the same rules both left out the same, and the folder is compared whole); ruleFolders and ruleNote say how many.'), `the compare_scans description: ${description}`);
+  const openapi = readFileSync(path.join(__dirname, '..', 'src', 'api', 'openapi.ts'), 'utf8');
+  assert.ok(openapi.includes("ruleFolders: int('Present when a “Don’t scan” rule left entries out of a folder and the two scans did not run under the same “Don’t scan” rules, and that left something out: how many such folders. What one scan’s rule left out the other may have listed, so what only one scan listed in them is not compared — never called removed or added. Under the same rules such a folder is compared whole: both scans left out the same'),"), 'the OpenAPI ruleFolders');
 });
