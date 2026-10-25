@@ -44,6 +44,8 @@ const SRC = path.join(__dirname, '..', 'src');
  * mid-flight. Each entry is a claim, and the reason is the argument for it.
  */
 const NOT_A_RACE: Record<string, string> = {
+  'services/storage.ts::next.then':
+    'preserveCorrupt\'s own queue bookkeeping: it removes the queue\'s map entry once that store\'s copy-aside settles; the copy itself is the promise returned to, and awaited by, the caller, and this writes no stored state',
   'mcp/index.ts::shutdownOnce':
     'the MCP process ending on a signal or on its client closing stdin (hunt C58): it waits, bounded, for a cancelled offload and a trash_paths call, then exits — no request owns it and nothing reads state after it',
   'middleware/idempotency.ts::admit':
