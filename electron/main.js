@@ -47,6 +47,8 @@ const { formatBytes } = require(path.join(__dirname, '..', 'dist', 'utils', 'for
 const { appDataDir } = require(path.join(__dirname, '..', 'dist', 'services', 'storage.js'));
 const { isEphemeral } = require(path.join(__dirname, '..', 'dist', 'services', 'portableMode.js'));
 const { allScans } = require(path.join(__dirname, '..', 'dist', 'services', 'diskScanner.js'));
+const { anyOffloadJobRunning } = require(path.join(__dirname, '..', 'dist', 'services', 'offload.js'));
+const { shutdownWhenSettled, SHUTDOWN_GRACE_MS } = require(path.join(__dirname, '..', 'dist', 'mcp', 'shutdown.js'));
 const { pauseScan, resumeScan, isScanPaused } = require(path.join(__dirname, '..', 'dist', 'services', 'engineBudget.js'));
 const desktop = require('./lib/desktop');
 const guards = require('./lib/guards');
@@ -849,8 +851,30 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform === 'linux' || !tray) app.quit();
   });
 
-  app.on('before-quit', () => {
+  // Quitting while an offload copies (CL-2, the desktop half of hunt C58): the quit is held once,
+  // the server told to stop — which cancels the offload — and TreeMap quits when the offload has
+  // rolled back and saved its record, or after the same bounded wait the MCP server's shutdown
+  // uses. With no offload running it quits at once, as it always did.
+  let quitWhenSettled = null;
+  let quitSettled = false;
+  app.on('before-quit', (event) => {
     for (const t of [trayTimer, updateTimer, firstUpdateCheck, pumpTimer]) if (t) clearTimeout(t);
-    if (running) running.shutdown();
+    if (!running || quitSettled) return;
+    if (!quitWhenSettled && !anyOffloadJobRunning()) {
+      running.shutdown();
+      return;
+    }
+    event.preventDefault();
+    if (quitWhenSettled) return;
+    const server = running;
+    quitWhenSettled = shutdownWhenSettled({
+      cancel: () => server.shutdown(),
+      busy: () => anyOffloadJobRunning(),
+      exit: () => {
+        quitSettled = true;
+        app.quit();
+      },
+      log: () => console.error(`[treemap] quitting after ${SHUTDOWN_GRACE_MS / 1000} s with an offload still rolling back`),
+    });
   });
 }

@@ -1162,6 +1162,56 @@ test('main: the tray uses the template glyph on macOS and the colour glyph elsew
   } finally { h.dispose(); }
 });
 
+/** A before-quit event as Electron hands it: preventDefault keeps the app running. */
+function quitEvent(): { defaultPrevented: boolean; preventDefault(): void } {
+  return { defaultPrevented: false, preventDefault(): void { this.defaultPrevented = true; } };
+}
+
+test('main: Quit with no offload running quits at once; with one running it waits, bounded, for its rollback (CL-2)', async () => {
+  const dir = mkTmp();
+  let h = await loadMain({ dataDir: dir });
+  try {
+    const ev = quitEvent();
+    h.stub.app.emit('before-quit', ev);
+    assert.equal(ev.defaultPrevented, false, 'nothing to wait for: the quit goes on as it always did');
+    assert.equal(h.stub.backend.shutdowns, 1, 'the server is told to stop');
+    assert.equal(h.stub.backend.clock.sleeps, 0, 'and nothing waits');
+  } finally { h.dispose(); }
+
+  h = await loadMain({ dataDir: dir });
+  try {
+    h.stub.backend.offloadRunning = true;
+    const ev = quitEvent();
+    h.stub.app.emit('before-quit', ev);
+    assert.equal(ev.defaultPrevented, true, 'an offload is copying: the quit is held so its rollback can run and its record be saved');
+    assert.equal(h.stub.backend.shutdowns, 1, 'the server is told to stop, which cancels the offload');
+    await h.settle();
+    assert.equal(h.stub.app.quitCalls, 0, 'still rolling back: not quit yet');
+    const again = quitEvent();
+    h.stub.app.emit('before-quit', again);
+    assert.equal(again.defaultPrevented, true, 'a second Quit while it rolls back is held too');
+    h.stub.backend.offloadRunning = false;
+    await h.settle();
+    assert.equal(h.stub.app.quitCalls, 1, 'the rollback settled: TreeMap quits, once');
+    const last = quitEvent();
+    h.stub.app.emit('before-quit', last);
+    assert.equal(last.defaultPrevented, false, 'the quit it asked for goes through');
+  } finally { h.dispose(); }
+
+  h = await loadMain({ dataDir: dir });
+  const said: string[] = [];
+  const realError = console.error;
+  console.error = (...a: unknown[]): void => { said.push(a.map(String).join(' ')); };
+  try {
+    h.stub.backend.offloadRunning = true;
+    h.stub.app.emit('before-quit', quitEvent());
+    for (let i = 0; i < 2000 && h.stub.app.quitCalls === 0; i++) await h.settle();
+    assert.equal(h.stub.app.quitCalls, 1, 'an offload that never settles cannot keep TreeMap from quitting');
+    assert.ok(h.stub.backend.clock.t >= 60_000, `it waited out the grace first (clock at ${h.stub.backend.clock.t} ms)`);
+    assert.deepEqual(said, ['[treemap] quitting after 60 s with an offload still rolling back'], 'and says why, as the desktop shell');
+  } finally { console.error = realError; h.dispose(); }
+});
+
 test('main: a growth alert arrives under the folder-and-number headline', async () => {
   const dir = mkTmp();
   const h = await loadMain({ dataDir: dir });

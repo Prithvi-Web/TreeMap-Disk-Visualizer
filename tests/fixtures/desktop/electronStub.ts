@@ -14,6 +14,7 @@ import { EventEmitter } from 'node:events';
 import Module from 'node:module';
 import path from 'node:path';
 import { formatBytes } from '../../../src/utils/formatBytes';
+import * as realShutdown from '../../../src/mcp/shutdown';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface Display { id: number; bounds: Rect; workArea: Rect; scaleFactor?: number }
@@ -293,6 +294,10 @@ export function makeStub(opts: StubOptions) {
     unpausable: new Set<string>(),
     paused: [] as string[],
     resumed: [] as string[],
+    /** Whether an offload is still running (a cancelled one until it has rolled back): what Quit waits on (CL-2). */
+    offloadRunning: false,
+    /** The clock the real bounded wait (src/mcp/shutdown.ts) runs on here: each poll's sleep moves it on, counted. */
+    clock: { t: 0, sleeps: 0 },
   };
   const dist: Record<string, unknown> = {
     'dist/server.js': {
@@ -307,6 +312,21 @@ export function makeStub(opts: StubOptions) {
     'dist/services/storage.js': { appDataDir: () => opts.dataDir },
     'dist/services/portableMode.js': { isEphemeral: () => !!opts.ephemeral },
     'dist/services/diskScanner.js': { allScans: () => backend.scans },
+    'dist/services/offload.js': { anyOffloadJobRunning: (): boolean => backend.offloadRunning },
+    // The real bounded wait, on the stand-in clock: each poll yields once and moves the clock on by its sleep.
+    // main.js's own log is kept, so a test hears what the shell says when it gives up waiting.
+    'dist/mcp/shutdown.js': {
+      SHUTDOWN_GRACE_MS: realShutdown.SHUTDOWN_GRACE_MS,
+      shutdownWhenSettled: (steps: realShutdown.ShutdownSteps): Promise<void> => realShutdown.shutdownWhenSettled({
+        ...steps,
+        now: () => backend.clock.t,
+        sleep: async (ms: number) => {
+          backend.clock.t += ms;
+          backend.clock.sleeps++;
+          await new Promise((r) => setImmediate(r));
+        },
+      }),
+    },
     'dist/services/engineBudget.js': {
       isScanPaused: (id: string): boolean => backend.pausedIds.has(id),
       pauseScan: (scan: { scanId: string }) => {
