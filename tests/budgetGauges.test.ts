@@ -311,6 +311,31 @@ test('gauges wire history, actuals and projection together', async () => {
   assert.ok(g.projection.breachAtMs! > 0);
 });
 
+test('a gauge counts the scans its rate was fitted over apart from every point of its history: an update starts the run again (HE3 review F1.2)', async () => {
+  const bp = '/Users/t/Projects/updated';
+  // Four scans an earlier build saved (no rules recorded), then six since the update, a GB a day.
+  writeSnapshots([
+    ...Array.from({ length: 4 }, (_, i) => snap(bp, `old-${i}`, 12 - i, 80 * GB)),
+    ...Array.from({ length: 6 }, (_, i) => ({ ...snap(bp, `new-${i}`, 5 - i, (95 + i) * GB), ignoreRules: '[]' })),
+  ]);
+  const [g] = await budgetGauges([{ path: bp, maxBytes: 105 * GB }], () => 100 * GB);
+  assert.equal(g.projection.status, 'ok', JSON.stringify(g.projection));
+  assert.equal(g.projection.seriesPoints, 10, 'every point of the history');
+  assert.equal(g.projection.fitPoints, 6, 'the scans the rate rests on: those since the update');
+});
+
+test('the dashboard projection line\'s hover text says the scans the rate was fitted over, not every point of the history (HE3 review F1.2)', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const start = html.indexOf('function budgetProjectionLine');
+  const fn = html.slice(start, html.indexOf('function shortProjectionReason'));
+  const projection = { status: 'ok', confidence: 0.9, bytesPerDay: GB, breachInDays: 5, breachAtMs: NOW + 5 * DAY, seriesSource: 'own-scans', seriesPoints: 106, fitPoints: 6 };
+  const line = new Function('state', 'formatBytes', 'formatDay', 'escapeHtml', `${fn}; return budgetProjectionLine;`)(
+    { budgets: { gauges: new Map([['/b', { projection }]]) } }, (n: number) => `${n} B`, () => 'the day', (x: unknown) => String(x),
+  ) as (b: { path: string; overBy: number }) => string;
+  const out = line({ path: '/b', overBy: 0 });
+  assert.match(out, new RegExp(`title="${GB} B/day over 6 scans"`), out);
+});
+
 /* ══════════════ The route (wired by the parent session) ══════════════ */
 
 import http from 'node:http';

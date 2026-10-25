@@ -59,6 +59,12 @@ export interface BudgetProjection {
   breachInDays?: number;
   /** Unix epoch ms of the projected breach — status 'ok' only. */
   breachAtMs?: number;
+  /**
+   * How many scans the fitted rate rests on — status 'ok' only (HE3 review F1.2): those since the drives
+   * mounted inside the folder that a scan stopped at, or its "Don't scan" rules, last changed, as the
+   * forecast fits them. The gauge's seriesPoints counts every point of the history.
+   */
+  fitPoints?: number;
 }
 
 export interface BudgetGauge {
@@ -229,6 +235,7 @@ export function computeBudgetProjection(
       bytesPerDay: first.bytesPerDay,
       breachInDays: f.fullInDays,
       breachAtMs: now + Math.round(f.fullInDays * DAY_MS),
+      fitPoints: f.snapshotCount,
     };
   }
   return { status: f.status, reason: budgetReason(f.status, first.bytesPerDay, f.reason), confidence: f.confidence, bytesPerDay: first.bytesPerDay };

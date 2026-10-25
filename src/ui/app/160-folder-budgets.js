@@ -97,7 +97,9 @@ function budgetProjectionLine(b) {
     const when = formatDay(p.breachAtMs);
     const approx = p.seriesSource === 'ancestor-trees'
       ? ` <span title="${escapeHtml(p.caveat || '')}">· from shallow history</span>` : '';
-    return `<div class="muted num" style="font-size:10.5px;" title="${escapeHtml(formatBytes(p.bytesPerDay))}/day over ${Number(p.seriesPoints) || 0} scans">` +
+    // The scans the rate was fitted over, not every point of the history (HE3 review F1.2): the fit
+    // starts again where the drives or the "Don't scan" rules last changed.
+    return `<div class="muted num" style="font-size:10.5px;" title="${escapeHtml(formatBytes(p.bytesPerDay))}/day over ${Number(p.fitPoints) || 0} scans">` +
       `at this pace, over in ~${days} day${days === 1 ? '' : 's'} (${escapeHtml(when)})${approx}</div>`;
   }
   return `<div class="muted" style="font-size:10.5px;" title="${escapeHtml(p.reason || '')}">${escapeHtml(shortProjectionReason(p))}</div>`;
