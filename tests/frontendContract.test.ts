@@ -2031,7 +2031,7 @@ test('a run card shows every reason it left something alone, one line each with 
 /** The editor's Preview, evaluated: what it shows for a simulate answer `result`. */
 async function autopilotPreview(result: Record<string, unknown>): Promise<string> {
   const handler = region("$('apPreviewBtn').addEventListener", 'let apSaveSeq');
-  const helper = region('function leftAloneHtml', 'function renderAutopilotRuns');
+  const helper = region('function leftAloneReasons', 'function renderAutopilotRuns');
   type El = { innerHTML: string; querySelector: () => null; addEventListener: (t: string, f: () => Promise<void>) => void; click?: () => Promise<void> };
   const els: Record<string, El> = {};
   const $ = (id: string): El => (els[id] ||= { innerHTML: '', querySelector: () => null, addEventListener(t, f) { if (t === 'click') this.click = f; } });

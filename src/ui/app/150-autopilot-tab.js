@@ -259,15 +259,29 @@ function ruleAgeText(ms) {
  * which hid every other reason from a run that left things alone for several
  * (review round 3, F3.6). Past five reasons the rest are counted.
  */
-function leftAloneHtml(skipped) {
+/** What a run or a preview left alone, one line per reason (the first five), and how many entries the rest are. */
+function leftAloneReasons(skipped) {
   const MAX_REASONS = 5;
   const counts = new Map();
   for (const s of skipped) counts.set(s.reason, (counts.get(s.reason) || 0) + 1);
   const shown = [...counts].slice(0, MAX_REASONS);
   const rest = skipped.length - shown.reduce((n, [, c]) => n + c, 0);
-  return shown.map(([reason, n]) => `
-      <div class="ap-skipped">${icon('alert', 12)} <span>${escapeHtml(reason)}${n > 1 ? ` (${formatCount(n)} items)` : ''}</span></div>`).join('') +
+  return { lines: shown.map(([reason, n]) => `${reason}${n > 1 ? ` (${formatCount(n)} items)` : ''}`), rest };
+}
+function leftAloneHtml(skipped) {
+  const { lines, rest } = leftAloneReasons(skipped);
+  return lines.map((line) => `
+      <div class="ap-skipped">${icon('alert', 12)} <span>${escapeHtml(line)}</span></div>`).join('') +
     (rest > 0 ? `<div class="ap-skipped"><span>…and ${formatCount(rest)} more left alone</span></div>` : '');
+}
+/**
+ * The same, as words to say (review HD2-L1). A count of skipped entries is no count of items: the
+ * server gives one entry for every item a note or an installed program left alone, its count in its
+ * reason, so "1 item that matches is left alone" was said of a note pausing 2,000.
+ */
+function leftAloneWords(skipped) {
+  const { lines, rest } = leftAloneReasons(skipped);
+  return [...lines, rest > 0 ? `…and ${formatCount(rest)} more left alone.` : ''].filter(Boolean).join('\n');
 }
 
 function renderAutopilotRuns(runs) {
@@ -724,11 +738,11 @@ $('apPreviewBtn').addEventListener('click', async () => {
       (rows || `<div class="muted" style="padding:4px 0;">${none}</div>`) +
       (n > 12 ? `<div class="muted" style="font-size:11px;padding-left:10px;">…and ${formatCount(n - 12)} more</div>` : '') +
       (result.skipped.length ? leftAloneHtml(result.skipped) : '');
-    const left = result.skipped.length;
     say([
       `What this would delete: ${head}${limit ? ` (${limit})` : ''}.`,
       result.wouldBlockReason || '',
-      !rows ? none : left ? `${formatCount(left)} item${left === 1 ? ' that matches is' : 's that match are'} left alone.` : '',
+      !rows ? none : '',
+      result.skipped.length ? leftAloneWords(result.skipped) : '',
     ].filter(Boolean).join('\n'));
   } catch (e) {
     // A folder that names none, where the same path without the whitespace at

@@ -1342,23 +1342,50 @@ test('Preview says aloud that it is working, what it would delete and why it fai
   const pending: Array<{ ok(r: unknown): void; fail(e: Error): void }> = [];
   const said: string[] = [];
   const offered: string[] = [];
+  // The page's own words for what a preview left alone: the reasons the box shows (review HD2-L1).
+  const decl = (name: string): string => {
+    const from = INDEX.indexOf(`function ${name}(`);
+    assert.notEqual(from, -1, `${name} is in the page`);
+    let d = 0;
+    for (let i = INDEX.indexOf('{', from); i < INDEX.length; i++) { if (INDEX[i] === '{') d++; else if (INDEX[i] === '}' && --d === 0) return INDEX.slice(from, i + 1); }
+    throw new Error(name);
+  };
+  const leftAloneWords = new Function('formatCount', `${decl('leftAloneReasons')}\n${decl('leftAloneWords')}\nreturn leftAloneWords;`)(String);
   const page = new Function('$', 'apEditorRefusal', 'toast', 'escapeHtml', 'policyFromEditor', 'api', 'fxOrbShow', 'fxOrbHide',
-    'formatBytes', 'formatCount', 'icon', 'meantFolder', 'noFolderNamed', 'offerMeant', 'leftAloneHtml', 'sayAloud',
+    'formatBytes', 'formatCount', 'icon', 'meantFolder', 'noFolderNamed', 'offerMeant', 'leftAloneHtml', 'sayAloud', 'leftAloneWords',
     `let apSaveSeq = 0; let apPreviewSeq = 0; return async () => ${INDEX.slice(open, end + 1)};`,
   )($, () => refusal, () => undefined, (x: string) => x, () => ({ path: '/x ' }),
     () => new Promise((ok, fail) => { pending.push({ ok, fail }); }), () => undefined, () => undefined,
     (n: number) => `${n} B`, String, () => '', async () => meant, (p: string) => `No folder is named “${p}”.`,
     (p: string) => { offered.push(p); }, () => '<div>left alone</div>',
-    (id: string, words: string) => { assert.equal(id, 'apPreviewSaid', 'it speaks in its own region'); said.push(words); }) as () => Promise<void>;
+    (id: string, words: string) => { assert.equal(id, 'apPreviewSaid', 'it speaks in its own region'); said.push(words); }, leftAloneWords) as () => Promise<void>;
 
   // Pressed: the working sentence is said; answered: what it would delete, and why a run would stop.
   let press = page();
   assert.deepEqual(said, ['Checking what this would delete…'], 'the working sentence is said as the box shows it');
+  // One entry the server collapses for every item a note left alone, its count in its reason (autopilot.ts noteSkipped).
+  const NOTE = 'Left alone — your note on /x/kept pauses automatic cleanup around it (5 matched items).';
   pending.shift()!.ok({ items: [{ path: '/x/a', name: 'a', reason: 'old', bytes: 5 }], bytesWouldDelete: 5, capBytes: 10,
-    wouldBlockReason: 'A real run would stop here: it is over the policy’s weekly limit.', skipped: [{ path: '/x/b', reason: 'a note' }] });
+    wouldBlockReason: 'A real run would stop here: it is over the policy’s weekly limit.', skipped: [{ path: '/x/kept', reason: NOTE }] });
   await press;
-  assert.deepEqual(said.slice(1), ['What this would delete: 5 B across 1 item (limit 10 B).\nA real run would stop here: it is over the policy’s weekly limit.\n1 item that matches is left alone.'],
-    'its answer is said: the total, the reason a run would stop, and what it leaves alone');
+  assert.deepEqual(said.slice(1), [`What this would delete: 5 B across 1 item (limit 10 B).\nA real run would stop here: it is over the policy’s weekly limit.\n${NOTE}`],
+    'its answer is said: the total, the reason a run would stop, and what it leaves alone, in the box\'s words — never one entry said as "1 item" (review HD2-L1)');
+
+  // Items found and nothing left alone, the commonest answer: no "left alone" line at all (review HD2-L2).
+  said.length = 0;
+  press = page();
+  pending.shift()!.ok({ items: [{ path: '/x/a', name: 'a', reason: 'old', bytes: 5 }], bytesWouldDelete: 5, capBytes: null, skipped: [] });
+  await press;
+  assert.deepEqual(said, ['Checking what this would delete…', 'What this would delete: 5 B across 1 item.']);
+
+  // Several reasons, one of them shared by two items: each said once, as the box lists them (review HD2-L2).
+  said.length = 0;
+  press = page();
+  const GONE = 'It is no longer there.';
+  pending.shift()!.ok({ items: [], bytesWouldDelete: 0, capBytes: null,
+    skipped: [{ path: '/x/kept', reason: NOTE }, { path: '/x/c', reason: GONE }, { path: '/x/d', reason: GONE }] });
+  await press;
+  assert.deepEqual(said, ['Checking what this would delete…', `What this would delete: 0 B across 0 items.\nEverything that matches is left alone — nothing would be deleted.\n${NOTE}\n${GONE} (2 items)`]);
 
   // Nothing matches: said as the box says it.
   said.length = 0;
@@ -1404,7 +1431,7 @@ test('Preview says aloud that it is working, what it would delete and why it fai
   second.ok({ items: [], bytesWouldDelete: 0, capBytes: null, skipped: [{ path: '/x/b', reason: 'a note' }] });
   await d;
   assert.deepEqual(said, ['Checking what this would delete…', 'Checking what this would delete…',
-    'What this would delete: 0 B across 0 items.\nEverything that matches is left alone — nothing would be deleted.'], 'an older press says nothing');
+    'What this would delete: 0 B across 0 items.\nEverything that matches is left alone — nothing would be deleted.\na note'], 'an older press says nothing');
 });
 
 test('opening the policy editor takes down what an earlier Preview said (review HD2 F1.9)', () => {
