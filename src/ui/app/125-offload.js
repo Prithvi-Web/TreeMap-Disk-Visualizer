@@ -540,6 +540,9 @@ function renderOffloadIndex() {
   // Nor did one whose original was gone by its trash step (HE3 review F1.1):
   // this offload moved nothing to the Trash for it, and left nothing in place.
   const gone = active.filter(e => e.originalGone && !e.originalKept).length;
+  const goneNote = gone
+    ? ` <span class="num">${formatCount(gone)}</span> ${gone === 1 ? 'was copied, but its original was gone before it could be moved to the Trash, so it is' : 'were copied, but their originals were gone before they could be moved to the Trash, so they are'} not counted.`
+    : '';
   // Nor did one name of a file that had others (review F1.11): its bytes stay while another name does.
   const linked = active.filter(e => e.hardLinked && !e.originalKept && !e.originalGone).length;
   const linkedNote = linked
@@ -549,8 +552,7 @@ function renderOffloadIndex() {
   // offload rolls the totals in place.
   FxNum.rollHtml($('offloadInfo'),
     `<span class="num">${formatCount(active.length)}</span> offloaded file${active.length === 1 ? '' : 's'} across ${idx.destinations.length} destination${idx.destinations.length === 1 ? '' : 's'} — <span class="num">${formatBytes(active.reduce((s, e) => s + (e.originalKept || e.originalGone || e.hardLinked ? 0 : e.size), 0))}</span> freed locally.` +
-    (kept ? ` <span class="num">${formatCount(kept)}</span> ${kept === 1 ? 'was copied with its original left in place, so it is' : 'were copied with their originals left in place, so they are'} not counted.` : '') +
-    (gone ? ` <span class="num">${formatCount(gone)}</span> ${gone === 1 ? 'was copied, but its original was gone before it could be moved to the Trash, so it is' : 'were copied, but their originals were gone before they could be moved to the Trash, so they are'} not counted.` : '') + linkedNote,
+    (kept ? ` <span class="num">${formatCount(kept)}</span> ${kept === 1 ? 'was copied with its original left in place, so it is' : 'were copied with their originals left in place, so they are'} not counted.` : '') + goneNote + linkedNote,
     'offload-index');
 
   host.innerHTML = idx.destinations.map((d, di) => {
