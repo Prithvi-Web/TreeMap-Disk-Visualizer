@@ -403,8 +403,8 @@ test('windowsSnapshotsFrom: a storage list TreeMap cannot add up is unknown, and
 
 test('CHANGELOG records the fix under the version that ships it', () => {
   const changelog = read('CHANGELOG.md');
-  const version = (JSON.parse(read('package.json')) as { version: string }).version;
-  const at = changelog.indexOf(`## [${version}]`);
+  // 5.0.1 shipped this fix; later versions keep its entry below their own.
+  const at = changelog.indexOf('## [5.0.1]');
   assert.notEqual(at, -1);
   const top = changelog.slice(at, changelog.indexOf('\n## [', at + 1));
   assert.match(top, /issues\/33/);

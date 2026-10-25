@@ -824,8 +824,9 @@ test("HANDOFF's release recipe counts the assets the workflow lists and carries 
 });
 
 test('CHANGELOG records the fix under the version that ships it', () => {
-  const at = CHANGELOG.indexOf(`## [${PKG.version}]`);
-  assert.notEqual(at, -1, `the ${PKG.version} entry exists`);
+  // 5.0.1 shipped this fix; later versions keep its entry below their own.
+  const at = CHANGELOG.indexOf('## [5.0.1]');
+  assert.notEqual(at, -1, 'the 5.0.1 entry exists');
   const top = CHANGELOG.slice(at, CHANGELOG.indexOf('\n## [', at + 1));
   assert.match(top, /### Fixed/);
   assert.match(top, /lose its installers/, 'names the failure');
