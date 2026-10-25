@@ -624,7 +624,10 @@ export async function clearFreedesktopTrash(failed: EmptyTrashResult['failed'], 
  * that it ran: leaving `ran` false there made a successful empty come back as `{ emptied: false,
  * freedBytes: 6144 }`. And a fallback that ran clean makes gio's absence no failure (HC-L3): its
  * entry stayed in `failed`, so the same clean empty still came back `emptied: false`, toasted as an
- * error and audited as a partial failure. A fallback that failed keeps both.
+ * error and audited as a partial failure. A fallback that failed says its own failures, and only
+ * them: gio's absence is no reason the Trash stayed full once the fallback ran, and the Dashboard's
+ * toast prints the first failure, which blamed gio and left the folder it could not read, or the
+ * drive that did not answer, unsaid (review HC2-L2, HC2-L6).
  */
 export async function runTrashEmptiers(
   commands: { cmd: string; args: string[] }[],
@@ -646,7 +649,7 @@ export async function runTrashEmptiers(
   if (!fallback) return { ran: false, failed };
   const fallbackFailed: EmptyTrashResult['failed'] = [];
   await fallback(fallbackFailed);
-  return fallbackFailed.length === 0 ? { ran: true, failed: [] } : { ran: false, failed: [...failed, ...fallbackFailed] };
+  return fallbackFailed.length === 0 ? { ran: true, failed: [] } : { ran: false, failed: fallbackFailed };
 }
 
 /**

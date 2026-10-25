@@ -369,9 +369,10 @@ test('on Linux without gio, the freedesktop fallback that empties the Trash clea
       const clean = await runTrashEmptiers(emptyTrashCommands('linux'), noGio, (failed) => clearFreedesktopTrash(failed, locate));
       assert.deepEqual(clean, { ran: true, failed: [] }, 'the fallback emptied it: gio\'s absence is no failure');
       assert.deepEqual(fs.readdirSync(files), [], 'and the Trash is empty');
-      // Control: a fallback that fails keeps both failures, and is no emptied Trash.
-      const both = await runTrashEmptiers(emptyTrashCommands('linux'), noGio, async (failed) => { failed.push({ location: files, reason: 'Permission denied' }); });
-      assert.deepEqual(both, { ran: false, failed: [{ location: 'gio', reason: "the system's own Trash emptier did not run" }, { location: files, reason: 'Permission denied' }] });
+      // A fallback that fails is no emptied Trash, and its own failure is what is said: gio's absence is no
+      // reason the Trash stayed full once the fallback ran, and the toast prints the first (review HC2-L2, HC2-L6).
+      const failing = await runTrashEmptiers(emptyTrashCommands('linux'), noGio, async (failed) => { failed.push({ location: files, reason: 'Permission denied' }); });
+      assert.deepEqual(failing, { ran: false, failed: [{ location: files, reason: 'Permission denied' }] });
       // Control: gio that runs is the emptier, and no fallback runs.
       let fallbacks = 0;
       const gio = await runTrashEmptiers(emptyTrashCommands('linux'), async () => {}, async () => { fallbacks++; });
@@ -407,15 +408,15 @@ test('on Linux without gio, a freedesktop fallback that could not read a Trash f
       fs.chmodSync(files, 0o755);
     }
     assert.equal(locked.ran, false, `a Trash folder that could not be read was not emptied: ${JSON.stringify(locked)}`);
-    assert.deepEqual(locked.failed.map((f) => f.location), ['gio', files], 'gio\'s absence and the unread folder are both said');
+    assert.deepEqual(locked.failed.map((f) => f.location), [files], 'the unread folder is said, first — not gio\'s absence (review HC2-L2)');
     assert.ok(locked.failed.every((f) => typeof f.reason === 'string' && f.reason.length > 0), 'each with its reason');
     assert.ok(fs.existsSync(path.join(files, 'old.bin')), 'and the file is still there');
 
     // A drive's Trash folder that did not answer as the locations were listed: it may hold a Trash, which nothing emptied.
     const unanswered = await runTrashEmptiers(emptyTrashCommands('linux'), noGio, (failed) => clearFreedesktopTrash(failed, at([], ['EIO'])));
     assert.equal(unanswered.ran, false, `a drive's Trash that did not answer was not emptied: ${JSON.stringify(unanswered)}`);
-    assert.equal(unanswered.failed.length, 2, 'gio\'s absence and the drive that did not answer are both said');
-    assert.equal(unanswered.failed[1].reason, describeFsError({ code: 'EIO' }), 'the drive\'s failure is said in words');
+    assert.equal(unanswered.failed.length, 1, 'the drive that did not answer is said, and gio\'s absence is not (review HC2-L2)');
+    assert.equal(unanswered.failed[0].reason, describeFsError({ code: 'EIO' }), 'the drive\'s failure is said in words, first, where the toast reads it');
 
     // Control: a Trash folder that is not there is nothing to clear, not a failure.
     const absent = await runTrashEmptiers(emptyTrashCommands('linux'), noGio, (failed) => clearFreedesktopTrash(failed, at([path.join(root, 'nowhere', 'files')], [])));
