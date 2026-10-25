@@ -1070,6 +1070,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       '200': jsonResponse('The summary', ref('AgentSummary')),
       '202': jsonResponse('Scan still running', obj({ status: str("'running'"), scanned: int(), currentPath: str() }, ['status', 'scanned'])),
       '404': errorResponse('Unknown scanId'),
+      '500': errorResponse('NOTES_UNREADABLE — notes.json could not be read, so the folders its notes pause cannot be left out of what is reclaimable; nothing is summarised until it is repaired or removed (never for a cloud listing, which no note can pause)'),
     },
   },
 
@@ -3085,6 +3086,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       '400': errorResponse('POLICY_REQUIRED (neither "policyId" nor "policy"); for a "policy", every refusal a save would give it, judged against the stored policy of the same id as a save judges it: POLICY_MATCH_EMPTY, POLICY_MATCH_INVALID, POLICY_PATH_TOO_BROAD, POLICY_PATH_REQUIRED, POLICY_PATH_IS_LINK, PATH_INVALID, PATH_BLOCKED, POLICY_QUERY_INVALID, POLICY_QUERY_UNANSWERABLE, POLICY_MATCH_ADVISORY, POLICY_MATCH_UNKNOWN'),
       '404': errorResponse('POLICY_NOT_FOUND'),
       '409': errorResponse('POLICY_RECORD_INVALID — the stored policy\'s folder is not one TreeMap saved (autopilot.json was changed outside TreeMap), so nothing was scanned; save the policy again'),
+      '500': errorResponse('NOTES_UNREADABLE — notes.json could not be read, so the folders its notes pause cannot be left out; nothing is previewed until it is repaired or removed, as a run of the policy is recorded failed'),
     },
   },
   {

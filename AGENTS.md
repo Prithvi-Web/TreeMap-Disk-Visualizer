@@ -1218,8 +1218,10 @@ read-what-you-saw) permission to act.
   text), is never written over: all three routes answer
   `500 NOTES_UNREADABLE` with the reason, never an empty list, and every
   consumer of the pauses refuses until it is repaired or removed (the
-  unreadable original is kept beside it): the lists and the agent summary
-  with the same `500`, while `GET /api/cleanup/suggestions` and MCP
+  unreadable original is kept beside it): the lists, the agent summary and
+  an Autopilot preview (`POST /api/autopilot/simulate`) with the same
+  `500`, and an Autopilot run is recorded `failed` with the reason, while
+  `GET /api/cleanup/suggestions` and MCP
   `cleanup_suggestions` answer `available: false` with
   `code: "NOTES_UNREADABLE"` and the reason (a malformed rule pack's answer
   carries no `code`). None of them refuses a cloud listing, which no note

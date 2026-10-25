@@ -258,6 +258,84 @@ test('every route that refuses an unreadable notes.json declares 500 NOTES_UNREA
   const named = String(op('get', '/api/notes').summary);
   assert.deepEqual(['/api/cleanup/suggestions', ...lists.map(([, r]) => r), 'Autopilot'].filter((x) => !named.includes(x)), [],
     `the notes list names every list a note pauses: ${named}`);
-  // The code refuses where these say it does.
-  for (const file of ['src/api/insightRoutes.ts', 'src/api/settingsRoutes.ts']) assert.match(source(file), /notePausedTest|suppressedNoteRoots/, file);
+  // The code refuses where these say it does: each handler reaches the refusal (review HD2 F1.6 — a bare
+  // name in a file matched its import line alone).
+  const reaching = notesUnreadableRoutes().map((r) => `${r.method} ${r.route}`);
+  assert.deepEqual([...lists, ...notes].map(([m, r]) => `${m} ${r}`).filter((x) => !reaching.includes(x)), [], `each reaches it in the code: ${reaching.join(', ')}`);
+});
+
+/**
+ * Every route whose handler reaches a NOTES_UNREADABLE refusal, found from the code: the functions in src/ that
+ * throw it, and every function that calls one — a call resolved to the caller's own file or to the module it
+ * imports the name from — and then each route registration in src/api whose handler calls one of those.
+ * Top-level functions here end with a `}` at the start of a line, and a route's handler runs to the next
+ * registration in its file.
+ */
+function notesUnreadableRoutes(): Array<{ method: string; route: string; via: string[]; handler: string }> {
+  const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true })
+    .flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : e.name.endsWith('.ts') ? [path.join(dir, e.name)] : []));
+  const files = walk(path.join(REPO, 'src'));
+  const bodies = new Map<string, string>();
+  const scope = new Map<string, Map<string, string>>();
+  for (const file of files) {
+    const text = fs.readFileSync(file, 'utf8');
+    const own = new Map<string, string>();
+    for (const m of text.matchAll(/^(?:export )?(?:async )?function (\w+)\s*[(<]/gm)) {
+      const end = text.indexOf('\n}', m.index);
+      const key = `${path.relative(REPO, file)}::${m[1]}`;
+      bodies.set(key, text.slice(m.index, end === -1 ? text.length : end + 2));
+      own.set(m[1], key);
+    }
+    scope.set(file, own);
+  }
+  for (const file of files) {
+    const own = scope.get(file)!;
+    for (const m of fs.readFileSync(file, 'utf8').matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*'(\.[^']+)'/g)) {
+      const base = path.resolve(path.dirname(file), m[2]);
+      const target = fs.existsSync(`${base}.ts`) ? `${base}.ts` : path.join(base, 'index.ts');
+      for (const part of m[1].split(',').map((x) => x.trim().replace(/^type\s+/, '')).filter(Boolean)) {
+        const [name, alias] = part.split(/\s+as\s+/);
+        const key = `${path.relative(REPO, target)}::${name}`;
+        if (bodies.has(key)) own.set(alias ?? name, key);
+      }
+    }
+  }
+  const called = (file: string, body: string): string[] =>
+    [...scope.get(file)!].filter(([name]) => new RegExp(`(?<![.\\w])${name}\\(`).test(body)).map(([, key]) => key);
+  const reach = new Set([...bodies].filter(([, b]) => /new AppError\(\s*500,\s*'NOTES_UNREADABLE'/.test(b)).map(([key]) => key));
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [key, body] of bodies) {
+      if (!reach.has(key) && called(path.join(REPO, key.split('::')[0]), body.slice(body.indexOf('{'))).some((k) => reach.has(k))) { reach.add(key); grew = true; }
+    }
+  }
+  const routes: Array<{ method: string; route: string; via: string[]; handler: string }> = [];
+  for (const name of fs.readdirSync(path.join(REPO, 'src', 'api')).filter((n) => n.endsWith('.ts'))) {
+    const file = path.join(REPO, 'src', 'api', name);
+    const text = fs.readFileSync(file, 'utf8');
+    const regs = [...text.matchAll(/\w+Router\.(get|post|put|delete|patch)\(\s*'([^']+)'/g)];
+    regs.forEach((m, i) => {
+      const handler = text.slice(m.index, i + 1 < regs.length ? regs[i + 1].index : text.length);
+      const via = called(file, handler).filter((k) => reach.has(k));
+      if (via.length > 0) routes.push({ method: m[1], route: `/api${m[2].replace(/:(\w+)/g, '{$1}')}`, via, handler });
+    });
+  }
+  return routes;
+}
+
+test('every route whose handler reaches a NOTES_UNREADABLE refusal declares the 500, found from the code rather than a list (review HD2 F1.3, F1.6)', () => {
+  const routes = notesUnreadableRoutes();
+  const found = routes.map((r) => `${r.method} ${r.route}`);
+  // Controls: the graph follows a call through a service (simulate reaches it in autopilot.ts) and through the notes helpers.
+  for (const known of ['post /api/autopilot/simulate', 'get /api/agent/summary', 'get /api/empty-folders', 'delete /api/notes']) {
+    assert.ok(found.includes(known), `control: ${known} is found: ${found.join(', ')}`);
+  }
+  // Smart suggestions catches the refusal and answers 200 available:false with the code, which its 200 declares.
+  const answered = new Set(['get /api/cleanup/suggestions']);
+  for (const r of routes.filter((x) => answered.has(`${x.method} ${x.route}`))) {
+    assert.match(r.handler, /catch \(err\) \{[^}]*code: 'NOTES_UNREADABLE'/, `${r.route} answers the refusal itself`);
+    assert.match(said(r.method, r.route, '200'), /NOTES_UNREADABLE/, `${r.route}'s 200 says so`);
+  }
+  assert.deepEqual(routes.filter((r) => !answered.has(`${r.method} ${r.route}`) && !said(r.method, r.route, '500').includes('NOTES_UNREADABLE'))
+    .map((r) => `${r.method} ${r.route} (via ${r.via.join(', ')})`), [], 'each declares the 500 it answers');
 });
