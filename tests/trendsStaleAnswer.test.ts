@@ -147,7 +147,7 @@ test('the last-change list drops a comparison answer for a folder no longer show
   assert.equal(host.innerHTML, 'before', 'folder /a\'s deltas are not written under folder /b');
 });
 
-/** labelTrendForecast over stand-ins, its /api/forecast answer pending until the test settles it (leftover HE-L2). */
+/** labelTrendForecast over stand-ins, its /api/forecast answer pending until the test settles it. */
 function forecastHarness() {
   const pending = deferred<Record<string, unknown>>();
   const drawn: string[] = [];
@@ -164,7 +164,7 @@ function forecastHarness() {
 
 const GROWING = { status: 'ok', bytesPerDay: 5000, fullInDays: 30, basis: 'volume' };
 
-test('a forecast answer that lands after Trends was left draws no chart in the hidden view and says nothing (leftover HE-L2)', async () => {
+test('a forecast answer that lands after Trends was left draws no chart in the hidden view and says nothing', async () => {
   const h = forecastHarness();
   const running = h.label('/a', 1);
   h.state.view = 'dashboard'; // left before /api/forecast answered: the unmount destroyed the chart handle
@@ -175,7 +175,7 @@ test('a forecast answer that lands after Trends was left draws no chart in the h
   assert.equal(h.info.textContent, 'latest: 111 B · 7 files', 'nor is a date added to the line');
 });
 
-test('in the view still open, the same answer draws the dashed tail and adds the date (leftover HE-L2)', async () => {
+test('in the view still open, the same answer draws the dashed tail and adds the date', async () => {
   const h = forecastHarness();
   const running = h.label('/a', 1);
   h.pending.resolve(GROWING);
@@ -184,7 +184,7 @@ test('in the view still open, the same answer draws the dashed tail and adds the
   assert.match(h.info.textContent, /· at current growth, disk full ~d\d+$/, h.info.textContent);
 });
 
-test('an empty history that lands after Trends was left draws nothing in the hidden view (leftover HE-L2)', async () => {
+test('an empty history that lands after Trends was left draws nothing in the hidden view', async () => {
   const pending = deferred<{ roots: unknown[] }>();
   const drawn: string[] = [];
   const els: Record<string, Record<string, unknown>> = {};

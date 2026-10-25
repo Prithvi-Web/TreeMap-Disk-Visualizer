@@ -135,7 +135,7 @@ test('a Cancel that lands between two files, with no copy under way, stops the r
     }
     await fsp.link(a, b);
   });
-  // Every restore copy reads its file through this seam, a chunk at a time (leftover HE-L8): a later file
+  // Every restore copy reads its file through this seam, a chunk at a time: a later file
   // whose copy began, only to be cut short at its first chunk, looks by every other measure here like one
   // never tried — its status, the count put back, and the file not being there.
   let chunksAfterCancel = 0;

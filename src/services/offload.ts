@@ -1170,7 +1170,7 @@ function metaMissSentence(misses: readonly string[], where: 'copies' | 'restored
 /** The codes of a selected item left in place by its look right before its trash step (hunt C06). */
 const ORIGINAL_CHANGED = 'OFFLOAD_ORIGINAL_CHANGED';
 const ORIGINAL_UNREADABLE = 'OFFLOAD_ORIGINAL_UNREADABLE';
-/** The code of a selected folder left in place because it held something not copied by its own turn (leftover HE-L1). */
+/** The code of a selected folder left in place because it held something not copied by its own turn. */
 const FOLDER_GAINED = 'OFFLOAD_NOT_FULLY_LISTED';
 
 /** Each selected item's planned files, by the item (`topPaths`): a file selected on its own is its own one. */
@@ -1252,7 +1252,7 @@ async function changedWhileCopied(src: string, look: SourceLook): Promise<'chang
 
 /**
  * Each folder this job made at the destination on the way to `dests` that holds nothing now, removed
- * deepest first (leftover HE-L7): a copy removed because its original changed while it was copied left
+ * deepest first: a copy removed because its original changed while it was copied left
  * the folder made for it standing empty, unsaid, and the next offload of the same folder was renamed
  * around it ("proj (offloaded 2)"). Never a folder that was there before (`createdDirs` holds the
  * outermost each mkdir made, so every folder from there down was made by this job), and never one
@@ -1279,7 +1279,7 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
   /** Each original as it was right before its copy was made (hunt C06). */
   const looks = new Map<string, SourceLook>();
   /**
-   * The first look this job took of each file, by file (leftover HE-L3): copying one name of a
+   * The first look this job took of each file, by file: copying one name of a
    * hard-linked file reads the file every name shares, so a later name's own look already holds this
    * job's read as the date the file was last opened.
    */
@@ -1326,7 +1326,7 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       // The copy keeps its original's dates and permissions (hunt C45); one a drive cannot hold is said.
       // Readable by this user whatever they are — an original another account owns can be readable
       // here with no owner bits — so Restore can always read it back; the record keeps them exact.
-      // The last-opened date as it was before this job read the file by any of its names (leftover HE-L3).
+      // The last-opened date as it was before this job read the file by any of its names.
       const meta = fileMetaOf(first === undefined ? look : { ...look, atimeNs: first.atimeNs });
       const missed = await applyFileMeta(item.dest, meta.mode === undefined ? meta : { ...meta, mode: meta.mode | 0o400 });
       if (missed !== null) metaMisses.push(missed);
@@ -1335,7 +1335,7 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       job.filesDone++;
     }
 
-    // A folder made for copies that were removed is removed too (leftover HE-L7).
+    // A folder made for copies that were removed is removed too.
     if (torn.size > 0) await removeEmptiedDirs(plan.filter((c) => torn.has(c.src)).map((c) => c.dest), createdDirs);
 
     // Every copy verified — only now do the local originals go to the Trash.
@@ -1359,7 +1359,7 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     let trashed: { deleted: string[]; failed: { path: string; reason: string; code?: string }[] } = { deleted: [], failed: [] };
     // And each item once more at its own turn, right before its trash step (hunt C06): one holding a file
     // that is not what was copied is left in place, its verified copies standing and recorded.
-    // A selected folder is listed again then too (leftover HE-L1, HE-L5): the look above comes before
+    // A selected folder is listed again then too: the look above comes before
     // the open-file check and every earlier item's trash step, and a file made in the folder after it
     // went to the Trash with the folder and no copy, the job saying it was offloaded. As the Undo
     // Vault's walk again right before an item's trash step (CAPSULE_CHANGED).

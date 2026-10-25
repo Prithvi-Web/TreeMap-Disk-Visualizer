@@ -220,13 +220,13 @@ test('a file written to while its copy streamed: the copy, which may mix old and
   assert.doesNotMatch(job.error ?? '', /as it was then/, 'never said to hold the file as it was');
   assert.match(job.error ?? '', /Its other verified copies stand at /, job.error);
   assert.equal(fs.existsSync(path.join(dest, 'proj', 'db.bin')), false, 'the torn copy is not left at the destination');
-  assert.deepEqual(fs.readdirSync(path.join(dest, 'proj')), ['b.txt'], 'the folder holding the other verified copy stays (leftover HE-L7)');
+  assert.deepEqual(fs.readdirSync(path.join(dest, 'proj')), ['b.txt'], 'the folder holding the other verified copy stays');
   const entries = (await getOffloadIndex()).entries.filter((e) => e.originalPath.startsWith(proj + path.sep));
   assert.deepEqual(entries.map((e) => path.basename(e.originalPath)), ['b.txt'], 'only the copy that verified whole is recorded for Restore');
   assert.ok(entries.every((e) => e.originalKept === true), 'as a copy whose original stayed');
 });
 
-test('a folder made at the destination for a copy that was removed is removed with it, deepest first, while one holding a copy stays (leftover HE-L7)', async () => {
+test('a folder made at the destination for a copy that was removed is removed with it, deepest first, while one holding a copy stays', async () => {
   const root = fs.realpathSync(fileTempDir('treemap-offloadOriginalChanged-tornonly-'));
   const proj = path.join(root, 'proj');
   const data = path.join(proj, 'data');

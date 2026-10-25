@@ -260,7 +260,7 @@ export interface ScanResult {
    */
   boundary?: ScanBoundaryRecord;
   /**
-   * The "Don't scan" patterns this scan ran under, as one key (leftover HE-L6): Compare reads a folder
+   * The "Don't scan" patterns this scan ran under, as one key: Compare reads a folder
    * that left out only what a rule matched as listed in full only when both scans' keys are the same.
    * Absent on a cloud listing and on a record made by hand. Kept off `buildScanStats`.
    */
@@ -718,7 +718,7 @@ export interface SnapshotTreeNode {
   u?: 1;
   /**
    * Present (1) = a folder some of whose children (with bytes) the stored tree left out, past the largest
-   * it keeps per folder (leftover HE-L4): an item missing from `c` is not known to have been absent. Set
+   * it keeps per folder: an item missing from `c` is not known to have been absent. Set
    * only on trees that carry `m`.
    */
   k?: 1;
@@ -793,7 +793,7 @@ export interface CompareResult {
   unlistedFolders?: number;
   /**
    * Present when a "Don't scan" rule left entries out of a folder and the two scans are not known to have
-   * run under the same rules (leftover HE-L6): how many such folders. What only one scan listed in them
+   * run under the same rules: how many such folders. What only one scan listed in them
    * is not compared — never called removed or added.
    */
   ruleFolders?: number;

@@ -250,7 +250,7 @@ test('a private file\'s copy, and its restore\'s file, are never readable by oth
   assert.equal(fs.statSync(secret).mode & 0o777, 0o600);
 });
 
-test('an entry an earlier build recorded with no permissions or dates is restored as any new file is made, never left private (leftover HE-L9)', { skip: process.platform === 'win32' ? 'Windows has no POSIX permission bits' : false }, async () => {
+test('an entry an earlier build recorded with no permissions or dates is restored as any new file is made, never left private', { skip: process.platform === 'win32' ? 'Windows has no POSIX permission bits' : false }, async () => {
   const { proj, paths: [file], scan } = project('nomode', { 'old.txt': 0o644 });
   const dest = fileTempDir('treemap-offloadKeepsMeta-nomode-dest-');
   const job = await withOpenFileCheck('clear', async () => {

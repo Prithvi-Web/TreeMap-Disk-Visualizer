@@ -782,7 +782,7 @@ insightRouter.get('/snapshots/tree', guardQueryPath('path'), async (req: Request
   // the tree itself (the sunburst lays out client-side from the tree).
   // An item the previous tree did not store is new (null) only where the folder holding it listed every
   // child; past a cut list it is left out — unknown, drawn as unchanged — never read as "did not exist"
-  // (leftover HE-L4, the time slider's sibling of hunt C46). So is anything in or of a folder the previous
+  // (the time slider's sibling of hunt C46). So is anything in or of a folder the previous
   // scan could not list in full (review F1.2, F1.3).
   if (found.prev) {
     const prevOf = prevSizeLookup(found.prev.tree, rootPath);

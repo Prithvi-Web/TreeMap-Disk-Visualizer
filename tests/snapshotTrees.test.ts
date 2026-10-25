@@ -107,7 +107,7 @@ test('closestSnapshot picks the nearest takenAt in either direction', () => {
   assert.equal(closestSnapshot([], 5), null);
 });
 
-/* ---------- the time slider's diff overlay reads a cut list as a cut list (leftover HE-L4) ---------- */
+/* ---------- the time slider's diff overlay reads a cut list as a cut list ---------- */
 
 /** 40 files in `root`, f01 the largest; `sizeOf` may change one. */
 function forty(root: string, sizeOf: (name: string, size: number) => number = (_n, s) => s): FileNode[] {
@@ -117,7 +117,7 @@ function forty(root: string, sizeOf: (name: string, size: number) => number = (_
   });
 }
 
-test('a stored tree marks a folder whose children it cut, and the overlay\'s lookup reads an item missing from it as unknown, never as new (leftover HE-L4)', () => {
+test('a stored tree marks a folder whose children it cut, and the overlay\'s lookup reads an item missing from it as unknown, never as new', () => {
   const prev = buildSnapshotTree(dir('/data', 'data', [
     ...forty('/data'),
     dir('/data/sub', 'sub', [file('/data/sub/a', 'a', 5000), file('/data/sub/b', 'b', 4000)]),
@@ -159,7 +159,7 @@ test('a folder is marked cut exactly when a child with bytes was left out: one t
   assert.equal(prevSizeLookup(cut, '/r')('/r/brand-new'), undefined, 'so an item missing from it is not known to have been absent');
 });
 
-test('a folder the previous scan could not list in full is read as not known, never as holding nothing (leftover HE-L4, as hunt C47)', () => {
+test('a folder the previous scan could not list in full is read as not known, never as holding nothing (as hunt C47)', () => {
   const prev: SnapshotTreeNode = { n: 'data', s: 10, t: 1, m: 1, c: [{ n: 'Mail', s: 0, t: 1, u: 1 }, { n: 'docs', s: 10, t: 1, c: [{ n: 'a', s: 10 }] }, { n: 'empty', s: 0, t: 1 }] };
   const prevOf = prevSizeLookup(prev, '/data');
   assert.equal(prevOf('/data/Mail/msg.emlx'), undefined, 'what a refused folder held is not known');
@@ -174,7 +174,7 @@ test('what the overlay\'s prevSize means is stated with every reason it can be a
   assert.ok(openapi.includes("prevSize: nullable(int('Historical layouts only: size in the previous snapshot; null = did not exist (the folder holding it in the previous snapshot listed every child with bytes, apart from what the same “Don’t scan” rules left out of both scans); absent when that is not known — the previous snapshot kept only its largest children there, or none at its depth limit, or could not list it, or the folder holding it, in full (refused, unreadable, not entered, or holding an entry it could not look at)')),"), 'the OpenAPI prevSize names the third cause');
 });
 
-test('a tree an earlier build stored, with no marks, is read as cut wherever it kept as many children as the narrowest shape keeps (leftover HE-L4)', () => {
+test('a tree an earlier build stored, with no marks, is read as cut wherever it kept as many children as the narrowest shape keeps', () => {
   const kids = (n: number): SnapshotTreeNode[] => Array.from({ length: n }, (_, i) => ({ n: `k${i}`, s: 100 - i }));
   const wide: SnapshotTreeNode = { n: 'data', s: 999, t: 1, c: kids(10) };
   const narrow: SnapshotTreeNode = { n: 'data', s: 999, t: 1, c: kids(3) };
@@ -182,7 +182,7 @@ test('a tree an earlier build stored, with no marks, is read as cut wherever it 
   assert.equal(prevSizeLookup(narrow, '/data')('/data/other'), null, 'three kept: that was all of them');
 });
 
-test('GET /api/snapshots/tree sends no "did not exist" for an item that only fell past the previous tree\'s cut (leftover HE-L4)', async () => {
+test('GET /api/snapshots/tree sends no "did not exist" for an item that only fell past the previous tree\'s cut', async () => {
   const root = fs.realpathSync(fileTempDir('treemap-snapshotTrees-overlay-')); // as the route's path guard spells it
   const tree = (files: FileNode[], subFiles: FileNode[]): FileNode => dir(root, path.basename(root), [...files, dir(path.join(root, 'sub'), 'sub', subFiles)]);
   const at = (name: string): string => path.join(root, name);

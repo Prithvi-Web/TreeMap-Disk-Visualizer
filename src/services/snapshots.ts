@@ -204,7 +204,7 @@ function compactTree(store: ScanStore, id: number, depth: number, perDir: number
       const rest = bySize.slice(perDir).filter(unlisted);
       const extra = rest.slice(0, perDir);
       if (rest.length > extra.length) out.u = 1;
-      // Children with bytes left out of `c` (leftover HE-L4): one missing from it may still have been there.
+      // Children with bytes left out of `c`: one missing from it may still have been there.
       if (bySize.length > perDir + extra.length) out.k = 1;
       const kids = [...bySize.slice(0, perDir), ...extra].map((c) => compactTree(store, c, depth - 1, perDir));
       if (kids.length) out.c = kids;
@@ -216,7 +216,7 @@ function compactTree(store: ScanStore, id: number, depth: number, perDir: number
 /** Build the stored tree, stepping down the shape ladder until it fits the budget. */
 export function buildSnapshotTree(source: TreeSource): SnapshotTreeNode {
   const store = asStore(source);
-  // The root says the tree marks its cut folders (`k`, leftover HE-L4), so a reader can tell it from one
+  // The root says the tree marks its cut folders (`k`), so a reader can tell it from one
   // an earlier build stored.
   const shaped = (i: number): SnapshotTreeNode => ({ ...compactTree(store, store.rootId, TREE_SHAPES[i].depth, TREE_SHAPES[i].perDir), m: 1 });
   let tree = shaped(0);
@@ -231,7 +231,7 @@ export function buildSnapshotTree(source: TreeSource): SnapshotTreeNode {
 const NARROWEST_PER_DIR = Math.min(...TREE_SHAPES.map((shape) => shape.perDir));
 
 /**
- * What the previous stored tree knows of each path, for the time slider's diff overlay (leftover HE-L4):
+ * What the previous stored tree knows of each path, for the time slider's diff overlay:
  * its size where the tree stored it; null where it was not there — the nearest folder above it that the
  * tree stored listed every child with bytes; undefined where that is not known, because that folder's
  * list was cut to its largest children, it sat at the depth limit with none stored, or its scan could not

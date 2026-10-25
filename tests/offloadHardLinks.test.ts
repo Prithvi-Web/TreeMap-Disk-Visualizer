@@ -175,7 +175,7 @@ test('two names of one file, each selected on its own, both go to the Trash with
   assert.deepEqual(trashedPaths.slice(before), [a, b], 'both names went to the Trash');
 });
 
-test('a name of a file whose other name went to the Trash is still looked at: written to after that, it stays in place, named as changed (leftover HE-L11)', async () => {
+test('a name of a file whose other name went to the Trash is still looked at: written to after that, it stays in place, named as changed', async () => {
   const root = fs.realpathSync(fileTempDir('treemap-offloadHardLinks-pairWritten-'));
   const a = path.join(root, 'a.bin');
   const b = path.join(root, 'b.bin');
@@ -203,7 +203,7 @@ test('a name of a file whose other name went to the Trash is still looked at: wr
   assert.match(job.error ?? '', /^b\.bin was left in place: it changed after its copy was made \(the copy holds it as it was then\), so it was not moved to the Trash\./, job.error);
 });
 
-test('every name of a hard-linked file keeps the date the file was last opened before the offload read it: the copies and the record (leftover HE-L3)', async () => {
+test('every name of a hard-linked file keeps the date the file was last opened before the offload read it: the copies and the record', async () => {
   const root = fs.realpathSync(fileTempDir('treemap-offloadHardLinks-atime-'));
   const proj = path.join(root, 'proj');
   fs.mkdirSync(proj);

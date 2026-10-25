@@ -74,7 +74,7 @@ test('a folder one of the scans could not list in full is said, and what is in i
   assert.doesNotMatch(html, /could not list in full/, 'nothing said when every folder was listed');
 });
 
-test('a folder a "Don\'t scan" rule left entries out of under rules not the same for both scans is said, apart from the unlisted ones, and the card never says nothing changed (leftover HE-L6)', () => {
+test('a folder a "Don\'t scan" rule left entries out of under rules not the same for both scans is said, apart from the unlisted ones, and the card never says nothing changed', () => {
   html = '';
   (ctx.renderCompare as (r: unknown) => void)({ entries: [], totalDelta: -9000, truncated: false, unlistedFolders: 0, ruleFolders: 1, deep: true, whenA: 1, whenB: 2, rules: null });
   const one = html.replace(/\s+/g, ' ');

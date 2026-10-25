@@ -2152,13 +2152,13 @@ export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): Em
 
 const COMPARE_CAP = 1000;
 
-/** The "Don't scan" patterns a scan runs under, as one key (`ScanResult.ignoreRules`, leftover HE-L6). */
+/** The "Don't scan" patterns a scan runs under, as one key (`ScanResult.ignoreRules`). */
 function ignoreRulesKey(ignore: readonly CompiledIgnore[]): string {
   return JSON.stringify(ignore.map((m) => m.raw).sort());
 }
 
 /**
- * Whether two scans are known to have run under the same "Don't scan" patterns (leftover HE-L6): only
+ * Whether two scans are known to have run under the same "Don't scan" patterns: only
  * then did a rule leave out of one exactly what it left out of the other. A record with no key (a cloud
  * listing, one made by hand) is not known to.
  */
@@ -2180,7 +2180,7 @@ export function sameIgnoreRules(a: ScanResult, b: ScanResult): boolean {
  * children both scans list are compared as ever. A folder that left out only what a "Don't scan" rule
  * matched is compared whole (review F1.3) when `sameRules` says both scans ran under the same rules
  * (`sameIgnoreRules`): then both left out the same. Otherwise what one scan's rule left out the other may
- * have listed, so it is not compared either (leftover HE-L6) — a rule added between two scans listed the
+ * have listed, so it is not compared either — a rule added between two scans listed the
  * node_modules it hid as removed — and such folders are counted in `ruleFolders`.
  */
 export function compareTrees(sourceA: TreeSource, sourceB: TreeSource, opts: { sameRules?: boolean } = {}): { entries: CompareEntry[]; truncated: boolean; unlistedFolders: number; ruleFolders: number } {
@@ -2190,7 +2190,7 @@ export function compareTrees(sourceA: TreeSource, sourceB: TreeSource, opts: { s
   let unlistedFolders = 0;
   let ruleFolders = 0;
   const sameRules = opts.sameRules === true;
-  /** Whether a rule may have left out of folder `id` something the other scan listed (leftover HE-L6). */
+  /** Whether a rule may have left out of folder `id` something the other scan listed. */
   const ruled = (store: ScanStore, id: number): boolean => !sameRules && store.flag(id, Flag.LeftOutByRule);
 
   const emit = (store: ScanStore, id: number, childPath: string, sizeA: number | null, sizeB: number | null): void => {
@@ -2261,7 +2261,7 @@ export function unlistedFoldersNote(count: number): string | null {
     `or holding an entry it could not look at), so what is in ${count === 1 ? 'it' : 'them'} that only one scan listed is not compared — neither removed nor added.`;
 }
 
-/** What a comparison says of the folders a "Don't scan" rule left entries out of under rules not the same for both scans (leftover HE-L6), or null. */
+/** What a comparison says of the folders a "Don't scan" rule left entries out of under rules not the same for both scans, or null. */
 export function ruleFoldersNote(count: number): string | null {
   if (count === 0) return null;
   return `${formatCount(count)} folder${count === 1 ? '' : 's'} a "Don't scan" rule left entries out of, under rules that are not the same for both scans, ` +

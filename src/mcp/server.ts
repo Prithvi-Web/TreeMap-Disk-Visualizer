@@ -875,7 +875,7 @@ export function buildMcpServer(): McpServer {
         const { entries, truncated, unlistedFolders, ruleFolders } = compareTrees(storeA, storeB, { sameRules: sameIgnoreRules(scanA, scanB) });
         const totalDelta = storeB.size(storeB.rootId) - storeA.size(storeA.rootId);
         const unlistedNote = unlistedFoldersNote(unlistedFolders); // hunt C47
-        const ruleNote = ruleFoldersNote(ruleFolders); // leftover HE-L6
+        const ruleNote = ruleFoldersNote(ruleFolders);
         return ok({
           scanIdA,
           scanIdB,

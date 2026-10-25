@@ -107,7 +107,7 @@ test('a folder that left out only what a "Don\'t scan" rule matched is compared 
   assert.deepEqual(rows(whole), ['proj/b.txt removed', 'proj/c.txt added']);
   assert.equal(whole.unlistedFolders, 0, 'nothing in it is unknown');
   assert.equal(whole.ruleFolders, 0);
-  // Rules not known to be the same (leftover HE-L6): what one scan's rule left out the other may have listed.
+  // Rules not known to be the same: what one scan's rule left out the other may have listed.
   const unsure = compareTrees(storeOf(ruled(before)), storeOf(ruled(now)));
   assert.deepEqual(rows(unsure), [], 'nothing is called removed or added in a folder a rule may have left it out of');
   assert.equal(unsure.ruleFolders, 1, 'the folder is counted as one a rule left entries out of');
@@ -146,7 +146,7 @@ test('two real scans under a "Don\'t scan" rule: a file deleted beside the rule\
   }
 });
 
-test('two real scans whose "Don\'t scan" rules differ: what the rule hid or let back in is neither removed nor added, over HTTP and MCP, and the folder is counted (leftover HE-L6)', async () => {
+test('two real scans whose "Don\'t scan" rules differ: what the rule hid or let back in is neither removed nor added, over HTTP and MCP, and the folder is counted', async () => {
   const root = fs.realpathSync(fileTempDir('treemap-compareUnlisted-rulechange-'));
   const proj = path.join(root, 'proj');
   fs.mkdirSync(path.join(proj, 'node_modules'), { recursive: true });
@@ -244,7 +244,7 @@ test('a folder the system refused on the second scan: /api/compare and compare_s
   assert.match(String(s.unlistedNote), /1 folder one of these scans could not list in full/, String(s.unlistedNote));
 });
 
-test('what a comparison says of folders a scan could not list names the causes true of them, and only those: the MCP note, the tool description and the OpenAPI document (leftover HE-L10)', () => {
+test('what a comparison says of folders a scan could not list names the causes true of them, and only those: the MCP note, the tool description and the OpenAPI document', () => {
   const causes = '(refused, unreadable, not entered, or holding an entry it could not look at)';
   assert.equal(unlistedFoldersNote(0), null);
   assert.equal(unlistedFoldersNote(1), `1 folder one of these scans could not list in full ${causes}, so what is in it that only one scan listed is not compared — neither removed nor added.`);

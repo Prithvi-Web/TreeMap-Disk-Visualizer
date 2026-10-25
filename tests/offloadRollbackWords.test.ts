@@ -17,7 +17,7 @@ const read = (rel: string): string => readFileSync(path.join(ROOT, rel), 'utf8')
 /** "any failure rolls back", "failures roll back completely", … — the promise with no line drawn (review F1.16). */
 const UNQUALIFIED = /\b(any\s+)?failures?\s+(all\s+)?rolls?\s+back/i;
 
-test('the guard finds the promise however its words are spaced or wrapped, as in the hard-wrapped AGENTS.md (leftover HE-L12)', () => {
+test('the guard finds the promise however its words are spaced or wrapped, as in the hard-wrapped AGENTS.md', () => {
   for (const said of ['Any failure rolls back completely.', 'Any failure\n     rolls back completely.', 'failures\n  all  roll back', 'any  failure rolls\nback']) {
     assert.match(said, UNQUALIFIED, JSON.stringify(said));
   }

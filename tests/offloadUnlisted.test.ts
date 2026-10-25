@@ -222,7 +222,7 @@ test('two of three folders gaining a file are both left in place, the first name
   assert.match(job.error ?? '', /projA was left in place \(and 1 more folder\): /, job.error);
 });
 
-test('a file made in a later selected folder while an earlier one goes to the Trash leaves that folder in place: each folder is listed again at its own turn (leftover HE-L1, HE-L5)', async () => {
+test('a file made in a later selected folder while an earlier one goes to the Trash leaves that folder in place: each folder is listed again at its own turn', async () => {
   const { folders: [projA, projB], scan } = projects('own-turn', ['projA', 'projB']);
   const dest = fileTempDir('treemap-offloadUnlisted-own-turn-dest-');
   const late = path.join(projB, 'made-while-trashing.txt');
@@ -249,7 +249,7 @@ test('a file made in a later selected folder while an earlier one goes to the Tr
   assert.equal(entry?.originalKept, true, 'and is recorded as a copy whose original stayed, never as space freed');
 });
 
-test('a later selected folder moved away while an earlier one goes to the Trash is said as its files removed, never as holding itself (leftover HE-L1, review)', async () => {
+test('a later selected folder moved away while an earlier one goes to the Trash is said as its files removed, never as holding itself (review)', async () => {
   const { root, folders: [projA, projB], scan } = projects('moved-away', ['projA', 'projB']);
   const dest = fileTempDir('treemap-offloadUnlisted-moved-away-dest-');
   const elsewhere = path.join(root, 'moved-projB');
