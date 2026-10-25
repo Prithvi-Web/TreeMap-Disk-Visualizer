@@ -51,7 +51,9 @@ OpenAPI 3 spec).
    the folder's modified time is unchanged and was more than 5 seconds older
    than the start of that scan — a folder changed in the 5 seconds before
    that scan, or while it ran, is listed afresh, because a change in the same
-   tick of the clock can leave its time as it was. The answer's `incremental`
+   tick of the clock can leave its time as it was. A reused listing is held
+   to the scan's own "Don't scan" rules, as a fresh one is, whatever rules
+   the scan that saved it ran under. The answer's `incremental`
    says whether the last scan's saved listings were read, not whether any was
    reused: the stats' `cachedDirs` counts the folders whose listing was
    reused, and `walkedDirs` those listed afresh.

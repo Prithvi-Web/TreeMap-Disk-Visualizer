@@ -11,7 +11,8 @@ import crypto from 'node:crypto';
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-inc-test-');
 
-import { startScan, getScan, mtimesMatch, listingSettled, SETTLED_LISTING_MS } from '../src/services/diskScanner';
+import { startScan, getScan, mtimesMatch, listingSettled, SETTLED_LISTING_MS, compareTrees, sameIgnoreRules } from '../src/services/diskScanner';
+import { Flag, storeOf } from '../src/services/scanStore';
 import { updateSettings } from '../src/services/settings';
 import { FileNode, ScanResult } from '../src/models/types';
 import { settled, pending } from '../src/utils/backgroundWrites';
@@ -502,6 +503,40 @@ test('a fast-rescan cache an earlier build saved (format 2) is never read: a nam
     assert.equal(fs.existsSync(v2), false, 'the old cache left app-data');
     assert.equal(path.basename(cacheOnDisk(second.rootPath)), `mtime-cache-v3-${h}.json`, 'and the rescan saved one of the current format');
   } finally {
+    await fsp.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a fast rescan holds every listing it reuses to its own "Don\'t scan" rules: a rule added since the cache was written leaves out what it matches, as a fresh listing does, so two scans under one rule compare alike (review F1.4)', async () => {
+  const root = fs.realpathSync(await fsp.mkdtemp(path.join(os.tmpdir(), 'treemap-inc-rule-')));
+  const proj = path.join(root, 'proj');
+  await fsp.mkdir(path.join(proj, 'node_modules'), { recursive: true });
+  await fsp.writeFile(path.join(proj, 'node_modules', 'x.js'), Buffer.alloc(9000, 1));
+  await fsp.writeFile(path.join(proj, 'a.txt'), Buffer.alloc(1000, 1));
+  ageFolders(root);
+  try {
+    await scanOnce(root, false);
+    await waitForCache(root);
+    await updateSettings({ ignore: [{ pattern: 'node_modules', scope: 'scan' }] });
+    const ruled = await scanOnce(root, true);
+    assert.equal(ruled.status, 'complete');
+    assert.equal(ruled.walkedDirs, 0, 'control: every listing came from the cache the scan without the rule wrote');
+    const store = storeOf(ruled);
+    assert.equal(store.findByPath(path.join(proj, 'node_modules')), -1, 'the rule leaves node_modules out of a reused listing too');
+    assert.equal(store.size(store.rootId), 1000, 'and its bytes are not counted');
+    assert.equal(store.flag(store.findByPath(proj), Flag.LeftOutByRule), true, 'the folder says a rule left entries out of it, as a fresh listing marks it');
+
+    // proj changes, so the next fast rescan lists it afresh under the same rule.
+    await fsp.writeFile(path.join(proj, 'b.txt'), Buffer.alloc(10, 1));
+    const later = new Date(Date.now() - 30 * 60 * 1000);
+    fs.utimesSync(proj, later, later);
+    const again = await scanOnce(root, true);
+    assert.equal(sameIgnoreRules(ruled, again), true, 'both ran under the one rule');
+    const r = compareTrees(storeOf(ruled), storeOf(again), { sameRules: sameIgnoreRules(ruled, again) });
+    const at = (e: { path: string; change: string }): string => `${path.relative(root, e.path).split(path.sep).join('/')} ${e.change}`;
+    assert.deepEqual(r.entries.map(at), ['proj/b.txt added'], 'node_modules, on the disk throughout, is not called removed');
+  } finally {
+    await updateSettings({ ignore: [] });
     await fsp.rm(root, { recursive: true, force: true });
   }
 });

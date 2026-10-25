@@ -1284,11 +1284,18 @@ interface DirJob {
  * node does not hold is not guessed: its allocation (so the sparse and slack
  * tallies count only the folders listed afresh — the walker's sentence says
  * so, FAST_RESCAN_PARTIAL) and a hard-link duplicate's bytes.
+ *
+ * The listing is held to this scan's own "Don't scan" rules, as a fresh one
+ * is (review F1.4): the cache is kept per folder and boundary, not per rule,
+ * so a rule added since it was written would otherwise count what it matches
+ * — under an `ignoreRules` key that says it was left out.
  */
-function reuseCachedListing(scan: ScanResult, store: ScanStore, dirId: number, dirPath: string, cachedChildren: FileNode[], queue: DirJob[], dev: number | undefined): void {
+function reuseCachedListing(scan: ScanResult, store: ScanStore, dirId: number, dirPath: string, cachedChildren: FileNode[], queue: DirJob[], dev: number | undefined, ignore: CompiledIgnore[]): void {
   scan.currentPath = dirPath;
   scan.cachedDirs = (scan.cachedDirs ?? 0) + 1;
-  for (const child of cachedChildren) {
+  const kept = ignore.length > 0 ? cachedChildren.filter((child) => !matchesAny(ignore, path.join(dirPath, child.name), child.name)) : cachedChildren;
+  if (kept.length < cachedChildren.length) markLeftOutByRule(store, dirId);
+  for (const child of kept) {
     scan.scanned++;
     const childId = store.addNode(dirId, fileNodeToInput(child));
     if (child.type === 'dir') {
@@ -1584,7 +1591,7 @@ async function processDirectory(
     noteIfCrossed(bounds, job.parentDev, job.dev, dirPath);
     const listing = reusableListing(cachedNode);
     if (listing && mtimesMatch(cachedMtime, Math.round(st.mtimeMs))) {
-      reuseCachedListing(scan, store, dirId, dirPath, listing, queue, job.dev);
+      reuseCachedListing(scan, store, dirId, dirPath, listing, queue, job.dev, ignore);
       return;
     }
     // Its listing changed — fall through and re-list from disk.
@@ -1593,7 +1600,7 @@ async function processDirectory(
     const cached = cache.get(dirPath);
     const listing = cached && cached.type === 'dir' ? reusableListing(cached) : null;
     if (cached && listing && mtimesMatch(cached.modifiedAt, store.modifiedAt(dirId))) {
-      reuseCachedListing(scan, store, dirId, dirPath, listing, queue, job.dev);
+      reuseCachedListing(scan, store, dirId, dirPath, listing, queue, job.dev, ignore);
       return;
     }
   }
