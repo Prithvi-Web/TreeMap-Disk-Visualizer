@@ -684,11 +684,11 @@ function cartFocusModel(landing: () => unknown = () => null) {
 }
 
 /** The page's cartExecuteCommit over the focus model: renderCart hides the dock once the cart is empty, after an await, as the page's does. */
-function cartCommitIn(m: ReturnType<typeof cartFocusModel>, cart: Set<string>, answer: (chunk: string[]) => Record<string, unknown>) {
+function cartCommitIn(m: ReturnType<typeof cartFocusModel>, cart: Set<string>, answer: (chunk: string[]) => Record<string, unknown>, toasts: string[] = []) {
   return declared<(paths: string[], foreseen?: unknown[]) => Promise<void>>('async function cartExecuteCommit(paths, foreseen = []) {', {
     $: m.$, document: m.doc, state: { cart }, icon: () => '', REDUCED: true, formatCount: String,
     api: async (_url: string, opts: { body: string }) => answer(JSON.parse(opts.body).paths),
-    saveCart: () => {}, refreshCartButtons: () => {}, rescan: () => {}, toast: () => {},
+    saveCart: () => {}, refreshCartButtons: () => {}, rescan: () => {}, toast: (t: string) => { toasts.push(t); },
     renderCart: async () => { await Promise.resolve(); if (cart.size) m.$('cartDock') && (m.els.cartDock.classList.add('show')); else { m.els.cartDock.classList.remove('show'); m.cartTrash.shown = false; } },
     cartFocusReturn: () => m.cart.cartFocusReturn(),
     cartCommitSummary: () => m.open(),
@@ -753,16 +753,26 @@ function confirmOkIn(m: ReturnType<typeof cartFocusModel>, cb: () => Promise<voi
   return { ok, settle };
 }
 
-test('a commit started from the confirm sheet\'s OK — the net giving focus back only once the commit has begun — leaves focus on Move to Trash when it fails or leaves items staged, never <body>: one request and a chunked one (review F1.15 of HZ)', async () => {
+test('a commit started from the confirm sheet\'s OK — the net giving focus back only once the commit has begun — leaves focus on Move to Trash when it fails, stops part-way or leaves items staged, never <body>: one request and a chunked one (review F1.15 of HZ)', async () => {
   const failing = (): Record<string, unknown> => { throw new Error('the server did not answer (a test)'); };
   const leavesOne = (chunk: string[]): Record<string, unknown> => ({ runId: 'r1', trashed: chunk.slice(1), skipped: [{ path: chunk[0], code: 'CAPSULE_FULL', reason: 'Too big.' }] });
+  /** The first request trashes all but one item, which it leaves staged; the second fails: the "Stopped after" branch. */
+  const stopsAfterFirst = (): ((chunk: string[]) => Record<string, unknown>) => { let calls = 0; return (chunk) => (calls++ ? failing() : leavesOne(chunk)); };
   for (const n of [1, 501]) {
-    for (const [how, answer] of [['its first request fails', failing], ['it leaves items staged', leavesOne]] as const) {
+    const ways = [
+      ['its first request fails', () => failing],
+      ['it leaves items staged', () => leavesOne],
+      // A second request there is only past one chunk.
+      ...(n > 500 ? [['its second request fails after the first left an item staged', stopsAfterFirst]] as const : []),
+    ] as const;
+    for (const [how, answerFor] of ways) {
       const at = `${n} item(s), ${how}`;
       const m = cartFocusModel();
       const paths = Array.from({ length: n }, (_, i) => `/c/f${i}.bin`);
       const cart = new Set(paths);
-      const commit = cartCommitIn(m, cart, answer);
+      const answer = answerFor();
+      const toasts: string[] = [];
+      const commit = cartCommitIn(m, cart, answer, toasts);
       const { ok, settle } = confirmOkIn(m, () => commit(paths));
       m.cartTrash.focus(); // Move to Trash pressed
       m.open(); // the confirm sheet remembers it and takes focus
@@ -774,6 +784,10 @@ test('a commit started from the confirm sheet\'s OK — the net giving focus bac
       if (answer === failing) {
         assert.equal((m.doc.activeElement as { name?: string }).name, 'cartTrash', `${at}: focus is on Move to Trash, not <body>`);
       } else {
+        if (answerFor === stopsAfterFirst) {
+          assert.ok(toasts.some((t) => t.startsWith('Stopped after 499 items: ')), `control (${at}): the commit stopped part-way: ${toasts.join(' | ')}`);
+          assert.equal(cart.size, 2, `control (${at}): the item the first request left and the one never sent stay staged`);
+        }
         assert.equal(m.seen.atOpen, m.cartTrash, `${at}: Move to Trash has focus as the "Done" sheet opens, not <body> or the closed sheet's OK`);
       }
     }
