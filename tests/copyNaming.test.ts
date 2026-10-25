@@ -832,13 +832,31 @@ function cloudSafeNamings(text: string): string[] {
   return [...said.matchAll(/(?<![/\w-])cloud[- ]safe\b/gi)].map((m) => JSON.stringify(said.slice(Math.max(0, (m.index ?? 0) - 40), (m.index ?? 0) + 40)));
 }
 
-test('the Clean Up tab "Online-only files" is never called by its old name, "Cloud-safe", wherever a person reads it: the page, every string the server writes, README, SECURITY and AGENTS (CL-1)', () => {
+/** The fields of a rule a person or an agent reads: Smart suggestions' "Why?" panel and cleanup_suggestions give them as written. */
+const RULE_WORDS = ['title', 'description', 'adviceCommand', 'restoreCommand', 'clearCommand'];
+/** The rule packs' own folder, whose README documents them. */
+const RULE_PACKS = path.join('src', 'services', 'rulepacks');
+
+/** Every rule pack's words a person reads (RULE_WORDS), with where each is — the packs are JSON, which sourceStrings does not read. */
+function rulePackWords(): { at: string; text: string }[] {
+  const out: { at: string; text: string }[] = [];
+  for (const file of fs.readdirSync(path.join(ROOT, RULE_PACKS)).filter((f) => f.endsWith('.json')).sort()) {
+    const pack = JSON.parse(fs.readFileSync(path.join(ROOT, RULE_PACKS, file), 'utf8')) as { rules: Array<Record<string, unknown>> };
+    for (const rule of pack.rules) for (const key of RULE_WORDS) if (typeof rule[key] === 'string') out.push({ at: `${file} ${String(rule.id)} ${key}`, text: rule[key] as string });
+  }
+  return out;
+}
+
+test('the Clean Up tab "Online-only files" is never called by its old name, "Cloud-safe", wherever a person reads it: the page, every string the server writes, the rule packs, README, SECURITY, AGENTS and the rule packs\' README (CL-1, review F1.8 of HZ)', () => {
   assert.equal(cloudSafeNamings('Custom rules, Cloud-safe, Libraries').length, 1, 'control: the old name is found');
   assert.deepEqual(cloudSafeNamings('GET /api/cleanup/cloud-safe?scanId= and cloudSafe'), [], 'control: a route and a key are not');
   assert.ok(pageText(INDEX).includes('Online-only files'), 'control: the page names the tab');
   assert.deepEqual(cloudSafeNamings(pageText(INDEX)), [], 'public/index.html');
   assert.deepEqual(sourceStrings(['src']).flatMap((s) => cloudSafeNamings(s.text).map((hit) => `${s.at}: ${hit}`)), [], 'the server\'s strings');
-  for (const doc of DOCS) assert.deepEqual(cloudSafeNamings(fs.readFileSync(path.join(ROOT, doc), 'utf8')), [], doc);
+  const packs = rulePackWords();
+  assert.ok(packs.some((w) => w.at.endsWith(' description')) && packs.some((w) => w.at.endsWith(' title')), `control: the packs' titles and descriptions are read (${packs.length})`);
+  assert.deepEqual(packs.flatMap((w) => cloudSafeNamings(w.text).map((hit) => `${w.at}: ${hit}`)), [], 'the rule packs');
+  for (const doc of [...DOCS, path.join(RULE_PACKS, 'README.md')]) assert.deepEqual(cloudSafeNamings(fs.readFileSync(path.join(ROOT, doc), 'utf8')), [], doc);
 });
 
 /**
@@ -847,30 +865,71 @@ test('the Clean Up tab "Online-only files" is never called by its old name, "Clo
  */
 const HEADING_PROPER = new Set(['TreeMap', 'Up', 'Vault', 'Autopilot', 'Score', 'Trash']);
 
-/** Each heading of the page's markup — an h1 to h6, or a Settings or sheet section head — whose words after the first are capitalised though no proper name. */
+/**
+ * Every heading of the page's markup — an h1 to h6, or a Settings or sheet section head — as its own words (the
+ * text before any control or aside it holds, past its icon however the icon's span is written: review F1.13 of
+ * HZ) and all the text it holds.
+ */
+function headingsOf(markup: string): { title: string; text: string }[] {
+  return [...markup.matchAll(/<(h[1-6])\b[^>]*>([\s\S]*?)<\/\1>|<div class="(?:set-h|tn-h|as-h)"[^>]*>([\s\S]*?)<\/div>/g)].map((m) => {
+    const inner = m[2] ?? m[3] ?? '';
+    return { title: inner.replace(/<span\b[^>]*\bdata-icon=[^>]*><\/span>/g, '').split('<')[0].trim(), text: inner.replace(/<[^>]*>/g, '').trim() };
+  });
+}
+
+/** Each heading of the page's markup whose words after the first are capitalised though no proper name. */
 function titleCaseHeadings(markup: string): string[] {
-  const out: string[] = [];
-  for (const m of markup.matchAll(/<(h[1-6])\b[^>]*>([\s\S]*?)<\/\1>|<div class="(?:set-h|tn-h|as-h)"[^>]*>([\s\S]*?)<\/div>/g)) {
-    // The heading's own words: the text before any control or aside it holds.
-    const title = (m[2] ?? m[3] ?? '').replace(/<span data-icon="[^"]*"><\/span>/g, '').split('<')[0].trim();
+  return headingsOf(markup).map((h) => h.title).filter((title) => {
     const words = title.match(/[A-Za-z][A-Za-z'’-]*/g) ?? [];
-    if (words.slice(1).some((w) => /^[A-Z]/.test(w) && !HEADING_PROPER.has(w))) out.push(title);
+    return words.slice(1).some((w) => /^[A-Z]/.test(w) && !HEADING_PROPER.has(w));
+  });
+}
+
+/** The markup of every part of the page, as the build joins them. */
+function pageMarkup(): string {
+  return fs.readdirSync(path.join(ROOT, 'src', 'ui', 'markup')).filter((f) => f.endsWith('.html'))
+    .map((f) => fs.readFileSync(path.join(ROOT, 'src', 'ui', 'markup', f), 'utf8')).join('\n');
+}
+
+/**
+ * Each place `text` names one of `headings` with a capital the heading does not have — "Drive Health" for the card
+ * "Drive health" — its first letter aside, which a sentence may capitalise or not, and its spacing aside.
+ */
+function titleCasedHeadingNames(text: string, headings: string[]): string[] {
+  const hits: string[] = [];
+  for (const heading of headings) {
+    const spelled = new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'), 'gi');
+    for (const m of text.matchAll(spelled)) {
+      const said = m[0].replace(/\s+/g, ' ');
+      if ([...said].some((ch, i) => i > 0 && ch !== heading[i] && ch === heading[i].toUpperCase())) hits.push(`${JSON.stringify(said)} for "${heading}"`);
+    }
   }
-  return out;
+  return hits;
 }
 
 test('every heading on the page is in sentence case, but for proper names: "Largest files", "Drive health" — never "Largest Files" (CL-4, hunt S6)', () => {
   assert.deepEqual(titleCaseHeadings('<h2><span data-icon="x"></span>Largest Files<span class="h2-aside">Size</span></h2>'), ['Largest Files'], 'control: Title Case is found');
   assert.deepEqual(titleCaseHeadings('<h2>Largest files</h2><h3>Clean Up target</h3><div class="set-h">Undo Vault</div><h3>Move to Trash?</h3>'), [], 'control: sentence case, and proper names, are not');
-  const markup = fs.readdirSync(path.join(ROOT, 'src', 'ui', 'markup')).filter((f) => f.endsWith('.html'))
-    .map((f) => fs.readFileSync(path.join(ROOT, 'src', 'ui', 'markup', f), 'utf8')).join('\n');
+  // An icon whose span carries more than its name — the Trash sheet's, Keyboard shortcuts' — hid the heading's words (review F1.13 of HZ).
+  assert.deepEqual(titleCaseHeadings('<h2><span data-icon="trash" data-size="17"></span>Empty The Disk <span class="num"></span></h2>'), ['Empty The Disk'], 'control: Title Case past an icon with a size is found');
+  const markup = pageMarkup();
   assert.ok(markup.includes('Largest files'), 'control: the headings are read');
   assert.deepEqual(titleCaseHeadings(markup), [], 'the markup\'s headings');
+  assert.deepEqual(headingsOf(markup).filter((h) => h.text && !h.title).map((h) => h.text), [], 'every heading that holds words has them read');
   // The PDF report's section headings name the same cards, in the same case.
   const report = fs.readFileSync(path.join(ROOT, 'src', 'services', 'reportExport.ts'), 'utf8');
   const headings = [...report.matchAll(/text: `([^`$(]+)[^`]*`, style: 'h2'/g)].map((m) => m[1].trim());
   assert.ok(headings.length >= 3, `control: the report's headings are read: ${headings.join(', ')}`);
   assert.deepEqual(headings.filter((h) => (h.match(/[A-Za-z]+/g) ?? []).slice(1).some((w) => /^[A-Z]/.test(w) && !HEADING_PROPER.has(w))), [], 'the PDF report\'s headings');
+});
+
+test('README, AGENTS, SECURITY, the rule packs and their README name a card or a sheet as its heading does — "Drive health", never "Drive Health" (CL-4, review F1.4/F1.9/F1.8 of HZ)', () => {
+  const headings = [...new Set(headingsOf(pageMarkup()).map((h) => h.title.replace(/[?:.…]+$/, '').trim()).filter((t) => (t.match(/[A-Za-z]+/g) ?? []).length >= 2))];
+  assert.ok(headings.includes('Drive health') && headings.includes('All storage') && headings.includes('Media libraries'), `control: the cards' headings are read: ${headings.join(' | ')}`);
+  assert.deepEqual(titleCasedHeadingNames('An **All Storage** strip; the Media Libraries card', headings), ['"All Storage" for "All storage"', '"Media Libraries" for "Media libraries"'], 'control: a card named in Title Case is found');
+  assert.deepEqual(titleCasedHeadingNames('All storage, all storage, the Undo\n  Vault, nothing to clean up', headings), [], 'control: its own case, a sentence\'s first letter, a line break and a lower case are not');
+  for (const doc of [...DOCS, path.join(RULE_PACKS, 'README.md')]) assert.deepEqual(titleCasedHeadingNames(fs.readFileSync(path.join(ROOT, doc), 'utf8'), headings), [], doc);
+  assert.deepEqual(rulePackWords().flatMap((w) => titleCasedHeadingNames(w.text, headings).map((hit) => `${w.at}: ${hit}`)), [], 'the rule packs');
 });
 
 test('the Undo Vault tab prints a copy\'s reason in the cart\'s words, and an older copy\'s "staged in the cleanup cart" as the cart says it now (G18 review F1.1)', () => {
