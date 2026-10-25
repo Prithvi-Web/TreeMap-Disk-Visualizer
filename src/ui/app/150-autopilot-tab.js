@@ -26,6 +26,11 @@ async function loadAutopilot() {
   // HD-L3/L13): "Loading policies…" painted over it handed focus to <body>, where neither a second failure
   // nor a success could find it again.
   const retry = $('apRetry');
+  // Said in #apPoliciesSaid beside the list, which each load writes over: a retry, and below, a failure
+  // — a failed retry otherwise handed focus to a Try again named exactly as the one pressed, and
+  // nothing said it had failed (review HD2 F1.10). Guarded: a page reader may lift this without sayAloud.
+  const say = (words) => { if (typeof sayAloud === 'function') sayAloud('apPoliciesSaid', words); };
+  if (retry) say('Trying again…');
   if (retry && retry === document.activeElement) {
     retry.setAttribute('aria-busy', 'true');
     retry.textContent = 'Trying again…';
@@ -50,10 +55,12 @@ async function loadAutopilot() {
     $('apRetry').addEventListener('click', () => loadAutopilot());
     $('apRuns').innerHTML = '';
     if (hadFocus) $('apRetry').focus({ preventScroll: true });
+    say(`Couldn’t load Autopilot: ${e.message}`);
     // FX: a failed load can honestly claim nothing about armed policies.
     fxApBreatheSync(false);
     return;
   }
+  say(''); // what a failure said goes with it
   renderAutopilot();
 }
 

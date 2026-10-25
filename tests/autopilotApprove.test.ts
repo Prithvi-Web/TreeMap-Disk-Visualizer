@@ -1148,7 +1148,9 @@ test('a failed reload after Remove, Approve or Save moves focus to Try again —
  * neither a second failure nor a success could find it again (review HD-L3/L13). And its guard — Try
  * again takes focus only when focus was in a list — was untested (review HD-L10).
  */
-test('Try again after the first Autopilot load failed keeps focus off <body> whether the retry fails or works, and a failed load leaves focus outside both lists where it is (review HD-L3/L13, HD-L10)', async () => {
+test('Try again after the first Autopilot load failed keeps focus off <body> whether the retry fails or works, and a failed load leaves focus outside both lists where it is (review HD-L3/L13, HD-L10); a focused Try again shows it is busy, one pressed without focus is replaced by the loading line, and each retry and failure is said aloud (review HD2 F1.8, F1.10)', async () => {
+  assert.match(INDEX, /<div id="apPolicies"><\/div>\s*(?:<!--[^>]*-->\s*)?<div id="apPoliciesSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"><\/div>/,
+    'beside the policies list, outside what each load writes over, is a polite live region of its own');
   const doc = { body: { isConnected: true } as Record<string, unknown>, activeElement: null as unknown };
   doc.activeElement = doc.body;
   type El = {
@@ -1168,10 +1170,12 @@ test('Try again after the first Autopilot load failed keeps focus off <body> whe
   const list = () => {
     const el = {
       rows: [] as El[],
+      html: '',
       contains: (e: unknown) => el.rows.includes(e as El),
       querySelectorAll: (sel: string) => el.rows.filter((r) => sel.replace(/^\[|\]$/g, '') in r.attrs),
       /** innerHTML = …: every old row is detached, focus on one falls to <body>, as a browser does. */
       set innerHTML(v: string) {
+        el.html = v;
         for (const r of el.rows) r.isConnected = false;
         if (el.rows.includes(doc.activeElement as El)) doc.activeElement = doc.body;
         el.rows = [];
@@ -1193,25 +1197,46 @@ test('Try again after the first Autopilot load failed keeps focus off <body> whe
     return url.includes('/runs') ? { runs: [] } : { policies: [{ id: 'P' }], knownGroupIds: [] };
   };
   let rendered = 0;
+  const said: string[] = [];
   // renderAutopilot as its own keeper does it (the test below pins that it does): mark, repaint, restore.
-  const load = new Function('document', '$', 'api', 'state', 'escapeHtml', 'fxApBreatheSync', 'focusLanding', 'counted',
+  const load = new Function('document', '$', 'api', 'state', 'escapeHtml', 'fxApBreatheSync', 'focusLanding', 'counted', 'sayAloud',
     `${pageSource('apFocusMark')} ${pageSource('apFocusRestore')} ${pageSource('loadAutopilot')};
      function renderAutopilot() { counted(); const host = $('apPolicies'); const mark = apFocusMark(host); host.innerHTML = '<div data-ap-edit="P"></div>'; apFocusRestore(host, mark); }
      return loadAutopilot;`,
-  )(doc, $, api, state, (x: string) => x, () => undefined, () => null, () => { rendered++; }) as () => Promise<void>;
+  )(doc, $, api, state, (x: string) => x, () => undefined, () => null, () => { rendered++; },
+    (id: string, words: string) => { assert.equal(id, 'apPoliciesSaid', 'it speaks in its own region'); said.push(words); }) as () => Promise<void>;
+  const FAILED = 'Couldn’t load Autopilot: the server stopped answering';
 
   // The tab opens and its first load fails, focus on the tab button: it stays there (HD-L10).
   tab.focus();
   await load();
   assert.ok(retry, 'control: the failure painted Try again');
   assert.equal(doc.activeElement, tab, 'focus outside both lists is left where it is');
+  assert.deepEqual(said, [FAILED], 'the failure is said (HD2 F1.10)');
+
+  // Try again pressed while it does not have focus: the loading line replaces it, and the retry is said (HD2 F1.8).
+  const unfocused = retry as El | null;
+  const pressed = unfocused!.click!();
+  assert.match(policies.html, /Loading policies…/, 'a Try again without focus is replaced by the loading line');
+  assert.equal(unfocused!.attrs['aria-busy'], undefined, 'and is not marked busy');
+  assert.deepEqual(said, [FAILED, 'Trying again…'], 'the retry is said');
+  await pressed;
+  assert.equal(doc.activeElement, tab, 'control: focus is still on the tab');
+  assert.deepEqual(said, [FAILED, 'Trying again…', FAILED], 'and its failure is said again');
 
   // The person presses Try again, and it fails again: focus is on the new Try again.
   const first = retry as El | null;
   first!.focus();
-  await first!.click!();
+  const retried = first!.click!();
+  // While the answer is out, the focused Try again stays, marked busy and saying so (HD2 F1.8).
+  assert.equal(first!.attrs['aria-busy'], 'true', 'the focused Try again is marked busy while the answer is out');
+  assert.equal(first!.textContent, 'Trying again…', 'and says it is trying again');
+  assert.equal(first!.isConnected, true, 'and stays where it is');
+  assert.equal(said[said.length - 1], 'Trying again…', 'the retry is said');
+  await retried;
   assert.notEqual(retry, first, 'control: a new Try again was painted');
   assert.equal(doc.activeElement, retry, 'focus goes to the new Try again, not <body>');
+  assert.equal(said[said.length - 1], FAILED, 'and a failed retry is said, so it is not mistaken for nothing happening (HD2 F1.10)');
 
   // Pressed again, it works: focus lands on a control on the page, not <body>.
   answers = 'ok';
@@ -1219,6 +1244,7 @@ test('Try again after the first Autopilot load failed keeps focus off <body> whe
   assert.equal(rendered, 1, 'control: the policies were rendered');
   assert.notEqual(doc.activeElement, doc.body, 'focus is not on <body>');
   assert.equal(doc.activeElement, addBtn, 'it lands on Add policy, where the keeper sends it');
+  assert.equal(said[said.length - 1], '', 'what the failure said goes once the policies load');
 });
 
 /*
