@@ -1579,6 +1579,72 @@ test('"Empty the Trash" confirmed empties it and closes both sheets, giving focu
   }
 });
 
+test('a sheet opened as another closed in the same turn — "Keyboard shortcuts" from the palette, Clean Up\'s "Make this an Autopilot policy" — gives focus to the views\' landing as it closes, never <body>: its opener sits in a sheet that closed earlier, whose close is not still to come (final review of the "Empty the Trash" fix)', () => {
+  // The fix that lets "Empty the Trash" give focus back to the Trash row skips the net's fallback for an
+  // opener that stopped painting inside a sheet. It skipped it for every such opener: the palette's own
+  // input, left as the newest focus when the palette closes and "Keyboard shortcuts" opens in one turn
+  // (the page is inert by the time the palette's close runs, so nothing else took focus), and a control in
+  // a sheet that closed as it opened another. Those sheets closed in an earlier batch, so no close of theirs
+  // was still to come, and closing the second sheet left focus on <body>. Only a sheet closing in the same
+  // batch has that close to come.
+  const entry = "{ label: 'Keyboard shortcuts', hint: 'the ? panel', run: () => toggleShortcuts() }";
+  assert.ok(INDEX.includes(entry), 'the palette offers "Keyboard shortcuts", which runs toggleShortcuts');
+  for (const [order, focusDropsFirst] of NET_ORDERS) {
+    // The palette, its "Keyboard shortcuts" and the "?" panel's toggle: the page's own.
+    {
+      const { doc, api, flush, landing } = observedPage({ focusDropsFirst });
+      const $ = (id: string) => doc.getElementById(id)!;
+      const palette = new Function('$', 'document', 'topModal', 'hideTooltip', 'nlClose', 'cmdkRender', 'loadSavedViews', 'cmdkLoadRoots',
+        `'use strict';
+         let cmdkPrevFocus = null; let cmdkSel = 0;
+         ${braced('function toggleShortcuts(')}
+         const cmdkShown = [${entry}];
+         ${braced('function cmdkRun(')}
+         ${braced('function cmdkOpen(')}
+         ${braced('function cmdkClose(')}
+         return { cmdkOpen, cmdkRun, toggleShortcuts };`,
+      )($, doc, api.topModal, () => {}, () => {}, () => {}, async () => {}, async () => {}) as { cmdkOpen: () => void; cmdkRun: (i: number) => void; toggleShortcuts: () => void };
+      const at = `the palette's "Keyboard shortcuts" (${order})`;
+      const opener = $('scanBtn');
+      for (let p: FEl | null = opener; p; p = p.parent) p.hidden = false; // on screen
+      opener.focus();
+      assert.equal(doc.activeElement, opener, `control (${at}): a control on the page has focus`);
+      palette.cmdkOpen(); flush(); // ⌘K
+      assert.equal(doc.activeElement, $('cmdkInput'), `control (${at}): the palette's input has focus`);
+      palette.cmdkRun(0); flush(); // "Keyboard shortcuts", and Enter: the palette closes and the panel opens, one turn
+      const shortcuts = $('shortcutsModal');
+      assert.ok(shortcuts.classList.contains('open') && !$('cmdkModal').classList.contains('open'), `control (${at}): the panel is up, the palette gone`);
+      assert.ok(shortcuts.contains(doc.activeElement), `control (${at}): the panel holds focus`);
+      palette.toggleShortcuts(); flush(); // "?" again
+      assert.equal(shortcuts.classList.contains('open'), false, `control (${at}): the panel closed`);
+      const now = doc.activeElement;
+      assert.ok(now && now !== doc.body && now.getClientRects().length > 0, `${at}: focus is on a control on screen, not <body> (it is on <${now?.tag} id=${now?.id}>)`);
+      assert.equal(now, landing(), `${at}: the views' landing, as for any opener that is gone from the screen`);
+    }
+    // Sheet A closes and opens sheet B in one turn, as "Make this an Autopilot policy" closes Clean Up and opens the editor.
+    {
+      const { doc, flush, landing } = observedPage({ focusDropsFirst });
+      const $ = (id: string) => doc.getElementById(id)!;
+      const at = `Clean Up's "Make this an Autopilot policy" (${order})`;
+      const clean = $('cleanModal'), editor = $('apModal'), promote = $('cleanPromoteBtn');
+      for (let p: FEl | null = promote; p && p !== clean; p = p.parent) p.hidden = false; // its Custom rules tab is up
+      const opener = $('scanBtn');
+      for (let p: FEl | null = opener; p; p = p.parent) p.hidden = false; // on screen
+      opener.focus();
+      assert.equal(doc.activeElement, opener, `control (${at}): a control on the page has focus`);
+      clean.classList.add('open'); flush();
+      promote.focus();
+      assert.equal(doc.activeElement, promote, `control (${at}): the promote button has focus`);
+      clean.classList.remove('open'); editor.classList.add('open'); flush(); // closeModal('cleanModal'), then openPolicyEditor(…)
+      assert.ok(editor.contains(doc.activeElement), `control (${at}): the editor holds focus`);
+      editor.classList.remove('open'); flush(); // Cancel
+      const now = doc.activeElement;
+      assert.ok(now && now !== doc.body && now.getClientRects().length > 0, `${at}: focus is on a control on screen, not <body> (it is on <${now?.tag} id=${now?.id}>)`);
+      assert.equal(now, landing(), `${at}: the views' landing, as for any opener that is gone from the screen`);
+    }
+  }
+});
+
 /* ══════════════ F02 review F1.7 — the Offload sheet a picked folder opened gives focus back to what opened the picker ══════════════ */
 
 test('Cancel or Escape on the Offload sheet a picked folder opened gives focus back to the control that opened the picker — never <body> (review F1.7 of fifth browser pass F02)', async () => {

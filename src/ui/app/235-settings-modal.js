@@ -978,7 +978,9 @@ function modalOpened(el) {
   modalPrevFocus.set(el.id, focusBefore(el));
   modalJustOpened = true;
 }
-function modalClosed(el) {
+/* `closing` is every sheet the net's batch closes, this one included (modalNet): a reader that
+   lifts this alone passes none. */
+function modalClosed(el, closing = null) {
   syncModalLayers(false); // lift inert first, or the restored focus is refused
   const prev = modalPrevFocus.get(el.id) || null;
   modalPrevFocus.delete(el.id);
@@ -1013,7 +1015,11 @@ function modalClosed(el) {
   // "Empty the Trash" closes the question, whose opener is the Trash sheet's Empty button, and then
   // the Trash sheet. That sheet's own close runs next and gives focus back to the Trash row it was
   // opened from; landing focus here first left it on the Dashboard's first control (review F1.1 of HZ).
-  if (!onScreen && prev.isConnected !== false && typeof prev.closest === 'function' && prev.closest('.modal-backdrop')) return;
+  // Only then: an opener in a sheet that closed in an earlier batch has no close still to come — the
+  // palette's input, after its "Keyboard shortcuts" closed the palette and opened the panel in one
+  // turn, or a control in Clean Up, which "Make this an Autopilot policy" closes as it opens the
+  // editor — and skipping the landing for it left focus on <body> (final review of that fix).
+  if (!onScreen && closing && prev.isConnected !== false && typeof prev.closest === 'function' && closing.has(prev.closest('.modal-backdrop'))) return;
   const back = onScreen ? prev : (typeof focusLanding === 'function' ? focusLanding() : null);
   if (back) back.focus({ preventScroll: true });
 }
@@ -1036,12 +1042,15 @@ function syncModalLayers(moveFocus = true) {
   if (top && !top.contains(active) && (opened || !inModalOverlay(active))) modalFocusInto(top);
 }
 const modalNet = new MutationObserver((records) => {
+  const wasOpen = (r) => (r.oldValue || '').split(/\s+/).includes('open');
+  // Every sheet this batch closes, known before any close is handled: a close early in the batch
+  // leaves an opener in a sheet that closes later in it to that sheet's own close (modalClosed).
+  const closing = new Set(records.filter((r) => wasOpen(r) && !r.target.classList.contains('open')).map((r) => r.target));
   for (const r of records) {
     const el = r.target;
     const isOpen = el.classList.contains('open');
-    const wasOpen = (r.oldValue || '').split(/\s+/).includes('open');
-    if (isOpen === wasOpen) continue;
-    if (isOpen) modalOpened(el); else modalClosed(el);
+    if (isOpen === wasOpen(r)) continue;
+    if (isOpen) modalOpened(el); else modalClosed(el, closing);
   }
   syncModalLayers();
 });
