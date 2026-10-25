@@ -16,7 +16,7 @@ import type { ReclaimScoreFactValue } from '../services/facts';
 import { adviceClaimsFor, cleanupSuggestionsCountedFor, type AdviceClaim } from '../services/cleanupMemo';
 import { suppressedNoteRoots } from '../services/notes';
 import { ruleCatalogStatus } from '../services/rulePacks';
-import { adviceHitAlong, foldedNamesOf, namesLeadTo } from '../services/adviceGuard';
+import { adviceHitAlong, foldedNamesOf, namesLeadTo, realPlaceUnlessLink } from '../services/adviceGuard';
 import { getIgnoreMatchers } from '../services/settings';
 import { getForecast } from '../services/forecast';
 import { buildStatement } from '../services/missingGigabytes';
@@ -240,7 +240,8 @@ function advisoryRefusal(p: string, relation: 'is in' | 'holds', hit: { path: st
  * Refuses a path an advice-only rule claims (hunt C12) — the claimed folder or file, anything
  * inside it, or a folder holding it — as Autopilot leaves such a group alone: its files are data (a
  * VM disk) or the operating system's, and the supported way to reclaim them is the rule's
- * adviceCommand. Each path is judged as given and where it lives (its parents' links resolved).
+ * adviceCommand. Each path is judged as given, where it lives (its parents' links resolved) and,
+ * when it is no link itself, where it really is (a Windows short name is the long name it stands for).
  * The item and anything inside it are judged from the path itself, every folder above it read
  * against the rules (adviceGuard), whatever folder a scan started at: the cleanup walk examines only
  * what lies below a scan's root, so a scan rooted at an advice-only folder, or inside one, claimed
@@ -250,16 +251,19 @@ function advisoryRefusal(p: string, relation: 'is in' | 'holds', hit: { path: st
  * when the rule packs cannot be read: then nothing can say which paths are advice only.
  */
 async function refuseAdvicePaths(paths: string[]): Promise<void> {
-  // Each path as given, where it lives (links in its parents) and on the Data volume's short spelling,
-  // compared name by name as a file system folds names (hunt HF-L3, HF-L5), as the scanned-root rule
-  // and the agent policy judge a path — not by its spelling.
+  // Each path as given, where it lives (links in its parents), on the Data volume's short spelling and,
+  // when it is no link itself, where it really is — a Windows short name (8.3), which no fold explains,
+  // is the folder it names (review F1.2) — compared name by name as a file system folds names (hunt
+  // HF-L3, HF-L5), as the scanned-root rule and the agent policy judge a path — not by its spelling.
+  const placesOf = (p: string): string[] => {
+    const real = realPlaceUnlessLink(p);
+    return [...new Set([p, livesAt(p), canonicalDirOf(p), ...(real === null ? [] : [real])])];
+  };
   const spellings = paths.map((p) => {
-    const as = [...new Set([p, livesAt(p), canonicalDirOf(p)])];
+    const as = placesOf(p);
     return { p, as, keys: as.map(foldedNamesOf) }; // folded once: a batch is up to 500 paths
   });
   const touches = (a: string[], b: string[]): boolean => namesLeadTo(a, b) || namesLeadTo(b, a);
-  // A scan's root as recorded and where it lives: its claims are spelled from the root as recorded.
-  const rootsOf = (scan: ScanResult): string[] => [...new Set([scan.rootPath, canonicalDirOf(scan.rootPath)])];
   const catalog = ruleCatalogStatus();
   if (!catalog.ok) {
     throw new AppError(500, 'RULE_PACKS_UNAVAILABLE',
@@ -273,16 +277,22 @@ async function refuseAdvicePaths(paths: string[]): Promise<void> {
   }
   // A cloud account's scan lists no local path (trash_paths refuses cloud paths before this), and its
   // root is no path to look up on the disk.
-  const scans = allScans().filter((scan) => scan.status === 'complete' && (scan.store || scan.root) && !scan.rootPath.startsWith('cloud://')
-    && spellings.some(({ keys }) => keys.some((q) => rootsOf(scan).some((root) => touches(foldedNamesOf(root), q)))));
+  // A scan's root is judged as a path is (`placesOf`), looked up once per scan: a root typed by a short
+  // name is the folder it names (review F1.2). Its claims are spelled from the root as recorded.
+  const scans = allScans()
+    .filter((scan) => scan.status === 'complete' && (scan.store || scan.root) && !scan.rootPath.startsWith('cloud://'))
+    .map((scan) => ({ scan, roots: placesOf(scan.rootPath) }))
+    .filter(({ roots }) => {
+      const rootKeys = roots.map(foldedNamesOf);
+      return spellings.some(({ keys }) => keys.some((q) => rootKeys.some((root) => touches(root, q))));
+    });
   // A claim whose advice is about its folder itself (Windows' Temp folder) refuses that folder and a
   // folder holding it, never what is in it (hunt HF-L1).
   const relationOf = (claim: AdviceClaim, at: string[], q: string[]): 'is in' | 'holds' | null => {
     if (namesLeadTo(at, q) && (claim.folderOnly !== true || namesLeadTo(q, at))) return 'is in';
     return namesLeadTo(q, at) ? 'holds' : null;
   };
-  for (const scan of scans) {
-    const roots = rootsOf(scan);
+  for (const { scan, roots } of scans) {
     const claims = (await adviceClaimsFor(storeOf(scan), catalog.catalog)).map((claim) => ({
       claim,
       places: roots.map((root) => foldedNamesOf(root === scan.rootPath ? claim.path : path.join(root, path.relative(scan.rootPath, claim.path)))),

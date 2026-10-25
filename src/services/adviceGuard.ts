@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { foldName } from '../utils/pathSanitizer';
+import { foldName, realPlaceNow } from '../utils/pathSanitizer';
 import type { Rule, RuleCatalog, ProjectDirRule } from './rulePacks';
 
 /**
@@ -45,6 +45,23 @@ function folded(name: string): string {
 export function foldedNamesOf(p: string): string[] {
   const { root } = path.parse(p);
   return [root, ...p.slice(root.length).split(path.sep).filter((name) => name.length > 0)].map(folded);
+}
+
+/**
+ * Where `p` really is, when it is no link itself: the native realpath (`realPlaceNow`) — every link
+ * resolved and each name as the volume stores it, so a Windows short name (8.3: `LOCALS~1` for
+ * `LocalState`), which no fold explains, is the long name it stands for (review F1.2). Null for a link,
+ * which is judged as itself (removing a link removes the link, never what it leads to), for a path
+ * that is not there, and for one that cannot be looked up.
+ */
+export function realPlaceUnlessLink(p: string): string | null {
+  try {
+    const entry = fs.lstatSync(p, { throwIfNoEntry: false });
+    if (entry === undefined || entry.isSymbolicLink()) return null;
+  } catch {
+    return null;
+  }
+  return realPlaceNow(p);
 }
 
 /** Whether the folded names `outer` (`foldedNamesOf`) are `inner`'s or lead to them: the same place, or a folder above it. */

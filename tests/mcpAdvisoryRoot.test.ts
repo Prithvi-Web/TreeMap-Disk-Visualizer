@@ -34,7 +34,9 @@ import { withOpenFileCheck } from './fixtures/openFileCheck';
  */
 
 const PACKS = fileTempDir('treemap-mcp-advroot-packs-');
-const LOCAL = fs.realpathSync(fileTempDir('treemap-mcp-advroot-local-'));
+// Spelled by the native realpath, as the server reads where a folder is: the Windows runner's temp
+// folder is spelled with 8.3 short names, which only the native realpath expands.
+const LOCAL = fs.realpathSync.native(fileTempDir('treemap-mcp-advroot-local-'));
 const trashed: string[] = [];
 const was = { packs: process.env.TREEMAP_RULEPACK_DIR, local: process.env.LOCALAPPDATA };
 
@@ -56,6 +58,8 @@ function writePacks(): void {
       rule({ id: 'test-locked-build', kind: 'location', title: 'Test locked build', description: 'A build folder another tool owns.', action: 'advice', adviceCommand: 'buildtool clean', paths: ['{localAppData}/lockedparent/build'] }),
       // Review F1.4: a location rule whose folder's last name holds an s, which a volume may fold from ſ.
       rule({ id: 'test-vm-store', kind: 'location', title: 'Test VM store', description: 'A virtual machine store.', action: 'advice', adviceCommand: 'vmtool prune', paths: ['{localAppData}/vmstore'] }),
+      // Review F1.2: the shape of WSL's folder holding a distribution's virtual disk.
+      rule({ id: 'test-wsl-disk', kind: 'location', title: 'Test WSL disk', description: 'A Linux distribution\'s virtual disk.', action: 'advice', adviceCommand: 'wsltool export', paths: ['{localAppData}/wslish/LocalState'] }),
     ],
   }));
   for (const pack of ['macos', 'linux', 'windows']) {
@@ -383,4 +387,64 @@ test('a location rule\'s folder named with a last name the volume folds (ſ for 
   if (!volumeFolds(store, folded)) return t.skip('this volume does not fold ſ to s');
   await scanAt(store); // rooted AT the folder: no scan's walk lists it as an item, so the path alone must say so
   await assertRefused([folded, path.join(folded, 'disk.raw')], 'vmtool prune');
+});
+
+/* Review F1.2: Windows gives a folder a second name, its 8.3 short name (LocalState is also LOCALS~1),
+ * which no fold explains. trash_paths judged a path's last name, and a scan root's, as spelled, so a
+ * short name of an advice-only folder went to the Trash step, which took the folder it names. Now each
+ * is also judged where it really is: the native realpath, which answers a short name with the long
+ * name it stands for (a link is still judged as itself: removing it removes the link). */
+
+/**
+ * Stands in for Windows' native realpath answering a short name: `short`, and anything under it, is
+ * answered as `long`. APFS and ext4 give a folder no second name, so a folder of its own stands in for
+ * the short name, under a name Windows would never make for these folders.
+ */
+async function withShortName<T>(short: string, long: string, body: () => Promise<T>): Promise<T> {
+  const realpath = fs.realpathSync.native;
+  const shorts = [...new Set([short, path.join(realpath(path.dirname(short)), path.basename(short))])];
+  fs.realpathSync.native = ((p: fs.PathLike, ...rest: unknown[]) => {
+    const asked = String(p);
+    const from = shorts.find((s) => asked === s || asked.startsWith(s + path.sep));
+    return (realpath as (...a: unknown[]) => string)(from === undefined ? asked : long + asked.slice(from.length), ...rest);
+  }) as typeof realpath;
+  try {
+    return await body();
+  } finally {
+    fs.realpathSync.native = realpath;
+  }
+}
+
+test('an advice-only folder named by a Windows short name is refused, as the folder that name is (review F1.2)', async () => {
+  const wsl = path.join(LOCAL, 'wslish');
+  const state = path.join(wsl, 'LocalState');
+  const short = path.join(wsl, 'LCLSTA~1');
+  for (const dir of [state, short]) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(state, 'ext4.vhdx'), Buffer.alloc(8_192, 6));
+  fs.writeFileSync(path.join(short, 'ext4.vhdx'), Buffer.alloc(8_192, 6));
+  await scanAt(wsl);
+  await withShortName(short, state, async () => {
+    await assertRefused([short, path.join(short, 'ext4.vhdx')], 'wsltool export');
+  });
+});
+
+test('a scan whose root is typed by a Windows short name still finds the folder holding an advice-only item (review F1.2)', async () => {
+  const root = tree('treemap-mcp-advroot-shortroot-', ['pkgs/vmfolder/vmdisk.bundle/disk.img', 'PKGS~1/vmfolder/vmdisk.bundle/disk.img']);
+  const long = path.join(root, 'pkgs');
+  await withShortName(path.join(root, 'PKGS~1'), long, async () => {
+    await scanAt(path.join(root, 'PKGS~1'));
+    await assertRefused([path.join(long, 'vmfolder')], 'vmtool compact');
+    const r = await call('trash_paths', { paths: [path.join(long, 'vmfolder')], dryRun: true });
+    assert.match(r.content?.[0]?.text ?? '', /" holds "Test VM disk"/, 'the refusal says the folder holds the item');
+  });
+});
+
+test('a link named like an advice-only folder\'s short name is judged as the link it is: removing it removes the link (review F1.2)', {
+  skip: process.platform === 'win32', // a symbolic link needs a privilege the Windows runner's user may not hold
+}, async () => {
+  const root = tree('treemap-mcp-advroot-shortlink-', ['vm/vmdisk.bundle/disk.img']);
+  const link = path.join(root, 'VMDISK~1');
+  fs.symlinkSync(path.join(root, 'vm', 'vmdisk.bundle'), link);
+  await scanAt(root);
+  await assertAllowed(link);
 });
