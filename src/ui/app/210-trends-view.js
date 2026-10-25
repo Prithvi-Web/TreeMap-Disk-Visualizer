@@ -211,9 +211,24 @@ function trendNetPoints(snaps, sameCounting = null) {
 }
 
 /** False across a change of "Don't scan" rules (B24): that step is what was
-    scanned, not a change on disk — like a drive leaving the count above. */
+    scanned, not a change on disk — like a drive leaving the count above. Read
+    from this browser's record of each scan, and from the key each snapshot
+    records itself (`ignoreRules`), which a scheduled scan has too: two whose
+    keys differ, or one an earlier build saved beside one that records its
+    rules, are not known to have counted alike unless this browser holds its
+    record of both (HE3 review F1.3), as the list below reads them. */
 function trendSameCounting(a, b) {
-  return coverageChange(coverageFor(a.rootPath, a.id), coverageFor(b.rootPath, b.id)) !== 'rules';
+  const before = coverageFor(a.rootPath, a.id), after = coverageFor(b.rootPath, b.id);
+  return coverageChange(before, after) !== 'rules' && !snapshotRulesUnknown(a.ignoreRules !== b.ignoreRules, before, after);
+}
+
+/** Whether two snapshots are not known to have run under the same "Don't
+    scan" rules (leftover HE2-L1): the server's keys for them differ, and this
+    browser does not hold its record of both scans, which would say. A record
+    of both decides; a record of one, or of neither, does not (HE3 review
+    F1.6). Shared by Trends' strip and list and by Compare. */
+function snapshotRulesUnknown(keysDiffer, before, after) {
+  return keysDiffer && !(before && after);
 }
 
 /* The compact net-change strip above the deltas: sign-split at zero, accent
@@ -254,7 +269,7 @@ async function renderTrendDeltas() {
     const rules = coverageRules(before, after);
     // The server knows the two do not record the same rules, and this browser cannot say which each ran
     // under (leftover HE2-L1): a row in only one list may be what a rule left out or let back in.
-    const rulesUnknown = diff.sameRules === false && !(before && after);
+    const rulesUnknown = snapshotRulesUnknown(diff.sameRules === false, before, after);
     // No change is said as none — not "grew by 0 B" in the growth colour (QA C07).
     const total = diff.totalDelta === 0 ? 'total did not change'
       : `total ${up ? 'grew' : 'shrank'} by

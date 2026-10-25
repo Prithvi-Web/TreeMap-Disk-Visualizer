@@ -107,7 +107,7 @@ function harness(scans: Scan[], snapshots: Snap[] = [], clock: { minute: (t: num
     sayAloud: (id: string, text: string) => { said.push([id, text]); },
   };
   const names = ['lastPathSegment', 'loadCompareOptions', 'parseCmp', ...(/function cmpSyncResult\s*\(/.test(INDEX) ? ['cmpSyncResult'] : []),
-    'cmpOptionLabels', ...(/function cmpPairRefusal\s*\(/.test(INDEX) ? ['cmpPairRefusal'] : [])];
+    'cmpOptionLabels', ...(/function cmpPairRefusal\s*\(/.test(INDEX) ? ['cmpPairRefusal'] : []), 'snapshotRulesUnknown'];
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const page = new Function(...keys, `'use strict';\n${names.map(declOf).join('\n')}\n${runButtonSource()}\n` +
@@ -394,7 +394,7 @@ test('the split view\'s failure is said in #cmpSaid, and a compare started again
   };
   const aloud = /\nconst (\w+) = new Map\(\);[^\n]*\nfunction sayAloud\(/.exec(INDEX);
   assert.ok(aloud, 'control: sayAloud keeps what each region says in a map declared right above it');
-  const names = ['lastPathSegment', 'loadCompareOptions', 'parseCmp', 'cmpSyncResult', 'cmpOptionLabels', 'cmpPairRefusal', 'cmpWhenPair', 'initCmpSplit', 'cmpSplitDraw', 'sayAloud', 'asSentences'];
+  const names = ['lastPathSegment', 'loadCompareOptions', 'parseCmp', 'cmpSyncResult', 'cmpOptionLabels', 'cmpPairRefusal', 'cmpWhenPair', 'initCmpSplit', 'cmpSplitDraw', 'sayAloud', 'asSentences', 'snapshotRulesUnknown'];
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const page = new Function(...keys, `'use strict';\nlet cmpSplit = null; let cmpSplitSeq = 0; const ${aloud[1]} = new Map();\n${names.map(declOf).join('\n')}\n${runButtonSource()}\n` +

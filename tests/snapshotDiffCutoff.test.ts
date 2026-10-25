@@ -133,7 +133,7 @@ async function trendDeltasFor(answer: Record<string, unknown>): Promise<string> 
     FxNum: { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } }, fxBarsIn: () => {},
   };
   const keys = Object.keys(deps);
-  const render = new Function(...keys, `${decl('renderTrendDeltas')}\n${decl('snapshotNotComparedHtml')}\n${decl('deltaRow')}\nreturn renderTrendDeltas;`)(...keys.map((k) => deps[k])) as () => Promise<void>;
+  const render = new Function(...keys, `${decl('renderTrendDeltas')}\n${decl('snapshotRulesUnknown')}\n${decl('snapshotNotComparedHtml')}\n${decl('deltaRow')}\nreturn renderTrendDeltas;`)(...keys.map((k) => deps[k])) as () => Promise<void>;
   await render();
   return host.innerHTML;
 }

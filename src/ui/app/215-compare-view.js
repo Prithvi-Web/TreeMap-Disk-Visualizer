@@ -200,7 +200,7 @@ $('cmpRunBtn').addEventListener('click', async () => {
       if (state.compare.result !== pair) return;
       fxHuntBeamSync('cmpBody', false);
       // §7.4 — a same-root snapshot pair also gets the split-slider maps.
-      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: false, notCompared: diff.notCompared || 0, deep: false, whenA: diff.a.takenAt, whenB: diff.b.takenAt, splitRoot: a.rootPath, rulesUnknown: diff.sameRules === false && !(cmpCoverage(a) && cmpCoverage(b)), rules });
+      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: false, notCompared: diff.notCompared || 0, deep: false, whenA: diff.a.takenAt, whenB: diff.b.takenAt, splitRoot: a.rootPath, rulesUnknown: snapshotRulesUnknown(diff.sameRules === false, cmpCoverage(a), cmpCoverage(b)), rules });
     }
   } catch (e) {
     if (state.compare.result !== pair) return;

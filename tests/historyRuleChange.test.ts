@@ -47,7 +47,7 @@ function decl(name: string): string {
 }
 
 /** The coverage helpers every test here needs, with this browser's record. */
-const COVERAGE = ['SCAN_COVERAGE_STORE', 'readCoverageBook', 'coverageFor', 'coverageChange', 'ignorePatternTest', 'coverageRules', 'coverageExplains'];
+const COVERAGE = ['SCAN_COVERAGE_STORE', 'readCoverageBook', 'coverageFor', 'coverageChange', 'ignorePatternTest', 'coverageRules', 'coverageExplains', 'snapshotRulesUnknown'];
 
 function load<T>(names: string[], deps: Record<string, unknown>, returns: string, prelude = ''): T {
   const keys = Object.keys(deps);
@@ -221,6 +221,24 @@ test('Trends’ last-change list says when the two snapshots are not known to sh
   assert.doesNotMatch(known, /not known to have run/);
   const same = await draw(browserWith([]), { totalDelta: -5_000_000, entries: [WIDE_GONE] });
   assert.match(same, /· removed</, 'the server says nothing of the rules: as before');
+  // A record of only one of the two (a scan made here beside a scheduled one) does not say which rules the
+  // other ran under: still not known (HE3 review F1.6).
+  for (const only of ['s1', 's2']) {
+    const one = await draw(browserWith([{ snap: only, patterns: [] }]), { totalDelta: -5_000_000, entries: [WIDE_GONE], sameRules: false });
+    assert.match(one, /· removed, or no longer scanned</, `a record of ${only} alone: ${one}`);
+    assert.match(one, / — these two scans are not known to have run under the same “Don’t scan” rules/, `a record of ${only} alone: the head says why`);
+  }
+});
+
+test('two snapshots are not known to share their rules only when the server says their keys differ and this browser lacks its record of either (HE3 review F1.6)', () => {
+  const unknown = load<(differ: boolean, before: unknown, after: unknown) => boolean>([], base(browserWith([])), 'snapshotRulesUnknown');
+  const rec = { family: 'walk', patterns: [] };
+  assert.equal(unknown(true, null, null), true, 'no record of either');
+  assert.equal(unknown(true, rec, null), true, 'a record of the earlier one only');
+  assert.equal(unknown(true, null, rec), true, 'a record of the later one only');
+  assert.equal(unknown(true, rec, rec), false, 'a record of both decides');
+  assert.equal(unknown(false, null, null), false, 'keys that agree say nothing is unknown');
+  assert.equal(unknown(false, rec, rec), false);
 });
 
 test('Compare says when two snapshots are not known to share their rules: rows in only one list are counted apart from added and removed, and the cause is stated (leftover HE2-L1)', () => {
@@ -243,10 +261,10 @@ test('Compare says when two snapshots are not known to share their rules: rows i
   assert.doesNotMatch(els.cmpBody!.innerHTML, /not known to have run/);
 });
 
-test('the Compare button hands a snapshot pair’s "not known to share rules" to the render only where this browser has no record of either pick’s rules (leftover HE2-L1)', () => {
+test('the Compare button hands a snapshot pair’s "not known to share rules" to the render unless this browser has a record of both picks’ rules, by the rule Trends uses (leftover HE2-L1, HE3 review F1.6)', () => {
   const start = INDEX.indexOf("$('cmpRunBtn').addEventListener('click'");
   const handler = INDEX.slice(start, INDEX.indexOf('/* ── §7.4', start));
-  assert.match(handler, /rulesUnknown: diff\.sameRules === false && !\(cmpCoverage\(a\) && cmpCoverage\(b\)\), rules \}\)/, 'the snapshot render reads the server\'s word and this browser\'s record');
+  assert.match(handler, /rulesUnknown: snapshotRulesUnknown\(diff\.sameRules === false, cmpCoverage\(a\), cmpCoverage\(b\)\), rules \}\)/, 'the snapshot render reads the server\'s word and this browser\'s record, through the shared rule tested above');
 });
 
 test('AGENTS.md says GET /api/snapshots/compare answers sameRules: false across a change of "Don\'t scan" rules (leftover HE2-L1)', () => {
@@ -275,6 +293,31 @@ test('Trends’ net-change strip draws no step across a change of "Don’t scan"
   assert.ok(drawn.spec, 'the strip is drawn');
   assert.deepEqual(drawn.spec.points, [{ t: 400, v: 10 }, { t: 500, v: 20 }],
     'the −5 and +5 of the rule going on and off are not growth or space freed');
+});
+
+test('Trends’ net-change strip draws no step where the snapshots’ own keys say the "Don’t scan" rules changed, whether or not this browser saw the scans; its record of both still decides (HE3 review F1.3)', () => {
+  const points = (snaps: unknown[], ls: unknown): unknown => {
+    const drawn: { spec: { points: unknown[] } | null } = { spec: null };
+    const draw = load<() => void>(['drawTrendNet', 'trendNetPoints', 'trendSameCounting'], {
+      ...base(ls),
+      state: { system: SYSTEM, trends: { snapshots: snaps } },
+      $: (id: string) => (id === 'trendNet' ? { hidden: true } : {}),
+      FxCharts: { profitLine: (_el: unknown, spec: { points: unknown[] }) => { drawn.spec = spec; return { update() {}, destroy() {} }; } },
+    }, 'drawTrendNet', 'let trendNetHandle = null;');
+    draw();
+    return drawn.spec?.points;
+  };
+  const at = (id: string, takenAt: number, totalSize: number, ignoreRules?: string) => ({ id, rootPath: '/c', takenAt, totalSize, ...(ignoreRules !== undefined ? { ignoreRules } : {}) });
+  const nm = JSON.stringify(['node_modules']);
+  // Scheduled scans: this browser holds no record. The rule dropped at s3 lets 60 back into the count.
+  const dropped = [at('s1', 100, 40, nm), at('s2', 200, 40, nm), at('s3', 300, 100, '[]'), at('s4', 400, 110, '[]')];
+  assert.deepEqual(points(dropped, browserWith([])), [{ t: 200, v: 0 }, { t: 400, v: 10 }], 'the +60 of a rule dropped is not growth');
+  // The update: s1 and s2 an earlier build saved record no rules, so they are not known to share s3's.
+  const updated = [at('s1', 100, 40), at('s2', 200, 40), at('s3', 300, 100, '[]'), at('s4', 400, 110, '[]')];
+  assert.deepEqual(points(updated, browserWith([])), [{ t: 200, v: 0 }, { t: 400, v: 10 }], 'one that records no rules beside one that does');
+  // This browser saw s2 and s3 run under the same patterns: its record of both decides, as the list's does.
+  assert.deepEqual(points(updated, browserWith([{ snap: 's2', patterns: [] }, { snap: 's3', patterns: [] }])), [{ t: 200, v: 0 }, { t: 300, v: 60 }, { t: 400, v: 10 }],
+    'the same patterns recorded for both: the step is on disk');
 });
 
 test('Trends’ last-change list says a folder is scanned again, not new, and why (B24)', async () => {

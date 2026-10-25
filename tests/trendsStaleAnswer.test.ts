@@ -104,7 +104,7 @@ function deltasHarness() {
     FxNum: { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } }, fxBarsIn: () => {},
   };
   const keys = Object.keys(deps);
-  const render = new Function(...keys, `${decl('renderTrendDeltas')}\n${decl('deltaRow')}\nreturn renderTrendDeltas;`)(...keys.map((k) => deps[k])) as () => Promise<void>;
+  const render = new Function(...keys, `${decl('renderTrendDeltas')}\n${decl('snapshotRulesUnknown')}\n${decl('deltaRow')}\nreturn renderTrendDeltas;`)(...keys.map((k) => deps[k])) as () => Promise<void>;
   return { host, state, settle, render };
 }
 
@@ -139,7 +139,7 @@ test('the last-change list drops a comparison answer for a folder no longer show
     FxNum: { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } }, fxBarsIn: () => {},
   };
   const keys = Object.keys(deps);
-  const render = new Function(...keys, `${decl('renderTrendDeltas')}\n${decl('deltaRow')}\nreturn renderTrendDeltas;`)(...keys.map((k) => deps[k])) as () => Promise<void>;
+  const render = new Function(...keys, `${decl('renderTrendDeltas')}\n${decl('snapshotRulesUnknown')}\n${decl('deltaRow')}\nreturn renderTrendDeltas;`)(...keys.map((k) => deps[k])) as () => Promise<void>;
   const running = render();
   state.trends = { path: '/b', snapshots: [snap('b1', 5)] }; // another folder picked meanwhile
   pending.resolve({ totalDelta: 999, entries: [{ name: 'gone', path: '/a/gone', type: 'dir', sizeA: 9, sizeB: null, delta: -9 }] });
