@@ -332,6 +332,8 @@ test('every route whose handler reaches a NOTES_UNREADABLE refusal declares the 
   }
   // Smart suggestions catches the refusal and answers 200 available:false with the code, which its 200 declares.
   const answered = new Set(['get /api/cleanup/suggestions']);
+  // Found, or the checks of how it answers would not run at all (review HD2-L4).
+  for (const known of answered) assert.ok(found.includes(known), `control: ${known} is found: ${found.join(', ')}`);
   for (const r of routes.filter((x) => answered.has(`${x.method} ${x.route}`))) {
     assert.match(r.handler, /catch \(err\) \{[^}]*code: 'NOTES_UNREADABLE'/, `${r.route} answers the refusal itself`);
     assert.match(said(r.method, r.route, '200'), /NOTES_UNREADABLE/, `${r.route}'s 200 says so`);

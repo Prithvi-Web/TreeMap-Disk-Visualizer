@@ -1011,6 +1011,19 @@ test('an unreadable notes.json refuses neither Smart suggestions nor the agent s
     assert.ok(sug.body.groups.some((g: any) => g.id === 'regen-node-modules'), 'and are served');
     const summary = await req(port, 'GET', `/api/agent/summary?scanId=${scan.scanId}`);
     assert.equal(summary.status, 200, `nor is the agent summary: ${JSON.stringify(summary.body)}`);
+    // A local listing's summary is refused: what a note pauses cannot be known, so its reclaimable bytes are not
+    // advertised to agents (AGENTS.md, and OpenAPI's 500) — the refusal the cloud case is the exception to (review HD2-L3).
+    const localRoot = dataDir;
+    const local = createScanRecord(localRoot);
+    local.store = buildStoreFromTree({
+      name: path.basename(localRoot), path: localRoot, type: 'dir', modifiedAt: 0, isHidden: false, size: 900_000, children: [
+        { name: 'node_modules', path: path.join(localRoot, 'node_modules'), type: 'dir', modifiedAt: 0, isHidden: false, size: 900_000, children: [] },
+      ],
+    });
+    local.status = 'complete';
+    const refused = await req(port, 'GET', `/api/agent/summary?scanId=${local.scanId}`);
+    assert.deepEqual([refused.status, refused.body.code], [500, 'NOTES_UNREADABLE'], `a local listing's summary is refused: ${JSON.stringify(refused.body)}`);
+    assert.equal(typeof refused.body.error, 'string', 'with the uniform { error, code }');
   } finally {
     await close();
     fs.rmSync(notesFile, { force: true });
