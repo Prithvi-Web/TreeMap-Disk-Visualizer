@@ -28,12 +28,15 @@ const DAY_MS = 86_400_000;
 /**
  * One measurement of a budget folder: when, how many bytes, and — when its
  * scan stopped at, or went into, a drive mounted inside the folder — which
- * (Track U, U-24). computeForecast fits only the run since that last changed.
+ * (Track U, U-24); and the "Don't scan" rules its scan ran under, where its
+ * snapshot records them (leftover HE2-L2). computeForecast fits only the run
+ * since either last changed.
  */
 export interface BudgetPoint {
   t: number;
   v: number;
   boundary?: SnapshotBoundary;
+  ignoreRules?: string;
 }
 
 export interface BudgetHistorySeries {
@@ -119,8 +122,8 @@ function boundaryWithin(boundary: SnapshotBoundary | undefined, folder: string):
   return entered.length > 0 ? { rule: 'cross', entered } : undefined;
 }
 
-function pointOf(t: number, v: number, boundary: SnapshotBoundary | undefined): BudgetPoint {
-  return boundary ? { t, v, boundary } : { t, v };
+function pointOf(t: number, v: number, boundary: SnapshotBoundary | undefined, ignoreRules: string | undefined): BudgetPoint {
+  return { t, v, ...(boundary ? { boundary } : {}), ...(ignoreRules !== undefined ? { ignoreRules } : {}) };
 }
 
 /**
@@ -132,7 +135,7 @@ function pointOf(t: number, v: number, boundary: SnapshotBoundary | undefined): 
 export async function budgetHistorySeries(budgetPath: string): Promise<BudgetHistorySeries> {
   const own = await listSnapshots(budgetPath);
   if (own.length > 0) {
-    return { points: own.map((s) => pointOf(s.takenAt, s.totalSize, boundaryWithin(s.boundary, budgetPath))), source: 'own-scans' };
+    return { points: own.map((s) => pointOf(s.takenAt, s.totalSize, boundaryWithin(s.boundary, budgetPath), s.ignoreRules)), source: 'own-scans' };
   }
 
   // No direct history — look for scanned roots the budget folder sits under
@@ -153,7 +156,7 @@ export async function budgetHistorySeries(budgetPath: string): Promise<BudgetHis
       const tree = trees[s.id];
       if (!tree) continue;
       const node = descend(tree, segments);
-      if (node) points.push(pointOf(s.takenAt, node.s, boundaryWithin(s.boundary, budgetPath)));
+      if (node) points.push(pointOf(s.takenAt, node.s, boundaryWithin(s.boundary, budgetPath), s.ignoreRules));
     }
   }
   if (points.length === 0) return { points: [], source: 'none' };
@@ -192,7 +195,7 @@ export function computeBudgetProjection(
 
   // Dress the series up as snapshots so computeForecast can be reused
   // verbatim, with the remaining headroom standing in for free disk space —
-  // and each point's drives, so the fit starts where they last changed.
+  // and each point's drives and rules, so the fit starts where either last changed.
   const snaps: Snapshot[] = series.map((p, i) => ({
     id: `series-${i}`,
     rootPath: budget.path,
@@ -202,6 +205,7 @@ export function computeBudgetProjection(
     dirCount: 0,
     topEntries: [],
     ...(p.boundary ? { boundary: p.boundary } : {}),
+    ...(p.ignoreRules !== undefined ? { ignoreRules: p.ignoreRules } : {}),
   }));
   const headroom = budget.maxBytes - currentBytes;
   const first = computeForecast(snaps, headroom, now);

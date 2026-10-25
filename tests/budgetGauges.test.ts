@@ -125,6 +125,39 @@ test('a budget\'s history starts again where the drives a scan stopped at change
   assert.match(p.reason ?? '', /6 earlier scans stopped at different drives mounted inside this folder/);
 });
 
+test('a budget\'s history starts again where the "Don\'t scan" rules changed, as the forecast\'s does (leftover HE2-L2)', () => {
+  // Six scans under the rule `node_modules`, flat at 40 GB; the rule dropped, two count 100 GB. Nothing grew.
+  const nm = JSON.stringify(['node_modules']);
+  const series = [
+    ...Array.from({ length: 6 }, (_, i) => ({ ...pt(10 - i, 40 * GB), ignoreRules: nm })),
+    { ...pt(2, 100 * GB), ignoreRules: JSON.stringify([]) },
+    { ...pt(1, 100 * GB), ignoreRules: JSON.stringify([]) },
+  ];
+  const p = computeBudgetProjection({ path: '/b', maxBytes: 200 * GB }, 100 * GB, series, NOW);
+  assert.equal(p.status, 'insufficient', `the 60 GB step is a rule, not growth (got ${p.status}: ${p.reason ?? ''})`);
+  assert.match(p.reason ?? '', /6 earlier scans came before your “Don’t scan” rules changed, so they are not compared with these\./);
+  const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(agents.includes('Like the forecast, it fits only the scans since the drives mounted inside the budget folder that a scan stopped at, or the "Don\'t scan" rules, last changed'), 'AGENTS.md says so');
+});
+
+test('each point carries the "Don\'t scan" rules its scan ran under, from the folder\'s own snapshots or an ancestor\'s (leftover HE2-L2)', async () => {
+  const bp = '/Users/t/Projects/rules';
+  writeSnapshots([
+    snap(bp, 'own-r1', 1, 10 * GB),
+    { ...snap(bp, 'own-r2', 0, 11 * GB), ignoreRules: '["node_modules"]' },
+  ]);
+  assert.deepEqual((await budgetHistorySeries(bp)).points, [pt(1, 10 * GB), { ...pt(0, 11 * GB), ignoreRules: '["node_modules"]' }]);
+  const root = '/Users/t/Media';
+  const raw = '/Users/t/Media/photos/raw';
+  writeSnapshots([
+    snap(root, 'anc-r1', 1, 100 * GB),
+    { ...snap(root, 'anc-r2', 0, 100 * GB), ignoreRules: '[]' },
+  ]);
+  const tree: SnapshotTreeNode = { n: 'Media', s: 100 * GB, t: 1, c: [{ n: 'photos', s: 60 * GB, t: 1, c: [{ n: 'raw', s: 40 * GB, t: 1 }] }] };
+  writeTrees(root, { 'anc-r1': tree, 'anc-r2': tree });
+  assert.deepEqual((await budgetHistorySeries(raw)).points, [pt(1, 40 * GB), { ...pt(0, 40 * GB), ignoreRules: '[]' }]);
+});
+
 /* ---------- budgetHistorySeries: where the points come from ---------- */
 
 test("budgetHistorySeries prefers the folder's own snapshot history", async () => {

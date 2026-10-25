@@ -1267,7 +1267,8 @@ read-what-you-saw) permission to act.
   1 MiB-a-day "flat" floor does not apply: a folder growing more slowly than
   that toward a near budget gets its breach date. A series read from shallow snapshot trees says so in `caveat`.
   Like the forecast, it fits only the scans since the drives mounted inside
-  the budget folder that a scan stopped at last changed (Track U, U-24).
+  the budget folder that a scan stopped at, or the "Don't scan" rules, last
+  changed (Track U, U-24).
 - **Plain-words translation (v4 §9.6).** `POST /api/nl-query { text }`
   translates natural phrasing into the query grammar and **never executes**
   — no hits, no totals; run the returned `q` through `POST /api/query`
