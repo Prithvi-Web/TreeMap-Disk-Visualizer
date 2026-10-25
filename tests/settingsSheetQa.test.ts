@@ -660,6 +660,36 @@ test('"Target cleared" is retired once a new target is typed or its unit changed
   assert.equal(dom.$('settingsStatus').textContent, unread, 'control: why Save is off stays');
 });
 
+/*
+ * With the stored settings unreadable, Save is off and the line says why. Clear target wrote "press Save to
+ * keep it" over that line — untrue, Save being off — and typing a target then retired it, leaving Save off with
+ * nothing saying why (review HD2 F1.11).
+ */
+test('while Save is off, Clear target and a new target leave the line that says why alone (review HD2 F1.11)', () => {
+  const unread = 'Your settings could not be read, so Save is off — nothing here can overwrite them. Close this sheet and open Settings again to try again.';
+  const opened = braced("$('settingsBtn').addEventListener('click', async () => {");
+  assert.ok(opened.includes(`settingsSaveOn(false);`) && opened.includes(`setSettingsStatus('${unread}');`), 'control: a failed load turns Save off and says why');
+  const dom = fakeDom({ cleanupGoalValue: { value: '50' }, settingsSaveBtn: { disabled: true }, settingsStatus: { textContent: unread } });
+  const at = INDEX.indexOf("$('cleanupGoalClear').addEventListener('click', () => {");
+  const region = INDEX.slice(INDEX.lastIndexOf('// An edit like every other field here', at), INDEX.indexOf('/* ── Reclaim Score weights', at));
+  const said: string[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function('$', 'adoptCartGoal', 'sayAloud', `'use strict'; ${braced('function setSettingsStatus(')} ${region}`)(dom.$, () => null, (_id: string, words: string) => { said.push(words); });
+  dom.$('cleanupGoalClear').listeners.click();
+  assert.equal(dom.$('cleanupGoalValue').value, '', 'control: the box is emptied');
+  assert.equal(dom.$('settingsStatus').textContent, unread, 'the line still says why Save is off');
+  assert.deepEqual(said, [], 'and nothing untrue is said');
+  dom.$('cleanupGoalValue').value = '20';
+  dom.$('cleanupGoalValue').listeners.input();
+  dom.$('cleanupGoalUnit').listeners.change();
+  assert.equal(dom.$('settingsStatus').textContent, unread, 'nor does a new target take it down');
+
+  // Control: with Save on, the press says what it did.
+  dom.$('settingsSaveBtn').disabled = false;
+  dom.$('cleanupGoalClear').listeners.click();
+  assert.equal(dom.$('settingsStatus').textContent, 'Target cleared — press Save to keep it', 'control: with Save on, Clear target says so');
+});
+
 /* ══════════════ D76 — Save closes the sheet once the server has the settings ══════════════ */
 
 function saveRuntime(api: (url: string, options?: ApiCall['options']) => Promise<unknown>) {

@@ -255,6 +255,8 @@ function collectCleanupGoal() {
 const TARGET_CLEARED = 'Target cleared — press Save to keep it';
 $('cleanupGoalClear').addEventListener('click', () => {
   $('cleanupGoalValue').value = '';
+  // While Save is off the line says why, and "press Save" would be untrue over it (review HD2 F1.11).
+  if ($('settingsSaveBtn').disabled) return;
   // Each press is said (review HD-L16): the same words as the last are no news to sayAloud, so the line is
   // emptied first.
   setSettingsStatus('');
