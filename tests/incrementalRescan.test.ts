@@ -507,6 +507,56 @@ test('a fast-rescan cache an earlier build saved (format 2) is never read: a nam
   }
 });
 
+/**
+ * Fast-rescan `root` under one "Don't scan" rule added since the scan without it wrote the cache, and
+ * check the reused listing of `holder` leaves `holder/node_modules` out (review F1.4, leftover HE2-L5).
+ */
+async function rescanUnderNewRule(root: string, holder: string, pattern: string): Promise<void> {
+  await scanOnce(root, false);
+  await waitForCache(root);
+  await updateSettings({ ignore: [{ pattern, scope: 'scan' }] });
+  const ruled = await scanOnce(root, true);
+  assert.equal(ruled.status, 'complete');
+  assert.equal(ruled.walkedDirs, 0, 'control: every listing came from the cache the scan without the rule wrote');
+  const store = storeOf(ruled);
+  assert.equal(store.findByPath(path.join(holder, 'node_modules')), -1, `the rule ${pattern} leaves node_modules out of the reused listing of ${path.basename(holder)}`);
+  assert.equal(store.size(store.rootId), 1000, 'and its bytes are not counted');
+  assert.equal(store.flag(store.findByPath(holder), Flag.LeftOutByRule), true, 'the folder says a rule left entries out of it, as a fresh listing marks it');
+}
+
+test('a fast rescan holds the scanned folder\'s own reused listing to a "Don\'t scan" rule added since the cache was written, as it holds a folder below it (leftover HE2-L5)', async () => {
+  // node_modules sits in the scanned folder itself, whose listing is reused on the cache's word, not
+  // revalidated as a queued child's is: the rule must reach that reuse too.
+  const root = fs.realpathSync(await fsp.mkdtemp(path.join(os.tmpdir(), 'treemap-inc-rootrule-')));
+  await fsp.mkdir(path.join(root, 'node_modules'), { recursive: true });
+  await fsp.writeFile(path.join(root, 'node_modules', 'x.js'), Buffer.alloc(9000, 1));
+  await fsp.writeFile(path.join(root, 'a.txt'), Buffer.alloc(1000, 1));
+  ageFolders(root);
+  try {
+    await rescanUnderNewRule(root, root, 'node_modules');
+  } finally {
+    await updateSettings({ ignore: [] });
+    await fsp.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a fast rescan holds a reused listing to a path-form "Don\'t scan" rule, in the scanned folder and below it, as to a bare name (leftover HE2-L5)', async () => {
+  for (const nested of [false, true]) {
+    const root = fs.realpathSync(await fsp.mkdtemp(path.join(os.tmpdir(), 'treemap-inc-pathrule-')));
+    const holder = nested ? path.join(root, 'proj') : root;
+    await fsp.mkdir(path.join(holder, 'node_modules'), { recursive: true });
+    await fsp.writeFile(path.join(holder, 'node_modules', 'x.js'), Buffer.alloc(9000, 1));
+    await fsp.writeFile(path.join(holder, 'a.txt'), Buffer.alloc(1000, 1));
+    ageFolders(root);
+    try {
+      await rescanUnderNewRule(root, holder, path.join(holder, 'node_modules'));
+    } finally {
+      await updateSettings({ ignore: [] });
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test('a fast rescan holds every listing it reuses to its own "Don\'t scan" rules: a rule added since the cache was written leaves out what it matches, as a fresh listing does, so two scans under one rule compare alike (review F1.4)', async () => {
   const root = fs.realpathSync(await fsp.mkdtemp(path.join(os.tmpdir(), 'treemap-inc-rule-')));
   const proj = path.join(root, 'proj');
