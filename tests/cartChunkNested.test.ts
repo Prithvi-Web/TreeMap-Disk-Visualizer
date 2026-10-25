@@ -43,7 +43,8 @@ function cartPage(staged: string[], keptBack: string[] = []): Page {
   const requests: Page['requests'] = [];
   const summaries: Page['summaries'] = [];
   const gone: string[] = [];
-  const el = (): Record<string, unknown> => ({ disabled: false, hidden: false, innerHTML: '', classList: { add: () => undefined, contains: () => true } });
+  // A button takes focus as a page's does: the commit gives it back once it works again (review F1.15 of HZ).
+  const el = (): Record<string, unknown> => ({ disabled: false, hidden: false, innerHTML: '', classList: { add: () => undefined, contains: () => true }, focus: () => undefined });
   const noop = (): undefined => undefined;
   const make = new Function(
     'state', 'api', '$', 'icon', 'REDUCED', 'formatCount', 'formatBytes', 'toast', 'ensureNodes', 'nodeFor', 'resetOpenHandleWarning',

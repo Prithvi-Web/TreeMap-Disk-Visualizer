@@ -784,7 +784,7 @@ async function commitWithAFailingSecondBatch(first: Record<string, unknown>): Pr
     `let cartLastRun = null; let cartShown = 0; ${src}; return { run: cartExecuteCommit, lastRun: () => cartLastRun };`,
   );
   const ui = make(
-    () => ({ disabled: false, innerHTML: 'Delete', classList: { contains: () => true } }),
+    () => ({ disabled: false, innerHTML: 'Delete', classList: { contains: () => true }, focus: noop }), // a button takes focus (review F1.15 of HZ)
     () => (calls++ === 0 ? Promise.resolve(first) : Promise.reject(new Error('the server did not answer (a test)'))),
     1, 'key', () => '', true, (n: number) => String(n), { cart: new Set(['/x/a', '/x/b']) },
     noop, noop, noop, (message: string) => toasts.push(message), (result: Record<string, unknown>) => summaries.push(result), noop, 50,

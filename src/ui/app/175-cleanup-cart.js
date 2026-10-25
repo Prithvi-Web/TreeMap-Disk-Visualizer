@@ -542,12 +542,15 @@ async function cartExecuteCommit(paths, foreseen = []) {
   const btn = $('cartTrash');
   const label = btn.innerHTML;
   const result = { dryRun: false, runId: null, trashed: [], bytesFreed: 0, skipped: [], failedToTrash: [], unverified: [] };
-  let heldFocus = false;
+  // The commit runs only from the confirm sheet Move to Trash opened, and that sheet gives focus back
+  // to the button as it closes — after this has begun and, for a chunked commit, disabled it, so the
+  // return does nothing and focus is left on the sheet's OK, which a browser then drops to <body>.
+  // Whether focus goes back is judged where it is when the commit settles (review F1.15 of HZ):
+  // cartRefocus(btn, true) below.
   try {
     for (let i = 0; i < paths.length; i += CART_COMMIT_CHUNK) {
       const chunk = paths.slice(i, i + CART_COMMIT_CHUNK);
       if (paths.length > CART_COMMIT_CHUNK) {
-        heldFocus = heldFocus || document.activeElement === btn;
         btn.disabled = true;
         btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') +
           `Deleting… ${formatCount(Math.min(paths.length, i))}/${formatCount(paths.length)}`;
@@ -580,7 +583,7 @@ async function cartExecuteCommit(paths, foreseen = []) {
     if (result.trashed.length || result.unverified.length) {
       cartDropTrashed([...(result.trashed || []), ...result.skipped.filter((i) => i.code === 'ITEM_GONE').map((i) => i.path)]);
       btn.disabled = false;
-      cartRefocus(btn, heldFocus);
+      cartRefocus(btn, true);
       saveCart(); await renderCart(); refreshCartButtons();
       cartFocusOffHiddenDock();
       cartLastRun = result.runId;
@@ -596,7 +599,7 @@ async function cartExecuteCommit(paths, foreseen = []) {
   } finally {
     btn.disabled = false;
     btn.innerHTML = label;
-    cartRefocus(btn, heldFocus);
+    cartRefocus(btn, true);
   }
   // What is already gone leaves the cart too, as the summary says (hunt C74).
   const goneNow = [...(result.skipped || []), ...foreseen].filter((i) => i.code === 'ITEM_GONE').map((i) => i.path);
@@ -620,10 +623,16 @@ async function cartExecuteCommit(paths, foreseen = []) {
   if (result.trashed && result.trashed.length) rescan();
 }
 
-/** Focus a disabled Move to Trash dropped to <body> goes back to it once it works again (review HC2-L8). */
+/**
+ * Focus a disabled Move to Trash dropped to <body> goes back to it once it works again (review HC2-L8),
+ * and so does focus still nominally on a control that stopped painting — the closed confirm sheet's OK,
+ * which a browser drops to <body> at a later step (review F1.15 of HZ). Focus the person moved to a
+ * control on screen is left there; a button the dock took off screen takes no focus.
+ */
 function cartRefocus(btn, heldFocus) {
   const at = document.activeElement;
-  if (heldFocus && (!at || at === document.body)) btn.focus({ preventScroll: true });
+  const lost = !at || at === document.body || (typeof at.getClientRects === 'function' && !at.getClientRects().length);
+  if (heldFocus && lost) btn.focus({ preventScroll: true });
 }
 
 /**

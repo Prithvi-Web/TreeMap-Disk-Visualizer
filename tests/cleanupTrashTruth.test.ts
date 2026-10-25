@@ -47,13 +47,13 @@ function fnDecl(name: string): string {
   throw new Error(`unbalanced function ${name}`);
 }
 
-type El = { hidden: boolean; innerHTML: string; textContent: string; style: Record<string, string>; classes: Set<string>; classList: { add(c: string): void; remove(c: string): void; contains(c: string): boolean } };
+type El = { hidden: boolean; innerHTML: string; textContent: string; style: Record<string, string>; classes: Set<string>; classList: { add(c: string): void; remove(c: string): void; contains(c: string): boolean }; focus(): void };
 function makeEls(): { $: (id: string) => El; els: Record<string, El> } {
   const els: Record<string, El> = {};
   const $ = (id: string): El => (els[id] ||= (() => {
     const classes = new Set<string>();
     return { hidden: false, innerHTML: '', textContent: '', style: {}, classes,
-      classList: { add: (c: string) => { classes.add(c); }, remove: (c: string) => { classes.delete(c); }, contains: (c: string) => classes.has(c) } };
+      classList: { add: (c: string) => { classes.add(c); }, remove: (c: string) => { classes.delete(c); }, contains: (c: string) => classes.has(c) }, focus: () => {} };
   })());
   return { $, els };
 }
@@ -735,6 +735,49 @@ test('a chunked commit that leaves items in the cart gives focus back to Move to
   await commit(paths);
   assert.equal(cart.size, 2, 'control: two items stay staged');
   assert.equal(m.seen.atOpen, m.cartTrash, 'the button it disabled has focus again as the "Done" sheet opens, not <body>');
+});
+
+/**
+ * The page's own confirm OK handler over the focus model: closeModal stops the sheet painting at once, and the net's
+ * observer — a MutationObserver — reacts at the first microtask checkpoint, after the callback (the commit) has run up
+ * to its first await. `settle` is the browser's later rendering step, which drops focus left on what stopped painting
+ * to <body> (review F1.15 of HZ).
+ */
+function confirmOkIn(m: ReturnType<typeof cartFocusModel>, cb: () => Promise<void>) {
+  const handler = blockAt("$('confirmOk').addEventListener('click', async () => {").replace("$('confirmOk').addEventListener('click', ", '');
+  const ok = new Function('onConfirmTrash', 'closeModal', 'trashPaths',
+    `let confirmIgnoreOpenHandles = false; let openHandleSeq = 0; let confirmPaths = [];\nreturn ${handler};`,
+  )(cb, (id: string) => { assert.equal(id, 'confirmModal'); m.sheetOk.shown = false; queueMicrotask(() => m.net.modalClosed(m.sheet)); },
+    async () => assert.fail('the cart commit is a callback, never the plain trash path')) as () => Promise<void>;
+  const settle = (): void => { const at = m.doc.activeElement as { getClientRects?: () => unknown[] } | null; if (at && at !== m.doc.body && !at.getClientRects?.().length) m.doc.activeElement = m.doc.body; };
+  return { ok, settle };
+}
+
+test('a commit started from the confirm sheet\'s OK — the net giving focus back only once the commit has begun — leaves focus on Move to Trash when it fails or leaves items staged, never <body>: one request and a chunked one (review F1.15 of HZ)', async () => {
+  const failing = (): Record<string, unknown> => { throw new Error('the server did not answer (a test)'); };
+  const leavesOne = (chunk: string[]): Record<string, unknown> => ({ runId: 'r1', trashed: chunk.slice(1), skipped: [{ path: chunk[0], code: 'CAPSULE_FULL', reason: 'Too big.' }] });
+  for (const n of [1, 501]) {
+    for (const [how, answer] of [['its first request fails', failing], ['it leaves items staged', leavesOne]] as const) {
+      const at = `${n} item(s), ${how}`;
+      const m = cartFocusModel();
+      const paths = Array.from({ length: n }, (_, i) => `/c/f${i}.bin`);
+      const cart = new Set(paths);
+      const commit = cartCommitIn(m, cart, answer);
+      const { ok, settle } = confirmOkIn(m, () => commit(paths));
+      m.cartTrash.focus(); // Move to Trash pressed
+      m.open(); // the confirm sheet remembers it and takes focus
+      assert.equal(m.doc.activeElement, m.sheetOk, `control (${at}): the sheet's OK has focus`);
+      assert.equal(m.prevFocus.get('confirmModal'), m.cartTrash, `control (${at}): the sheet came from Move to Trash`);
+      await ok(); // Enter on OK
+      settle();
+      assert.ok(cart.size > 0, `control (${at}): items stay staged, so the dock and its button stay`);
+      if (answer === failing) {
+        assert.equal((m.doc.activeElement as { name?: string }).name, 'cartTrash', `${at}: focus is on Move to Trash, not <body>`);
+      } else {
+        assert.equal(m.seen.atOpen, m.cartTrash, `${at}: Move to Trash has focus as the "Done" sheet opens, not <body> or the closed sheet's OK`);
+      }
+    }
+  }
 });
 
 test('a dry run that fails gives focus back to Move to Trash, which it disabled while it ran — a second Enter reaches it (review HC2-L8)', async () => {
