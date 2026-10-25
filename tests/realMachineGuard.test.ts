@@ -625,7 +625,16 @@ test("outside a test runner, emptying the Trash goes ahead: to the machine's own
   assert.ok(calls.includes(`spawn ${[cmd, ...args].join(' ')}`), `the emptier was asked for: ${JSON.stringify(calls)}`);
   const result = value as { emptied: boolean; failed: Array<{ location: string }> };
   assert.equal(result.emptied, false, JSON.stringify(value));
-  assert.equal(result.failed[0]?.location, cmd, `and the answer names it as what did not run: ${JSON.stringify(value)}`);
+  if (process.platform === 'darwin' || process.platform === 'win32') {
+    assert.equal(result.failed[0]?.location, cmd, `and the answer names it as what did not run: ${JSON.stringify(value)}`);
+    return;
+  }
+  // On Linux, with gio not run, the freedesktop fallback empties the Trash folders itself, and the disarmed machine
+  // refuses it the first of them, the home folder's. The answer names that folder, and only what the fallback could
+  // not clear: once the fallback ran, gio's absence is no reason the Trash stayed full (runTrashEmptiers).
+  const homeTrash = path.join(child.home, '.local', 'share', 'Trash', 'files');
+  assert.equal(result.failed[0]?.location, homeTrash, `and the answer names the Trash folder the fallback could not clear: ${JSON.stringify(value)}`);
+  assert.ok(!result.failed.some((f) => f.location === cmd), `and not gio, which the fallback stood in for: ${JSON.stringify(value)}`);
 });
 
 test("outside a test runner, deleting the machine's local snapshots goes ahead: to tmutil on a Mac, which the disarmed machine does not start, and to the platform's own answer elsewhere", () => {
