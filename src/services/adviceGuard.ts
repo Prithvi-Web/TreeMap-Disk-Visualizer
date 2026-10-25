@@ -59,6 +59,8 @@ const KEY_JOIN = '\u0000';
 interface FoldedRules {
   names: Map<Rule, string[]>;
   paths: Map<Rule, string[]>;
+  /** How many names each location rule's paths have: a folder with another count is no location rule's. */
+  depths: Set<number>;
 }
 const foldedRules = new WeakMap<RuleCatalog, FoldedRules>();
 
@@ -68,8 +70,13 @@ function foldedRulesOf(catalog: RuleCatalog): FoldedRules {
   const names = new Map<Rule, string[]>();
   for (const rule of [...catalog.projectDirectory, ...catalog.directory, ...catalog.file]) names.set(rule, rule.names.map(folded));
   const paths = new Map<Rule, string[]>();
-  for (const rule of catalog.location) paths.set(rule, rule.paths.map((p) => foldedNamesOf(p).join(KEY_JOIN)));
-  const made = { names, paths };
+  const depths = new Set<number>();
+  for (const rule of catalog.location) {
+    const each = rule.paths.map(foldedNamesOf);
+    for (const ruleNames of each) depths.add(ruleNames.length);
+    paths.set(rule, each.map((ruleNames) => ruleNames.join(KEY_JOIN)));
+  }
+  const made = { names, paths, depths };
   foldedRules.set(catalog, made);
   return made;
 }
@@ -99,18 +106,24 @@ function projectMatches(rule: ProjectDirRule, at: string): boolean {
   return check(path.dirname(at), rule.requiresSibling, true) && check(at, rule.requiresChild, true) && check(at, rule.forbidsChild, false);
 }
 
-/** The rule the walk would claim the folder `at` by, or undefined. */
-function folderRule(catalog: RuleCatalog, at: string): Rule | undefined {
+/**
+ * The rule the walk would claim the folder `at` by, or undefined. The first `count` of `names` are
+ * `at`'s folded names (`foldedNamesOf`): every folder above a path is a run of the path's own names,
+ * so they are folded once per path, never again for each folder (review F1.1).
+ */
+function folderRule(catalog: RuleCatalog, at: string, names: readonly string[], count: number): Rule | undefined {
   const rules = foldedRulesOf(catalog);
   const base = path.basename(at);
   if (base !== '') {
-    const name = folded(base);
+    // Only a network share's root (`\\server\share\`) has a last name and no name past its root.
+    const name = count > 1 ? names[count - 1] : folded(base);
     const project = catalog.projectDirectory.find((r) => rules.names.get(r)?.includes(name) && projectMatches(r, at));
     if (project) return project;
     const named = catalog.directory.find((r) => rules.names.get(r)?.includes(name));
     if (named) return named;
   }
-  const key = foldedNamesOf(at).join(KEY_JOIN);
+  if (!rules.depths.has(count)) return undefined; // no location rule's folder has this many names
+  const key = names.slice(0, count).join(KEY_JOIN);
   return catalog.location.find((r) => rules.paths.get(r)?.includes(key));
 }
 
@@ -131,19 +144,28 @@ function isFile(p: string): boolean {
 export function adviceHitAlong(p: string, catalog: RuleCatalog): AdviceHit | null {
   const hit = (rule: Rule | undefined, at: string): AdviceHit | null =>
     rule?.action === 'advice' ? { path: at, title: rule.title, ...(rule.adviceCommand ? { adviceCommand: rule.adviceCommand } : {}) } : null;
+  // `p`, then every folder above it to its root: folder i's folded names are the first
+  // (names.length - i) of `p`'s, and at least its root — a root spelled with more separators than its
+  // own (`//a` on POSIX) reaches its root by one more step. (On Windows a `/`, which dirname reads as
+  // a separator and foldedNamesOf as part of a name, never reaches here: every caller's path is
+  // resolved, and Windows' resolve turns `/` into `\`.)
+  const chain = [p];
+  for (let at = p; path.dirname(at) !== at; ) chain.push((at = path.dirname(at)));
+  const names = foldedNamesOf(p);
+  const ruleAt = (i: number): Rule | undefined => folderRule(catalog, chain[i], names, Math.max(1, names.length - i));
   if (isFile(p)) {
     const name = folded(path.basename(p));
     const own = hit(catalog.file.find((r) => foldedRulesOf(catalog).names.get(r)?.includes(name)), p);
     if (own) return own;
   } else {
-    const own = hit(folderRule(catalog, p), p);
+    const own = hit(ruleAt(0), p);
     if (own) return own;
   }
-  for (let at = path.dirname(p); ; at = path.dirname(at)) {
+  for (let i = 1; i < chain.length; i++) {
     // A rule whose advice is about its folder itself (`adviceCovers: "folder"`) claims nothing in it (hunt HF-L1).
-    const rule = folderRule(catalog, at);
-    const above = rule?.adviceCovers === 'folder' ? null : hit(rule, at);
+    const rule = ruleAt(i);
+    const above = rule?.adviceCovers === 'folder' ? null : hit(rule, chain[i]);
     if (above) return above;
-    if (path.dirname(at) === at) return null;
   }
+  return null;
 }

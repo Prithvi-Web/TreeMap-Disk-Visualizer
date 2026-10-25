@@ -13,7 +13,8 @@ import { buildMcpServer } from '../src/mcp/server';
 import { startScan, getScan } from '../src/services/diskScanner';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { updateSettings } from '../src/services/settings';
-import { resetRuleCatalog } from '../src/services/rulePacks';
+import { resetRuleCatalog, ruleCatalogStatus } from '../src/services/rulePacks';
+import { adviceHitAlong } from '../src/services/adviceGuard';
 import { readAudit } from '../src/services/audit';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
@@ -324,4 +325,47 @@ test('a path named through a link into an advice-only folder is refused, as wher
   fs.symlinkSync(path.join(root, 'vm', 'vmdisk.bundle'), path.join(root, 'alias'));
   await scanAt(root);
   await assertRefused([path.join(root, 'alias', 'disk.img')], 'vmtool compact');
+});
+
+/* Review F1.1: every folder above a path was folded again from its root, name by name, so a deep path
+ * cost a fold for every name of every folder above it — quadratic in its depth, synchronously on the
+ * MCP event loop, for each spelling of each of up to 500 paths. Counted, not timed. */
+
+/** The catalog this file's packs make. */
+function catalogHere(): NonNullable<Extract<ReturnType<typeof ruleCatalogStatus>, { ok: true }>['catalog']> {
+  const status = ruleCatalogStatus();
+  assert.ok(status.ok, 'the test packs load');
+  return status.catalog;
+}
+
+/** How many names `body` folds: each fold is one NFKC normalisation (foldName). */
+function foldsDuring<T>(body: () => T): { folds: number; value: T } {
+  const proto = String.prototype as { normalize: (form?: string) => string };
+  const normalize = proto.normalize;
+  let folds = 0;
+  proto.normalize = function (this: string, form?: string): string {
+    folds += 1;
+    return normalize.call(this, form);
+  };
+  try {
+    return { value: body(), folds };
+  } finally {
+    proto.normalize = normalize;
+  }
+}
+
+test('a deep path folds each of its names once, not once for every folder above it, and a deep path under an advice-only folder is still found (review F1.1)', () => {
+  const catalog = catalogHere();
+  adviceHitAlong(path.join(LOCAL, 'warm'), catalog); // the rules' own names are folded once per catalog
+  const DEPTH = 400;
+  const deep = path.join(LOCAL, ...Array<string>(DEPTH).fill('d'));
+  const names = deep.split(path.sep).length;
+  const plain = foldsDuring(() => adviceHitAlong(deep, catalog));
+  assert.equal(plain.value, null, 'no rule claims it');
+  assert.ok(plain.folds <= 2 * names, `${plain.folds} folds for a path of ${names} names: each name once, not once for every folder above it`);
+
+  const data = path.join(LOCAL, 'dockerish', 'data');
+  const under = foldsDuring(() => adviceHitAlong(path.join(data, ...Array<string>(DEPTH).fill('d')), catalog));
+  assert.deepEqual([under.value?.path, under.value?.adviceCommand], [data, 'vmtool reclaim'], 'the location rule\'s folder far above it still claims it');
+  assert.ok(under.folds <= 2 * (names + 2), `${under.folds} folds for a path of ${names + 2} names`);
 });
