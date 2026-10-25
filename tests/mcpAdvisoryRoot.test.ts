@@ -333,6 +333,18 @@ test('a path named through a link into an advice-only folder is refused, as wher
   await assertRefused([path.join(root, 'alias', 'disk.img')], 'vmtool compact');
 });
 
+test('a link inside an advice-only folder, named through a link to that folder, is refused — as where its folder lives, not where the link leads (review HF2-L2)', {
+  skip: process.platform === 'win32', // a symbolic link needs a privilege the Windows runner's user may not hold
+}, async () => {
+  // A link is acted on as itself, so the place the whole path resolves to does not speak for it: where it
+  // lives comes only from its parents' links, read by livesAt and canonicalDirOf, which nothing else pinned.
+  const root = tree('treemap-mcp-advroot-leaflink-', ['vm/vmdisk.bundle/disk.img']);
+  fs.symlinkSync(path.join(root, 'vm', 'vmdisk.bundle', 'disk.img'), path.join(root, 'vm', 'vmdisk.bundle', 'inner-link'));
+  fs.symlinkSync(path.join(root, 'vm', 'vmdisk.bundle'), path.join(root, 'alias'));
+  await scanAt(root);
+  await assertRefused([path.join(root, 'alias', 'inner-link')], 'vmtool compact');
+});
+
 /* Review F1.1: every folder above a path was folded again from its root, name by name, so a deep path
  * cost a fold for every name of every folder above it — quadratic in its depth, synchronously on the
  * MCP event loop, for each spelling of each of up to 500 paths. Counted, not timed. */
@@ -368,12 +380,13 @@ test('a deep path folds each of its names once, not once for every folder above 
   const names = deep.split(path.sep).length;
   const plain = foldsDuring(() => adviceHitAlong(deep, catalog));
   assert.equal(plain.value, null, 'no rule claims it');
-  assert.ok(plain.folds <= 2 * names, `${plain.folds} folds for a path of ${names} names: each name once, not once for every folder above it`);
+  // Each name once (review HF2-L3): a budget of twice that let one extra fold per folder pass.
+  assert.ok(plain.folds <= names, `${plain.folds} folds for a path of ${names} names: each name once, not once for every folder above it`);
 
   const data = path.join(LOCAL, 'dockerish', 'data');
   const under = foldsDuring(() => adviceHitAlong(path.join(data, ...Array<string>(DEPTH).fill('d')), catalog));
   assert.deepEqual([under.value?.path, under.value?.adviceCommand], [data, 'vmtool reclaim'], 'the location rule\'s folder far above it still claims it');
-  assert.ok(under.folds <= 2 * (names + 2), `${under.folds} folds for a path of ${names + 2} names`);
+  assert.ok(under.folds <= names + 2, `${under.folds} folds for a path of ${names + 2} names`);
 });
 
 test('a location rule\'s folder named with a last name the volume folds (ſ for s) is refused, judged from the path itself (review F1.4)', async (t) => {

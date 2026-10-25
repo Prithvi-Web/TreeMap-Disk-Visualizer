@@ -46,7 +46,9 @@ interface RuleBase {
    * What an advice rule's "never trash it" covers (hunt HF-L1): absent, the folder it claims and
    * everything in it (a VM disk in Docker's data folder is the data); `folder`, the folder itself
    * only — Windows' Temp folder, which programs expect to exist, while a file in it is a file.
-   * Read by MCP trash_paths' advice-only refusal; a folder holding the item is refused either way.
+   * Read by MCP trash_paths' advice-only refusal, which also refuses a folder that a completed scan
+   * lists the item inside. An item a "Don't scan" pattern keeps out of a scan is not listed, so that
+   * scan refuses no folder for holding it (review HF2-L1; the rule packs' README says the same).
    */
   adviceCovers?: 'folder';
   /**

@@ -116,6 +116,47 @@ test('trash_paths, the rule-pack README and AGENTS.md say a folder holding an ad
   }
 });
 
+test('what those words say is what trash_paths does: a scan-scope "Don\'t scan" pattern on the item leaves the folder holding it unrefused, and a suggest-scope one does not (review HF2-L4)', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-mcp-advisory-holder-'));
+  const holder = path.join(root, 'vmfolder');
+  const item = path.join(holder, 'vmdisk.bundle');
+  fs.mkdirSync(item, { recursive: true });
+  fs.writeFileSync(path.join(item, 'disk.img'), Buffer.alloc(4_096, 7));
+  fs.writeFileSync(path.join(holder, 'other.txt'), 'x');
+  const scanned = async (): Promise<void> => {
+    const s = await startScan(root, {});
+    await waitFor(() => getScan(s.scanId)?.status !== 'running', `the scan of ${root}`);
+    assert.equal(getScan(s.scanId)?.status, 'complete', getScan(s.scanId)?.error);
+  };
+  const dry = async (p: string): Promise<{ refused: boolean; text: string }> => {
+    const r = await call('trash_paths', { paths: [p], dryRun: true });
+    return { refused: r.isError === true, text: r.content?.[0]?.text ?? '' };
+  };
+  await withOpenFileCheck('clear', async () => {
+    await updateSettings({ ignore: [{ pattern: 'vmdisk.bundle', scope: 'scan' }] });
+    try {
+      await scanned();
+      const held = await dry(holder);
+      assert.equal(held.refused, false, `the scan listed nothing inside it, so it refuses no folder for holding it — the limit the docs state: ${held.text}`);
+      const own = await dry(item);
+      assert.deepEqual([own.refused, /ADVISORY_PATH/.test(own.text)], [true, true], `control: the item itself is still refused: ${own.text}`);
+    } finally {
+      await updateSettings({ ignore: [] });
+    }
+    await updateSettings({ ignore: [{ pattern: 'vmdisk.bundle', scope: 'suggest' }] });
+    try {
+      await scanned();
+      const held = await dry(holder);
+      assert.equal(held.refused, true, `a suggest-scope pattern hides only the suggestion: the scan lists the item, and the folder holding it is refused: ${held.text}`);
+      assert.match(held.text, /ADVISORY_PATH/, held.text);
+      assert.match(held.text, /holds/, `and says it holds one: ${held.text}`);
+    } finally {
+      await updateSettings({ ignore: [] });
+    }
+  });
+  assert.deepEqual(trashed, [], 'nothing reached a Trash step');
+});
+
 test('an advisory group is marked, left out of totalBytes and counted in advisoryBytes; itemCount is every match', async () => {
   const r = await call('cleanup_suggestions', { scanId, itemsPerGroup: 1 });
   assert.ok(!r.isError, JSON.stringify(r.content));
