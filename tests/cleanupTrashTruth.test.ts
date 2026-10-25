@@ -490,8 +490,8 @@ test('a commit takes an item already gone out of the cart, as it does what went 
     $, state: { cart }, icon: () => '', REDUCED: true, formatCount: String, CART_COMMIT_CHUNK: 100, cartCommitKey: 'k', CART_PAGE: 50,
     api: async () => ({ runId: 'r1', trashed: ['/c/a.bin'], bytesFreed: 5, skipped: [{ path: '/c/gone.bin', code: 'ITEM_GONE', reason: 'It is no longer there — nothing to delete.' }], failedToTrash: [], unverified: [] }),
     toast: () => {}, saveCart: () => {}, renderCart: () => {}, refreshCartButtons: () => {}, cartCommitSummary: () => {}, rescan: () => {},
-    tmIsInside: (p: string, dir: string) => p.startsWith(dir + '/'),
-  }, `let cartLastRun = null; let cartShown = 0;\n${blockAt('function cartDropTrashed(trashed) {')}`);
+    tmIsInside: (p: string, dir: string) => p.startsWith(dir + '/'), document: { activeElement: null, body: {} }, cartFocusReturn: () => {},
+  }, `let cartLastRun = null; let cartShown = 0;\n${blockAt('function cartDropTrashed(trashed) {')}\n${fnDecl('cartRefocus')}\n${fnDecl('cartFocusOffHiddenDock')}`);
   await run(['/c/a.bin', '/c/gone.bin'], [{ path: '/c/gone2.bin', code: 'ITEM_GONE', reason: 'It is no longer there — nothing to delete.' }, { path: '/c/big.iso', code: 'CAPSULE_FULL', reason: 'Too big.' }]);
   assert.deepEqual([...cart], ['/c/big.iso'], 'what went and what was already gone leave the cart; what was left in place stays');
 });
@@ -557,8 +557,8 @@ function cartPress(cart: Set<string>, answer: (roots: string[]) => Array<Record<
     saveCart: () => { seen.saves++; },
     renderCart: async () => { await Promise.resolve(); if (cart.size) $('cartDock').classList.add('show'); else $('cartDock').classList.remove('show'); },
     refreshCartButtons: () => {}, cartFocusReturn: () => { seen.focusReturns++; },
-    tmIsInside: (p: string, dir: string) => p.startsWith(dir + '/'),
-  }, `let confirmPaths = []; let onConfirmTrash = null; let cartCommitKey = '';\n${blockAt('function cartDropTrashed(trashed) {')}`);
+    tmIsInside: (p: string, dir: string) => p.startsWith(dir + '/'), document: { activeElement: null, body: {} },
+  }, `let confirmPaths = []; let onConfirmTrash = null; let cartCommitKey = '';\n${blockAt('function cartDropTrashed(trashed) {')}\n${fnDecl('cartRefocus')}`);
   $('cartDock').classList.add('show');
   return { trashAll, els, seen };
 }
@@ -628,8 +628,8 @@ test('closing the "nothing can be moved" sheet over a cart it emptied gives focu
     // does (it resolves the cart's nodes first), so a check of the dock that does not wait for it sees it still shown (review F1.1).
     renderCart: async () => { await Promise.resolve(); if (cart.size) $('cartDock').classList.add('show'); else { $('cartDock').classList.remove('show'); cartTrash.shown = false; } },
     refreshCartButtons: () => {}, cartFocusReturn: () => viewControl.focus(),
-    tmIsInside: (p: string, dir: string) => p.startsWith(dir + '/'),
-  }, `let confirmPaths = []; let onConfirmTrash = null; let cartCommitKey = '';\n${blockAt('function cartDropTrashed(trashed) {')}`);
+    tmIsInside: (p: string, dir: string) => p.startsWith(dir + '/'), document: doc,
+  }, `let confirmPaths = []; let onConfirmTrash = null; let cartCommitKey = '';\n${blockAt('function cartDropTrashed(trashed) {')}\n${fnDecl('cartRefocus')}`);
   $('cartDock').classList.add('show');
 
   cartTrash.focus(); // the press on Move to Trash
@@ -641,6 +641,131 @@ test('closing the "nothing can be moved" sheet over a cart it emptied gives focu
   net.modalClosed(sheet);
   assert.equal(prev?.name, 'viewControl', 'the sheet remembers a control on screen as where focus came from');
   assert.equal((doc.activeElement as Ctl).name, 'viewControl', 'and gives focus back to it as it closes');
+});
+
+/**
+ * The page's own focus net (noteFocus, focusBefore, modalClosed) and the cart's own focus helpers (cartFocusReturn,
+ * cartNoteFocusIn), over stand-in controls that behave as a browser's do: a control with no box takes no focus, and a
+ * focused control that is disabled or stops painting drops focus to <body> (review HC2-L7, HC2-L8).
+ */
+function cartFocusModel(landing: () => unknown = () => null) {
+  type Ctl = { name: string; isConnected: boolean; shown: boolean; innerHTML: string; _disabled: boolean; disabled: boolean; getClientRects(): unknown[]; focus(): void; closest(): null };
+  const doc: { activeElement: unknown; body: unknown } = { activeElement: null, body: { name: 'body' } };
+  const focusTrail: unknown[] = [];
+  const prevFocus = new Map<string, unknown>();
+  const net = new Function('document', 'modalPrevFocus', 'syncModalLayers', 'toastsRetire', '$', 'focusLanding', 'focusTrail', 'FOCUS_TRAIL_MAX',
+    `${fnDecl('noteFocus')}\n${fnDecl('focusBefore')}\n${fnDecl('modalClosed')}\nreturn { noteFocus, focusBefore, modalClosed };`,
+  )(doc, prevFocus, () => {}, () => {}, () => ({ contains: () => false }), landing, focusTrail, 8) as {
+    noteFocus(el: unknown): void; focusBefore(sheet: unknown): Ctl | null; modalClosed(sheet: unknown): void;
+  };
+  const ctl = (name: string, shown: boolean): Ctl => ({
+    name, isConnected: true, shown, innerHTML: '', _disabled: false,
+    get disabled() { return this._disabled; },
+    set disabled(v: boolean) { this._disabled = v; if (v && doc.activeElement === this) doc.activeElement = doc.body; },
+    getClientRects() { return this.shown ? [1] : []; },
+    focus() { if (this.shown && !this._disabled) { doc.activeElement = this; net.noteFocus(this); } },
+    closest: () => null,
+  });
+  const viewControl = ctl('viewControl', true);
+  const cartTrash = ctl('cartTrash', true);
+  const sheetOk = ctl('confirmOk', true);
+  const sheet = { id: 'confirmModal', contains: (x: unknown) => x === sheetOk };
+  const { $: base$, els } = makeEls();
+  const $ = (id: string): unknown => (id === 'cartTrash' ? cartTrash : id === 'cartDock' ? Object.assign(base$('cartDock'), { contains: (x: unknown) => x === cartTrash }) : base$(id));
+  base$('cartDock').classList.add('show');
+  const cart = new Function('$', 'document', 'activeViewControl', `${fnDecl('cartFocusReturn')}\nconst cartFocus = { from: null };\nreturn { cartFocusReturn };`)(
+    $, doc, () => viewControl) as { cartFocusReturn(): void };
+  /** A sheet opening as modalOpened opens it: it remembers where focus came from, then takes it. */
+  const seen: { atOpen: unknown } = { atOpen: null };
+  const open = (): void => { seen.atOpen = doc.activeElement; prevFocus.set(sheet.id, net.focusBefore(sheet)); sheetOk.shown = true; sheetOk.focus(); };
+  /** Close (or Escape): the sheet stops painting, and the browser drops focus left on it to <body>. */
+  const close = (): void => { sheetOk.shown = false; if (doc.activeElement === sheetOk) doc.activeElement = doc.body; net.modalClosed(sheet); };
+  return { doc, net, ctl, viewControl, cartTrash, sheetOk, sheet, $, els, cart, open, close, prevFocus, seen };
+}
+
+/** The page's cartExecuteCommit over the focus model: renderCart hides the dock once the cart is empty, after an await, as the page's does. */
+function cartCommitIn(m: ReturnType<typeof cartFocusModel>, cart: Set<string>, answer: (chunk: string[]) => Record<string, unknown>) {
+  return declared<(paths: string[], foreseen?: unknown[]) => Promise<void>>('async function cartExecuteCommit(paths, foreseen = []) {', {
+    $: m.$, document: m.doc, state: { cart }, icon: () => '', REDUCED: true, formatCount: String,
+    api: async (_url: string, opts: { body: string }) => answer(JSON.parse(opts.body).paths),
+    saveCart: () => {}, refreshCartButtons: () => {}, rescan: () => {}, toast: () => {},
+    renderCart: async () => { await Promise.resolve(); if (cart.size) m.$('cartDock') && (m.els.cartDock.classList.add('show')); else { m.els.cartDock.classList.remove('show'); m.cartTrash.shown = false; } },
+    cartFocusReturn: () => m.cart.cartFocusReturn(),
+    cartCommitSummary: () => m.open(),
+    tmIsInside: (p: string, dir: string) => p.startsWith(dir + '/'),
+  }, `let cartLastRun = null; let cartCommitKey = 'k'; let cartShown = 0; const CART_PAGE = 50; const CART_COMMIT_CHUNK = 500;\n${blockAt('function cartDropTrashed(trashed) {')}\n${fnDecl('cartRefocus')}\n${fnDecl('cartFocusOffHiddenDock')}`);
+}
+
+test('a commit that empties the cart leaves focus on a control on screen when its "Done" sheet closes, never <body> — one request, and a chunked one (review HC2-L7)', async () => {
+  for (const n of [1, 501]) {
+    const m = cartFocusModel();
+    const paths = Array.from({ length: n }, (_, i) => `/c/f${i}.bin`);
+    const cart = new Set(paths);
+    const commit = cartCommitIn(m, cart, (chunk) => ({ runId: 'r1', trashed: chunk, bytesFreed: chunk.length }));
+    m.cartTrash.focus(); // the confirm sheet closed and gave focus back to Move to Trash
+    await commit(paths);
+    assert.equal(cart.size, 0, `control (${n}): the cart is emptied`);
+    assert.equal(m.prevFocus.get('confirmModal'), m.viewControl, `the "Done" sheet remembers a control on screen, not the hidden Move to Trash (${n} item(s))`);
+    m.close();
+    assert.equal((m.doc.activeElement as { name: string }).name, 'viewControl', `and gives focus back to it as it closes (${n} item(s))`);
+  }
+});
+
+test('a chunked commit stopped part-way that emptied the cart leaves focus on a control on screen when its sheet closes (review HC2-L7, the "Stopped after" branch)', async () => {
+  const m = cartFocusModel();
+  // The second request fails; the first took the folder that holds the one item it would have sent.
+  const paths = ['/c/F', ...Array.from({ length: 499 }, (_, i) => `/c/f${i}.bin`), '/c/F/x.bin'];
+  const cart = new Set(paths);
+  let calls = 0;
+  const commit = cartCommitIn(m, cart, (chunk) => { if (calls++) throw new Error('the server did not answer (a test)'); return { runId: 'r1', trashed: chunk }; });
+  m.cartTrash.focus();
+  await commit(paths);
+  assert.equal(cart.size, 0, 'control: the cart is emptied');
+  assert.equal(m.prevFocus.get('confirmModal'), m.viewControl, 'the sheet remembers a control on screen');
+  m.close();
+  assert.equal((m.doc.activeElement as { name: string }).name, 'viewControl', 'and gives focus back to it as it closes');
+});
+
+test('a chunked commit that leaves items in the cart gives focus back to Move to Trash, which it disabled while it ran (review HC2-L8)', async () => {
+  const m = cartFocusModel();
+  const paths = Array.from({ length: 501 }, (_, i) => `/c/f${i}.bin`);
+  const cart = new Set(paths);
+  const commit = cartCommitIn(m, cart, (chunk) => ({ runId: 'r1', trashed: chunk.slice(1), skipped: [{ path: chunk[0], code: 'CAPSULE_FULL', reason: 'Too big.' }] }));
+  m.cartTrash.focus();
+  await commit(paths);
+  assert.equal(cart.size, 2, 'control: two items stay staged');
+  assert.equal(m.seen.atOpen, m.cartTrash, 'the button it disabled has focus again as the "Done" sheet opens, not <body>');
+});
+
+test('a dry run that fails gives focus back to Move to Trash, which it disabled while it ran — a second Enter reaches it (review HC2-L8)', async () => {
+  const m = cartFocusModel();
+  const cart = new Set(['/c/a.bin']);
+  const toasts: string[] = [];
+  const trashAll = declared<() => Promise<void>>('async function cartTrashAll() {', {
+    $: m.$, document: m.doc, state: { cart }, ensureNodes: async () => {}, cartKnownPaths: () => [...cart], outermostPaths: (p: string[]) => p,
+    icon: () => '', REDUCED: true, formatCount: String, toast: (t: string) => { toasts.push(t); }, resetOpenHandleWarning: () => {},
+    cartDryRun: async () => { throw new Error('Too many requests'); },
+    cartManifestHtml: () => '', cartExecuteCommit: async () => {}, saveCart: () => {}, renderCart: async () => {}, refreshCartButtons: () => {},
+    cartFocusReturn: () => {}, tmIsInside: () => false,
+  }, `let confirmPaths = []; let onConfirmTrash = null; let cartCommitKey = '';\n${blockAt('function cartDropTrashed(trashed) {')}\n${fnDecl('cartRefocus')}`);
+  m.cartTrash.focus();
+  await trashAll();
+  assert.deepEqual(toasts, ['Could not work out what this would do: Too many requests'], 'control: the failure is said');
+  assert.equal((m.doc.activeElement as { name: string }).name, 'cartTrash', 'focus is back on the button, not on <body>');
+});
+
+test('a sheet whose opener stopped painting while it was open gives focus to the views\' landing as it closes, never <body> (review HC2-L7, the root of it)', () => {
+  const m = cartFocusModel(() => m.viewControl);
+  m.cartTrash.focus();
+  m.open(); // remembers Move to Trash
+  m.cartTrash.shown = false; // the dock hid under the sheet
+  m.close();
+  assert.equal((m.doc.activeElement as { name: string }).name, 'viewControl', 'focus lands on a control on screen');
+  const n = cartFocusModel(() => n.viewControl);
+  n.cartTrash.focus();
+  n.open();
+  n.close();
+  assert.equal((n.doc.activeElement as { name: string }).name, 'cartTrash', 'control: an opener still on screen gets focus back');
 });
 
 /* ═════════ C75 — an undo that stops part-way says what it put back, and the map catches up ═════════ */

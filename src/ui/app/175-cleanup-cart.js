@@ -316,6 +316,9 @@ async function cartTrashAll() {
 
   const btn = $('cartTrash');
   const label = btn.innerHTML;
+  // A browser drops focus from a control that is disabled to <body>; it goes back to the button
+  // once it works again, so a second Enter after a failed dry run reaches it (review HC2-L8).
+  const heldFocus = document.activeElement === btn;
   btn.disabled = true;
   btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + 'Checking…';
   let plan;
@@ -329,6 +332,7 @@ async function cartTrashAll() {
   } finally {
     btn.disabled = false;
     btn.innerHTML = label;
+    cartRefocus(btn, heldFocus);
   }
 
   const willDelete = (plan.items || []).filter((i) => i.willDelete);
@@ -538,10 +542,12 @@ async function cartExecuteCommit(paths, foreseen = []) {
   const btn = $('cartTrash');
   const label = btn.innerHTML;
   const result = { dryRun: false, runId: null, trashed: [], bytesFreed: 0, skipped: [], failedToTrash: [], unverified: [] };
+  let heldFocus = false;
   try {
     for (let i = 0; i < paths.length; i += CART_COMMIT_CHUNK) {
       const chunk = paths.slice(i, i + CART_COMMIT_CHUNK);
       if (paths.length > CART_COMMIT_CHUNK) {
+        heldFocus = heldFocus || document.activeElement === btn;
         btn.disabled = true;
         btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') +
           `Deleting… ${formatCount(Math.min(paths.length, i))}/${formatCount(paths.length)}`;
@@ -573,7 +579,10 @@ async function cartExecuteCommit(paths, foreseen = []) {
     // confirmed either way (FG3c) — is the one message that must not be sent here.
     if (result.trashed.length || result.unverified.length) {
       cartDropTrashed([...(result.trashed || []), ...result.skipped.filter((i) => i.code === 'ITEM_GONE').map((i) => i.path)]);
-      saveCart(); renderCart(); refreshCartButtons();
+      btn.disabled = false;
+      cartRefocus(btn, heldFocus);
+      saveCart(); await renderCart(); refreshCartButtons();
+      cartFocusOffHiddenDock();
       cartLastRun = result.runId;
       toast(result.trashed.length
         ? `Stopped after ${formatCount(result.trashed.length)} item${result.trashed.length === 1 ? '' : 's'}: ${e.message}`
@@ -587,14 +596,18 @@ async function cartExecuteCommit(paths, foreseen = []) {
   } finally {
     btn.disabled = false;
     btn.innerHTML = label;
+    cartRefocus(btn, heldFocus);
   }
   // What is already gone leaves the cart too, as the summary says (hunt C74).
   const goneNow = [...(result.skipped || []), ...foreseen].filter((i) => i.code === 'ITEM_GONE').map((i) => i.path);
   cartDropTrashed([...(result.trashed || []), ...goneNow]);
   cartShown = CART_PAGE;
   saveCart();
-  renderCart();
+  // Awaited, so a cart this emptied has hidden its dock — and Move to Trash with it — before the
+  // "Done" sheet opens and remembers where focus came from (review HC2-L7).
+  await renderCart();
   refreshCartButtons();
+  cartFocusOffHiddenDock();
   // An unconfirmed item may be in the Trash after all, and the undo puts it back if it is.
   cartLastRun = (result.trashed && result.trashed.length) || (result.unverified && result.unverified.length) ? result.runId : null;
   cartCommitSummary({
@@ -605,6 +618,24 @@ async function cartExecuteCommit(paths, foreseen = []) {
     ],
   });
   if (result.trashed && result.trashed.length) rescan();
+}
+
+/** Focus a disabled Move to Trash dropped to <body> goes back to it once it works again (review HC2-L8). */
+function cartRefocus(btn, heldFocus) {
+  const at = document.activeElement;
+  if (heldFocus && (!at || at === document.body)) btn.focus({ preventScroll: true });
+}
+
+/**
+ * Focus left on <body>, or on a control in a dock that just hid, goes to a control on screen
+ * (cartFocusReturn) — before a sheet opens, so the sheet gives focus back there as it closes, not
+ * to a hidden button, which leaves it on <body> (review HC2-L7).
+ */
+function cartFocusOffHiddenDock() {
+  const dock = $('cartDock');
+  if (dock.classList.contains('show')) return;
+  const at = document.activeElement;
+  if (!at || at === document.body || dock.contains(at)) cartFocusReturn();
 }
 
 /** Takes what went to the Trash out of the cart, and whatever was staged inside a folder that went (final review F1.12). */

@@ -79,6 +79,8 @@ function harness(plan: { items: { path: string; willDelete: boolean; reason?: st
     FxBeam: { attach: () => {} }, activeJob: null, askSettle: () => {},
     // confirmTrash asks which paths are parts of an installed program (fifth browser pass F01): none here.
     api: async (url: string) => (url === '/api/files/installed-programs' ? { parts: [] } : assert.fail(`unexpected request ${url}`)),
+    // Where focus is: cartTrashAll gives it back to Move to Trash after its dry run (review HC2-L8).
+    document: { activeElement: null, body: {} },
   };
   const helpers = ['confirmFooterReset'].filter((n) => new RegExp(`function ${n}\\s*\\(`).test(INDEX));
   const keys = Object.keys(deps);
@@ -94,6 +96,7 @@ function harness(plan: { items: { path: string; willDelete: boolean; reason?: st
     ${['installedProgramParts', 'installedProgramWords', 'installedProgramRemoval', 'installedProgramWarningHtml'].map(declOf).join('\n')}
     ${declOf('confirmTrash')}
     ${declOf('cartTrashAll')}
+    ${declOf('cartRefocus')}
     ${declOf('cartCommitSummary')}
     ${declOf('cartSpaceSaid')}
     ${declOf('closeModal')}

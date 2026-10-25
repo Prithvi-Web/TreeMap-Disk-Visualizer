@@ -1006,7 +1006,10 @@ function modalClosed(el) {
   // the card in the same turn (review F2.1). Focus goes where it would had
   // that control left the screen — the views' focusLanding — never <body>.
   // Guarded: a page reader may lift this net without the views.
-  const back = prev.isConnected !== false ? prev : (typeof focusLanding === 'function' ? focusLanding() : null);
+  // So can one still in the page that stopped painting while the sheet was open — a cart's Move to
+  // Trash, in the dock a commit emptied — which takes no focus (review HC2-L7).
+  const onScreen = prev.isConnected !== false && (typeof prev.getClientRects !== 'function' || prev.getClientRects().length > 0);
+  const back = onScreen ? prev : (typeof focusLanding === 'function' ? focusLanding() : null);
   if (back) back.focus({ preventScroll: true });
 }
 function syncModalLayers(moveFocus = true) {

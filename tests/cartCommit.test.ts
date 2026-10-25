@@ -780,14 +780,15 @@ async function commitWithAFailingSecondBatch(first: Record<string, unknown>): Pr
   let calls = 0;
   const make = new Function(
     '$', 'api', 'CART_COMMIT_CHUNK', 'cartCommitKey', 'icon', 'REDUCED', 'formatCount', 'state',
-    'saveCart', 'renderCart', 'refreshCartButtons', 'toast', 'cartCommitSummary', 'rescan', 'CART_PAGE',
+    'saveCart', 'renderCart', 'refreshCartButtons', 'toast', 'cartCommitSummary', 'rescan', 'CART_PAGE', 'document', 'cartFocusReturn',
     `let cartLastRun = null; let cartShown = 0; ${src}; return { run: cartExecuteCommit, lastRun: () => cartLastRun };`,
   );
   const ui = make(
-    () => ({ disabled: false, innerHTML: 'Delete' }),
+    () => ({ disabled: false, innerHTML: 'Delete', classList: { contains: () => true } }),
     () => (calls++ === 0 ? Promise.resolve(first) : Promise.reject(new Error('the server did not answer (a test)'))),
     1, 'key', () => '', true, (n: number) => String(n), { cart: new Set(['/x/a', '/x/b']) },
     noop, noop, noop, (message: string) => toasts.push(message), (result: Record<string, unknown>) => summaries.push(result), noop, 50,
+    { activeElement: null, body: {} }, noop,
   ) as { run: (paths: string[]) => Promise<void>; lastRun: () => unknown };
   await ui.run(['/x/a', '/x/b']);
   return { toasts, summaries, lastRun: ui.lastRun() };

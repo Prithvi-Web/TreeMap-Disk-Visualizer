@@ -43,11 +43,11 @@ function cartPage(staged: string[], keptBack: string[] = []): Page {
   const requests: Page['requests'] = [];
   const summaries: Page['summaries'] = [];
   const gone: string[] = [];
-  const el = (): Record<string, unknown> => ({ disabled: false, hidden: false, innerHTML: '', classList: { add: () => undefined } });
+  const el = (): Record<string, unknown> => ({ disabled: false, hidden: false, innerHTML: '', classList: { add: () => undefined, contains: () => true } });
   const noop = (): undefined => undefined;
   const make = new Function(
     'state', 'api', '$', 'icon', 'REDUCED', 'formatCount', 'formatBytes', 'toast', 'ensureNodes', 'nodeFor', 'resetOpenHandleWarning',
-    'cartManifestHtml', 'saveCart', 'renderCart', 'refreshCartButtons', 'cartCommitSummary', 'rescan', 'CART_PAGE',
+    'cartManifestHtml', 'saveCart', 'renderCart', 'refreshCartButtons', 'cartCommitSummary', 'rescan', 'CART_PAGE', 'document', 'cartFocusReturn',
     `let confirmPaths = []; let onConfirmTrash = null; let cartCommitKey = ''; let cartLastRun = null; let cartShown = 0;
      const CART_COMMIT_CHUNK = 1;
      ${pageFunction('cartKnownPaths')}
@@ -55,6 +55,8 @@ function cartPage(staged: string[], keptBack: string[] = []): Page {
      ${pageFunction('cartDryRun')}
      ${pageFunction('cartExecuteCommit')}
      ${pageFunction('cartDropTrashed')}
+     ${pageFunction('cartRefocus')}
+     ${pageFunction('cartFocusOffHiddenDock')}
      ${pageFunction('outermostPaths')}
      ${pageFunction('tmParentPath')}
      ${pageFunction('tmIsInside')}
@@ -77,6 +79,7 @@ function cartPage(staged: string[], keptBack: string[] = []): Page {
     },
     el, () => '', true, (n: number) => String(n), (n: number) => String(n), noop, async () => undefined, (p: string) => ({ path: p, size: 1 }), noop,
     () => '', noop, noop, noop, (result: Page['summaries'][number]) => { summaries.push(result); }, noop, 200,
+    { activeElement: null, body: {} }, noop,
   ) as { trashAll: () => Promise<void>; confirm: () => (() => Promise<void>) | null };
   return { ...page, cart, requests, summaries };
 }
