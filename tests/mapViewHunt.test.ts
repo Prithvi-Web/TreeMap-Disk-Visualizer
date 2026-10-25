@@ -217,7 +217,7 @@ test('C20: over the sunburst a grammar query counts no drawn match from the last
  * The real tmRunGrammarQuery, answered with `total` matches, in `mode`, over the folder `rootPath` (the scan's root,
  * /r, unless given): the hits are `paths` (`/r/f0`… unless given), and `truncated` says the server sent only the biggest.
  */
-async function grammarIn(mode: string, total: number, degraded: { reason: string }[] = [], o: { rootPath?: string; paths?: string[]; truncated?: boolean } = {}) {
+async function grammarIn(mode: string, total: number, degraded: { reason: string }[] = [], o: { rootPath?: string; paths?: string[]; truncated?: boolean; settled?: boolean } = {}) {
   const said: string[] = [];
   const state = {
     scanId: 's1', scanning: false, root: { path: '/r' },
@@ -234,6 +234,8 @@ async function grammarIn(mode: string, total: number, degraded: { reason: string
     tmUndrawnMessage: () => 'UNDRAWN', // the rectangle map's sentence — never the sunburst's
     formatCount: (n: number) => n.toLocaleString('en-US'),
     isSun: () => mode === 'sunburst',
+    // Whether the picture on screen is the settled live map (review HB2-L1): settled unless the case says not.
+    tmSettledLiveMap: () => o.settled !== false,
   };
   const keys = Object.keys(deps);
   const optional = ['tmSunburstQueryWords'].filter((n) => INDEX.includes(`function ${n}(`)).map(declSource).join('\n');
@@ -244,6 +246,18 @@ async function grammarIn(mode: string, total: number, degraded: { reason: string
   await run('size>1gb');
   return said[said.length - 1];
 }
+
+test('HB2 review (HB2-L1): an answer that lands while the map is no settled live map — a past snapshot, a time-lapse frame, a morph, the cart preview, a layout still being laid out — is not worded for that picture; the box is cleared for the draw that settles to word', async () => {
+  assert.equal(await grammarIn('treemap', 9, [], { settled: false }), '', 'the box is cleared, never worded of the picture in passing');
+  assert.equal(await grammarIn('treemap', 9), 'UNDRAWN', 'control: over the settled live map it is worded');
+  // One gate decides, and it is the one tmRewordQuery asks (the page's own, lifted).
+  const gate = (o: Record<string, unknown>) => new Function('state', 'tmPreview', 'tmMorph', 'altLayoutRefining', `${declSource('tmSettledLiveMap')}\nreturn tmSettledLiveMap();`)(
+    { view: o.view ?? 'treemap', treemap: { history: { active: !!o.history }, lapse: { playing: !!o.lapse } } }, { on: !!o.preview }, o.morph ? {} : null, () => !!o.refining) as boolean;
+  assert.equal(gate({}), true, 'the live Treemap, settled');
+  for (const k of ['history', 'lapse', 'preview', 'morph', 'refining']) assert.equal(gate({ [k]: true }), false, `not while ${k}`);
+  assert.equal(gate({ view: 'grid' }), false, 'not another view');
+  assert.match(declSource('tmRewordQuery'), /if \(!tmSettledLiveMap\(\)\) return;/, 'tmRewordQuery asks the same gate');
+});
 
 test('C20: over the sunburst the box says the matches are not highlighted there, and where they are', async () => {
   assert.equal(await grammarIn('sunburst', 9),
@@ -1036,7 +1050,7 @@ test('HB2 (L1, L8, L14): a plain word typed over the sunburst is said once — t
 });
 
 /** What the box says, and the real functions that word a query's answer for the map now drawn. */
-const REWORD_NAMES = ['TM_SUNBURST_BARE_WORDS', 'tmIsInside', 'tmUndrawnBreakdown', 'tmUndrawnMessage', 'tmSunburstQueryWords', 'tmQueryAnswerWords', 'tmRewordQuery',
+const REWORD_NAMES = ['TM_SUNBURST_BARE_WORDS', 'tmIsInside', 'tmUndrawnBreakdown', 'tmUndrawnMessage', 'tmSunburstQueryWords', 'tmQueryAnswerWords', 'tmSettledLiveMap', 'tmRewordQuery',
   ...['tmHiddenByCloud', 'tmCloudHiddenWords', 'tmCloudUpToo'].filter((n) => INDEX.includes(`function ${n}(`))];
 const NINE = ['/r', '/r/a/x1', '/r/a/x2', '/r/b/y1', '/r/b/y2', '/r/b/y3', '/r/c/z1', '/r/c/z2', '/r/c/z3'];
 

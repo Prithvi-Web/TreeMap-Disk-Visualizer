@@ -465,11 +465,21 @@ function tmQueryAnswerWords() {
  * Voronoi have laid so far, a new count every slice, each said aloud
  * (review F1.6) — the slice that settles the layout words it.
  */
-function tmRewordQuery() {
-  if (state.view !== 'treemap' || tmPreview.on || tmMorph) return;
-  if (state.treemap.history.active || state.treemap.lapse.playing) return;
+/**
+ * Whether the picture on screen is the settled live Treemap — the one an answer's words describe: not
+ * another view, the cart preview, a morph's passing frame, a past snapshot, a time-lapse frame or a
+ * Circles or Voronoi layout still being laid out. One gate for both writers of the answer, tmRewordQuery
+ * and tmRunGrammarQuery (review HB2-L1).
+ */
+function tmSettledLiveMap() {
+  if (state.view !== 'treemap' || tmPreview.on || tmMorph) return false;
+  if (state.treemap.history.active || state.treemap.lapse.playing) return false;
   // Guarded: a page reader may lift this function without it.
-  if (typeof altLayoutRefining === 'function' && altLayoutRefining()) return;
+  return !(typeof altLayoutRefining === 'function' && altLayoutRefining());
+}
+
+function tmRewordQuery() {
+  if (!tmSettledLiveMap()) return;
   const q = state.treemap.query.trim();
   let words;
   if (state.treemap.queryMode === 'grammar') {
@@ -559,8 +569,13 @@ async function tmRunGrammarQuery(q) {
     // A degraded answer speaks first: when the server stopped at its candidate
     // cap (`capped`), its total is a floor, and "the N biggest of M" would
     // present the cap as the count (D31). Worded by tmQueryAnswerWords, which
-    // words it again as the map changes (tmRewordQuery).
-    tmSetQueryMessage(tmQueryAnswerWords(), false);
+    // words it again as the map changes (tmRewordQuery). Only of the settled live map: an answer landing
+    // over a past snapshot, a time-lapse frame, a morph, the cart preview or a layout still being laid out
+    // was worded of that picture, and said again when it settled (review HB2-L1). The box is cleared
+    // then, so the last answer's words do not stand, and the draw that settles words it, once.
+    // Guarded: a page reader may lift this function without the gate.
+    const settled = typeof tmSettledLiveMap !== 'function' || tmSettledLiveMap();
+    tmSetQueryMessage(settled ? tmQueryAnswerWords() : '', false);
   } catch (e) {
     if (seq !== tmQuerySeq) return; // superseded, which is also how an aborted request ends
     if (scanAtRequest !== treeScanId()) return; // the older scan's failure, said over no tree of its own

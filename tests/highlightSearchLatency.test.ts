@@ -109,6 +109,7 @@ function highlight(answersAnyway = false) {
     tmSyncStageButton: noop, seedNodes: noop, tmStageable: () => null, formatCount: String, tmUndrawnMessage: () => '',
     isSun: () => false, isCells: () => false, renderSearchOverlay: () => { painted++; }, presentTreemap: noop, presentView: noop,
     presentSunburst: noop, presentCells: noop, renderCellsStatus: noop, clearTimeout, setTimeout,
+    tmSettledLiveMap: () => true, // the settled live map, which an answer is worded of (review HB2-L1)
   };
   const consts = ['TM_GRAMMAR_FIELDS', 'TM_GRAMMAR_RE', 'TM_FIELDLIKE_RE'].filter((n) => INDEX.includes(`const ${n} =`));
   const helpers = ['tmIsGrammarQuery', 'tmEditDistance', 'tmUnknownFieldHint'].filter((n) => new RegExp(`function ${n}\\s*\\(`).test(INDEX));
