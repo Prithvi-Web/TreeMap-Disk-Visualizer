@@ -16,6 +16,8 @@ import { getScan, startScan } from '../src/services/diskScanner';
 import { updateSettings } from '../src/services/settings';
 import { settled } from '../src/utils/backgroundWrites';
 import { waitFor } from './fixtures/waitFor';
+import { buildStoreFromTree } from '../src/services/scanStore';
+import { markUnlisted } from '../src/services/scanRefusals';
 process.env.TREEMAP_NO_GDU = '1';
 
 /** Unit tests for the time-slider snapshot-tree logic (pure functions). */
@@ -132,6 +134,29 @@ test('a stored tree marks a folder whose children it cut, and the overlay\'s loo
   const deep = buildSnapshotTree(dir('/r', 'r', [dir('/r/a', 'a', [dir('/r/a/b', 'b', [dir('/r/a/b/c', 'c', [file('/r/a/b/c/x', 'x', 10)])])])]));
   assert.equal(prevSizeLookup(deep, '/r')('/r/a/b/c/y'), undefined);
   assert.equal(prevSizeLookup(deep, '/r')('/r/a/b/c'), 10);
+});
+
+test('a folder is marked cut exactly when a child with bytes was left out: one that kept its 30, or kept its overflow as unlisted folders beside them, is whole, and an item missing from it did not exist (review F1.8)', () => {
+  /** `/r` holding `files` files, the largest first, and — when `refused` — a folder the scan was refused (0 bytes). */
+  const stored = (files: number, refused: boolean): SnapshotTreeNode => {
+    const kids: FileNode[] = Array.from({ length: files }, (_, i) => file(`/r/f${i}`, `f${i}`, 1000 - i));
+    if (refused) kids.push(dir('/r/refused', 'refused', []));
+    const store = buildStoreFromTree(dir('/r', 'r', kids));
+    if (refused) markUnlisted(store, store.findByPath('/r/refused'));
+    return buildSnapshotTree(store);
+  };
+  const thirty = stored(30, false);
+  assert.equal(thirty.c?.length, 30, 'control: all 30 kept');
+  assert.equal(thirty.k, undefined, 'exactly 30 children, all kept: not cut');
+  assert.equal(prevSizeLookup(thirty, '/r')('/r/brand-new'), null, 'so an item missing from it did not exist');
+  const withExtra = stored(30, true);
+  assert.equal(withExtra.c?.length, 31, 'control: the refused folder is kept beside the largest 30');
+  assert.equal(withExtra.k, undefined, '31 children, the 31st an unlisted folder kept as an extra: not cut');
+  assert.equal(prevSizeLookup(withExtra, '/r')('/r/brand-new'), null, 'so an item missing from it did not exist');
+  const cut = stored(31, true);
+  assert.equal(cut.c?.length, 31, 'control: the largest 30 and the refused folder are kept');
+  assert.equal(cut.k, 1, '32 children, one with bytes left out: cut');
+  assert.equal(prevSizeLookup(cut, '/r')('/r/brand-new'), undefined, 'so an item missing from it is not known to have been absent');
 });
 
 test('a folder the previous scan could not list in full is read as not known, never as holding nothing (leftover HE-L4, as hunt C47)', () => {
