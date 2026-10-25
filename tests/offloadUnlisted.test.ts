@@ -271,6 +271,117 @@ test('a later selected folder moved away while an earlier one goes to the Trash 
   assert.ok(fs.existsSync(path.join(elsewhere, 'a.txt')), 'what was moved away is untouched');
 });
 
+/** `scan` with an empty folder `name` beside its folders, on the disk and listed as empty. */
+function withEmptyFolder(root: string, scan: ScanResult, name: string): string {
+  const folder = path.join(root, name);
+  fs.mkdirSync(folder);
+  scan.root?.children?.push({ name, path: folder, size: 0, type: 'dir', modifiedAt: Date.now(), isHidden: false, children: [] });
+  return folder;
+}
+
+/** Offloads `selection`, running `during` inside each trash step and `whileCopying` as each copy verifies. */
+async function offloadWith(label: string, scan: ScanResult, selection: string[], hooks: { during?: (p: string) => void; whileCopying?: () => void }): Promise<OffloadJob> {
+  const dest = fileTempDir(`treemap-offloadUnlisted-${label}-dest-`);
+  duringTrashStep = hooks.during ?? null;
+  const undo = setOffloadVerifyForTests((_dest, hash) => { hooks.whileCopying?.(); return hash; });
+  try {
+    return await withOpenFileCheck('clear', async () => {
+      const prepared = await prepareOffload(scan, selection, dest);
+      return settled((await startOffload(scan, selection, dest, prepared)).jobId);
+    });
+  } finally {
+    duringTrashStep = null;
+    undo();
+  }
+}
+
+test('a selected empty folder that is gone by its turn is said to be gone — never to hold itself, never to have copies (review F1.6)', async () => {
+  const { root, folders: [projB], scan } = projects('gone-empty', ['projB']);
+  const emptyE = withEmptyFolder(root, scan, 'emptyE');
+  const before = trashedPaths.length;
+  const job = await offloadWith('gone-empty', scan, [projB, emptyE], { during: (p) => { if (p === projB && fs.existsSync(emptyE)) fs.rmdirSync(emptyE); } });
+  assert.equal(job.status, 'complete', job.error);
+  assert.deepEqual(trashedPaths.slice(before), [projB], 'only projB was handed to the Trash');
+  assert.equal(job.error, 'emptyE is no longer there, so it was not moved to the Trash.');
+});
+
+test('two selected empty folders gone — one while the copies were made, one by its own turn — are said together (review F1.6)', async () => {
+  const { root, folders: [projB], scan } = projects('gone-two', ['projB']);
+  const emptyE = withEmptyFolder(root, scan, 'emptyE');
+  const emptyF = withEmptyFolder(root, scan, 'emptyF');
+  const job = await offloadWith('gone-two', scan, [projB, emptyE, emptyF], {
+    whileCopying: () => { if (fs.existsSync(emptyE)) fs.rmdirSync(emptyE); },
+    during: (p) => { if (p === projB && fs.existsSync(emptyF)) fs.rmdirSync(emptyF); },
+  });
+  assert.equal(job.status, 'complete', job.error);
+  assert.equal(job.error, 'emptyE and 1 more selected folder are no longer there, so they were not moved to the Trash.');
+});
+
+const lockable = process.platform !== 'win32' && process.getuid?.() !== 0;
+
+/** Gives back the permissions a test took from `rel` in `folder`, wherever the folder is now: in place, or in the stand-in Trash. */
+function unlock(folder: string, rel = ''): void {
+  const places = [folder, ...fs.readdirSync(FAKE_TRASH).filter((n) => n.endsWith(`-${path.basename(folder)}`)).map((n) => path.join(FAKE_TRASH, n))];
+  for (const place of places) {
+    const p = path.join(place, rel);
+    if (fs.existsSync(p)) fs.chmodSync(p, 0o755);
+  }
+}
+
+test('a selected folder that cannot be looked into again at its turn is said so, its copies standing — never as holding itself (review F1.6)', { skip: lockable ? false : 'permissions do not stop this user here' }, async () => {
+  const { folders: [projA, projB], scan } = projects('unlistable-top', ['projA', 'projB']);
+  // Its files can still be looked at (search permission), but it cannot be listed.
+  const job = await offloadWith('unlistable-top', scan, [projA, projB], { during: (p) => { if (p === projA) fs.chmodSync(projB, 0o300); } });
+  unlock(projB);
+  assert.equal(job.status, 'complete', job.error);
+  assert.match(job.error ?? '', /^projB was left in place: it could not be looked into again \(.+\), so it was not moved to the Trash\. Its verified copies stand at \S+\.$/s, job.error);
+  assert.doesNotMatch(job.error ?? '', /now holds|which was not copied/, job.error);
+  assert.ok(fs.existsSync(path.join(projB, 'a.txt')), 'it is in place');
+});
+
+test('a folder in a selected folder that cannot be looked into at its turn leaves it in place, saying what is not known (review F1.6)', { skip: lockable ? false : 'permissions do not stop this user here' }, async () => {
+  const { folders: [projA, projB], scan } = projects('unlistable-sub', ['projA', 'projB']);
+  const sub = path.join(projB, 'sub');
+  fs.mkdirSync(sub);
+  scan.root?.children?.find((c) => c.path === projB)?.children?.push({ name: 'sub', path: sub, size: 0, type: 'dir', modifiedAt: Date.now(), isHidden: false, children: [] });
+  const job = await offloadWith('unlistable-sub', scan, [projA, projB], { during: (p) => { if (p === projA) fs.chmodSync(sub, 0o000); } });
+  unlock(projB, 'sub');
+  assert.equal(job.status, 'complete', job.error);
+  assert.match(job.error ?? '', /^projB was left in place: what sub in it holds is not known \(it could not be looked into: .+\), so it was not moved to the Trash\. Its verified copies stand at \S+\.$/s, job.error);
+});
+
+test('a selected folder that cannot be looked into is refused before anything is copied, never said to hold itself (review F1.6)', { skip: lockable ? false : 'permissions do not stop this user here' }, async () => {
+  const { root, proj, a } = project('unlistable-prepare');
+  const dest = fileTempDir('treemap-offloadUnlisted-unlistable-prepare-dest-');
+  const scan = scanListingOnly(root, proj, a);
+  fs.chmodSync(proj, 0o300);
+  try {
+    const refused = await refusalOf(withOpenFileCheck('clear', () => prepareOffload(scan, [proj], dest)));
+    assert.equal(refused.code, 'OFFLOAD_NOT_FULLY_LISTED', refused.message);
+    assert.match(refused.message, /^proj could not be looked into \(.+\), so what it holds is not known\. Offloading it would move anything the scan did not list to the Trash with no copy, so nothing was copied or deleted\. Rescan it, or offload what is inside it instead\.$/s, refused.message);
+  } finally {
+    fs.chmodSync(proj, 0o755);
+  }
+});
+
+test('a selected empty folder that is gone before the offload is planned is refused, said to be gone (review F1.6)', async () => {
+  const { root, folders: [projB], scan } = projects('gone-prepare', ['projB']);
+  const emptyE = withEmptyFolder(root, scan, 'emptyE');
+  fs.rmdirSync(emptyE);
+  const dest = fileTempDir('treemap-offloadUnlisted-gone-prepare-dest-');
+  const refused = await refusalOf(withOpenFileCheck('clear', () => prepareOffload(scan, [projB, emptyE], dest)));
+  assert.equal(refused.code, 'OFFLOAD_NOT_FULLY_LISTED', refused.message);
+  assert.equal(refused.message, 'emptyE is no longer there, so nothing was copied or deleted. Rescan the folder that held it.');
+});
+
+test('where agents read the offload contract, a selected folder that cannot be listed or is gone is said to be refused or kept for that (review F1.6)', () => {
+  const read = (rel: string): string => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').replace(/\s+/g, ' ');
+  const agents = read('AGENTS.md');
+  assert.ok(agents.includes('(`409 OFFLOAD_NOT_FULLY_LISTED`, naming it, or saying that the selected folder itself could not be looked into or is gone)'), 'AGENTS.md, before anything is copied');
+  assert.ok(agents.includes('one that is gone by then is said to be gone, with no copies unless it had files to copy, and is not moved to the Trash'), 'AGENTS.md, at its own turn');
+  assert.ok(read('src/api/openapi.ts').includes('naming the first such entry, or saying that the selected folder itself could not be looked into or is gone'), 'the OpenAPI 409');
+});
+
 test('an OS junk file the scan did not list (.DS_Store) does not hold a folder back', async () => {
   const { root, proj, a } = project('junk', ['.DS_Store']);
   const dest = fileTempDir('treemap-offloadUnlisted-junk-dest-');

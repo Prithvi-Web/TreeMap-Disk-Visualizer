@@ -809,8 +809,12 @@ async function withRealSizes(plan: PlannedCopy[], secondNames: ReadonlySet<strin
  * cannot be looked into is such a thing too: what it holds is unknown. OS junk (`JUNK_FILES`: .DS_Store
  * and the like, which the OS writes into any folder it shows) is not held against it. Links are not
  * followed: a link is one entry, which the scan lists as one.
+ *
+ * `kind` says which (review F1.6): an entry the scan did not list (`unlisted`), a folder that could not
+ * be listed (`unreadable`, `detail` saying why), or the selected folder itself gone (`gone`) — which
+ * holds nothing, and was said to hold itself.
  */
-async function firstUnlisted(folder: string, files: ReadonlySet<string>): Promise<{ at: string; why: string } | null> {
+async function firstUnlisted(folder: string, files: ReadonlySet<string>): Promise<Unlisted | null> {
   const pending = [folder];
   while (pending.length > 0) {
     const dir = pending.pop() as string;
@@ -818,15 +822,35 @@ async function firstUnlisted(folder: string, files: ReadonlySet<string>): Promis
     try {
       entries = await fsp.readdir(dir, { withFileTypes: true });
     } catch (err) {
-      return { at: dir, why: `it could not be looked into (${describeFsError(err)})` };
+      const detail = describeFsError(err);
+      return { at: dir, why: `it could not be looked into (${detail})`, kind: dir === folder && meansAbsent(err) ? 'gone' : 'unreadable', detail };
     }
     for (const entry of entries) {
       const at = path.join(dir, entry.name);
       if (entry.isDirectory()) pending.push(at);
-      else if (!files.has(at) && !JUNK_FILES.has(entry.name.toLowerCase())) return { at, why: 'the scan did not list it' };
+      else if (!files.has(at) && !JUNK_FILES.has(entry.name.toLowerCase())) return { at, why: 'the scan did not list it', kind: 'unlisted', detail: '' };
     }
   }
   return null;
+}
+
+/** What `firstUnlisted` found in a selected folder (review F1.6). */
+interface Unlisted {
+  at: string;
+  why: string;
+  kind: 'unlisted' | 'unreadable' | 'gone';
+  detail: string;
+}
+
+/**
+ * Why a selected folder that is still there stays out of the Trash, as a clause (review F1.6): what it
+ * now holds that was not copied, or what in it could not be looked into — never that it holds itself.
+ */
+function heldBecause(folder: string, found: Unlisted): string {
+  const rel = path.relative(folder, found.at);
+  if (found.kind === 'unlisted') return `it now holds ${rel}, which was not copied (it was made after the offload was planned)`;
+  if (rel === '') return `it could not be looked into again (${found.detail})`;
+  return `what ${rel} in it holds is not known (it could not be looked into: ${found.detail})`;
 }
 
 /**
@@ -907,9 +931,17 @@ export async function prepareOffload(
   const listed = listedSelection(nodes);
   for (const folder of listed.folders) {
     const unlisted = await firstUnlisted(folder, listed.files);
+    if (unlisted !== null && unlisted.at === folder) {
+      // The folder itself could not be listed, or is gone: it holds nothing that can be named (review F1.6).
+      throw new AppError(409, 'OFFLOAD_NOT_FULLY_LISTED', unlisted.kind === 'gone'
+        ? `${path.basename(folder)} is no longer there, so nothing was copied or deleted. Rescan the folder that held it.`
+        : `${path.basename(folder)} could not be looked into (${unlisted.detail}), so what it holds is not known. ` +
+          'Offloading it would move anything the scan did not list to the Trash with no copy, so nothing was copied or deleted. ' +
+          'Rescan it, or offload what is inside it instead.');
+    }
     if (unlisted !== null) {
       throw new AppError(409, 'OFFLOAD_NOT_FULLY_LISTED',
-        `${path.basename(folder)} holds ${path.relative(folder, unlisted.at) || path.basename(folder)}, and ${unlisted.why} — ` +
+        `${path.basename(folder)} holds ${path.relative(folder, unlisted.at)}, and ${unlisted.why} — ` +
         'a "Don\'t scan" pattern, a folder the scan could not read, a drive it did not enter, or something made since. ' +
         'Offloading the folder would move that to the Trash with no copy, so nothing was copied or deleted. ' +
         'Rescan it, or offload what is inside it instead.');
@@ -1313,7 +1345,7 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     // plan was checked has no copy, and the folder goes to the Trash whole. Such a folder is left in
     // place, its verified copies standing and recorded, as for an original something holds open. Asked
     // here so such a folder is not put to the open-file check; asked again at its own turn, below.
-    const leftInPlace: { folder: string; at: string; why: string }[] = [];
+    const leftInPlace: ({ folder: string } & Unlisted)[] = [];
     for (const folder of listed.folders) {
       const unlisted = await firstUnlisted(folder, listed.files);
       if (unlisted !== null) leftInPlace.push({ folder, ...unlisted });
@@ -1332,7 +1364,7 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     // went to the Trash with the folder and no copy, the job saying it was offloaded. As the Undo
     // Vault's walk again right before an item's trash step (CAPSULE_CHANGED).
     const folderSet = new Set(listed.folders);
-    const unlistedAtTurn = new Map<string, { at: string; why: string }>();
+    const unlistedAtTurn = new Map<string, Unlisted>();
     try {
       // The files whose item went on to its trash step, by file rather than name (review F1.6).
       const sentOn = new Set<string>();
@@ -1345,7 +1377,7 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
           const unlisted = await firstUnlisted(top, listed.files);
           if (unlisted !== null) {
             unlistedAtTurn.set(top, unlisted);
-            return { code: FOLDER_GAINED, reason: `it now holds ${path.relative(top, unlisted.at) || path.basename(top)}, which was not copied` };
+            return { code: FOLDER_GAINED, reason: unlisted.kind === 'gone' ? 'it is no longer there' : heldBecause(top, unlisted) };
           }
         }
         for (const f of files) { const look = looks.get(f); if (look) sentOn.add(fileKeyOf(look)); }
@@ -1375,13 +1407,26 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       // Copies are safe at the destination; report the leftovers honestly.
       job.error = `Offloaded ${everything}, but ${failedToTrash.length} original${failedToTrash.length === 1 ? '' : 's'} couldn't be moved to the Trash: ${failedToTrash[0].reason}`;
     }
-    if (leftInPlace.length > 0) {
-      const [first] = leftInPlace;
-      const more = leftInPlace.length > 1 ? ` (and ${formatCount(leftInPlace.length - 1)} more folder${leftInPlace.length === 2 ? '' : 's'})` : '';
-      const kept =
-        `${path.basename(first.folder)} was left in place${more}: it now holds ${path.relative(first.folder, first.at) || path.basename(first.folder)}, ` +
-        `which was not copied (${first.why === 'the scan did not list it' ? 'it was made after the offload was planned' : first.why}), ` +
-        `so it was not moved to the Trash. Its verified copies stand at ${destDir}.`;
+    // Copies stand only for a folder that had files to copy (review F1.6): an empty one has none.
+    const copiesOf = (group: { folder: string }[]): string => {
+      if (!group.some((l) => (filesOf.get(l.folder) ?? []).length > 0)) return '';
+      return ` ${group.length === 1 ? 'Its' : 'Their'} verified copies stand at ${destDir}.`;
+    };
+    const stillThere = leftInPlace.filter((l) => l.kind !== 'gone');
+    if (stillThere.length > 0) {
+      const [first] = stillThere;
+      const more = stillThere.length > 1 ? ` (and ${formatCount(stillThere.length - 1)} more folder${stillThere.length === 2 ? '' : 's'})` : '';
+      const kept = `${path.basename(first.folder)} was left in place${more}: ${heldBecause(first.folder, first)}, so it was not moved to the Trash.${copiesOf(stillThere)}`;
+      job.error = job.error ? `${job.error} Also: ${kept}` : kept;
+    }
+    // A selected folder gone by its trash step holds nothing, and is not left anywhere (review F1.6).
+    const vanished = leftInPlace.filter((l) => l.kind === 'gone');
+    if (vanished.length > 0) {
+      const name = path.basename(vanished[0].folder);
+      const others = vanished.length - 1;
+      const kept = others === 0
+        ? `${name} is no longer there, so it was not moved to the Trash.${copiesOf(vanished)}`
+        : `${name} and ${formatCount(others)} more selected folder${others === 1 ? '' : 's'} are no longer there, so they were not moved to the Trash.${copiesOf(vanished)}`;
       job.error = job.error ? `${job.error} Also: ${kept}` : kept;
     }
     if (tornTops.length > 0) {

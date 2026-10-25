@@ -623,7 +623,8 @@ OpenAPI 3 spec).
      folder is trashed whole, so one holding anything the scan did not list
      (a "Don't scan" match, a folder it could not read, a drive it did not
      enter, a file made since) is refused before anything is copied, dry run
-     included (`409 OFFLOAD_NOT_FULLY_LISTED`, naming it); OS junk such as
+     included (`409 OFFLOAD_NOT_FULLY_LISTED`, naming it, or saying that the
+     selected folder itself could not be looked into or is gone); OS junk such as
      `.DS_Store` does not count. Every name it lists is copied, a hard
      link's second name too: the scan counts the file once, under the first
      name it met, and each later name is copied as a file of its own,
@@ -635,7 +636,10 @@ OpenAPI 3 spec).
      and recorded; so is any selected item holding a file that is not what
      was copied by its own turn. Each item is looked at again right before
      its trash step (no bytes are read): a selected folder is listed again,
-     and one holding anything that was not copied stays; a file whose size,
+     and one holding anything that was not copied, or holding a folder that
+     cannot be listed, or that cannot be listed itself, stays; one that is
+     gone by then is said to be gone, with no copies unless it had files to
+     copy, and is not moved to the Trash; a file whose size,
      modified time or file id moved, or that is gone from a selected folder,
      changed after its copy was made — the copy holds it as it was then —
      and one whose change time alone moved may have changed (a new
