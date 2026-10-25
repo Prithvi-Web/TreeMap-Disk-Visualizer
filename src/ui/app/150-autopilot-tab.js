@@ -459,6 +459,7 @@ function openPolicyEditor(policy) {
   $('apDryRunFirst').checked = apDraft.dryRunFirst !== false;
   $('apEnabled').checked = apDraft.enabled === true;
   $('apPreview').innerHTML = '';
+  if (typeof sayAloud === 'function') sayAloud('apPreviewSaid', ''); // and nothing an earlier Preview said is left in its region (review HD2 F1.9)
 
   const kind = apDraft.match?.kind === 'custom' ? 'custom'
     : apDraft.match?.kind === 'query' ? 'query'
@@ -678,8 +679,12 @@ $('apPreviewBtn').addEventListener('click', async () => {
   // paints nothing (review HD-L14).
   const press = ++apPreviewSeq;
   const refused = apEditorRefusal();
-  // Toasted, as Save's refusal is, so it is said aloud (review F1.17); the box keeps nothing of an earlier draft.
-  if (refused) { host.innerHTML = ''; fxOrbHide('ap'); toast(refused, 'error'); return; }
+  // The box is no live region: what it shows is said in #apPreviewSaid beside it, for the latest press only
+  // (review HD2 F1.9). Guarded: a page reader may lift this handler without sayAloud.
+  const say = (words) => { if (typeof sayAloud === 'function') sayAloud('apPreviewSaid', words); };
+  // Toasted, as Save's refusal is, so it is said aloud (review F1.17); the box keeps nothing of an earlier draft,
+  // and the region nothing of the press it retired.
+  if (refused) { host.innerHTML = ''; say(''); fxOrbHide('ap'); toast(refused, 'error'); return; }
   // The draft as the editor holds it now — previewed, never saved.
   const draft = { policy: policyFromEditor() };
   // The editor this preview was asked in: closing it (apEditorClosed) or a
@@ -689,24 +694,35 @@ $('apPreviewBtn').addEventListener('click', async () => {
   // the finally below destroys it on every exit, the error paths included.
   host.innerHTML = `<div class="muted" style="margin-top:14px;display:flex;align-items:center;gap:8px;"><span class="fx-orb-well"></span>Checking what this would delete…</div>`;
   fxOrbShow('ap', host.querySelector('.fx-orb-well'), 'working');
+  say('Checking what this would delete…');
   try {
     const result = await api('/api/autopilot/simulate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(draft),
     });
     if (press !== apPreviewSeq) return;
+    const n = result.items.length;
+    const head = `${formatBytes(result.bytesWouldDelete)} across ${formatCount(n)} item${n === 1 ? '' : 's'}`;
+    const limit = result.capBytes !== null ? `limit ${formatBytes(result.capBytes)}` : '';
+    // What it left alone matched: "Nothing matches" only when nothing was left alone, as the run list says it (review round 3, F3.7).
+    const none = result.skipped.length ? 'Everything that matches is left alone — nothing would be deleted.' : 'Nothing matches right now.';
     const rows = result.items.slice(0, 12).map(i => `
       <div class="ap-run-item"><span class="nm" title="${escapeHtml(i.path)}">${escapeHtml(i.name)}</span>
       <span class="why">${escapeHtml(i.reason)}</span><b class="num">${formatBytes(i.bytes)}</b></div>`).join('');
     host.innerHTML =
       `<div class="set-h" style="margin-top:18px;">${icon('search', 14)}What this would delete</div>` +
-      `<div class="ap-preview-head num">${formatBytes(result.bytesWouldDelete)} across ${formatCount(result.items.length)} item${result.items.length === 1 ? '' : 's'}` +
-      (result.capBytes !== null ? ` <span class="muted">(limit ${formatBytes(result.capBytes)})</span>` : '') + `</div>` +
+      `<div class="ap-preview-head num">${head}` +
+      (limit ? ` <span class="muted">(${limit})</span>` : '') + `</div>` +
       (result.wouldBlockReason ? `<div class="ap-reason">${escapeHtml(result.wouldBlockReason)}</div>` : '') +
-      // What it left alone matched: "Nothing matches" only when nothing was left alone, as the run list says it (review round 3, F3.7).
-      (rows || `<div class="muted" style="padding:4px 0;">${result.skipped.length ? 'Everything that matches is left alone — nothing would be deleted.' : 'Nothing matches right now.'}</div>`) +
-      (result.items.length > 12 ? `<div class="muted" style="font-size:11px;padding-left:10px;">…and ${formatCount(result.items.length - 12)} more</div>` : '') +
+      (rows || `<div class="muted" style="padding:4px 0;">${none}</div>`) +
+      (n > 12 ? `<div class="muted" style="font-size:11px;padding-left:10px;">…and ${formatCount(n - 12)} more</div>` : '') +
       (result.skipped.length ? leftAloneHtml(result.skipped) : '');
+    const left = result.skipped.length;
+    say([
+      `What this would delete: ${head}${limit ? ` (${limit})` : ''}.`,
+      result.wouldBlockReason || '',
+      !rows ? none : left ? `${formatCount(left)} item${left === 1 ? ' that matches is' : 's that match are'} left alone.` : '',
+    ].filter(Boolean).join('\n'));
   } catch (e) {
     // A folder that names none, where the same path without the whitespace at
     // its end does: said in words, with that folder offered, as Save says it —
@@ -716,9 +732,11 @@ $('apPreviewBtn').addEventListener('click', async () => {
     if (press !== apPreviewSeq) return;
     if (meant && seq === apSaveSeq) {
       host.innerHTML = `<div class="ap-reason">${escapeHtml(noFolderNamed(draft.policy.path))}</div>`;
+      say(''); // the offer's toast says it, with the folder (offerMeant)
       offerMeant(draft.policy.path, meant, () => { if (seq === apSaveSeq) $('apPath').value = meant; }, 'Use that folder', 'apModal');
     } else {
       host.innerHTML = `<div class="ap-reason">${escapeHtml(e.message)}</div>`;
+      say(e.message);
     }
   } finally {
     if (press === apPreviewSeq) fxOrbHide('ap'); // a retired press's orb is gone already, or a later press's

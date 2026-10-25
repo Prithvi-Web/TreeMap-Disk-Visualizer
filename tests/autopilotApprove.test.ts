@@ -1240,6 +1240,97 @@ test('a Preview still out paints nothing once a later press, a refusal or the ed
   assert.equal(hides, 4, 'its own end takes its orb down');
 });
 
+/*
+ * Preview is the only way to see what a policy would delete before approving it, and it said nothing aloud:
+ * #apPreview is no live region, and only a refusal was toasted. A screen-reader user pressed Preview and heard
+ * nothing while it worked, when it answered, or when it failed (review HD2 F1.9).
+ */
+test('Preview says aloud that it is working, what it would delete and why it failed, in a live region of its own, for the latest press only (review HD2 F1.9)', async () => {
+  assert.match(INDEX, /<div id="apPreview"><\/div>\s*(?:<!--[^>]*-->\s*)?<div id="apPreviewSaid" class="sr-only" role="status" aria-live="polite" aria-atomic="true"><\/div>/,
+    'beside the box, outside what each press writes over, is a polite live region of its own');
+  const at = INDEX.indexOf("$('apPreviewBtn').addEventListener('click', async () => {");
+  const open = INDEX.indexOf('{', INDEX.indexOf('=>', at));
+  let depth = 0;
+  let end = open;
+  for (let i = open; i < INDEX.length; i++) { if (INDEX[i] === '{') depth++; else if (INDEX[i] === '}' && --depth === 0) { end = i; break; } }
+  const els: Record<string, { innerHTML: string; querySelector(): null }> = {};
+  const $ = (id: string) => (els[id] ||= { innerHTML: '', querySelector: () => null });
+  let refusal: string | null = null;
+  let meant: string | null = null;
+  const pending: Array<{ ok(r: unknown): void; fail(e: Error): void }> = [];
+  const said: string[] = [];
+  const offered: string[] = [];
+  const page = new Function('$', 'apEditorRefusal', 'toast', 'escapeHtml', 'policyFromEditor', 'api', 'fxOrbShow', 'fxOrbHide',
+    'formatBytes', 'formatCount', 'icon', 'meantFolder', 'noFolderNamed', 'offerMeant', 'leftAloneHtml', 'sayAloud',
+    `let apSaveSeq = 0; let apPreviewSeq = 0; return async () => ${INDEX.slice(open, end + 1)};`,
+  )($, () => refusal, () => undefined, (x: string) => x, () => ({ path: '/x ' }),
+    () => new Promise((ok, fail) => { pending.push({ ok, fail }); }), () => undefined, () => undefined,
+    (n: number) => `${n} B`, String, () => '', async () => meant, (p: string) => `No folder is named “${p}”.`,
+    (p: string) => { offered.push(p); }, () => '<div>left alone</div>',
+    (id: string, words: string) => { assert.equal(id, 'apPreviewSaid', 'it speaks in its own region'); said.push(words); }) as () => Promise<void>;
+
+  // Pressed: the working sentence is said; answered: what it would delete, and why a run would stop.
+  let press = page();
+  assert.deepEqual(said, ['Checking what this would delete…'], 'the working sentence is said as the box shows it');
+  pending.shift()!.ok({ items: [{ path: '/x/a', name: 'a', reason: 'old', bytes: 5 }], bytesWouldDelete: 5, capBytes: 10,
+    wouldBlockReason: 'A real run would stop here: it is over the policy’s weekly limit.', skipped: [{ path: '/x/b', reason: 'a note' }] });
+  await press;
+  assert.deepEqual(said.slice(1), ['What this would delete: 5 B across 1 item (limit 10 B).\nA real run would stop here: it is over the policy’s weekly limit.\n1 item that matches is left alone.'],
+    'its answer is said: the total, the reason a run would stop, and what it leaves alone');
+
+  // Nothing matches: said as the box says it.
+  said.length = 0;
+  press = page();
+  pending.shift()!.ok({ items: [], bytesWouldDelete: 0, capBytes: null, skipped: [] });
+  await press;
+  assert.deepEqual(said, ['Checking what this would delete…', 'What this would delete: 0 B across 0 items.\nNothing matches right now.']);
+
+  // A failure is said, as the box shows it.
+  said.length = 0;
+  press = page();
+  pending.shift()!.fail(new Error('Path does not exist: /x'));
+  await press;
+  assert.deepEqual(said, ['Checking what this would delete…', 'Path does not exist: /x'], 'a failure is said');
+
+  // A folder TreeMap offers instead is toasted (offerMeant says it): the region only lets the working sentence go.
+  said.length = 0;
+  meant = '/x';
+  press = page();
+  pending.shift()!.fail(new Error('Path does not exist: /x '));
+  await press;
+  assert.deepEqual(offered, ['/x '], 'control: the folder is offered');
+  assert.deepEqual(said, ['Checking what this would delete…', ''], 'and is not said twice');
+  meant = null;
+
+  // A refusal is toasted, and the working sentence of the press it retired goes; that press says nothing more.
+  said.length = 0;
+  press = page();
+  refusal = 'Enter a number of days from 1 to 365 in “Run at most once every”.';
+  await page();
+  pending.shift()!.ok({ items: [], bytesWouldDelete: 0, capBytes: null, skipped: [] });
+  await press;
+  assert.deepEqual(said, ['Checking what this would delete…', ''], 'a retired press says nothing of its answer');
+  refusal = null;
+
+  // Two presses, the first answering first: only the second's answer is said.
+  said.length = 0;
+  const c = page();
+  const d = page();
+  const [first, second] = [pending.shift()!, pending.shift()!];
+  first.fail(new Error('the first press failed'));
+  await c;
+  second.ok({ items: [], bytesWouldDelete: 0, capBytes: null, skipped: [{ path: '/x/b', reason: 'a note' }] });
+  await d;
+  assert.deepEqual(said, ['Checking what this would delete…', 'Checking what this would delete…',
+    'What this would delete: 0 B across 0 items.\nEverything that matches is left alone — nothing would be deleted.'], 'an older press says nothing');
+});
+
+test('opening the policy editor takes down what an earlier Preview said (review HD2 F1.9)', () => {
+  const body = pageSource('openPolicyEditor');
+  assert.match(body, /\$\('apPreview'\)\.innerHTML = '';\s*if \(typeof sayAloud === 'function'\) sayAloud\('apPreviewSaid', ''\);/,
+    'the box and its region are cleared together');
+});
+
 test('Preview\'s refusal is toasted — said aloud as every refusal of the editor is — and the preview box keeps nothing of an earlier draft (review F1.17)', async () => {
   const at = INDEX.indexOf("$('apPreviewBtn').addEventListener('click', async () => {");
   assert.notEqual(at, -1, 'the Preview handler is in the page');
