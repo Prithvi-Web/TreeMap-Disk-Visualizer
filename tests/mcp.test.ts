@@ -15,7 +15,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildMcpServer, setToolWaitClockForTests } from '../src/mcp/server';
 import { buildOpenApiDocument } from '../src/api/openapi';
-import { peekScan } from '../src/services/diskScanner';
+import { createScanRecord, peekScan } from '../src/services/diskScanner';
+import { buildStoreFromTree } from '../src/services/scanStore';
 import { CommandStopped, setTrashStepForTests } from '../src/services/cleaner';
 import { formatBytes } from '../src/utils/formatBytes';
 import { platform } from '../src/platform';
@@ -288,6 +289,35 @@ test('cleanup_suggestions names an unreadable notes.json as its cause, never a r
     assert.equal(s.available, false, 'degraded, not served unpaused');
     assert.equal(s.code, 'NOTES_UNREADABLE', 'the answer names its cause');
     assert.match(String(s.reason), /notes\.json/);
+  } finally {
+    for (const f of fs.readdirSync(dir)) if (f.startsWith('notes.json')) fs.rmSync(path.join(dir, f), { force: true });
+  }
+});
+
+test('cleanup_suggestions of a cloud listing, which no note can pause, is not refused for an unreadable notes.json (review HD2 F1.2)', async () => {
+  const dir = process.env.TREEMAP_DATA_DIR!;
+  const notesFile = path.join(dir, 'notes.json');
+  const root = 'cloud://gdrive';
+  const scan = createScanRecord(root);
+  scan.engine = 'cloud';
+  scan.store = buildStoreFromTree({
+    name: 'gdrive', path: root, type: 'dir', modifiedAt: 0, isHidden: false, size: 1_000_000, children: [
+      { name: 'node_modules', path: `${root}/node_modules`, type: 'dir', modifiedAt: 0, isHidden: false, size: 900_000, children: [
+        { name: 'a.js', path: `${root}/node_modules/a.js`, type: 'file', modifiedAt: 0, isHidden: false, size: 900_000, extension: 'js' },
+      ] },
+      { name: 'package.json', path: `${root}/package.json`, type: 'file', modifiedAt: 0, isHidden: false, size: 100_000, extension: 'json' },
+    ],
+  });
+  scan.status = 'complete';
+  fs.writeFileSync(notesFile, '{ not json');
+  try {
+    const local = await call('cleanup_suggestions', { scanId });
+    assert.equal(local.structuredContent!.code, 'NOTES_UNREADABLE', 'control: a local scan is refused');
+    const r = await call('cleanup_suggestions', { scanId: scan.scanId });
+    assert.ok(!r.isError, JSON.stringify(r.content));
+    const s = r.structuredContent!;
+    assert.equal(s.code, undefined, `a cloud listing is not refused for notes: ${JSON.stringify(s).slice(0, 300)}`);
+    assert.ok(s.groups.some((g: any) => g.id === 'regen-node-modules'), 'and its suggestions are served');
   } finally {
     for (const f of fs.readdirSync(dir)) if (f.startsWith('notes.json')) fs.rmSync(path.join(dir, f), { force: true });
   }

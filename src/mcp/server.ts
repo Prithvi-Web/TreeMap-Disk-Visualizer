@@ -14,7 +14,7 @@ import { DEFAULT_DUPLICATE_MIN_SIZE, getDuplicateJob } from '../services/duplica
 import { computeFacts } from '../services/facts';
 import type { ReclaimScoreFactValue } from '../services/facts';
 import { adviceClaimsFor, cleanupSuggestionsCountedFor, type AdviceClaim } from '../services/cleanupMemo';
-import { suppressedNoteRoots } from '../services/notes';
+import { suppressedNoteRootsFor } from '../services/notes';
 import { ruleCatalogStatus } from '../services/rulePacks';
 import { adviceHitAlong, foldedNamesOf, namesLeadTo, realPlaceUnlessLink } from '../services/adviceGuard';
 import { getIgnoreMatchers } from '../services/settings';
@@ -771,7 +771,7 @@ export function buildMcpServer(): McpServer {
         // than serving an unsuppressed list.
         let noted: string[];
         try {
-          noted = await suppressedNoteRoots();
+          noted = await suppressedNoteRootsFor(scan.rootPath); // none for a cloud listing, which no note can pause (review HD2 F1.2)
         } catch (err) {
           return ok({ scanId, available: false, code: 'NOTES_UNREADABLE', reason: err instanceof Error ? err.message : String(err), totalBytes: 0, groups: [] });
         }

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { requireScan, clampInt } from './scanRoutes';
 import { engineSettingRefusal, getSettings, updateSettings, getIgnoreMatchers, scanBoundaryRefusal } from '../services/settings';
-import { notePausedTest, suppressedNoteRoots } from '../services/notes';
+import { notePausedTest, suppressedNoteRootsFor } from '../services/notes';
 import { markBoundaryChanged } from '../services/indexEngine';
 import { cleanupSuggestionsFor } from '../services/cleanupMemo';
 import { ruleCatalogStatus } from '../services/rulePacks';
@@ -148,7 +148,7 @@ settingsRouter.get('/cleanup/suggestions', storageModeGate, async (req: Request,
   // notes were supposed to be filtering — fail closed, stated.
   let noted: string[];
   try {
-    noted = await suppressedNoteRoots();
+    noted = await suppressedNoteRootsFor(scan.rootPath); // none for a cloud listing, which no note can pause (review HD2 F1.2)
   } catch (err) {
     // `code` says the cause is notes.json, so the page never blames a rule pack (review HD-L2/L6).
     res.json({ scanId: scan.scanId, groups: [], available: false, code: 'NOTES_UNREADABLE', reason: err instanceof Error ? err.message : String(err) });

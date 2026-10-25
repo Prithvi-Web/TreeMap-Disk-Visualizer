@@ -979,6 +979,47 @@ test('Smart suggestions, the agent summary and MCP read no note into a cloud lis
   assert.equal(isUnderAny(path.join(process.cwd(), 'src'), [overServer]), true, 'control: a local path under the note is');
 });
 
+/*
+ * No note can pause a cloud listing, so an unreadable notes.json refuses none of the lists notePausedTest
+ * serves for one (F1.3) — but Smart suggestions and the agent summary read suppressedNoteRoots for every scan,
+ * and refused a cloud scan, so the Clean Up pane said its package, Git and browser lists were off when they
+ * had just been served (review HD2 F1.2).
+ */
+test('an unreadable notes.json refuses neither Smart suggestions nor the agent summary of a cloud listing, which no note can pause (review HD2 F1.2)', async () => {
+  const root = 'cloud://gdrive';
+  const leaf = (name: string, rel: string, size: number, extension: string): FileNode =>
+    ({ name, path: `${root}/${rel}`, type: 'file', modifiedAt: 0, isHidden: false, size, extension });
+  const scan = createScanRecord(root);
+  scan.engine = 'cloud';
+  scan.store = buildStoreFromTree({
+    name: 'gdrive', path: root, type: 'dir', modifiedAt: 0, isHidden: false, size: 1_000_000, children: [
+      { name: 'node_modules', path: `${root}/node_modules`, type: 'dir', modifiedAt: 0, isHidden: false, size: 900_000, children: [leaf('a.js', 'node_modules/a.js', 900_000, 'js')] },
+      leaf('package.json', 'package.json', 100_000, 'json'),
+    ],
+  });
+  scan.status = 'complete';
+  const dataDir = process.env.TREEMAP_DATA_DIR!;
+  const notesFile = path.join(dataDir, 'notes.json');
+  const { port, close } = await listen();
+  try {
+    fs.writeFileSync(notesFile, '{ not json');
+    await assert.rejects(suppressedNoteRoots(), (e: any) => e.code === 'NOTES_UNREADABLE', 'control: notes.json cannot be read');
+    const sug = await req(port, 'GET', `/api/cleanup/suggestions?scanId=${scan.scanId}`);
+    assert.equal(sug.status, 200, JSON.stringify(sug.body));
+    assert.equal(sug.body.code, undefined, `Smart suggestions of a cloud listing are not refused for notes: ${JSON.stringify(sug.body)}`);
+    assert.equal(sug.body.available, true, JSON.stringify(sug.body));
+    assert.ok(sug.body.groups.some((g: any) => g.id === 'regen-node-modules'), 'and are served');
+    const summary = await req(port, 'GET', `/api/agent/summary?scanId=${scan.scanId}`);
+    assert.equal(summary.status, 200, `nor is the agent summary: ${JSON.stringify(summary.body)}`);
+  } finally {
+    await close();
+    fs.rmSync(notesFile, { force: true });
+    for (const f of fs.readdirSync(dataDir)) {
+      if (f.startsWith('notes.json.corrupt')) fs.rmSync(path.join(dataDir, f), { force: true });
+    }
+  }
+});
+
 test('Empty folders judges the pause before its cap and its count: a free folder past a thousand paused ones is still offered, and totalCount and paused say which is which (review F1.12, F1.11)', async () => {
   await clearNotes();
   const fx = await mkTmp();

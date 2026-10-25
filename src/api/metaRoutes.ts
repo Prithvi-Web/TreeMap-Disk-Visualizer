@@ -8,7 +8,7 @@ import { appDataDir } from '../services/storage';
 import { collectLargestFiles, collectLargestFolders, scanRootRefusal } from '../services/diskScanner';
 import { cleanupSuggestionsCountedFor } from '../services/cleanupMemo';
 import { loadRuleCatalog } from '../services/rulePacks';
-import { suppressedNoteRoots } from '../services/notes';
+import { suppressedNoteRootsFor } from '../services/notes';
 import { getIgnoreMatchers } from '../services/settings';
 import { getForecast } from '../services/forecast';
 import { storeOf } from '../services/scanStore';
@@ -146,7 +146,7 @@ metaRouter.get('/agent/summary', storageModeGate, async (req: Request, res: Resp
   const ignore = await getIgnoreMatchers('suggest');
   // v4 §9.5 — the agent summary must not advertise reclaimable bytes the
   // suggestion surfaces themselves would refuse to show.
-  const noted = await suppressedNoteRoots();
+  const noted = await suppressedNoteRootsFor(scan.rootPath); // none for a cloud listing, which no note can pause (review HD2 F1.2)
   // loadRuleCatalog() throws on a malformed pack, as the matcher's default did.
   // Through the memo (U-16): the same walk the suggestions route answers from.
   const { groups, matchCounts } = await cleanupSuggestionsCountedFor(store, ignore, loadRuleCatalog(), noted); // already sorted largest first

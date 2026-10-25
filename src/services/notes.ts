@@ -220,6 +220,17 @@ export async function suppressedNoteRoots(): Promise<string[]> {
 }
 
 /**
+ * `suppressedNoteRoots` for a list of the scan rooted at `walkRoot` — Smart suggestions, the agent
+ * summary, MCP cleanup_suggestions. None for a cloud listing: no note can pause one (setNote refuses
+ * cloud:// ids), so an unreadable notes.json refuses it no more than it refuses the lists notePausedTest
+ * serves for one (review F1.3, HD2 F1.2). Otherwise it fails closed, as suppressedNoteRoots does.
+ */
+export async function suppressedNoteRootsFor(walkRoot: string): Promise<string[]> {
+  if (isCloudId(walkRoot)) return [];
+  return suppressedNoteRoots();
+}
+
+/**
  * Fold the suppression roots once per request (review round 1, finding 8):
  * `isUnderAny` re-resolves and re-case-folds every root on every call, which
  * is invisible with zero notes and quadratic pain with five hundred of them

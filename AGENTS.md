@@ -1222,7 +1222,8 @@ read-what-you-saw) permission to act.
   with the same `500`, while `GET /api/cleanup/suggestions` and MCP
   `cleanup_suggestions` answer `available: false` with
   `code: "NOTES_UNREADABLE"` and the reason (a malformed rule pack's answer
-  carries no `code`).
+  carries no `code`). None of them refuses a cloud listing, which no note
+  can pause.
 - **Budget gauges (v4 §9.4).** `GET /api/scan/{scanId}/budget-gauges` pairs
   each in-scan folder budget with a projected breach date — a NEW endpoint
   because `/budgets` is under byte-identity lock. The projection reuses
