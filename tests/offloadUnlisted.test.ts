@@ -220,6 +220,8 @@ test('two of three folders gaining a file are both left in place, the first name
   assert.deepEqual(trashedPaths.slice(before), [projB], 'only the untouched folder went to the Trash');
   assert.ok(fs.existsSync(path.join(projA, 'a.txt')) && fs.existsSync(path.join(projC, 'a.txt')), 'both that gained a file are in place');
   assert.match(job.error ?? '', /projA was left in place \(and 1 more folder\): /, job.error);
+  // Both had files to copy, so both copies stand (leftover HE2-L6).
+  assert.equal(job.error, `projA was left in place (and 1 more folder): it now holds made-during-the-copy.txt, which was not copied (it was made after the offload was planned), so it was not moved to the Trash. Their verified copies stand at ${job.destRoot}.`);
 });
 
 test('a file made in a later selected folder while an earlier one goes to the Trash leaves that folder in place: each folder is listed again at its own turn', async () => {
@@ -317,6 +319,35 @@ test('two selected empty folders gone — one while the copies were made, one by
   });
   assert.equal(job.status, 'complete', job.error);
   assert.equal(job.error, 'emptyE and 1 more selected folder are no longer there, so they were not moved to the Trash.');
+});
+
+test('a selected empty folder that gains a file at its own turn is left in place with no word of copies: it had none (leftover HE2-L6)', async () => {
+  const { root, folders: [projB], scan } = projects('empty-gains', ['projB']);
+  const emptyG = withEmptyFolder(root, scan, 'emptyG');
+  const late = path.join(emptyG, 'late.txt');
+  const before = trashedPaths.length;
+  const job = await offloadWith('empty-gains', scan, [projB, emptyG], { during: (p) => { if (p === projB && !fs.existsSync(late)) fs.writeFileSync(late, 'made while projB went to the Trash'); } });
+  assert.equal(job.status, 'complete', job.error);
+  assert.deepEqual(trashedPaths.slice(before), [projB], 'only projB was handed to the Trash');
+  assert.equal(job.error, 'emptyG was left in place: it now holds late.txt, which was not copied (it was made after the offload was planned), so it was not moved to the Trash.');
+  assert.ok(fs.existsSync(late), 'it is in place, the new file in it');
+});
+
+test('three selected folders with files gone before the first trash step are said together, their verified copies standing (leftover HE2-L6)', async () => {
+  const { root, folders: [projA, projB, projC, projD], scan } = projects('gone-with-files', ['projA', 'projB', 'projC', 'projD']);
+  let verified = 0;
+  const before = trashedPaths.length;
+  // Moved away once every copy has verified: after the copies, before the look at every folder.
+  const job = await offloadWith('gone-with-files', scan, [projA, projB, projC, projD], {
+    whileCopying: () => {
+      if (++verified !== 4) return;
+      for (const folder of [projB, projC, projD]) fs.renameSync(folder, path.join(root, `moved-${path.basename(folder)}`));
+    },
+  });
+  assert.equal(job.status, 'complete', job.error);
+  assert.deepEqual(trashedPaths.slice(before), [projA], 'only projA was handed to the Trash');
+  assert.equal(job.error, `projB and 2 more selected folders are no longer there, so they were not moved to the Trash. Their verified copies stand at ${job.destRoot}.`);
+  for (const name of ['projB', 'projC', 'projD']) assert.ok(fs.existsSync(path.join(job.destRoot, name, 'a.txt')), `the verified copy of ${name} stands`);
 });
 
 const lockable = process.platform !== 'win32' && process.getuid?.() !== 0;
