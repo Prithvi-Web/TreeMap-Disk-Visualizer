@@ -27182,6 +27182,10 @@ function kbDropUndrawn() {
   if (!ks || drawnCells().some((s) => s.n.path === ks.path)) return;
   state.treemap.kbSel = null;
   hideTooltip(); // its card goes with it (QA D63)
+  // Said once, where kbSelect said it was selected: the outline vanished silently for a screen reader,
+  // whose next keys then acted on nothing, and whose Escape climbed a folder (review HB2-L5).
+  const live = $('tmKbAnnounce');
+  if (live) live.textContent = `${ks.name} is no longer shown, so nothing is selected.`;
 }
 /** After a drill or a climb: say where we are, ahead of what is selected there. */
 function kbAnnounceRoot() {

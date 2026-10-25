@@ -1166,48 +1166,92 @@ test('HB2 (L6, L12): the map\'s every repaint words the box — drawView after a
 });
 
 test('HB2 review (F1.6): over Circles or Voronoi the box is worded once the layout settles — never at each slice of a layout still being laid out', () => {
-  const said: string[] = []; // what the box's live region says
+  // Both renderers, judged by the page's own isCells, and a layout that settles on a note of its own — nearly every
+  // real one does (altNoteFor) — which is no layout still being laid out (review HB2-L3).
+  const SETTLED_NOTE = '2 items (4 B) too small to draw at this size — drill in to see them';
+  for (const mode of ['circles', 'voronoi']) {
+    const said: string[] = []; // what the box's live region says
+    const live = { _t: '', set textContent(v: string) { this._t = v; if (v) said.push(v); }, get textContent() { return this._t; } };
+    const box = { textContent: '', hidden: true, classList: { toggle() {} } };
+    const els: Record<string, unknown> = { tmQueryErr: box, tmQuerySaid: live, tmSearch: { classList: { toggle() {} }, setAttribute() {} }, tmStatus: { textContent: '' } };
+    const frames: (() => void)[] = [];
+    const shape = (path: string, depth: number) => ({ n: { path }, depth, kind: 'circle', cx: 0, cy: 0, r: 1 });
+    // One layout's slices, breadth first: the shapes laid so far grow, and the matches among them with them — 0, 1, 2, 4, 6,
+    // then all 8 of the 9 that can be drawn (the ninth is the folder on screen itself).
+    const slices = [0, 1, 2, 4, 6, 8].map((k, i, all) => ({
+      cells: [shape('/r', 0), ...NINE.slice(1, 1 + k).map((p) => shape(p, 2))], done: i === all.length - 1, note: i === all.length - 1 ? SETTLED_NOTE : '', resume: {},
+    }));
+    let next = 0;
+    const state = {
+      view: 'treemap', pathIndex: new Map(),
+      treemap: { mode, rootPath: '/r', query: 'size>1gb', queryMode: 'grammar', matchTotal: 9, matchedPaths: new Set(NINE), matches: 0,
+        hideCloud: false, nodes: [], history: { active: false }, lapse: { playing: false }, cells: [] as unknown[], altNote: '', altMs: 0,
+        altRaf: 0, altZoomRaf: 0, altZoom: null, colorMode: 'size', rootSize: 100 },
+    };
+    const noop = () => {};
+    const drawView = load<() => void>([...REWORD_NAMES, 'asSentences', 'sayAloud', 'tmSetQueryMessage', 'renderSearchOverlay', 'updateTmStatus',
+      'isCells', 'altRefiningNote', 'buildCells', 'altRefineSchedule', 'repaintCells', 'drawCells', 'drawView',
+      ...['altLayoutRefining'].filter((n) => INDEX.includes(`function ${n}(`))], {
+      state, tmPreview: { on: false }, $: (id: string) => els[id], tmSyncQueryBar: noop,
+      requestAnimationFrame: (f: () => void) => frames.push(f), cancelAnimationFrame: noop, performance: { now: () => 0 },
+      formatCount: (n: number) => n.toLocaleString('en-US'), formatBytes: (b: number) => `${b} B`, formatWhen: () => 'then',
+      isSun: () => false,
+      tmSearchBuffer: { width: 1, height: 1 }, tmBuffer: { width: 1, height: 1 }, tmSearchCtx: ctxStub(), tmBufCtx: ctxStub(),
+      window: { devicePixelRatio: 1 }, document: { documentElement: { dataset: { theme: 'dark' } } }, cssVar: () => '#0A84FF',
+      treemapMatch: () => false, tmKidsOf: () => new Map(), altCellPath: noop,
+      sunburstRoot: () => ({ path: '/r' }), altRefineCancel: noop, fxShapeSync: noop, tmSizeCanvas: () => ({ cssW: 100, cssH: 100, dpr: 1 }),
+      layoutCirclePack: () => slices[next++], layoutVoronoi: () => slices[next++],
+      drawPackedCircle: noop, drawVoronoiCell: noop, altDrawLabels: noop, presentCells: noop, renderCellsStatus: noop, paintCells: noop,
+      renderTmLegend: noop, renderAltNote: noop, altNoteSettled: noop, fetchScoresForTreemap: noop,
+    }, 'drawView', 'const aloudSaid = new Map(); let tmMorph = null; let altRefineSeq = 0; let altNoteRefitDue = false; let altNoteRefitting = false; ' +
+      'let tmLastHits = { q: "size>1gb", paths: ' + JSON.stringify(NINE) + ', total: 9, truncated: false, stage: null, degraded: [] };');
+    drawView(); // a drill, Depth or Hide cloud: the layout's first slice, then one slice a frame
+    while (frames.length) frames.shift()!();
+    assert.equal(next, slices.length, `${mode}: control — every slice of the layout ran`);
+    assert.equal(state.treemap.altNote, SETTLED_NOTE, `${mode}: control — the layout settled on its own note`);
+    assert.equal(state.treemap.matches, 8, `${mode}: control — the settled layout draws 8 of the 9`);
+    assert.deepEqual(said, ['9 matches — 8 shown here. One is this folder itself, which has no rectangle of its own.'],
+      'one sentence, of the settled map: never "8 are deeper than this view draws. Zoom in or raise Depth." of a half-laid one, nor a new one each slice');
+    assert.equal(box.textContent, said[0]);
+  }
+});
+
+test('HB2 review (HB2-L4): back on Live from a past snapshot, the real loadTreemap lands the map — out of history first, then drawView — and the box is worded of the live map that landed', async () => {
+  // The order the `past` control above stands in for, run: loadTreemap's landing calls exitHistoryState, then drawView,
+  // whose tmRewordQuery words the box. Called the other way round, tmRewordQuery saw history.active and returned, and
+  // nothing repainted after it: the box kept the words it had.
+  const said: string[] = [];
   const live = { _t: '', set textContent(v: string) { this._t = v; if (v) said.push(v); }, get textContent() { return this._t; } };
   const box = { textContent: '', hidden: true, classList: { toggle() {} } };
-  const els: Record<string, unknown> = { tmQueryErr: box, tmQuerySaid: live, tmSearch: { classList: { toggle() {} }, setAttribute() {} }, tmStatus: { textContent: '' } };
-  const frames: (() => void)[] = [];
-  const shape = (path: string, depth: number) => ({ n: { path }, depth, kind: 'circle', cx: 0, cy: 0, r: 1 });
-  // One layout's slices, breadth first: the shapes laid so far grow, and the matches among them with them — 0, 1, 2, 4, 6,
-  // then all 8 of the 9 that can be drawn (the ninth is the folder on screen itself).
-  const slices = [0, 1, 2, 4, 6, 8].map((k, i, all) => ({
-    cells: [shape('/r', 0), ...NINE.slice(1, 1 + k).map((p) => shape(p, 2))], done: i === all.length - 1, note: '', resume: {},
-  }));
-  let next = 0;
+  const els: Record<string, unknown> = { tmQueryErr: box, tmQuerySaid: live, tmSearch: { classList: { toggle() {} }, setAttribute() {} }, tmTimeSlider: { value: '0', max: '2' }, tmUpBtn: {} };
   const state = {
-    view: 'treemap', pathIndex: new Map(),
-    treemap: { mode: 'circles', rootPath: '/r', query: 'size>1gb', queryMode: 'grammar', matchTotal: 9, matchedPaths: new Set(NINE), matches: 0,
-      hideCloud: false, nodes: [], history: { active: false }, lapse: { playing: false }, cells: [] as unknown[], altNote: '', altMs: 0,
-      altRaf: 0, altZoomRaf: 0, altZoom: null, colorMode: 'size', rootSize: 100 },
+    scanId: 's1', scanning: false, view: 'treemap', root: { path: '/r', name: 'r', size: 100 }, pathIndex: new Map(),
+    treemap: { mode: 'treemap', rootPath: '/r', rootName: 'r', rootSize: 100, maxDepth: 4, query: 'size>1gb', queryMode: 'grammar', matchTotal: 9,
+      matchedPaths: new Set(NINE), matches: 3, hideCloud: false, nodes: [] as unknown[], nodesFor: null, hover: null, kbSel: null, colorMode: 'size',
+      cells: [] as unknown[], altNote: '', history: { active: true, scrubbing: false, snaps: [], index: 0, cache: new Map(), seq: 0 },
+      lapse: { playing: false, seq: 0, raf: 0, onDone: null } },
   };
   const noop = () => {};
-  const drawView = load<() => void>([...REWORD_NAMES, 'asSentences', 'sayAloud', 'tmSetQueryMessage', 'renderSearchOverlay', 'updateTmStatus',
-    'altRefiningNote', 'buildCells', 'altRefineSchedule', 'repaintCells', 'drawCells', 'drawView',
-    ...['altLayoutRefining'].filter((n) => INDEX.includes(`function ${n}(`))], {
-    state, tmPreview: { on: false }, $: (id: string) => els[id], tmSyncQueryBar: noop,
-    requestAnimationFrame: (f: () => void) => frames.push(f), cancelAnimationFrame: noop, performance: { now: () => 0 },
-    formatCount: (n: number) => n.toLocaleString('en-US'), formatBytes: (b: number) => `${b} B`, formatWhen: () => 'then',
-    isSun: () => false, isCells: () => true,
-    tmSearchBuffer: { width: 1, height: 1 }, tmBuffer: { width: 1, height: 1 }, tmSearchCtx: ctxStub(), tmBufCtx: ctxStub(),
-    window: { devicePixelRatio: 1 }, document: { documentElement: { dataset: { theme: 'dark' } } }, cssVar: () => '#0A84FF',
-    treemapMatch: () => false, tmKidsOf: () => new Map(), altCellPath: noop,
-    sunburstRoot: () => ({ path: '/r' }), altRefineCancel: noop, fxShapeSync: noop, tmSizeCanvas: () => ({ cssW: 100, cssH: 100, dpr: 1 }),
-    layoutCirclePack: () => slices[next++], layoutVoronoi: () => slices[next++],
-    drawPackedCircle: noop, drawVoronoiCell: noop, altDrawLabels: noop, presentCells: noop, renderCellsStatus: noop, paintCells: noop,
-    renderTmLegend: noop, renderAltNote: noop, altNoteSettled: noop, fetchScoresForTreemap: noop,
-  }, 'drawView', 'const aloudSaid = new Map(); let tmMorph = null; let altRefineSeq = 0; let altNoteRefitDue = false; let altNoteRefitting = false; ' +
+  const frames: (() => void)[] = [];
+  const page = load<{ load: (p: string) => Promise<void> }>(
+    [...REWORD_NAMES, 'asSentences', 'sayAloud', 'tmSetQueryMessage', 'drawView', 'exitHistoryState', 'loadTreemap'], {
+      state, tmPreview: { on: false }, $: (id: string) => els[id] || { classList: { add() {}, remove() {} }, disabled: false },
+      requestAnimationFrame: (f: () => void) => { frames.push(f); return 1; }, cancelAnimationFrame: noop, tmSyncQueryBar: noop, formatCount: (n: number) => n.toLocaleString('en-US'),
+      isSun: () => false, isCells: () => false, REDUCED: true, exitCartPreview: noop, renderCrumbs: noop, maybeInjectTrash: noop, refreshTimebar: noop,
+      upDisabledKeepFocus: noop, tmSetEmpty: noop, fetchScoresForTreemap: noop, kbDropUndrawn: noop,
+      api: async () => ({ root: { path: '/r', name: 'r', size: 100 }, nodes: [{ path: '/r/a', depth: 1 }] }), reportError: (e: Error) => { throw e; },
+      treeScanId: () => 's1', tmCanvas: {}, TM_MIN_SIZE: 4096, updateTimeLabel: noop, lapseStop: noop,
+      drawTreemap() { state.treemap.matches = 8; }, drawSunburst: noop, drawCells: noop, altCircleFor: noop, ensureSubtree: async () => null,
+      tmHeldTreemap: async () => null, tmStopMorph: noop,
+    }, '{ load: loadTreemap }',
+    'const aloudSaid = new Map(); let tmMorph = null; let tmLoadSeq = 0; ' +
     'let tmLastHits = { q: "size>1gb", paths: ' + JSON.stringify(NINE) + ', total: 9, truncated: false, stage: null, degraded: [] };');
-  drawView(); // a drill, Depth or Hide cloud: the layout's first slice, then one slice a frame
-  while (frames.length) frames.shift()!();
-  assert.equal(next, slices.length, 'control: every slice of the layout ran');
-  assert.equal(state.treemap.matches, 8, 'control: the settled layout draws 8 of the 9');
-  assert.deepEqual(said, ['9 matches — 8 shown here. One is this folder itself, which has no rectangle of its own.'],
-    'one sentence, of the settled map: never "8 are deeper than this view draws. Zoom in or raise Depth." of a half-laid one, nor a new one each slice');
-  assert.equal(box.textContent, said[0]);
+  box.textContent = 'THE WORDS IT HAD'; // scrubbed to a snapshot, the box still holds what it last said
+  await page.load('/r');
+  for (let i = 0; i < 10 && frames.length; i++) frames.splice(0).forEach((f) => f()); // the live region speaks a frame later
+  assert.equal(state.treemap.history.active, false, 'control: back on Live');
+  assert.equal(box.textContent, '9 matches — 8 shown here. One is this folder itself, which has no rectangle of its own.', 'the box is worded of the live map that landed');
+  assert.deepEqual(said, [box.textContent], 'and said once');
 });
 
 test('HB2 review (F1.10): over the sunburst an empty box stays empty — a repaint never tells it the sunburst highlights no matches', () => {
@@ -1489,13 +1533,19 @@ test('HB2 (L3): the keyboard\'s selection goes when a repaint stops drawing it �
     // Hide cloud on: the rectangle map paints the local file alone.
     drawTreemap() { state.treemap.pxRects = state.treemap.hideCloud ? [{ n: local }] : [{ n: cloud }, { n: local }]; },
     hideTooltip() { tips++; },
+    $: (id: string) => (id === 'tmKbAnnounce' ? announce : null),
   }, 'drawView');
+  const SELECTED = 'icloud-only.mov, file, 9 B, 64.3 percent of this view'; // what kbSelect said of it
+  const announce = { textContent: SELECTED };
   drawView();
   assert.equal(state.treemap.kbSel, cloud, 'control: still drawn, still selected');
+  assert.equal(announce.textContent, SELECTED, 'control: a repaint that still draws it says nothing new');
   state.treemap.hideCloud = true; // the Hide cloud pill
   drawView();
   assert.equal(state.treemap.kbSel, null, 'nothing on screen is selected: c, Delete, p and Enter have nothing to act on');
   assert.equal(tips, 1, 'and its card goes with it');
+  // Said, in the region kbSelect speaks in: a screen reader was told it was selected, and never that it went (review HB2-L5).
+  assert.equal(announce.textContent, 'icloud-only.mov is no longer shown, so nothing is selected.', 'the drop is said once');
   state.treemap.kbSel = local;
   drawView();
   assert.equal(state.treemap.kbSel, local, 'control: a selection still drawn stays');
@@ -1520,7 +1570,7 @@ function quietCtx() {
  * The real liveRelayout over the real painter of `mode` — drawTreemap after the real animateTreemapTo, drawCells, or the
  * real animateSunburstTo — with fixtures/mapRaster resolving the painter's helpers. big.iso is selected, then deleted on disk.
  */
-async function liveDropHarness(mode: string) {
+async function liveDropHarness(mode: string, reduced = false) {
   const gone = { path: '/r/big.iso', name: 'big.iso', size: 60, type: 'file' };
   const kept = { path: '/r/small.txt', name: 'small.txt', size: 40, type: 'file' };
   const root = { path: '/r', name: 'r', size: 100, type: 'dir', children: [gone, kept] };
@@ -1560,9 +1610,13 @@ async function liveDropHarness(mode: string) {
   frames.length = 0;
   const live = load<{ liveRelayout: () => Promise<void> }>(['tmAnimFrame', 'tmMorph', 'animateTreemapTo', 'TM_MIN_SIZE', 'liveRelayout'], {
     ...deps, isSun: () => mode === 'sunburst', isCells: () => mode === 'circles', maybeInjectTrash() {},
+    // Reduced motion (or a hidden tab): animateTreemapTo paints once, with no morph frame to mask a painter that
+    // dropped the selection by the paint before (review HB2-L2).
+    REDUCED: reduced,
     drawTreemap: painter.draw, drawCells: painter.draw, animateSunburstTo: painter.draw, sunburstRoot: () => root,
-    // The server's layout of the folder now: big.iso is gone.
-    api: async () => ({ root: { path: '/r', size: 40 }, nodes: [rect(kept, 0, 100)] }),
+    // The server's layout of the folder now: big.iso is drawn until another process deletes it (review HB2-L2) — so
+    // the paint before the one that leaves it out still draws it, and only reading the paint just made drops it.
+    api: async () => ({ root: { path: '/r', size: gone.size + kept.size }, nodes: gone.size > 0 ? [rect(gone, 0, 60), rect(kept, 60, 40)] : [rect(kept, 0, 100)] }),
   }, '{ liveRelayout }');
   const relayout = async () => {
     state.live.dirty = 1;
@@ -1573,8 +1627,8 @@ async function liveDropHarness(mode: string) {
 }
 
 test('HB2 review (F1.3, F1.5, F1.7): a Live re-layout that stops drawing the selected item takes the selection — every renderer, with no drawView', async () => {
-  for (const mode of ['treemap', 'circles', 'sunburst']) {
-    const h = await liveDropHarness(mode);
+  for (const [mode, reduced] of [['treemap', false], ['treemap', true], ['circles', false], ['sunburst', false]] as const) {
+    const h = await liveDropHarness(mode, reduced);
     h.state.treemap.kbSel = h.kept;
     await h.relayout();
     assert.equal(h.state.treemap.kbSel, h.kept, `${mode}: control — a selection still drawn stays`);
