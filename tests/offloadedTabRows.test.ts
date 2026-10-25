@@ -37,7 +37,7 @@ function pageConstants(): string {
   return [...INDEX.matchAll(/^const OFFLOAD_[A-Z_]+ = [^;\n]+;$/gm)].map((m) => m[0]).join('\n');
 }
 
-interface Entry { id: string; name: string; originalPath: string; destPath: string; destRoot: string; size: number; hash: string; offloadedAt: number; restoredAt?: number; originalKept?: boolean; hardLinked?: boolean }
+interface Entry { id: string; name: string; originalPath: string; destPath: string; destRoot: string; size: number; hash: string; offloadedAt: number; restoredAt?: number; originalKept?: boolean; originalGone?: boolean; hardLinked?: boolean }
 interface Index { destinations: { root: string; mounted: boolean; lastSeenAt: number; totalBytes: number; activeCount: number; restoredCount: number }[]; entries: Entry[] }
 
 /** `count` offloaded files on `root`, newest first, as GET /api/offload/index serves them. */
@@ -117,6 +117,22 @@ test('the line above the list counts as freed only the originals that went to th
 
   const none = index([first, second]);
   assert.match(infoText(none), /^2 offloaded files across 1 destination — 2000 B freed locally\.$/, infoText(none));
+});
+
+test('a copy whose original was gone by its trash step is not counted as freed, and is never said to be left in place (HE3 review F1.1)', () => {
+  const index = (entries: Entry[]): Index => ({
+    destinations: [{ root: '/Volumes/A', mounted: true, lastSeenAt: 1, totalBytes: 0, activeCount: entries.length, restoredCount: 0 }],
+    entries,
+  });
+  const [first, second, third, fourth] = entriesOn('/Volumes/A', 4);
+  const one = index([first, second, { ...third, originalGone: true }]);
+  assert.match(infoText(one), /^3 offloaded files across 1 destination — 2000 B freed locally\. 1 was copied, but its original was gone before it could be moved to the Trash, so it is not counted\.$/, infoText(one));
+  const row = rowOf(drawn(one).body, third.id);
+  assert.match(row, /· original was already gone</, `the row says what became of its original: ${row}`);
+  assert.doesNotMatch(row, /left in place/, 'never that it was left in place');
+  // Each is counted once, as what it is: one kept, two gone (one of them a hard link), none twice.
+  const mixed = index([first, { ...second, originalKept: true }, { ...third, originalGone: true, hardLinked: true }, { ...fourth, originalGone: true }]);
+  assert.match(infoText(mixed), /^4 offloaded files across 1 destination — 1000 B freed locally\. 1 was copied with its original left in place, so it is not counted\. 2 were copied, but their originals were gone before they could be moved to the Trash, so they are not counted\.$/, infoText(mixed));
 });
 
 test('the index serves each destination\'s files newest first, whatever order its record holds them in - so the tab draws the newest 200 (final review F3.4)', async () => {

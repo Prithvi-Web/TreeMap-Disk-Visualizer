@@ -273,7 +273,31 @@ test('a later selected folder with files moved away while an earlier one goes to
   assert.equal(job.error, `projB is no longer there, so it was not moved to the Trash. Its verified copies stand at ${dest}.`);
   assert.doesNotMatch(job.error ?? '', /now holds/, 'a folder that is gone holds nothing');
   assert.ok(fs.existsSync(path.join(elsewhere, 'a.txt')), 'what was moved away is untouched');
+  // Its record says so too, never "original left in place" (HE3 review F1.1).
+  await assertRecordedGone([projB], [projA]);
 });
+
+/**
+ * The offload record of each `gone` folder's a.txt says its original was gone (`originalGone`), never
+ * that it was left in place (`originalKept`) — and each `trashed` folder's says neither (HE3 review F1.1).
+ */
+async function assertRecordedGone(gone: string[], trashed: string[]): Promise<void> {
+  const entries = (await getOffloadIndex()).entries;
+  const of = (folder: string): (typeof entries)[number] => {
+    const entry = entries.find((e) => e.originalPath === path.join(folder, 'a.txt'));
+    assert.ok(entry, `the copy of ${path.basename(folder)}/a.txt is recorded`);
+    return entry;
+  };
+  for (const folder of gone) {
+    const entry = of(folder);
+    assert.equal(entry.originalGone, true, `${path.basename(folder)}: recorded as a copy whose original was gone, so no space was freed by it`);
+    assert.equal('originalKept' in entry, false, `${path.basename(folder)}: never as one whose original was left in place`);
+  }
+  for (const folder of trashed) {
+    const entry = of(folder);
+    assert.equal('originalGone' in entry || 'originalKept' in entry, false, `${path.basename(folder)} went to the Trash: recorded as before`);
+  }
+}
 
 /** `scan` with an empty folder `name` beside its folders, on the disk and listed as empty. */
 function withEmptyFolder(root: string, scan: ScanResult, name: string): string {
@@ -348,6 +372,7 @@ test('three selected folders with files gone before the first trash step are sai
   assert.deepEqual(trashedPaths.slice(before), [projA], 'only projA was handed to the Trash');
   assert.equal(job.error, `projB and 2 more selected folders are no longer there, so they were not moved to the Trash. Their verified copies stand at ${job.destRoot}.`);
   for (const name of ['projB', 'projC', 'projD']) assert.ok(fs.existsSync(path.join(job.destRoot, name, 'a.txt')), `the verified copy of ${name} stands`);
+  await assertRecordedGone([projB, projC, projD], [projA]);
 });
 
 const lockable = process.platform !== 'win32' && process.getuid?.() !== 0;

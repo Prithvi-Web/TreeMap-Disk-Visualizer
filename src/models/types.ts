@@ -960,6 +960,13 @@ export interface OffloadEntry {
    */
   originalKept?: true;
   /**
+   * Set when the original was no longer there when the offload came to move it to the Trash (HE3 review
+   * F1.1): a selected folder something else moved or removed after its copies verified. This offload did
+   * not move it to the Trash, nor leave it in place, and freed no space by it. Never with originalKept;
+   * absent on every other entry, and on every entry an earlier build recorded.
+   */
+  originalGone?: true;
+  /**
    * Set when the original was one of several names of one file (a hard link: a link count above 1 when
    * its copy was made; review F1.11). Moving one name to the Trash frees nothing while another stays, so
    * the Offloaded tab counts no space freed for it. Absent on every other entry, and on every entry an

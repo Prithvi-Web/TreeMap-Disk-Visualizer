@@ -537,16 +537,20 @@ function renderOffloadIndex() {
   // A copy whose original the offload left in place freed nothing here
   // (final review F3.2): it is listed, and counted apart from what was freed.
   const kept = active.filter(e => e.originalKept).length;
+  // Nor did one whose original was gone by its trash step (HE3 review F1.1):
+  // this offload moved nothing to the Trash for it, and left nothing in place.
+  const gone = active.filter(e => e.originalGone && !e.originalKept).length;
   // Nor did one name of a file that had others (review F1.11): its bytes stay while another name does.
-  const linked = active.filter(e => e.hardLinked && !e.originalKept).length;
+  const linked = active.filter(e => e.hardLinked && !e.originalKept && !e.originalGone).length;
   const linkedNote = linked
     ? ` <span class="num">${formatCount(linked)}</span> ${linked === 1 ? 'had another name (a hard link) when it was offloaded, so it is' : 'had other names (hard links) when they were offloaded, so they are'} not counted: moving one name of a file frees nothing while another stays.`
     : '';
   // One offload index per machine — a constant key, so a restore or a new
   // offload rolls the totals in place.
   FxNum.rollHtml($('offloadInfo'),
-    `<span class="num">${formatCount(active.length)}</span> offloaded file${active.length === 1 ? '' : 's'} across ${idx.destinations.length} destination${idx.destinations.length === 1 ? '' : 's'} — <span class="num">${formatBytes(active.reduce((s, e) => s + (e.originalKept || e.hardLinked ? 0 : e.size), 0))}</span> freed locally.` +
-    (kept ? ` <span class="num">${formatCount(kept)}</span> ${kept === 1 ? 'was copied with its original left in place, so it is' : 'were copied with their originals left in place, so they are'} not counted.` : '') + linkedNote,
+    `<span class="num">${formatCount(active.length)}</span> offloaded file${active.length === 1 ? '' : 's'} across ${idx.destinations.length} destination${idx.destinations.length === 1 ? '' : 's'} — <span class="num">${formatBytes(active.reduce((s, e) => s + (e.originalKept || e.originalGone || e.hardLinked ? 0 : e.size), 0))}</span> freed locally.` +
+    (kept ? ` <span class="num">${formatCount(kept)}</span> ${kept === 1 ? 'was copied with its original left in place, so it is' : 'were copied with their originals left in place, so they are'} not counted.` : '') +
+    (gone ? ` <span class="num">${formatCount(gone)}</span> ${gone === 1 ? 'was copied, but its original was gone before it could be moved to the Trash, so it is' : 'were copied, but their originals were gone before they could be moved to the Trash, so they are'} not counted.` : '') + linkedNote,
     'offload-index');
 
   host.innerHTML = idx.destinations.map((d, di) => {
@@ -557,7 +561,7 @@ function renderOffloadIndex() {
       <div class="bp-item${e.restoredAt ? ' offl-restored' : ''}">
         ${chipFor({ type: 'file', extension: (e.name.split('.').pop() || '').toLowerCase() }, 13)}
         <div class="meta" style="flex:1;min-width:0;">
-          <div class="nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(e.name)}${e.restoredAt ? ` <span class="muted">· restored ${formatDate(e.restoredAt)}</span>` : e.originalKept ? ' <span class="muted">· original left in place</span>' : ''}</div>
+          <div class="nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(e.name)}${e.restoredAt ? ` <span class="muted">· restored ${formatDate(e.restoredAt)}</span>` : e.originalKept ? ' <span class="muted">· original left in place</span>' : e.originalGone ? ' <span class="muted">· original was already gone</span>' : ''}</div>
           <div class="pth" title="was ${escapeHtml(e.originalPath)}">was ${escapeHtml(e.originalPath)}</div>
         </div>
         <span class="dt num">${formatDate(e.offloadedAt)}</span>

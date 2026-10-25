@@ -1460,9 +1460,12 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     if (metaWord !== null) job.note = metaWord;
     // Every selected item the Trash did not take — a folder left in place, an original found open, one
     // the Trash refused or did not answer about — is still here: its copies are recorded as such, so
-    // the Offloaded tab never counts them as space freed (final review F3.2).
-    const gone = new Set(trashed.deleted);
-    const keptTops = new Set(topPaths.filter((p) => !gone.has(p)));
+    // the Offloaded tab never counts them as space freed (final review F3.2). A selected folder gone by
+    // then is not here, nor left anywhere: its copies are recorded as copies of an original that was
+    // gone, and no space is counted freed by them either (HE3 review F1.1).
+    const trashedTops = new Set(trashed.deleted);
+    const goneTops = new Set(leftInPlace.filter((l) => l.kind === 'gone').map((l) => l.folder));
+    const keptTops = new Set(topPaths.filter((p) => !trashedTops.has(p) && !goneTops.has(p)));
 
     // BOOKKEEPING, past the point of no return — and therefore never a reason
     // to roll back.
@@ -1500,7 +1503,7 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
             size: r.size,
             hash: r.hash,
             offloadedAt: now,
-            ...(isUnder(r.src, keptTops) ? { originalKept: true as const } : {}),
+            ...(isUnder(r.src, keptTops) ? { originalKept: true as const } : isUnder(r.src, goneTops) ? { originalGone: true as const } : {}),
             // One of several names of a file (review F1.11): trashing it freed no space of its own.
             ...(r.hardLinked ? { hardLinked: true as const } : {}),
             ...r.meta,
