@@ -3,7 +3,7 @@
 <div align="center">
 
 <a href="https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/releases">
-  <img src="treemap-hero.svg" alt="TreeMap — a disk-space visualizer that shows exactly what's eating your disk" width="100%">
+  <img src="treemap-hero.svg" alt="TreeMap, a disk-space visualizer that shows exactly what's eating your disk" width="100%">
 </a>
 
 <br><br>
@@ -52,18 +52,45 @@
 
 > [!TIP]
 > **No Node. No setup. No telemetry.** The desktop app is fully self-contained and scans the disk
-> of the machine it runs on. Deletes always go to your **system Trash** — nothing is ever
+> of the machine it runs on. Deletes always go to your **system Trash**, nothing is ever
 > hard-deleted, and anything moved there can be put back until the Trash is emptied.
+
+<br>
+
+<div align="center">
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/treemap-dark.webp"><img src="docs/media/treemap-light.webp" alt="The Treemap view of a 103.4 GB demo home folder: every file is a rectangle sized by its bytes, grouped by folder, with names and sizes on each tile" width="100%"></picture>
+
+<sub>Screenshots follow your GitHub theme: switch between light and dark to see both.</sub>
+
+</div>
+
+<br>
+
+<table>
+<tr>
+<td width="50%" align="center"><img src="docs/media/scan.gif" alt="Starting a scan from the start screen: the Dashboard fills in as the scan finishes, then the map appears with a Scan complete notice" width="100%"><br><sub><b>Scan</b>: pick a folder, watch it fill in</sub></td>
+<td width="50%" align="center"><img src="docs/media/drill.gif" alt="Drilling into the Projects folder, then web-app, and back up to the top, one level per click" width="100%"><br><sub><b>Drill in</b>: one folder per click, and back up</sub></td>
+</tr>
+<tr>
+<td width="50%" align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/dashboard-dark.webp"><img src="docs/media/dashboard-light.webp" alt="The Dashboard after a scan: the disk ring, the engine line, file types by size, the largest files and quick stats" width="100%"></picture><br><sub><b>Dashboard</b>: the whole picture at a glance</sub></td>
+<td width="50%" align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/disk-city-dark.webp"><img src="docs/media/disk-city-light.webp" alt="Disk City: the scan as an isometric city, where a building's footprint is its bytes, its height how long since anything changed, and its colour its size" width="100%"></picture><br><sub><b>Disk City</b>: footprint is bytes, height is staleness</sub></td>
+</tr>
+<tr>
+<td width="50%" align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/duplicates-dark.webp"><img src="docs/media/duplicates-light.webp" alt="Duplicates: four groups of identical files, up to 3.1 GB reclaimable, the two largest groups open with the copy to keep marked" width="100%"></picture><br><sub><b>Duplicates</b>: identical files, the copy to keep marked</sub></td>
+<td width="50%" align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/cleanup-cart-dark.webp"><img src="docs/media/cleanup-cart-light.webp" alt="The Clean Up cart open over the map: six build and dependency folders staged, 8.6 GB, with Preview after, Clear and Move all to Trash" width="100%"></picture><br><sub><b>Clean Up</b>: stage it, preview it, then move it to the Trash</sub></td>
+</tr>
+</table>
 
 <br>
 
 ## ✨ The seventeen views
 
-TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Seventeen views, one zero-dependency frontend.
+TreeMap isn't just a treemap, it's a full disk-hygiene workbench. Seventeen views, one zero-dependency frontend.
 
-**Getting around:** **⌘K** (Ctrl+K) opens a command palette over everything — every view, the Clean Up surface, the deep settings sections (type "weights" and land on the Reclaim sliders), the common actions (scan, rescan, empty the cart, export), your saved views, and the folders you've scanned before; anything it doesn't recognise becomes a file search, and closing it puts focus back exactly where it was. First launch offers a **four-step tour**: pick a folder, learn the map, then up to three quick wins — each one a real Smart suggestion with its size and its reason, staged **only when you click** and committed never; it ends at the cart with everything still undeleted. Skippable at every step, and it never returns once finished (Settings has a "show it again" button; a read-only portable session persists nothing, so it honestly forgets).
+**Getting around:** **⌘K** (Ctrl+K) opens a command palette over everything, every view, the Clean Up surface, the deep settings sections (type "weights" and land on the Reclaim sliders), the common actions (scan, rescan, empty the cart, export), your saved views, and the folders you've scanned before; anything it doesn't recognise becomes a file search, and closing it puts focus back exactly where it was. First launch offers a **four-step tour**: pick a folder, learn the map, then up to three quick wins, each one a real Smart suggestion with its size and its reason, staged **only when you click** and committed never; it ends at the cart with everything still undeleted. Skippable at every step, and it never returns once finished (Settings has a "show it again" button; a read-only portable session persists nothing, so it honestly forgets).
 
-**Sizes are decimal**, as Finder counts them: 1 KB = 1,000 bytes, 1 MB = 1,000,000 bytes, 1 GB = 1,000,000,000 bytes — on screen, in exports and reports, in the API's and the MCP tools' formatted strings, in every box where you type a size (budgets, Autopilot limits, the Clean Up target), and in the search box (`size>500mb` is 500,000,000 bytes; `kib`, `mib` and `gib` are there for the 1,024-based units). Windows Explorer divides by 1,024 under the same labels, so it shows the same files smaller — by about 7% at gigabyte sizes.
+**Sizes are decimal**, as Finder counts them: 1 KB = 1,000 bytes, 1 MB = 1,000,000 bytes, 1 GB = 1,000,000,000 bytes, on screen, in exports and reports, in the API's and the MCP tools' formatted strings, in every box where you type a size (budgets, Autopilot limits, the Clean Up target), and in the search box (`size>500mb` is 500,000,000 bytes; `kib`, `mib` and `gib` are there for the 1,024-based units). Windows Explorer divides by 1,024 under the same labels, so it shows the same files smaller, by about 7% at gigabyte sizes.
 
 <div align="center">
   <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Disk City, Grid, Apps, Libraries, Security, Fleet, Missing GB, Duplicates, Trends, History, Offloaded, Undo Vault, Autopilot, Clean Up, Scheduled + Ignore">
@@ -76,36 +103,36 @@ TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Seventeen v
 <td width="50%" valign="top">
 
 ### 📊 Dashboard
-Disk-usage ring, live scan progress, file-type donut chart, and the **top-10 largest files _and folders_**. Click a folder to leap straight into the treemap. A **disk-full forecast** projects from your scan history — *"At current growth (+5.4 GB/day), this disk is full in ~58 days — top culprits: …"* — and is honest when it can't know: too little history, erratic growth, or shrinking usage all say so instead of inventing a number. An **All storage** strip unifies your local disk with any connected **Google Drive / Dropbox / OneDrive** — scan a cloud account into the very same treemap (**metadata only, no file contents are ever downloaded**; deletes go to the provider's own trash; duplicates/live/offload are disabled with clear notices). Opt-in and local-first: with no account connected, zero cloud code runs and nothing touches the network.
+Disk-usage ring, live scan progress, file-type donut chart, and the **top-10 largest files _and folders_**. Click a folder to leap straight into the treemap. A **disk-full forecast** projects from your scan history, *"At current growth (+5.4 GB/day), this disk is full in ~58 days, top culprits: …"*, and is honest when it can't know: too little history, erratic growth, or shrinking usage all say so instead of inventing a number. An **All storage** strip unifies your local disk with any connected **Google Drive / Dropbox / OneDrive**, scan a cloud account into the very same treemap (**metadata only, no file contents are ever downloaded**; deletes go to the provider's own trash; duplicates/live/offload are disabled with clear notices). Opt-in and local-first: with no account connected, zero cloud code runs and nothing touches the network.
 
-Two more cards sit here. **Cost to keep** prices the scanned data against Google Drive, Dropbox, OneDrive and iCloud+ — in your choice of six currencies — from a table that **ships inside the app**: TreeMap never looks prices up online, so the `as of` date is always on screen and a saving is only claimed when clearing space would actually move you down a **tier**. **Drive health** reports the drive's own SMART attributes and self-assessment **verbatim** and answers one question — which runs out first, free space or write endurance — without ever editorialising; a false *"your drive is dying"* is a real harm, so where the numbers aren't there (no `smartctl`, or a drive that reports no wear indicator) it says exactly that instead.
+Two more cards sit here. **Cost to keep** prices the scanned data against Google Drive, Dropbox, OneDrive and iCloud+, in your choice of six currencies, from a table that **ships inside the app**: TreeMap never looks prices up online, so the `as of` date is always on screen and a saving is only claimed when clearing space would actually move you down a **tier**. **Drive health** reports the drive's own SMART attributes and self-assessment **verbatim** and answers one question, which runs out first, free space or write endurance, without ever editorialising; a false *"your drive is dying"* is a real harm, so where the numbers aren't there (no `smartctl`, or a drive that reports no wear indicator) it says exactly that instead.
 
-**Folder budgets get gauges.** Every pinned budget shows a thermometer here — used against limit, coloured by proximity — and, once the folder has enough scan history, *the projected date it breaches its ceiling*. The projection is the disk-full forecast's own code with the budget's headroom standing in for free space (`src/services/budgetGauges.ts` reuses `computeForecast` verbatim), so its refusals are the same ones: too little history, erratic growth, or a shrinking folder all say so under the bar instead of inventing a date. A projection read from shallow snapshot history says that too, on hover.
+**Folder budgets get gauges.** Every pinned budget shows a thermometer here, used against limit, coloured by proximity, and, once the folder has enough scan history, *the projected date it breaches its ceiling*. The projection is the disk-full forecast's own code with the budget's headroom standing in for free space (`src/services/budgetGauges.ts` reuses `computeForecast` verbatim), so its refusals are the same ones: too little history, erratic growth, or a shrinking folder all say so under the bar instead of inventing a date. A projection read from shallow snapshot history says that too, on hover.
 
-**Held-up space** catches the disk's most confusing lie: a file you deleted whose space never came back, because a still-running program is holding the handle open. TreeMap groups those by the process holding them, biggest holder first, and offers to ask that process to quit — **gracefully only**. It refuses programs that are part of the operating system (anything run from macOS's `/System`, `/usr`, `/bin` or `/sbin`, Linux's `/usr`, `/bin`, `/sbin` or `/lib`), programs run by the system administrator or another user, TreeMap itself and TreeMap's parent — none of those is even offered a Restart button — refuses a PID whose process isn't what the caller named, and a program that declines to quit is reported as *still running* rather than force-killed. It sees only the programs running under your account — every program when TreeMap runs as root — and an open file it cannot check, or a program of yours whose open files it cannot read, is **counted and said, never claimed** either way — except on Linux under a `/proc` mounted with `hidepid=2`, where such a program is not listed at all, so nothing counts it.
+**Held-up space** catches the disk's most confusing lie: a file you deleted whose space never came back, because a still-running program is holding the handle open. TreeMap groups those by the process holding them, biggest holder first, and offers to ask that process to quit, **gracefully only**. It refuses programs that are part of the operating system (anything run from macOS's `/System`, `/usr`, `/bin` or `/sbin`, Linux's `/usr`, `/bin`, `/sbin` or `/lib`), programs run by the system administrator or another user, TreeMap itself and TreeMap's parent (none of those is even offered a Restart button), refuses a PID whose process isn't what the caller named, and a program that declines to quit is reported as *still running* rather than force-killed. It sees only the programs running under your account (every program when TreeMap runs as root), and an open file it cannot check, or a program of yours whose open files it cannot read, is **counted and said, never claimed** either way, except on Linux under a `/proc` mounted with `hidepid=2`, where such a program is not listed at all, so nothing counts it.
 
 </td>
 <td width="50%" valign="top">
 
 ### 🗺️ Treemap
-A squarified treemap of every file, sized by bytes and colored **teal → amber → red** — or by **Reclaim score**, which colors each cell by how safe and worthwhile it is to delete rather than how big it is (grey for anything TreeMap could not score, named in the legend rather than left to look like a low score). Drill in, climb back with breadcrumbs + zoom-out, search with highlights (`report`, `*.zip`), pin **folder budgets** (over-budget folders get a red dashed border), and **export** the chart (PNG / SVG), the whole scan (**CSV**, or a multi-page **PDF report**), or the folder's history as an **animated GIF** (dependency-free, hand-written LZW, encoded off the main thread) or a **WebM video** where the runtime can record a canvas — the menu says which you're getting. A **time slider** appears once a folder has scan history: scrub to any past scan and watch the map morph — in the treemap *and* the sunburst — with a **diff overlay** tinting what grew green and what shrank red, and **transport controls** (play/pause, ½×–4×, loop) that play the history as a film: rectangles grow, shrink, bloom in and vanish exactly as the bytes did, while the label steps snapshot by snapshot because an interpolated byte total would be an invented number. And a **Live toggle** watches the scanned folder in real time: changed files pulse, regions re-flow as bytes move, and a "writing now" feed ranks the busiest paths by MB/min (auto-pauses when the disk goes quiet). **Containers are drillable**: .zip/.jar/.tar/.tar.gz/.iso (and Docker's data file, with the CLI) get a badge — click to look inside without extracting a byte, using the archive's own directory listing. Nothing inside an archive can be trashed or opened — only the archive itself. Right-click any file for **where it came from** — the site a download originated at, read from the OS's own quarantine and "where from" metadata. Only the **host** is shown until you click to reveal the full URL, it is written with `textContent` and never as HTML, no clickable link is ever built from it, and TreeMap never fetches it: a URL out of a downloaded file is untrusted input, and it is treated that way. A **drive dock** sits under the map (and under Disk City) whenever external drives are connected, each showing its free space — **drag the cart onto a drive** to offload: the exact manifest and a confirm first, then copy → verify every byte back → only then Trash the originals; a drive that vanishes mid-drag aborts cleanly, and a failure before every copy verifies rolls back completely (an original that cannot go to the Trash afterwards stays beside its verified copy).
+A squarified treemap of every file, sized by bytes and colored **teal → amber → red**, or by **Reclaim score**, which colors each cell by how safe and worthwhile it is to delete rather than how big it is (grey for anything TreeMap could not score, named in the legend rather than left to look like a low score). Drill in, climb back with breadcrumbs + zoom-out, search with highlights (`report`, `*.zip`), pin **folder budgets** (over-budget folders get a red dashed border), and **export** the chart (PNG / SVG), the whole scan (**CSV**, or a multi-page **PDF report**), or the folder's history as an **animated GIF** (dependency-free, hand-written LZW, encoded off the main thread) or a **WebM video** where the runtime can record a canvas, the menu says which you're getting. A **time slider** appears once a folder has scan history: scrub to any past scan and watch the map morph, in the treemap *and* the sunburst, with a **diff overlay** tinting what grew green and what shrank red, and **transport controls** (play/pause, ½×–4×, loop) that play the history as a film: rectangles grow, shrink, bloom in and vanish exactly as the bytes did, while the label steps snapshot by snapshot because an interpolated byte total would be an invented number. And a **Live toggle** watches the scanned folder in real time: changed files pulse, regions re-flow as bytes move, and a "writing now" feed ranks the busiest paths by MB/min (auto-pauses when the disk goes quiet). **Containers are drillable**: .zip/.jar/.tar/.tar.gz/.iso (and Docker's data file, with the CLI) get a badge, click to look inside without extracting a byte, using the archive's own directory listing. Nothing inside an archive can be trashed or opened, only the archive itself. Right-click any file for **where it came from**, the site a download originated at, read from the OS's own quarantine and "where from" metadata. Only the **host** is shown until you click to reveal the full URL, it is written with `textContent` and never as HTML, no clickable link is ever built from it, and TreeMap never fetches it: a URL out of a downloaded file is untrusted input, and it is treated that way. A **drive dock** sits under the map (and under Disk City) whenever external drives are connected, each showing its free space: **drag the cart onto a drive** to offload: the exact manifest and a confirm first, then copy → verify every byte back → only then Trash the originals; a drive that vanishes mid-drag aborts cleanly, and a failure before every copy verifies rolls back completely (an original that cannot go to the Trash afterwards stays beside its verified copy).
 
-**Four ways to draw the same tree.** A segmented control switches between the squarified **Treemap**, a radial **Sunburst**, nested **Circles** and a **Voronoi** map — same folder, same breadcrumbs, same depth, same colour mode, same highlight box. Circle packing sizes every circle so its *area* is its bytes, exactly as the rectangles do, and animates the zoom when you drill so you can see where you went; a folder's name sits on its own ring rather than through its contents. The Voronoi map solves for cells whose areas are proportional to bytes — a weighted centroidal diagram, iterated until no cell is more than 2% off its true share — and when a folder's sizes are too lopsided for that to be reachable in the time a frame allows, it **says so under the map**, with the worst cell's error, instead of presenting an approximation as exact. Anything too small to draw at the current size is counted and named there too. Both solvers lay out under the same wall clock, so a folder with thousands of near-identical children cannot hang a frame — when one runs out of time it stops subdividing and says that under the map, rather than quietly drawing less.
+**Four ways to draw the same tree.** A segmented control switches between the squarified **Treemap**, a radial **Sunburst**, nested **Circles** and a **Voronoi** map: same folder, same breadcrumbs, same depth, same colour mode, same highlight box. Circle packing sizes every circle so its *area* is its bytes, exactly as the rectangles do, and animates the zoom when you drill so you can see where you went; a folder's name sits on its own ring rather than through its contents. The Voronoi map solves for cells whose areas are proportional to bytes, a weighted centroidal diagram, iterated until no cell is more than 2% off its true share, and when a folder's sizes are too lopsided for that to be reachable in the time a frame allows, it **says so under the map**, with the worst cell's error, instead of presenting an approximation as exact. Anything too small to draw at the current size is counted and named there too. Both solvers lay out under the same wall clock, so a folder with thousands of near-identical children cannot hang a frame, when one runs out of time it stops subdividing and says that under the map, rather than quietly drawing less.
 
 <img src="demo/03-circles.jpg" width="100%" alt="Nested circles: every circle's area is its bytes, and a folder's name sits on its own ring">
 <img src="demo/04-voronoi.jpg" width="100%" alt="The Voronoi map of the same folder: cells whose areas are proportional to bytes">
 
-**Drag to lasso.** Rubber-band by default, freehand with ⌥, and everything whose centre falls inside is staged in the Clean Up cart — with a running count and byte total while you drag, so you can see what you have caught before you let go. ⌘ (Ctrl) over a region takes those items back out. Nothing is deleted and no gesture ever empties the cart; the cart still runs its own dry run and confirmation. It works the same way in **Disk City**, where a modifier is needed because a plain drag pans.
+**Drag to lasso.** Rubber-band by default, freehand with ⌥, and everything whose centre falls inside is staged in the Clean Up cart, with a running count and byte total while you drag, so you can see what you have caught before you let go. ⌘ (Ctrl) over a region takes those items back out. Nothing is deleted and no gesture ever empties the cart; the cart still runs its own dry run and confirmation. It works the same way in **Disk City**, where a modifier is needed because a plain drag pans.
 
 <img src="demo/06-lasso.jpg" width="100%" alt="A freehand lasso over the treemap, with the running count and byte total of what it has caught">
 
-**Hold `Z` to magnify.** A circular lens at 4× over the parts of the map where tiles are two pixels wide, redrawn from the layout rather than scaled up from the picture — so the edges stay crisp and the names are legible at a size they were never drawn at. There is a **Lens** button for pinning it.
+**Hold `Z` to magnify.** A circular lens at 4× over the parts of the map where tiles are two pixels wide, redrawn from the layout rather than scaled up from the picture, so the edges stay crisp and the names are legible at a size they were never drawn at. There is a **Lens** button for pinning it.
 
-**Ask in plain words.** The ✨ button beside the highlight box turns *"big videos I haven't opened in a year"* into `size>1gb ext:mp4,… used>1y` — and the translation is **always shown in an editable field before it runs**, because a natural-language box that hides what it actually searched is a black box, and this one is a query builder with a friendlier front door. The phrase table is built in and works **entirely offline** — unknown words are listed as ignored, never silently dropped, and a test statically proves the whole feature contains zero network code.
+**Ask in plain words.** The ✨ button beside the highlight box turns *"big videos I haven't opened in a year"* into `size>1gb ext:mp4,… used>1y`, and the translation is **always shown in an editable field before it runs**, because a natural-language box that hides what it actually searched is a black box, and this one is a query builder with a friendlier front door. The phrase table is built in and works **entirely offline**, unknown words are listed as ignored, never silently dropped, and a test statically proves the whole feature contains zero network code.
 
-**Notes pinned to folders.** Right-click any folder (or press `n` on the keyboard selection) and write yourself a note — *"client archive, keep until 2027"*. The note shows in the tooltip and as a small sticky-note glyph on the tile, and it means something to the machine too: by default a noted folder and everything inside it is **excluded from Smart suggestions and every Autopilot match**, and Autopilot's previews and run records say what was left alone and why. The pause is per-note toggleable, notes are rendered as plain text only (never HTML), and deleting one re-arms automation — which is why the notes endpoints sit in the app's pinned destructive list.
+**Notes pinned to folders.** Right-click any folder (or press `n` on the keyboard selection) and write yourself a note: *"client archive, keep until 2027"*. The note shows in the tooltip and as a small sticky-note glyph on the tile, and it means something to the machine too: by default a noted folder and everything inside it is **excluded from Smart suggestions and every Autopilot match**, and Autopilot's previews and run records say what was left alone and why. The pause is per-note toggleable, notes are rendered as plain text only (never HTML), and deleting one re-arms automation, which is why the notes endpoints sit in the app's pinned destructive list.
 
-**Human-scale sizes.** Next to folders over about 1 GB the tooltip can add *"≈ 3,100 photos or 48 videos like the ones here — based on the 2,847 photos in this folder, average 12.1 MB"*. The comparison always comes from the folder's **own** photos, videos or music (at least ten of a kind), never from a made-up average — the master rule is in `src/services/facts/humanScaleProvider.ts`, which also explains why there is no "hours of video" figure: that would need a bitrate constant, and the same sentence that demands honesty forbids one. Folders with nothing comparable show nothing. Toggle in Settings, on by default.
+**Human-scale sizes.** Next to folders over about 1 GB the tooltip can add *"≈ 3,100 photos or 48 videos like the ones here, based on the 2,847 photos in this folder, average 12.1 MB"*. The comparison always comes from the folder's **own** photos, videos or music (at least ten of a kind), never from a made-up average, the master rule is in `src/services/facts/humanScaleProvider.ts`, which also explains why there is no "hours of video" figure: that would need a bitrate constant, and the same sentence that demands honesty forbids one. Folders with nothing comparable show nothing. Toggle in Settings, on by default.
 
 </td>
 </tr>
@@ -113,13 +140,13 @@ A squarified treemap of every file, sized by bytes and colored **teal → amber 
 <td colspan="2" valign="top">
 
 ### 🏙️ Disk City
-The Treemap's own tiling, seen from a corner — the *same* arrangement, not a similar one, so switching between them is legible rather than disorienting. A flat treemap encodes exactly one variable in area; this encodes three at once. **Footprint** is bytes, **height** is staleness (or file count, or nesting depth), **colour** is size, on the Treemap's own ramp (or Reclaim score, file kind, or age). *"The tall red tower is a 40 GB thing you have not opened in two years"* reads instantly in a way a red rectangle never does.
+The Treemap's own tiling, seen from a corner, the *same* arrangement, not a similar one, so switching between them is legible rather than disorienting. A flat treemap encodes exactly one variable in area; this encodes three at once. **Footprint** is bytes, **height** is staleness (or file count, or nesting depth), **colour** is size, on the Treemap's own ramp (or Reclaim score, file kind, or age). *"The tall red tower is a 40 GB thing you have not opened in two years"* reads instantly in a way a red rectangle never does.
 
-<img src="demo/01-city-hero.jpg" width="100%" alt="Disk City: the treemap's tiling seen from a corner — footprint is bytes, height is staleness, colour is Reclaim score">
+<img src="demo/01-city-hero.jpg" width="100%" alt="Disk City: the treemap's tiling seen from a corner, footprint is bytes, height is staleness, colour is Reclaim score">
 
-Pure Canvas 2D — an isometric projection is a 2D affine transform, and there is no WebGL, no 3D engine and no dependency anywhere in it. The draw order is a topological sort rather than a depth number, because **no per-box number can order a real treemap layout correctly** — that was measured against a ray-casting oracle, and four plausible scalar keys each got dozens of pairs wrong. Buildings are lit from one named direction, cast shadows onto the roofs behind them, and are finished with parapets, rooftop plant and the occasional mast; none of that carries data, which is why it is drawn at low contrast and never near a label.
+Pure Canvas 2D: an isometric projection is a 2D affine transform, and there is no WebGL, no 3D engine and no dependency anywhere in it. The draw order is a topological sort rather than a depth number, because **no per-box number can order a real treemap layout correctly**, that was measured against a ray-casting oracle, and four plausible scalar keys each got dozens of pairs wrong. Buildings are lit from one named direction, cast shadows onto the roofs behind them, and are finished with parapets, rooftop plant and the occasional mast; none of that carries data, which is why it is drawn at low contrast and never near a label.
 
-Drag to pan, scroll to zoom, click to go inside, Escape to come back out. Height is normalised to the folder you are standing in, and the legend says so. A block that swallowed its children is hatched rather than presented as a thing with nothing inside it, and the level-of-detail line always names its own threshold — *"showing 4,120 of 251,000 items"* — because a map that quietly drew a fraction of what it was given is lying by omission. Everything on it is also listed as a **text equivalent** below the map, in draw order.
+Drag to pan, scroll to zoom, click to go inside, Escape to come back out. Height is normalised to the folder you are standing in, and the legend says so. A block that swallowed its children is hatched rather than presented as a thing with nothing inside it, and the level-of-detail line always names its own threshold, *"showing 4,120 of 251,000 items"*, because a map that quietly drew a fraction of what it was given is lying by omission. Everything on it is also listed as a **text equivalent** below the map, in draw order.
 
 </td>
 </tr>
@@ -127,7 +154,7 @@ Drag to pan, scroll to zoom, click to go inside, Escape to come back out. Height
 <td width="50%" valign="top">
 
 ### 🔲 Grid
-A size-proportional icon grid with multi-select, sorting, and virtual scrolling — buttery even on huge folders. Sort by name, date, last accessed, type, size — or by **Reclaim score**, which answers *what is safest to delete* rather than *what is biggest*. Anything TreeMap could not score sorts last rather than as zero.
+A size-proportional icon grid with multi-select, sorting, and virtual scrolling, buttery even on huge folders. Sort by name, date, last accessed, type, size, or by **Reclaim score**, which answers *what is safest to delete* rather than *what is biggest*. Anything TreeMap could not score sorts last rather than as zero.
 
 </td>
 <td width="50%" valign="top">
@@ -140,42 +167,42 @@ A size-proportional icon grid with multi-select, sorting, and virtual scrolling 
 <tr>
 <td width="50%" valign="top">
 
-### 🎮 Libraries — games & media
-Steam, Epic, GOG and itch.io libraries, read from each launcher's own manifests (including a hand-written parser for Valve's KeyValues format), with **Steam's own reported size shown next to TreeMap's** so you can see they agree. Every title is split into **base install / shader cache / workshop content / Proton prefix / DLC** — and **only the shader cache is ever offered for removal**, because it regenerates at the cost of one stutter on next launch. The rest costs a redownload, a mod re-subscribe, or a destroyed compatibility prefix, so TreeMap won't put a checkbox next to it.
+### 🎮 Libraries: games & media
+Steam, Epic, GOG and itch.io libraries, read from each launcher's own manifests (including a hand-written parser for Valve's KeyValues format), with **Steam's own reported size shown next to TreeMap's** so you can see they agree. Every title is split into **base install / shader cache / workshop content / Proton prefix / DLC**, and **only the shader cache is ever offered for removal**, because it regenerates at the cost of one stutter on next launch. The rest costs a redownload, a mod re-subscribe, or a destroyed compatibility prefix, so TreeMap won't put a checkbox next to it.
 
-The same deal for **media libraries** — Photos, Final Cut Pro, iMovie, Lightroom and Capture One bundles, read from each app's **own documented layout**, never guessed directory names. Each splits into **originals / derivatives / database**, and **only derivatives are ever offered** (renders, proxies, thumbnails, previews), each stating the cost of regenerating it — *"Photos will rebuild thumbnails on next open; expect a slow first launch."* Originals never get a checkbox: the file **is** the data. A library whose layout isn't recognised shows its size and offers nothing, and a library its app is holding open says so and offers nothing.
+The same deal for **media libraries**: Photos, Final Cut Pro, iMovie, Lightroom and Capture One bundles, read from each app's **own documented layout**, never guessed directory names. Each splits into **originals / derivatives / database**, and **only derivatives are ever offered** (renders, proxies, thumbnails, previews), each stating the cost of regenerating it: *"Photos will rebuild thumbnails on next open; expect a slow first launch."* Originals never get a checkbox: the file **is** the data. A library whose layout isn't recognised shows its size and offers nothing, and a library its app is holding open says so and offers nothing.
 
 </td>
 <td width="50%" valign="top">
 
 ### 🛡️ Security
-Finds **keys, credentials and wallets sitting outside the folder they belong in** — a private key in `~/Downloads`, an `id_rsa` on the Desktop, a `.env` in a shared folder. It matches on **name and location only: no file is ever opened, and no file content is ever read, stored or shown**. There is **no delete button at all**. The single remedy offered is *Move to `.ssh`* (or the appropriate home), which is a **rename** — both ends must sit inside a folder you scanned, an occupied destination aborts the move, and nothing is ever removed. Findings never leave this machine, and are explicitly excluded from anything the Fleet view can share.
+Finds **keys, credentials and wallets sitting outside the folder they belong in**, a private key in `~/Downloads`, an `id_rsa` on the Desktop, a `.env` in a shared folder. It matches on **name and location only: no file is ever opened, and no file content is ever read, stored or shown**. There is **no delete button at all**. The single remedy offered is *Move to `.ssh`* (or the appropriate home), which is a **rename**, both ends must sit inside a folder you scanned, an occupied destination aborts the move, and nothing is ever removed. Findings never leave this machine, and are explicitly excluded from anything the Fleet view can share.
 
 </td>
 </tr>
 <tr>
 <td colspan="2" valign="top">
 
-### 🌐 Fleet — other machines on your network
-See how full your *other* computers are without walking over to them. **Off by default**, and it announces nothing until you turn it on. Machines exchange a **summary only** — the name you gave the machine and its OS, the volume's total/used/free, and the folder you last scanned with its time and size. That list is not a promise in a README, it's an **eleven-field allow-list in the code** ([`fleetSummary.ts`](src/services/fleet/fleetSummary.ts)) that is the only thing ever serialised, with a second check that throws rather than send a field whose name so much as *smells* like a file tree, a security finding or a provenance URL.
+### 🌐 Fleet: other machines on your network
+See how full your *other* computers are without walking over to them. **Off by default**, and it announces nothing until you turn it on. Machines exchange a **summary only**, the name you gave the machine and its OS, the volume's total/used/free, and the folder you last scanned with its time and size. That list is not a promise in a README, it's an **eleven-field allow-list in the code** ([`fleetSummary.ts`](src/services/fleet/fleetSummary.ts)) that is the only thing ever serialised, with a second check that throws rather than send a field whose name so much as *smells* like a file tree, a security finding or a provenance URL.
 
-**File trees, Security findings and download origins never cross the network, and there is no remote-delete route in the server at all** — not a disabled one, not a permission-gated one; it does not exist. Asking a peer to run a scan is a *separate* opt-in that peer must grant. Pairing is a **six-digit code**, compared in constant time, good for three minutes and one machine; a wrong guess doesn't cancel the window, so nobody on the network can interrupt a pairing by guessing — but guessing is bounded: five wrong codes and that machine is refused, fifty in all and the code is withdrawn and you are told which machine was trying. The LAN listener is a **separate server with three routes** — the main API is never mounted on it and stays bound to `127.0.0.1` — and it binds one of this machine's private IPv4 addresses (the first it finds), never `0.0.0.0`; the Fleet panel names the one it listens on. Discovery is hand-written mDNS over `dgram`, no dependency added.
+**File trees, Security findings and download origins never cross the network, and there is no remote-delete route in the server at all**: not a disabled one, not a permission-gated one; it does not exist. Asking a peer to run a scan is a *separate* opt-in that peer must grant. Pairing is a **six-digit code**, compared in constant time, good for three minutes and one machine; a wrong guess doesn't cancel the window, so nobody on the network can interrupt a pairing by guessing, but guessing is bounded: five wrong codes and that machine is refused, fifty in all and the code is withdrawn and you are told which machine was trying. The LAN listener is a **separate server with three routes**, the main API is never mounted on it and stays bound to `127.0.0.1`, and it binds one of this machine's private IPv4 addresses (the first it finds), never `0.0.0.0`; the Fleet panel names the one it listens on. Discovery is hand-written mDNS over `dgram`, no dependency added.
 
 </td>
 </tr>
 <tr>
 <td colspan="2" valign="top">
 
-### 🥧 Missing GB — where the space actually went
-The complaint this answers is that **the numbers do not add up**: the Finder says 188 GB used, a disk tool shows 156 GB of files, and nothing explains the difference. This view is one accounting statement for the volume, printed as a receipt — a bar over the disk's whole capacity, then the arithmetic with a rule above the total.
+### 🥧 Missing GB: where the space actually went
+The complaint this answers is that **the numbers do not add up**: the Finder says 188 GB used, a disk tool shows 156 GB of files, and nothing explains the difference. This view is one accounting statement for the volume, printed as a receipt, a bar over the disk's whole capacity, then the arithmetic with a rule above the total.
 
 **It balances or it names the gap.** Every line is bytes, the lines sum to the volume's used space *exactly*, and whatever is left over gets its own **Unaccounted** line rather than being folded into the others to look tidy. That is enforced in code, not just tested: [`assertBalances`](src/services/missingGigabytes.ts) throws on every build of a statement, so a future line that forgets to join the sum fails loudly instead of shipping a receipt wrong by exactly its own size.
 
-The lines are files the scan walked, online-only files counted but not resident, filesystem snapshots, purgeable space, space held by programs still gripping a deleted file, **other volumes sharing the same storage pool**, and what the scan was refused. That sixth line is most of the point on a Mac: Preboot, VM and Update sit in the same APFS container as `/`, share its free space, and no scan of `/` ever walks them — about 12 GB a files-only tool simply loses.
+The lines are files the scan walked, online-only files counted but not resident, filesystem snapshots, purgeable space, space held by programs still gripping a deleted file, **other volumes sharing the same storage pool**, and what the scan was refused. That sixth line is most of the point on a Mac: Preboot, VM and Update sit in the same APFS container as `/`, share its free space, and no scan of `/` ever walks them, about 12 GB a files-only tool simply loses.
 
-**An unknown is never shown as a zero.** A line that could not be measured says so, in full, with the real reason — and the Unaccounted line names it, so the gap is attributable rather than mysterious. Two on this Mac: **purgeable space**, which macOS reports only through a native API (`diskutil`, `diskutil apfs` and `system_profiler` were each checked and none carries the figure, and TreeMap's native scan core does not ask for it — it lists folders, builds the scan's store and governs the scan), and **what a gdu scan was refused**, because gdu emits a folder it could not open as an ordinary *empty* folder and exits 0. The native engine and the built-in walker count refusals exactly (and so does the NTFS turbo mode on Windows); only they claim a zero.
+**An unknown is never shown as a zero.** A line that could not be measured says so, in full, with the real reason, and the Unaccounted line names it, so the gap is attributable rather than mysterious. Two on this Mac: **purgeable space**, which macOS reports only through a native API (`diskutil`, `diskutil apfs` and `system_profiler` were each checked and none carries the figure, and TreeMap's native scan core does not ask for it, it lists folders, builds the scan's store and governs the scan), and **what a gdu scan was refused**, because gdu emits a folder it could not open as an ordinary *empty* folder and exits 0. The native engine and the built-in walker count refusals exactly (and so does the NTFS turbo mode on Windows); only they claim a zero.
 
-Also stated rather than implied: hard links are already counted once by the scan, so they are a note under that line and not a second deduction; and copy-on-write clones **cannot** yet be told from real copies — no Node API exposes clone identity, and the native scan core does not ask APFS for it — so where they exist that line is an over-count and the difference lands in Unaccounted. Every remedy offered is a signpost to an existing, separately-gated action — nothing here deletes anything.
+Also stated rather than implied: hard links are already counted once by the scan, so they are a note under that line and not a second deduction; and copy-on-write clones **cannot** yet be told from real copies, no Node API exposes clone identity, and the native scan core does not ask APFS for it, so where they exist that line is an over-count and the difference lands in Unaccounted. Every remedy offered is a signpost to an existing, separately-gated action, nothing here deletes anything.
 
 </td>
 </tr>
@@ -183,22 +210,22 @@ Also stated rather than implied: hard links are already counted once by the scan
 <td width="50%" valign="top">
 
 ### 🧬 Duplicates
-Finds **true** duplicates (size + streamed SHA-256), grouped with reclaimable space per group. **Online-only files are never opened** — reading an iCloud, OneDrive or Dropbox placeholder would download it — so they are left unchecked, and the view says how many and how big. Auto-select keeps the newest copy of each. A **Near-duplicate images** tab catches resized, re-encoded and screenshot copies with a perceptual **dHash**. And because bulk-deleting duplicates is the scariest action in the app, every group has a **Compare** view: copies side by side — thumbnail, dimensions, EXIF capture date, size, path — with the recommended keep marked **and the rule that picked it stated**, the differing dHash regions highlighted over near-duplicate pairs ("4 of 64 blocks differ"), and full keyboard control (←/→ groups, 1–9 keeper, Space stages the rest). Facts the disk doesn't record show as exactly that — *"no capture date recorded"* — never a guess.
+Finds **true** duplicates (size + streamed SHA-256), grouped with reclaimable space per group. **Online-only files are never opened**, reading an iCloud, OneDrive or Dropbox placeholder would download it, so they are left unchecked, and the view says how many and how big. Auto-select keeps the newest copy of each. A **Near-duplicate images** tab catches resized, re-encoded and screenshot copies with a perceptual **dHash**. And because bulk-deleting duplicates is the scariest action in the app, every group has a **Compare** view: copies side by side, thumbnail, dimensions, EXIF capture date, size, path, with the recommended keep marked **and the rule that picked it stated**, the differing dHash regions highlighted over near-duplicate pairs ("4 of 64 blocks differ"), and full keyboard control (←/→ groups, 1–9 keeper, Space stages the rest). Facts the disk doesn't record show as exactly that, *"no capture date recorded"*, never a guess.
 
 </td>
 <td width="50%" valign="top">
 
 ### 📈 Trends
-Every scan saves a lightweight snapshot, charted over time per folder — with a clear **"what grew / what shrank since last scan"** breakdown.
+Every scan saves a lightweight snapshot, charted over time per folder, with a clear **"what grew / what shrank since last scan"** breakdown.
 
-### 🗓️ History — Calendar · Journal · Compare, one view
+### 🗓️ History: Calendar · Journal · Compare, one view
 The whole time dimension lives in **one History tab** with three panels.
 
-**📅 Calendar.** A GitHub-style heatmap of **bytes written per day** — one cell per day, weeks as columns, years stacked. Toggle between **modified** (exact, from the scan itself) and **created** (per-file stats behind a cap, with any unread days reported honestly rather than drawn as empty). Hover for a day's total and file count; **click a day — or drag across a range — and the treemap filters to those files**, through the same query grammar as the search box, so the result is exactly what typing `modified:2026-03-14` would show.
+**📅 Calendar.** A GitHub-style heatmap of **bytes written per day**: one cell per day, weeks as columns, years stacked. Toggle between **modified** (exact, from the scan itself) and **created** (per-file stats behind a cap, with any unread days reported honestly rather than drawn as empty). Hover for a day's total and file count; **click a day, or drag across a range, and the treemap filters to those files**, through the same query grammar as the search box, so the result is exactly what typing `modified:2026-03-14` would show.
 
-**📓 Journal.** A rolling, human-readable narrative of significant changes — *"**Tuesday 18 March** — Docker added 14.2 GB (`~/Library/Containers/com.docker.docker`)"* — built by scheduled scans from snapshot deltas, capped and rotated in `journal.jsonl`. **Attribution never guesses**: an app is named only when the path provably belongs to it, "**you**" only when TreeMap's own audit log matches the deletion, and otherwise the entry says exactly *"an unidentified process."* Each entry links back into the treemap at that path and day. Portable sessions keep the journal in memory only and say so — nothing is written to the host.
+**📓 Journal.** A rolling, human-readable narrative of significant changes, *"**Tuesday 18 March**, Docker added 14.2 GB (`~/Library/Containers/com.docker.docker`)"*, built by scheduled scans from snapshot deltas, capped and rotated in `journal.jsonl`. **Attribution never guesses**: an app is named only when the path provably belongs to it, "**you**" only when TreeMap's own audit log matches the deletion, and otherwise the entry says exactly *"an unidentified process."* Each entry links back into the treemap at that path and day. Portable sessions keep the journal in memory only and say so, nothing is written to the host.
 
-**🔀 Compare.** Pick any two scans of the same folder for a file-level diff: **added, removed, grew, shrank.** History pairs also get a **split-slider**: both snapshots rendered as treemaps in one canvas with a draggable divider revealing one over the other — photo-comparison style, fully keyboard-accessible (the divider is a native slider: arrows nudge it, Home/End snap, and its position is announced to screen readers). Subtrees collapse to one row instead of thousands. Every **removed** row also offers **"Check snapshots"** — your OS has probably been keeping filesystem snapshots (APFS local snapshots, Btrfs subvolumes, Volume Shadow Copies) the whole time, so a file deleted weeks ago and long gone from the Trash is often still recoverable. Looking costs nothing and asks for nothing; recovering asks for your administrator password once, at that moment, on macOS and Windows (Linux needs none). The recovered copy is written **beside** the original, never over whatever is there now — it came from an older snapshot, so overwriting by default would replace newer work with older.                  
+**🔀 Compare.** Pick any two scans of the same folder for a file-level diff: **added, removed, grew, shrank.** History pairs also get a **split-slider**: both snapshots rendered as treemaps in one canvas with a draggable divider revealing one over the other, photo-comparison style, fully keyboard-accessible (the divider is a native slider: arrows nudge it, Home/End snap, and its position is announced to screen readers). Subtrees collapse to one row instead of thousands. Every **removed** row also offers **"Check snapshots"**, your OS has probably been keeping filesystem snapshots (APFS local snapshots, Btrfs subvolumes, Volume Shadow Copies) the whole time, so a file deleted weeks ago and long gone from the Trash is often still recoverable. Looking costs nothing and asks for nothing; recovering asks for your administrator password once, at that moment, on macOS and Windows (Linux needs none). The recovered copy is written **beside** the original, never over whatever is there now, it came from an older snapshot, so overwriting by default would replace newer work with older.                  
 
 </td>
 </tr>
@@ -206,27 +233,27 @@ The whole time dimension lives in **one History tab** with three panels.
 <td colspan="2" valign="top">
 
 ### 🧹 Clean Up
-**Custom rules** (old / huge / by extension / duplicated), **Smart suggestions** — sorted into **regenerable** (`node_modules`, Rust/Maven `target`, virtualenvs, build output — each shown with the command that restores it), **cache**, and **junk**, plus a per-profile **browser cache** breakdown (Chrome / Edge / Brave / Firefox / Safari) — and **Empty folders**. Everything → Trash.
+**Custom rules** (old / huge / by extension / duplicated), **Smart suggestions**, sorted into **regenerable** (`node_modules`, Rust/Maven `target`, virtualenvs, build output, each shown with the command that restores it), **cache**, and **junk**, plus a per-profile **browser cache** breakdown (Chrome / Edge / Brave / Firefox / Safari), and **Empty folders**. Everything → Trash.
 
-**Reclaim Score** ranks by how safe *and* how worthwhile something is to delete, out of 100, from six signals TreeMap already has: how big it is (against this scan's own distribution, not a fixed threshold), how long since it was last opened, whether a rule pack says it rebuilds itself, whether an identical copy exists on this disk, whether it was downloaded, and whether a copy exists elsewhere (a pushed Git remote, a sync client, a backup). Every score is one click from its breakdown — what each signal contributed, in a sentence, and **what could not be computed**.
+**Reclaim Score** ranks by how safe *and* how worthwhile something is to delete, out of 100, from six signals TreeMap already has: how big it is (against this scan's own distribution, not a fixed threshold), how long since it was last opened, whether a rule pack says it rebuilds itself, whether an identical copy exists on this disk, whether it was downloaded, and whether a copy exists elsewhere (a pushed Git remote, a sync client, a backup). Every score is one click from its breakdown, what each signal contributed, in a sentence, and **what could not be computed**.
 
-That last part is the design. A signal TreeMap cannot read is **left out of the score and named**, never counted as zero: a file with no download record is not *less* redownloadable than one that was downloaded, it is *unknown*, and scoring it as zero would rank a file nobody can vouch for below one positively known to be worthless. Missing signals lower a confidence band instead, and the panel shows how much of the score was actually measured. Where last-opened dates are unavailable, the last-*changed* date stands in — stated in the sentence you read, and costing the score a confidence step, because a caveat nothing acts on is decoration.
+That last part is the design. A signal TreeMap cannot read is **left out of the score and named**, never counted as zero: a file with no download record is not *less* redownloadable than one that was downloaded, it is *unknown*, and scoring it as zero would rank a file nobody can vouch for below one positively known to be worthless. Missing signals lower a confidence band instead, and the panel shows how much of the score was actually measured. Where last-opened dates are unavailable, the last-*changed* date stands in, stated in the sentence you read, and costing the score a confidence step, because a caveat nothing acts on is decoration.
 
-The weights live in **Settings → Reclaim Score** and are yours to change, with a reset to the defaults. A ranking whose reasoning you cannot inspect or adjust is an oracle, and this app does not ship oracles. Setting a weight to zero removes that signal from the score entirely — which is a different statement from it scoring zero. And the score never selects anything: it sorts, and it explains.
+The weights live in **Settings → Reclaim Score** and are yours to change, with a reset to the defaults. A ranking whose reasoning you cannot inspect or adjust is an oracle, and this app does not ship oracles. Setting a weight to zero removes that signal from the score entirely, which is a different statement from it scoring zero. And the score never selects anything: it sorts, and it explains.
 
-**The Clean Up cart** is the one place a deletion is actually committed. Stage anything, from any view that lists something reclaimable — Largest files, Duplicates and near-duplicates, Clean Up groups and rules, Empty folders, package orphans, browser caches, cloud-only files, an app's **caches and logs** (never the app itself or your data), a game's **shader cache** (never the install, the mods or a Proton prefix), or every file a query matched. Advisory groups and Security findings get no cart button at all — not a disabled one, none, because they have no delete path anywhere in the app.
+**The Clean Up cart** is the one place a deletion is actually committed. Stage anything, from any view that lists something reclaimable: Largest files, Duplicates and near-duplicates, Clean Up groups and rules, Empty folders, package orphans, browser caches, cloud-only files, an app's **caches and logs** (never the app itself or your data), a game's **shader cache** (never the install, the mods or a Proton prefix), or every file a query matched. Advisory groups and Security findings get no cart button at all, not a disabled one, none, because they have no delete path anywhere in the app.
 
-**Preview after** re-lays the treemap out with the staged items taken out and hatches what would come back, under a banner that says nothing has been deleted. The freed space stays on the map rather than the survivors growing into it: area means bytes, and a rectangle that silently became worth more bytes than it was a second ago would make every size comparison against the live map wrong. Exiting restores the map exactly as it was. It is pure arithmetic in the browser — no scan, no server call, nothing on disk.
+**Preview after** re-lays the treemap out with the staged items taken out and hatches what would come back, under a banner that says nothing has been deleted. The freed space stays on the map rather than the survivors growing into it: area means bytes, and a rectangle that silently became worth more bytes than it was a second ago would make every size comparison against the live map wrong. Exiting restores the map exactly as it was. It is pure arithmetic in the browser, no scan, no server call, nothing on disk.
 
-Committing runs a **dry run first, always**: the exact manifest, every path with its size, and anything that will be **left in place** with the reason. Then the whole batch goes through the **Undo Vault** as one run — copied, verified, and only then trashed — so **Undo this run** puts every file back at its original path, even after you have emptied the Trash, until the Undo Vault removes its copies (after 30 days by default, or sooner to stay under its size cap). Anything too large for the Undo Vault to protect is **left undeleted rather than deleted unprotected**, said in the manifest before you click rather than in a summary afterwards. Undo puts files back byte for byte while the Undo Vault holds their copies, **with their permissions and the dates they were last modified and opened** — including a folder's own, restored after its contents so that writing the children back does not re-stamp it. (Not the date each was created: no system lets a program set that back.)
+Committing runs a **dry run first, always**: the exact manifest, every path with its size, and anything that will be **left in place** with the reason. Then the whole batch goes through the **Undo Vault** as one run, copied, verified, and only then trashed, so **Undo this run** puts every file back at its original path, even after you have emptied the Trash, until the Undo Vault removes its copies (after 30 days by default, or sooner to stay under its size cap). Anything too large for the Undo Vault to protect is **left undeleted rather than deleted unprotected**, said in the manifest before you click rather than in a summary afterwards. Undo puts files back byte for byte while the Undo Vault holds their copies, **with their permissions and the dates they were last modified and opened**, including a folder's own, restored after its contents so that writing the children back does not re-stamp it. (Not the date each was created: no system lets a program set that back.)
 
-An optional **Clean Up target** in Settings — "free 50 GB" — gives the cart a meter filling toward it. A meter, and nothing else: no streaks, no badges, no confetti. A progress meter is information; a reward loop pointed at deleting your own files is manipulation.
+An optional **Clean Up target** in Settings, "free 50 GB", gives the cart a meter filling toward it. A meter, and nothing else: no streaks, no badges, no confetti. A progress meter is information; a reward loop pointed at deleting your own files is manipulation.
 
-Smart suggestions come from **versioned rule packs** ([`src/services/rulepacks/`](src/services/rulepacks/)) rather than hard-coded logic, so adding a known offender is a JSON edit. Every group has a **“why is this suggested”** panel showing what matched, how confident the rule is, and how to put it back. A few of the biggest things on a disk — a Docker/WSL virtual disk, Windows.old, root-owned package caches — are listed **for their size only, with no delete option**, because the file *is* the data or the OS owns it; those show the supported way to reclaim the space instead.
+Smart suggestions come from **versioned rule packs** ([`src/services/rulepacks/`](src/services/rulepacks/)) rather than hard-coded logic, so adding a known offender is a JSON edit. Every group has a **“why is this suggested”** panel showing what matched, how confident the rule is, and how to put it back. A few of the biggest things on a disk, a Docker/WSL virtual disk, Windows.old, root-owned package caches, are listed **for their size only, with no delete option**, because the file *is* the data or the OS owns it; those show the supported way to reclaim the space instead.
 
-**Shrink video** re-encodes large videos to HEVC using the Mac's **hardware encoder** (VideoToolbox through `ffmpeg` — never a software encode that would run for hours). It is not offered on Windows or Linux yet: TreeMap cannot yet confirm a hardware HEVC encoder there, and the panel says so. This is the one lossy thing TreeMap does, so the order is the guarantee: encode beside the original → probe the result → verify it → *only then* trash the original → rename → restore timestamps. If any step before the Trash step fails, the original is still sitting there untouched; if the rename after it fails, the original is in the Trash and the new file beside where it was, and the result says where both are. Right before the Trash step TreeMap checks whether a program holds the original open, and one it sees open keeps its original (that file's re-encoded copy is discarded). The check cannot see every program — on a Mac, not one another account runs — and where it cannot run, the Trash step goes ahead. One file's problem never stops the rest of the batch. Where `ffmpeg` isn't installed the panel says so plainly and offers nothing.
+**Shrink video** re-encodes large videos to HEVC using the Mac's **hardware encoder** (VideoToolbox through `ffmpeg`, never a software encode that would run for hours). It is not offered on Windows or Linux yet: TreeMap cannot yet confirm a hardware HEVC encoder there, and the panel says so. This is the one lossy thing TreeMap does, so the order is the guarantee: encode beside the original → probe the result → verify it → *only then* trash the original → rename → restore timestamps. If any step before the Trash step fails, the original is still sitting there untouched; if the rename after it fails, the original is in the Trash and the new file beside where it was, and the result says where both are. Right before the Trash step TreeMap checks whether a program holds the original open, and one it sees open keeps its original (that file's re-encoded copy is discarded). The check cannot see every program, on a Mac, not one another account runs, and where it cannot run, the Trash step goes ahead. One file's problem never stops the rest of the batch. Where `ffmpeg` isn't installed the panel says so plainly and offers nothing.
 
-**Package orphans** sorts package-manager artifacts into **orphaned** (no project file such as `package.json` beside them, though a folder of scripts may still use them; a virtualenv's interpreter is gone, so it cannot run; or a Homebrew keg is superseded by a newer linked one — each says which), **active** (context only) and **shared cache** (always reclaimable), each with the command that restores or clears it. It **refuses to guess**: with the owning manifest missing, a directory is only claimed when one of the rule's `evidence` children is actually present — an unidentifiable folder is reported as nothing rather than as garbage.
+**Package orphans** sorts package-manager artifacts into **orphaned** (no project file such as `package.json` beside them, though a folder of scripts may still use them; a virtualenv's interpreter is gone, so it cannot run; or a Homebrew keg is superseded by a newer linked one, each says which), **active** (context only) and **shared cache** (always reclaimable), each with the command that restores or clears it. It **refuses to guess**: with the owning manifest missing, a directory is only claimed when one of the rule's `evidence` children is actually present, an unidentifiable folder is reported as nothing rather than as garbage.
 
 </td>
 </tr>
@@ -234,13 +261,13 @@ Smart suggestions come from **versioned rule packs** ([`src/services/rulepacks/`
 <td width="50%" valign="top">
 
 ### 📤 Offloaded
-The third option next to *keep* and *trash*: **Offload…** copies files to another drive, **verifies every byte** (SHA-256, read back from the destination), and only then moves the originals to the Trash — never a bare move; a failure before every copy verifies rolls back cleanly, and an original that cannot go to the Trash afterwards stays beside its verified copy. This tab is the searchable index of everything offloaded, with per-destination totals, reveal-on-destination, and verified **Restore**. Unplugged drives show grayed out with a last-seen date.
+The third option next to *keep* and *trash*: **Offload…** copies files to another drive, **verifies every byte** (SHA-256, read back from the destination), and only then moves the originals to the Trash, never a bare move; a failure before every copy verifies rolls back cleanly, and an original that cannot go to the Trash afterwards stays beside its verified copy. This tab is the searchable index of everything offloaded, with per-destination totals, reveal-on-destination, and verified **Restore**. Unplugged drives show grayed out with a last-seen date.
 
 </td>
 <td width="50%" valign="top">
 
 ### 🗄️ Undo Vault
-The safety net for **Autopilot** and the **Clean Up cart**. Before either moves anything to the Trash, TreeMap copies it here, **verifies every byte** (SHA-256), and only then moves the original to the Trash — so emptying the Trash doesn't lose it, as long as the copy is kept. Searchable and grouped by run, with one-click verified **Restore** back to the exact original path (never overwriting anything that's there now). It can't fill your disk: a size cap (by default 10% of the free space on its disk, counting what it already holds) evicts the oldest copies first, and anything too big to protect is **left undeleted rather than deleted unprotected** — with the reason shown, never hidden in a log. Copies are kept 30 days by default; both numbers are in Settings. Files you move to the Trash any other way (right-click, the Grid, Duplicates, Clean Up) go to the Trash as usual and aren't copied here.
+The safety net for **Autopilot** and the **Clean Up cart**. Before either moves anything to the Trash, TreeMap copies it here, **verifies every byte** (SHA-256), and only then moves the original to the Trash, so emptying the Trash doesn't lose it, as long as the copy is kept. Searchable and grouped by run, with one-click verified **Restore** back to the exact original path (never overwriting anything that's there now). It can't fill your disk: a size cap (by default 10% of the free space on its disk, counting what it already holds) evicts the oldest copies first, and anything too big to protect is **left undeleted rather than deleted unprotected**, with the reason shown, never hidden in a log. Copies are kept 30 days by default; both numbers are in Settings. Files you move to the Trash any other way (right-click, the Grid, Duplicates, Clean Up) go to the Trash as usual and aren't copied here.
 
 </td>
 </tr>
@@ -248,9 +275,9 @@ The safety net for **Autopilot** and the **Clean Up cart**. Before either moves 
 <td width="50%" valign="top">
 
 ### ✨ Autopilot
-**Clean Up, but it keeps happening.** Write a policy once — *"clear old build folders in ~/Projects"* — and TreeMap carries it out on its own. Every rail §B1 asks for is here and visible in the editor: **the first run of any new policy is always a preview**, showing exactly what it matched, and it deletes nothing until you approve it; **byte caps** per run and per rolling week; a **cooldown** that doubles as the schedule; and *"ask me first above N GB"* so a policy that suddenly matches far more than expected **stops instead of executing**. Everything it removes goes through the Undo Vault first, so **a run can be undone in one click** until the Undo Vault removes its copies (after 30 days by default, or sooner to stay under its size cap), and the run history shows what each run deleted *and why* — or the reason it decided not to. Clean Up stays exactly as it was: manual, for deleting something right now.
+**Clean Up, but it keeps happening.** Write a policy once, *"clear old build folders in ~/Projects"*, and TreeMap carries it out on its own. Every rail §B1 asks for is here and visible in the editor: **the first run of any new policy is always a preview**, showing exactly what it matched, and it deletes nothing until you approve it; **byte caps** per run and per rolling week; a **cooldown** that doubles as the schedule; and *"ask me first above N GB"* so a policy that suddenly matches far more than expected **stops instead of executing**. Everything it removes goes through the Undo Vault first, so **a run can be undone in one click** until the Undo Vault removes its copies (after 30 days by default, or sooner to stay under its size cap), and the run history shows what each run deleted *and why*, or the reason it decided not to. Clean Up stays exactly as it was: manual, for deleting something right now.
 
-A policy can also match a **query** — the same search language as the treemap box, so a saved view becomes a Clean Up rule and a Clean Up rule becomes a policy, with one matching engine the whole way up. The query is checked by that same parser before the policy can be saved, and one with no conditions is refused outright: it would select every file in the folder, unattended. Promotion pre-fills the editor and saves nothing — the policy that comes out still starts switched off, still previews every run, and still cannot delete anything until you have seen its first run and approved it.
+A policy can also match a **query**, the same search language as the treemap box, so a saved view becomes a Clean Up rule and a Clean Up rule becomes a policy, with one matching engine the whole way up. The query is checked by that same parser before the policy can be saved, and one with no conditions is refused outright: it would select every file in the folder, unattended. Promotion pre-fills the editor and saves nothing, the policy that comes out still starts switched off, still previews every run, and still cannot delete anything until you have seen its first run and approved it.
 
 </td>
 <td width="50%" valign="top">
@@ -262,7 +289,7 @@ Re-scan folders on a schedule with **growth-threshold alerts** and **disk-full f
 </tr>
 </table>
 
-> **How it's built** — Node.js + **Express 5** + **TypeScript** on the backend, with a Rust scan core (`native/treemap-core`) loaded as a Node module. The frontend ships as a single, **zero-dependency** `index.html` — generated from `src/ui/` (small source files stitched by `scripts/build-ui.js`) — with hand-coded **Canvas 2D**, no React, no D3, no Chart.js. Navigation is a **liquid-glass sidebar** that collapses to a 64-px icon rail with ⌘B (and floats over the content, with a scrim, on narrow windows). Ships as a **web app** _and_ a downloadable **Electron desktop app** for macOS and Windows.
+> **How it's built**: Node.js + **Express 5** + **TypeScript** on the backend, with a Rust scan core (`native/treemap-core`) loaded as a Node module. The frontend ships as a single, **zero-dependency** `index.html`, generated from `src/ui/` (small source files stitched by `scripts/build-ui.js`), with hand-coded **Canvas 2D**, no React, no D3, no Chart.js. Navigation is a **liquid-glass sidebar** that collapses to a 64-px icon rail with ⌘B (and floats over the content, with a scrim, on narrow windows). Ships as a **web app** _and_ a downloadable **Electron desktop app** for macOS and Windows.
 
 <img src="divider.svg" width="100%" alt="">
 
@@ -275,7 +302,7 @@ Grab the latest installer from the [**Releases page**](https://github.com/Prithv
 <tr>
 <td>🍎 <b>macOS</b><br><sub>Apple Silicon only</sub></td>
 <td><code>TreeMap-x.y.z-arm64.dmg</code></td>
-<td>Open it, drag TreeMap into Applications — then follow <b><a href="#-first-launch-on-macos--apple-could-not-verify">First launch on macOS</a></b>, because macOS blocks it the first time.</td>
+<td>Open it, drag TreeMap into Applications, then follow <b><a href="#-first-launch-on-macos--apple-could-not-verify">First launch on macOS</a></b>, because macOS blocks it the first time.</td>
 </tr>
 <tr>
 <td>🪟 <b>Windows</b></td>
@@ -285,19 +312,21 @@ Grab the latest installer from the [**Releases page**](https://github.com/Prithv
 </table>
 
 > [!NOTE]
-> **The macOS build is Apple Silicon only** — any M-series Mac (late 2020 onward).
-> There is no Intel Mac build. On an Intel Mac, run TreeMap in web mode instead — see
+> **The macOS build is Apple Silicon only**, any M-series Mac (late 2020 onward).
+> There is no Intel Mac build. On an Intel Mac, run TreeMap in web mode instead, see
 > **🚀 Run from source / web mode** further down; it is the same app in a browser tab.
 > Not sure which you have?  → **About This Mac**: it says either *Apple M…* or *Intel*.
 
 > [!NOTE]
-> **Linux** — no desktop download. Run TreeMap in web mode (three commands, further down) — it is the same app in a browser tab — or build your own AppImage with `npm run dist:linux`. The test suite runs on Linux in CI; only the packaging is not published.
+> **Linux**, no desktop download. Run TreeMap in web mode (three commands, further down), it is the same app in a browser tab, or build your own AppImage with `npm run dist:linux`. The test suite runs on Linux in CI; only the packaging is not published.
 
-Every release also carries `TreeMap-x.y.z.exe` (Windows, **portable** — no installer, and it keeps its data beside itself), `TreeMap-x.y.z-arm64-mac.zip`, and the `latest*.yml` / `.blockmap` files the in-app updater reads. The version is in every file name.
+Every release also carries `TreeMap-x.y.z.exe` (Windows, **portable**, no installer, and it keeps its data beside itself), `TreeMap-x.y.z-arm64-mac.zip`, and the `latest*.yml` / `.blockmap` files the in-app updater reads. The version is in every file name.
 
 **Which version do I have?** In the desktop app: **TreeMap → About TreeMap** on macOS, **Help → About TreeMap** on Windows. In web mode, open <http://127.0.0.1:4280/api/capabilities> (or the `PORT` you set) and read `version`; that is the number on the Releases page.
 
-### 🍎 First launch on macOS — "Apple could not verify…"
+<a id="-first-launch-on-macos--apple-could-not-verify"></a>
+
+### 🍎 First launch on macOS: "Apple could not verify…"
 
 The first time you open TreeMap, macOS stops it with this:
 
@@ -305,7 +334,7 @@ The first time you open TreeMap, macOS stops it with this:
 > Apple could not verify "TreeMap.app" is free of malware that may harm your Mac or
 > compromise your privacy.  ·  **[ Done ]  [ Move to Bin ]**
 
-**Your download is fine.** That message does not mean malware was found — macOS shows it for
+**Your download is fine.** That message does not mean malware was found, macOS shows it for
 *any* app that hasn't been **notarized**, and notarizing requires a paid Apple Developer
 Program membership ($99/year) that this free, open-source project doesn't have. TreeMap is
 signed, just not by an Apple-paid certificate. Every byte of it is
@@ -315,31 +344,31 @@ release is built in the open by [GitHub Actions](.github/workflows/release.yml).
 Get past it **once** with either route below. After that TreeMap opens normally forever.
 
 <details open>
-<summary><b>Route 1 — clicks only, no Terminal</b> (Apple's own way)</summary>
+<summary><b>Route 1, clicks only, no Terminal</b> (Apple's own way)</summary>
 
 <br>
 
 > ⚠️ **Two things people trip on here**
 >
-> **1 — *Right-click → Open* no longer works.** Apple removed that old shortcut in macOS
+> **1: *Right-click → Open* no longer works.** Apple removed that old shortcut in macOS
 > **Sequoia (15)**, so on Sequoia and every macOS since it does nothing at all. The steps below are
 > the replacement.
 >
-> **2 — There is a one-hour clock.** The **Open Anyway** button in step 3 only appears for about
+> **2: There is a one-hour clock.** The **Open Anyway** button in step 3 only appears for about
 > an hour after macOS blocked the app. If it isn't there, double-click TreeMap again to
 > re-trigger the block, then go straight back to System Settings.
 
-1. Double-click **TreeMap** in your Applications folder. The message above appears — click **Done**.
+1. Double-click **TreeMap** in your Applications folder. The message above appears, click **Done**.
 2. Open  **System Settings → Privacy & Security**, and scroll to the bottom, to **Security**.
 3. You'll see *"TreeMap.app" was blocked to protect your Mac.* Click **Open Anyway**.
 4. Authenticate with **Touch ID** or your Mac's password.
-5. Double-click **TreeMap** again. A last prompt appears — click **Open Anyway**.
+5. Double-click **TreeMap** again. A last prompt appears, click **Open Anyway**.
 6. Authenticate once more. TreeMap launches, and is now a permanent exception.
 
 </details>
 
 <details>
-<summary><b>Route 2 — one line in Terminal</b> (fastest — a single step)</summary>
+<summary><b>Route 2, one line in Terminal</b> (fastest, a single step)</summary>
 
 <br>
 
@@ -364,7 +393,7 @@ and needs no password.
 
 <br>
 
-Same cause, same cure — use **Route 2** above. That wording appears when the download was
+Same cause, same cure, use **Route 2** above. That wording appears when the download was
 partly unpacked, or when the DMG was copied around before opening. If it still says *damaged*
 after running the command, the download itself was truncated: delete the `.dmg` and download it
 again from the Releases page.
@@ -381,22 +410,22 @@ Both routes above still work, and you also get the classic shortcut Apple remove
 
 </details>
 
-### 🪟 First launch on Windows — "Windows protected your PC"
+### 🪟 First launch on Windows: "Windows protected your PC"
 
 Same story, different vendor: the installer isn't signed with a paid Microsoft certificate, so
 SmartScreen shows a blue box once. Click **More info**, then **Run anyway**. That's it.
 
-> No Node.js or setup required — the desktop app is self-contained and scans the disk of the computer it runs on.
+> No Node.js or setup required, the desktop app is self-contained and scans the disk of the computer it runs on.
 
 ### 🖥️ Desktop extras
 
-- 📌 **Menu bar / tray icon** with live free-disk stats and quick actions (open app, scan home folder, quit). Close the window and TreeMap stays in the tray so scheduled scans keep running — quit from the tray menu.
+- 📌 **Menu bar / tray icon** with live free-disk stats and quick actions (open app, scan home folder, quit). Close the window and TreeMap stays in the tray so scheduled scans keep running, quit from the tray menu.
 - 🖱️ **Drag & drop** a folder onto the window or dock icon to scan it instantly.
-- 🔄 **Auto-updates** from GitHub Releases, checked shortly after launch and every 6 hours. Windows downloads the new version and asks before restarting. macOS cannot install an update into an un-notarized app, so there TreeMap only *checks* and offers a **Download** dialog that opens the Releases page — drag the new build into Applications yourself. Decline once with "Skip this version" and that version stays quiet.
+- 🔄 **Auto-updates** from GitHub Releases, checked shortly after launch and every 6 hours. Windows downloads the new version and asks before restarting. macOS cannot install an update into an un-notarized app, so there TreeMap only *checks* and offers a **Download** dialog that opens the Releases page, drag the new build into Applications yourself. Decline once with "Skip this version" and that version stays quiet.
 - 🔔 **Growth alerts** from scheduled scans arrive as native notifications.
-- 🖱️ **"Scan with TreeMap" in the right-click menu** — a Finder Quick Action on macOS, a shell entry on Windows, and a Nautilus / Dolphin / Thunar entry on Linux (for a build you made yourself). Add or remove it from Settings in the desktop app — the entry starts the installed app, so a browser tab or a build run from source does not offer to add it (one already there is shown with the program it starts, and can be removed); it applies to **your account only and needs no administrator rights**. TreeMap asks the OS whether it's installed every single time rather than remembering, so uninstalling TreeMap can never leave a dead menu entry behind claiming otherwise.
-- 🧳 **Portable, no-trace mode** — run TreeMap from a USB stick and it writes **nothing to the host machine**: settings, index and history all live beside the executable. If the medium is read-only it goes fully **ephemeral** — memory-backed storage, an in-memory database, an audit ring buffer, and the Undo Vault switched off *with the reason shown* rather than silently — and the same when the `TreeMap-Data` folder beside it is a link or holds one, since whoever prepared the drive could have pointed TreeMap's saves elsewhere. Portable builds: `npm run dist:portable-mac` / `-win` / `-linux`.
-- ⚙️ **How hard a scan works is yours to set.** Settings › Scanning budget: Eco (about a quarter of the computer), Balanced (about half), Turbo (up to nine-tenths), or Automatic — Turbo for a scan you start and watch, Balanced for the ones that run on their own, a step lower on battery, and Eco when the system reports serious heat. Settings › Scan engine picks the engine — Automatic, the native engine, gdu or the built-in walker — and on Windows offers the opt-in **NTFS turbo** mode, which reads a drive's file table directly with administrator permission, after asking, for TreeMap installed for everyone who uses the computer. The Dashboard says which engine and budget every scan used, and why.
+- 🖱️ **"Scan with TreeMap" in the right-click menu**, a Finder Quick Action on macOS, a shell entry on Windows, and a Nautilus / Dolphin / Thunar entry on Linux (for a build you made yourself). Add or remove it from Settings in the desktop app, the entry starts the installed app, so a browser tab or a build run from source does not offer to add it (one already there is shown with the program it starts, and can be removed); it applies to **your account only and needs no administrator rights**. TreeMap asks the OS whether it's installed every single time rather than remembering, so uninstalling TreeMap can never leave a dead menu entry behind claiming otherwise.
+- 🧳 **Portable, no-trace mode**, run TreeMap from a USB stick and it writes **nothing to the host machine**: settings, index and history all live beside the executable. If the medium is read-only it goes fully **ephemeral**, memory-backed storage, an in-memory database, an audit ring buffer, and the Undo Vault switched off *with the reason shown* rather than silently, and the same when the `TreeMap-Data` folder beside it is a link or holds one, since whoever prepared the drive could have pointed TreeMap's saves elsewhere. Portable builds: `npm run dist:portable-mac` / `-win` / `-linux`.
+- ⚙️ **How hard a scan works is yours to set.** Settings › Scanning budget: Eco (about a quarter of the computer), Balanced (about half), Turbo (up to nine-tenths), or Automatic: Turbo for a scan you start and watch, Balanced for the ones that run on their own, a step lower on battery, and Eco when the system reports serious heat. Settings › Scan engine picks the engine, Automatic, the native engine, gdu or the built-in walker, and on Windows offers the opt-in **NTFS turbo** mode, which reads a drive's file table directly with administrator permission, after asking, for TreeMap installed for everyone who uses the computer. The Dashboard says which engine and budget every scan used, and why.
 
 <img src="divider.svg" width="100%" alt="">
 
@@ -419,7 +448,7 @@ offers **TreeMap: Scan This Workspace Folder**.
 The first open clones TreeMap, installs its dependencies and builds it, under one
 cancellable progress notification; later opens go straight to starting the server.
 If the folder you have open *is* this repository, your working tree is used and
-nothing is downloaded — and nothing fetches or resets it either.
+nothing is downloaded, and nothing fetches or resets it either.
 
 The server always runs as a **child process on your own Node 20+**, never inside
 the extension host: TreeMap loads `better-sqlite3` and `sharp`, native modules
@@ -439,7 +468,7 @@ Then open **http://127.0.0.1:4280** in your browser.
 
 Requires **Node.js 20+**. Trash support uses `gio` on Linux (preinstalled on GNOME/KDE), Finder via `osascript` on macOS, and the Recycle Bin via PowerShell on Windows.
 
-`npm run build` does not build the native scan engine, so a copy run from source scans with the built-in walker — or, on macOS and Linux, gdu, if `npm run fetch:gdu:dev` fetched one or one is on your PATH — and the Dashboard's engine line says why. To build the engine, install Rust from https://rustup.rs — the version it needs is pinned in `native/treemap-core/rust-toolchain.toml` and installed on first use — and run `npm run build:native`.
+`npm run build` does not build the native scan engine, so a copy run from source scans with the built-in walker, or, on macOS and Linux, gdu, if `npm run fetch:gdu:dev` fetched one or one is on your PATH, and the Dashboard's engine line says why. To build the engine, install Rust from https://rustup.rs, the version it needs is pinned in `native/treemap-core/rust-toolchain.toml` and installed on first use, and run `npm run build:native`.
 
 ### 📦 Build the desktop app
 
@@ -451,33 +480,33 @@ npm run dist:win     # produce a Windows installer in release/
 ```
 
 > ⚠️ You can only build the macOS app on a Mac and the Windows app on Windows (the Windows `dist` also needs the Windows native module, which only a Windows build or the release workflow makes).
-> To get **both** without owning both machines, use the automated release below — GitHub builds them for you.
+> To get **both** without owning both machines, use the automated release below: GitHub builds them for you.
 
-> 🦀 The `dist` scripts build TreeMap's native scanner first (`npm run build:native`), so packaging needs **Rust** — install it from [rustup.rs](https://rustup.rs). A build that cannot include the scanner stops with the reason instead of producing a slower app without it. Installing or running TreeMap never needs Rust.
+> 🦀 The `dist` scripts build TreeMap's native scanner first (`npm run build:native`), so packaging needs **Rust**, install it from [rustup.rs](https://rustup.rs). A build that cannot include the scanner stops with the reason instead of producing a slower app without it. Installing or running TreeMap never needs Rust.
 
 <details>
 <summary><b>🤖 Publish a new version (automated GitHub Actions)</b></summary>
 
 <br>
 
-A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows installers on GitHub's servers and attaches them to a Release — including the `latest*.yml` metadata the in-app auto-updater checks.
+A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows installers on GitHub's servers and attaches them to a Release, including the `latest*.yml` metadata the in-app auto-updater checks.
 
 **To cut a release:**
 
 1. Bump the version with `npm version 1.2.1 --no-git-tag-version` (it changes `package.json` and the two app entries in `package-lock.json`, nothing else) and add a matching `## [1.2.1]` entry at the top of `CHANGELOG.md`.
-2. Create a matching **tag** prefixed with `v` (e.g. `v1.2.1`) and push it — either way works; the first is the safer one:
+2. Create a matching **tag** prefixed with `v` (e.g. `v1.2.1`) and push it, either way works; the first is the safer one:
    - **From GitHub Desktop (recommended):** **Repository → Push** first and wait for **Tests** to be green under **Actions**; then **History →** right-click the commit **→ Create Tag… →** `v1.2.1` **→ Create Tag**, then **Repository → Push** again (Desktop pushes the tag with it). The workflow creates the release itself as a draft, with that version's entry in `CHANGELOG.md` as its notes, and publishes it only once every installer is attached and checked.
    - **On github.com:** GitHub Desktop **Repository → Push** first, then **Releases → Draft a new release → Choose a tag →** type `v1.2.1` → **Create new tag: v1.2.1 on publish** → leave the notes empty (the workflow writes them from `CHANGELOG.md`; do **not** click *Generate release notes*, which would replace them with raw commit titles, and leave *Set as a pre-release* unticked, or the in-app updater will skip the version) → **Publish release**.
-3. The workflow runs on its own: it builds both installers, uploads them, checks that every file it built is really there, byte for byte, and only then publishes the release — so a release the workflow creates never appears with an empty **Assets** list. (A release you published yourself from the Releases page is public straight away and gets its files a few minutes later, as before.) The install instructions are added under the notes.
-   If a build turns red under **Actions**, a release the workflow created stays a **Draft** only you can see; one you published yourself from the Releases page stays public with files missing — fix it, never delete it. Open the run: the **notes** job says what to fix when the problem is the tag or the notes (a tag that does not match the version in `package.json`, a version with no `CHANGELOG.md` entry, or two saved drafts for one tag); otherwise read the red build step. Once the cause is fixed, use the run's **Re-run failed jobs** first — only the red build repeats, and the files the green one attached stay. **Run workflow** with the tag (below) is for a release whose **Assets** list is empty: a fresh run compares its new files with the ones already attached, and a file that differs in size stops it until you delete that file on the release page.
+3. The workflow runs on its own: it builds both installers, uploads them, checks that every file it built is really there, byte for byte, and only then publishes the release, so a release the workflow creates never appears with an empty **Assets** list. (A release you published yourself from the Releases page is public straight away and gets its files a few minutes later, as before.) The install instructions are added under the notes.
+   If a build turns red under **Actions**, a release the workflow created stays a **Draft** only you can see; one you published yourself from the Releases page stays public with files missing, fix it, never delete it. Open the run: the **notes** job says what to fix when the problem is the tag or the notes (a tag that does not match the version in `package.json`, a version with no `CHANGELOG.md` entry, or two saved drafts for one tag); otherwise read the red build step. Once the cause is fixed, use the run's **Re-run failed jobs** first, only the red build repeats, and the files the green one attached stay. **Run workflow** with the tag (below) is for a release whose **Assets** list is empty: a fresh run compares its new files with the ones already attached, and a file that differs in size stops it until you delete that file on the release page.
 
-> **The tag is what ships.** The Releases page's *Latest* and the in-app updater both read the newest `v*` tag. A version bumped in `package.json` but never tagged and pushed is invisible to every user — they are told they are up to date.
+> **The tag is what ships.** The Releases page's *Latest* and the in-app updater both read the newest `v*` tag. A version bumped in `package.json` but never tagged and pushed is invisible to every user, they are told they are up to date.
 
-> **Edit a release, never delete it.** The installers are attached to the release itself, not to the tag. A release that is deleted and made again comes back with an empty **Assets** list even though the tag still exists — that is how v5.0.0 lost its downloads (issue #32). To change the title or the notes, use **Edit** on the release; the installers stay put.
+> **Edit a release, never delete it.** The installers are attached to the release itself, not to the tag. A release that is deleted and made again comes back with an empty **Assets** list even though the tag still exists, that is how v5.0.0 lost its downloads (issue #32). To change the title or the notes, use **Edit** on the release; the installers stay put.
 
 > **A saved draft does not ship by itself.** Saving a draft creates no tag, so nothing runs. Publish it, or push the tag: the workflow then finds the draft, adds the install instructions, attaches the installers and publishes it once they are all there. Two saved drafts for one tag stop the run until you delete one.
 
-**If a release has no installers** (an empty **Assets** list): **Actions → Build & Release → Run workflow**, leave *Use workflow from* at `main`, type the tag (for example `v5.0.0`) into the box, **Run workflow**. A few minutes later the installers are rebuilt from that tag and attached. Your notes are kept — the install instructions are added under them only if they are missing. Leave the box empty for a test build of `main` — the installers are saved as zip files under **Artifacts** at the bottom of the run's page, and no release is touched.
+**If a release has no installers** (an empty **Assets** list): **Actions → Build & Release → Run workflow**, leave *Use workflow from* at `main`, type the tag (for example `v5.0.0`) into the box, **Run workflow**. A few minutes later the installers are rebuilt from that tag and attached. Your notes are kept, the install instructions are added under them only if they are missing. Leave the box empty for a test build of `main`, the installers are saved as zip files under **Artifacts** at the bottom of the run's page, and no release is touched.
 
 </details>
 
@@ -503,7 +532,7 @@ A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows in
 | `GET /api/scan/:id/export?format=csv\|pdf` | Download the scan as CSV (files / folders) or a PDF report |
 | `GET /api/missing-gigabytes?scanId=` | The accounting statement for the volume: the lines sum to used space exactly, and the residual is its own `unaccounted` line. A line that could not be measured reports `bytes: null` with a reason, never `0` |
 | `GET /api/scans` | Completed scans currently in memory, except a dry run's: the scan an Autopilot Preview or a preview-only policy run makes is held but not listed |
-| `POST /api/facts` | Per-path derived facts as a sidecar (`size`, `lastUsed`, `recoverability`, `reclaimScore`). A path absent from `values` was **not computable** — never a zero |
+| `POST /api/facts` | Per-path derived facts as a sidecar (`size`, `lastUsed`, `recoverability`, `reclaimScore`). A path absent from `values` was **not computable**, never a zero |
 | `GET /api/large-files?scanId=` | Top N largest files |
 | `GET /api/large-folders?scanId=` | Top N largest folders (recursive sizes) |
 | `GET /api/file-types?scanId=` | Size breakdown by extension |
@@ -515,13 +544,13 @@ A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows in
 | `GET /api/snapshots` | Scan history: roots, per-root snapshots (`?path=`), or all (`?all=true`) |
 | `GET /api/snapshots/compare?a=&b=` | Top-level deltas between two snapshots |
 | `GET /api/snapshots/tree?path=&at=` | Historical treemap closest to a timestamp (time slider), with grew/shrank data |
-| `GET /api/forecast?path=` | Disk-full projection: days until full, confidence, top growers — honest when history is thin |
+| `GET /api/forecast?path=` | Disk-full projection: days until full, confidence, top growers, honest when history is thin |
 | `GET /api/watch/:scanId` | Live disk activity (Server-Sent Events): per-second batches of `{ path, delta, kind }` |
-| `POST /api/container/expand` | List a container's contents (zip/jar/tar/tgz/iso/docker) as virtual treemap children — never extracts |
+| `POST /api/container/expand` | List a container's contents (zip/jar/tar/tgz/iso/docker) as virtual treemap children, never extracts |
 | `POST /api/offload` · `GET /api/offload/:id/progress` | Copy → SHA-256 verify → trash originals, to another drive (SSE progress, cancellable with rollback) |
 | `GET /api/offload/index` · `POST /api/offload/restore` | Searchable offload catalog (mount-aware) and verified restore |
 | `GET /api/cloud/status` · `POST /api/cloud/connect` · `…/disconnect` | Cloud accounts: local-only status, PKCE OAuth (loopback + paste fallback), token wipe |
-| `POST /api/cloud/scan` · `POST /api/cloud/trash` | Metadata-only cloud scan (registers like a disk scan) and provider-trash deletes — the documented pathGuard exemption |
+| `POST /api/cloud/scan` · `POST /api/cloud/trash` | Metadata-only cloud scan (registers like a disk scan) and provider-trash deletes, the documented pathGuard exemption |
 | `GET /api/cleanup/suggestions?scanId=` | Smart cleanup suggestions (regenerable / cache / junk) |
 | `GET /api/packages/orphans?scanId=` | Package-manager leftovers: orphaned / active / shared cache |
 | `GET /api/games?scanId=` | Game libraries per title: base, shader cache, workshop, Proton prefix, DLC |
@@ -532,14 +561,14 @@ A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows in
 | `GET /api/compression/candidates?scanId=` | Video worth re-encoding to HEVC, with estimated savings |
 | `GET /api/platform/shell-integration` | The "Scan with TreeMap" right-click entry (add / remove) |
 | `GET /api/platform/portable` | Whether this is a no-trace portable session |
-| `GET /api/fleet` | Other TreeMaps on your network — off by default, summaries only |
+| `GET /api/fleet` | Other TreeMaps on your network, off by default, summaries only |
 | `GET /api/cleanup/browser-profiles?scanId=` | Per-browser-profile cache breakdown |
 | `GET /api/git/repos?scanId=` · `POST /api/git/gc` | Git pack/loose/LFS breakdown, and `git gc` a scanned repo |
 | `GET /api/system/snapshots` · `POST …/purge` | OS snapshot accounting (APFS / Btrfs / VSS) |
-| `GET /api/system/snapshots/find-deleted?path=` | Which filesystem snapshots could still hold a lost path — needs no privileges |
+| `GET /api/system/snapshots/find-deleted?path=` | Which filesystem snapshots could still hold a lost path, needs no privileges |
 | `POST /api/system/snapshots/restore` | Recover it, written beside the original (asks for admin on macOS/Windows) |
 | `GET /api/autopilot/policies` · `PUT …` | Standing cleanup policies (re-validated on save; editing a policy's scope revokes its approval) |
-| `POST /api/autopilot/simulate` | Exactly what a policy would delete — writes nothing, touches no schedule |
+| `POST /api/autopilot/simulate` | Exactly what a policy would delete, writes nothing, touches no schedule |
 | `POST /api/autopilot/policies/:id/approve` | Approve a policy's mandatory first preview so it runs on its own; it deletes only while it is enabled and not set to "Only ever preview" |
 | `GET /api/autopilot/runs` · `POST …/runs/:id/undo` | Run history, and a verified one-click undo from the Undo Vault |
 | `GET /api/timecapsule` | The Undo Vault: what the Clean Up cart and Autopilot copied aside before trashing it, with capacity + history |
@@ -561,13 +590,13 @@ A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows in
 
 ## 🤖 Use it with AI (MCP)
 
-TreeMap speaks the **Model Context Protocol (MCP)** — the open standard that lets AI assistants like **Claude** use apps as tools. Connect it once and you can simply *talk to your disk*:
+TreeMap speaks the **Model Context Protocol (MCP)**, the open standard that lets AI assistants like **Claude** use apps as tools. Connect it once and you can simply *talk to your disk*:
 
 > *"What's eating my disk?"* &nbsp;·&nbsp; *"Find duplicates in my Downloads and clean them up"* &nbsp;·&nbsp; *"How long until this disk is full?"* &nbsp;·&nbsp; *"Move my old videos to the external drive"*
 
 The AI does the scanning and number-crunching with TreeMap's real engine, and **every safety rule still applies**: deletes only ever go to the system Trash, destructive actions can be previewed with a dry run first, and everything is written to an audit log.
 
-### Step 1 — One-time setup (~2 minutes)
+### Step 1: One-time setup (~2 minutes)
 
 You need [Node.js 20+](https://nodejs.org) installed. Then copy-paste this into a terminal:
 
@@ -578,13 +607,13 @@ npm install
 npm run build
 ```
 
-Done. Now print the folder's full location — you'll paste it in step 2 wherever you see `/PATH/TO/TreeMap-Disk-Visualizer`:
+Done. Now print the folder's full location, you'll paste it in step 2 wherever you see `/PATH/TO/TreeMap-Disk-Visualizer`:
 
 ```bash
 pwd
 ```
 
-### Step 2 — Connect your AI app
+### Step 2: Connect your AI app
 
 <details>
 <summary><b>🟠 Claude Desktop</b></summary>
@@ -606,7 +635,7 @@ pwd
 }
 ```
 
-3. **Fully quit and reopen Claude Desktop.** A tools icon appears in the chat box — TreeMap's tools are listed under `treemap`.
+3. **Fully quit and reopen Claude Desktop.** A tools icon appears in the chat box: TreeMap's tools are listed under `treemap`.
 
 > 🪟 **Windows:** write the path with double backslashes, e.g. `"C:\\Users\\you\\TreeMap-Disk-Visualizer\\dist\\mcp\\index.js"`.
 
@@ -623,7 +652,7 @@ One command (swap in your real path):
 claude mcp add treemap -- node /PATH/TO/TreeMap-Disk-Visualizer/dist/mcp/index.js
 ```
 
-That's it — next session, ask Claude Code to scan a folder and it will pick up the TreeMap tools automatically. (`claude mcp list` shows it; `claude mcp remove treemap` undoes it.)
+That's it, next session, ask Claude Code to scan a folder and it will pick up the TreeMap tools automatically. (`claude mcp list` shows it; `claude mcp remove treemap` undoes it.)
 
 </details>
 
@@ -632,7 +661,7 @@ That's it — next session, ask Claude Code to scan a folder and it will pick up
 
 <br>
 
-Create (or edit) `.cursor/mcp.json` in your home folder for all projects — or in a project's root for just that project — with:
+Create (or edit) `.cursor/mcp.json` in your home folder for all projects, or in a project's root for just that project, with:
 
 ```json
 {
@@ -659,35 +688,35 @@ TreeMap is a standard **stdio** MCP server. Point your client at:
 - **Command:** `node`
 - **Arguments:** `/PATH/TO/TreeMap-Disk-Visualizer/dist/mcp/index.js`
 
-No environment variables, ports, or API keys needed — it runs locally and talks over stdin/stdout. (Quick smoke test from the repo folder: `npm run mcp` should print `server ready on stdio`.)
+No environment variables, ports, or API keys needed, it runs locally and talks over stdin/stdout. (Quick smoke test from the repo folder: `npm run mcp` should print `server ready on stdio`.)
 
 </details>
 
 ### What the AI can do
 
-Ten tools, all calling the exact same internals as the app — same validation, same safety rails:
+Ten tools, all calling the exact same internals as the app, same validation, same safety rails:
 
 | Tool | What it does |
 |---|---|
 | `scan_path` | Scan a folder → returns a `scanId` the other tools use |
 | `get_largest` | The biggest files or folders in a scan |
-| `reclaim_ranked` | The same entries re-ranked by **Reclaim score** — safest to delete first — each with its full breakdown and the signals that could not be read |
+| `reclaim_ranked` | The same entries re-ranked by **Reclaim score**, safest to delete first, each with its full breakdown and the signals that could not be read |
 | `find_duplicates` | True duplicates (size + SHA-256 content hashing) |
 | `cleanup_suggestions` | Known-reclaimable space: caches, regenerable build folders, junk |
-| `forecast` | Disk-full projection — *"full in ~58 days at current growth"* |
-| `missing_gigabytes` | Reconcile the volume: every line in bytes, summing to used space exactly, with the leftover named rather than hidden. `bytes: null` means **unknown** and carries its reason — never the same as `0` |
+| `forecast` | Disk-full projection: *"full in ~58 days at current growth"* |
+| `missing_gigabytes` | Reconcile the volume: every line in bytes, summing to used space exactly, with the leftover named rather than hidden. `bytes: null` means **unknown** and carries its reason, never the same as `0` |
 | `compare_scans` | What grew and what shrank between two scans |
 | `offload` | Move files to another drive the safe way: copy → verify → then trash originals |
-| `trash_paths` | Move files to the system Trash — never a hard delete |
+| `trash_paths` | Move files to the system Trash, never a hard delete |
 
 ### Kept safe by design
 
-- 🎯 The AI can only touch paths **inside folders it has scanned** — scanning is what grants permission.
-- 🧪 `trash_paths` and `offload` accept `dryRun: true`, returning the exact list of affected files and bytes while doing **nothing** — so the AI can show you the plan before acting.
-- 📜 You can pin down what agents may ever touch with an `agent-policy.json` (allowed roots, protected paths, a per-operation byte cap) — see [AGENTS.md](AGENTS.md).
-- 🧾 Every destructive request — executed, dry-run, or refused — lands in an append-only `audit.jsonl` you can review any time.
+- 🎯 The AI can only touch paths **inside folders it has scanned**, scanning is what grants permission.
+- 🧪 `trash_paths` and `offload` accept `dryRun: true`, returning the exact list of affected files and bytes while doing **nothing**, so the AI can show you the plan before acting.
+- 📜 You can pin down what agents may ever touch with an `agent-policy.json` (allowed roots, protected paths, a per-operation byte cap), see [AGENTS.md](AGENTS.md).
+- 🧾 Every destructive request, executed, dry-run, or refused, lands in an append-only `audit.jsonl` you can review any time.
 
-> 🤓 Prefer plain HTTP? The same power is available as a REST API with a machine-readable spec — start the server and fetch `/api/openapi.json` or `/api/capabilities`, or read [AGENTS.md](AGENTS.md), the full guide for automated agents.
+> 🤓 Prefer plain HTTP? The same power is available as a REST API with a machine-readable spec, start the server and fetch `/api/openapi.json` or `/api/capabilities`, or read [AGENTS.md](AGENTS.md), the full guide for automated agents.
 
 <img src="divider.svg" width="100%" alt="">
 
@@ -696,15 +725,15 @@ Ten tools, all calling the exact same internals as the app — same validation, 
 Disk tools should never lose your data. TreeMap is built defensively:
 
 - 🔒 Paths are sanitized and traversal-proofed; system dirs (`/proc`, `/sys`, `/dev`, `/run`, `C:\Windows\System32`, …) are blocked outright, but not `/run/media`, where Linux mounts a person's own drives.
-- 🎯 Trash/open endpoints only accept paths **inside a folder you scanned** — and never paths *inside an archive* (only the archive itself can be trashed).
-- ♻️ Deletes always go through the OS Trash — undo from Finder/Explorer until the Trash is emptied.
-- 🪟 On Windows, a path Windows would rewrite before binning it (a name ending in a dot or a space) is left alone, with a sentence saying why — never a different file in the Recycle Bin.
-- 📤 Offload never bare-moves: copy first, verify every byte against a SHA-256 read back from the destination, and only then trash the originals — a failure before every copy verifies rolls back with local data untouched, and an original that cannot go to the Trash afterwards stays beside its verified copy.
+- 🎯 Trash/open endpoints only accept paths **inside a folder you scanned**, and never paths *inside an archive* (only the archive itself can be trashed).
+- ♻️ Deletes always go through the OS Trash, undo from Finder/Explorer until the Trash is emptied.
+- 🪟 On Windows, a path Windows would rewrite before binning it (a name ending in a dot or a space) is left alone, with a sentence saying why, never a different file in the Recycle Bin.
+- 📤 Offload never bare-moves: copy first, verify every byte against a SHA-256 read back from the destination, and only then trash the originals, a failure before every copy verifies rolls back with local data untouched, and an original that cannot go to the Trash afterwards stays beside its verified copy.
 - ☁️ Cloud scanning is strictly opt-in and metadata-only: no file contents are ever downloaded, OAuth tokens live only in the local app-data folder (Disconnect wipes them), cloud deletes go to the provider's own trash, and with no account connected no cloud code path executes at all.
-- 🧬 The Duplicates view refuses to trash *every* copy in a group — at least one always stays.
+- 🧬 The Duplicates view refuses to trash *every* copy in a group, at least one always stays.
 - 🧬 The duplicate finder never opens an online-only file (an iCloud, OneDrive or Dropbox placeholder): reading one would download it. It says how many it left unchecked instead.
-- 🚦 Token-bucket rate limiting per client IP, in three lanes priced by what a request costs the server — 10 requests/s sustained (bursts of 20) for the API, 150/s (300) for thumbnails, 60/s (120) for cheap metadata — plus graceful SIGTERM shutdown that drains live SSE streams and stops background hashing, scheduled scans & live-activity watchers.
-- ⏳ Scan results live in memory only and auto-expire after 30 minutes. What does reach disk — history snapshots, settings, the SQLite live index, Undo Vault copies, the offload catalog, the journal and the audit log — sits in the platform app-data folder (`~/Library/Application Support/TreeMap`, `%APPDATA%\TreeMap`, or `~/.config/treemap`) and never leaves the machine. [SECURITY.md](SECURITY.md) lists every file, and every outbound connection the app can make.
+- 🚦 Token-bucket rate limiting per client IP, in three lanes priced by what a request costs the server, 10 requests/s sustained (bursts of 20) for the API, 150/s (300) for thumbnails, 60/s (120) for cheap metadata, plus graceful SIGTERM shutdown that drains live SSE streams and stops background hashing, scheduled scans & live-activity watchers.
+- ⏳ Scan results live in memory only and auto-expire after 30 minutes. What does reach disk, history snapshots, settings, the SQLite live index, Undo Vault copies, the offload catalog, the journal and the audit log, sits in the platform app-data folder (`~/Library/Application Support/TreeMap`, `%APPDATA%\TreeMap`, or `~/.config/treemap`) and never leaves the machine. [SECURITY.md](SECURITY.md) lists every file, and every outbound connection the app can make.
 
 <img src="divider.svg" width="100%" alt="">
 
@@ -714,13 +743,13 @@ Contributing? [CONTRIBUTING.md](CONTRIBUTING.md) has the three commands and the 
 
 ```text
 src/
-  ui/           The frontend, as small editable parts — shell/ (the document's
+  ui/           The frontend, as small editable parts, shell/ (the document's
                 head and tail), styles/, markup/ (one file per view and modal),
                 app/ (the behaviour). scripts/build-ui.js stitches them, in
                 manifest.json order, into public/index.html. Run `npm run build:ui`
                 after any edit; never edit the generated page (the suite fails
                 if it drifts from its sources). See src/ui/README.md.
-  api/          Express routes — scan, files, insights, facts, query, cart,
+  api/          Express routes, scan, files, insights, facts, query, cart,
                 offload, cloud, fleet, autopilot, the Undo Vault (timecapsule),
                 notes, journal, platform, settings, and meta (capabilities +
                 OpenAPI)
@@ -738,8 +767,8 @@ src/
                 grammar), cloud/ (Google Drive, Dropbox, OneDrive), fleet/
                 (LAN summaries + mDNS), Scheduler, Settings, Storage (app-data
                 files), DiskUsage
-  platform/     OS-specific mechanisms — trash, shell integration, snapshots,
-                SMART, last-used, backups — under macos/, windows/, linux/
+  platform/     OS-specific mechanisms, trash, shell integration, snapshots,
+                SMART, last-used, backups, under macos/, windows/, linux/
   mcp/          The stdio MCP server (`npm run mcp`)
   middleware/   errorHandler, rateLimiter, pathGuard, requireToken
   models/       Shared TypeScript interfaces
@@ -755,13 +784,13 @@ native/
   treemap-core/ Rust workspace: tm-walk (folder listing), tm-governor (the
                 scanning budget), tm-store (the scan's store), tm-node (the
                 Node module), tm-mft + tm-mft-helper (Windows NTFS turbo)
-bench/          `npm run bench` — the harness and recorded baselines the
+bench/          `npm run bench`, the harness and recorded baselines the
                 native engine's speed figures come from
 public/
-  index.html    GENERATED from src/ui/ — never edit it; run `npm run build:ui`
+  index.html    GENERATED from src/ui/, never edit it; run `npm run build:ui`
 vscode-extension/
   src/lib/      Pure decision-making (which source tree to run, what may be
-                cloned, what a webview may frame) — no `vscode` import, so the
+                cloned, what a webview may frame), no `vscode` import, so the
                 main test suite covers it
   src/          The editor glue: progress notifications, the webview panel,
                 and the child process that runs TreeMap's own server
@@ -776,28 +805,28 @@ scripts/
   mark-portable.js  Marks a mac zip or Linux AppImage build as portable
   run-tests.js      Cross-shell test runner (`npm test`)
   gen-tray-icon.js  One-time generator for the tray template icons
-tests/          node:test suite — `npm test`, or one file with
+tests/          node:test suite: `npm test`, or one file with
                 `npx tsx --test tests/<name>.test.ts`
 ```
 
 ## 🧠 Design decisions worth knowing
 
-- **A scan lives in a packed Structure-of-Arrays store, not a tree of objects.** Every scan used to be millions of JavaScript objects (~330 bytes each, measured) — which put a hard ceiling of a few million files on what fit in RAM. The tree now lives in a handful of typed arrays (`src/services/scanStore.ts`): names in one UTF-8 pool, children as contiguous id ranges laid out breadth-first, paths reconstructed on demand instead of stored. Measured cost: **~52 bytes per file** at 1M, 5M, 20M and 40M synthetic nodes — a 40M-item scan is ~2 GB of arrays, and a 100M-item scan projects to ~5 GB, on hardware where the object tree could not have held 20M. Summing every directory size is one reverse linear pass (28 ms for 5M nodes vs 2.2 s recursive), nothing recurses on pathological depth, and the browser notices nothing: the pruned JSON the API emits is byte-identical to the old tree — a golden test replays a fixture scan against responses recorded from the pre-rewrite server and compares the raw bytes. The store's columns are plain typed arrays. For a native scan they are built by the Rust core (`tm-store`) while the walk runs and adopted without a copy; the built-in walker and gdu fill the same columns from JavaScript. (A spill mode that keeps a very large scan in files on disk is being built; until it ships, every scan is held in memory.) The one deliberate trade: handing 250k pruned nodes to the UI rebuilds path strings the old tree kept around, ~150 ms per handover on an operation that already spends ~170 ms serializing.
-- **For the built-in walker, scan speed is a threadpool problem.** Every async `lstat`/`readdir` runs on libuv's threadpool, which defaults to 4 threads — that, not the walker's concurrency, was its bottleneck. TreeMap sizes the pool to 2× cores (≤ 16) before it spins up; measured on APFS this scans ~1.6× faster, while 32 threads is *slower* than 4 (kernel metadata-lock contention). The dashboard shows which engine ran and how long the scan took.
-- **The native scan engine lists a whole folder in one system call.** On macOS it asks `getattrlistbulk` for every entry's name, type, sizes, times and flags at once, on its own worker threads (Linux: `getdents64` + `statx`; Windows: `FileIdExtdDirectoryInfo`), and builds the scan's store itself while it walks (`tm-store`, in the layout of the app's own store), which TreeMap then takes over — so the JSON is the same, and the equivalence tests hold it byte-identical to the built-in walker's (verified on macOS; Linux and Windows run on CI). The store's room is sized before the walk, from the last scan of the same folder or, for a whole volume, from the volume's count of inodes in use, so a big disk is walked once; a tree that outgrows the room it was given is walked a second time, and the scan says so. Recorded by `npm run bench` on an Apple M3 (4 performance + 4 efficiency cores, 16 GB, macOS 27), warm cache, Turbo budget, load 2.2–3.6 (up to 7.0 during the built-in walker’s runs on the 1,000,000-entry tree), 23 September 2026: **412,291 entries/s on a 200,000-entry tree** (the built-in walker: 131,203), and **91,308 entries/s on a 1,000,000-entry tree** too big for the kernel's metadata cache, which reads 2.3 GB per scan (the walker: 82,497). At the Eco budget it runs on the efficiency cores and its speed varied too much run to run to record (±17%). These figures predate 26 September 2026, when the engine began building the scan's store as it walks, and have not been re-measured since. Where the native module cannot load, gdu runs on macOS and Linux (where one is bundled, fetched or on the PATH) for a full scan with no "Don't scan" patterns that does not include the drives mounted inside the folder, and the built-in walker otherwise. If a native walk fails part-way, the built-in walker scans again from the start, and the Dashboard's engine line says why — unless the walk had already counted more than 5,000,000 items, or the folder's last scan counted more than 4,000,000: then the scan ends instead, with a message that gives the reason and how to scan it anyway, rather than start again at a fraction of the speed.
-- **The numbers, measured, with the machine's load next to them.** A throughput figure without the load it was taken under is not a claim about anything — the same code on the same tree has measured 116,793 items/s on an idle machine and ~47,000/s on a busy one. Measured with the engines of the 5.0 releases, before the native engine, on an Apple Silicon MacBook running a normal desktop session (`load average 3.1–4.6`, i.e. *not* a quiet benchmark box): a **whole-disk scan of `/` covered 1,411,715 items in 16.4 s (~86,000 items/s)**, and a home folder of **458,661 items took 9.1 s**. The persistent index stores a node in **183 bytes on disk** (164 after compaction), and `readTree` hands the UI its 250,000-node cap in **~790 ms**. Expect better on an idle machine and worse under load; the relationships between these numbers are the stable part, not the absolute values.
-- **Snapshots are automatic** — one is saved after every successful scan, so Trends needs zero setup. Totals + top-level entries live in `snapshots.json` (a few KB each, capped at 200 per folder); the time slider's shallow trees (≤ 3 levels, ~100 KB budget each) sit in separate per-root files so the main history file stays tiny.
-- **The scheduler is a 60-second `setInterval`**, not `node-cron` — hour-level granularity doesn't justify a dependency. Schedules fire while the app runs (the desktop app keeps running in the tray).
+- **A scan lives in a packed Structure-of-Arrays store, not a tree of objects.** Every scan used to be millions of JavaScript objects (~330 bytes each, measured), which put a hard ceiling of a few million files on what fit in RAM. The tree now lives in a handful of typed arrays (`src/services/scanStore.ts`): names in one UTF-8 pool, children as contiguous id ranges laid out breadth-first, paths reconstructed on demand instead of stored. Measured cost: **~52 bytes per file** at 1M, 5M, 20M and 40M synthetic nodes, a 40M-item scan is ~2 GB of arrays, and a 100M-item scan projects to ~5 GB, on hardware where the object tree could not have held 20M. Summing every directory size is one reverse linear pass (28 ms for 5M nodes vs 2.2 s recursive), nothing recurses on pathological depth, and the browser notices nothing: the pruned JSON the API emits is byte-identical to the old tree, a golden test replays a fixture scan against responses recorded from the pre-rewrite server and compares the raw bytes. The store's columns are plain typed arrays. For a native scan they are built by the Rust core (`tm-store`) while the walk runs and adopted without a copy; the built-in walker and gdu fill the same columns from JavaScript. (A spill mode that keeps a very large scan in files on disk is being built; until it ships, every scan is held in memory.) The one deliberate trade: handing 250k pruned nodes to the UI rebuilds path strings the old tree kept around, ~150 ms per handover on an operation that already spends ~170 ms serializing.
+- **For the built-in walker, scan speed is a threadpool problem.** Every async `lstat`/`readdir` runs on libuv's threadpool, which defaults to 4 threads, that, not the walker's concurrency, was its bottleneck. TreeMap sizes the pool to 2× cores (≤ 16) before it spins up; measured on APFS this scans ~1.6× faster, while 32 threads is *slower* than 4 (kernel metadata-lock contention). The dashboard shows which engine ran and how long the scan took.
+- **The native scan engine lists a whole folder in one system call.** On macOS it asks `getattrlistbulk` for every entry's name, type, sizes, times and flags at once, on its own worker threads (Linux: `getdents64` + `statx`; Windows: `FileIdExtdDirectoryInfo`), and builds the scan's store itself while it walks (`tm-store`, in the layout of the app's own store), which TreeMap then takes over, so the JSON is the same, and the equivalence tests hold it byte-identical to the built-in walker's (verified on macOS; Linux and Windows run on CI). The store's room is sized before the walk, from the last scan of the same folder or, for a whole volume, from the volume's count of inodes in use, so a big disk is walked once; a tree that outgrows the room it was given is walked a second time, and the scan says so. Recorded by `npm run bench` on an Apple M3 (4 performance + 4 efficiency cores, 16 GB, macOS 27), warm cache, Turbo budget, load 2.2–3.6 (up to 7.0 during the built-in walker’s runs on the 1,000,000-entry tree), 23 September 2026: **412,291 entries/s on a 200,000-entry tree** (the built-in walker: 131,203), and **91,308 entries/s on a 1,000,000-entry tree** too big for the kernel's metadata cache, which reads 2.3 GB per scan (the walker: 82,497). At the Eco budget it runs on the efficiency cores and its speed varied too much run to run to record (±17%). These figures predate 26 September 2026, when the engine began building the scan's store as it walks, and have not been re-measured since. Where the native module cannot load, gdu runs on macOS and Linux (where one is bundled, fetched or on the PATH) for a full scan with no "Don't scan" patterns that does not include the drives mounted inside the folder, and the built-in walker otherwise. If a native walk fails part-way, the built-in walker scans again from the start, and the Dashboard's engine line says why, unless the walk had already counted more than 5,000,000 items, or the folder's last scan counted more than 4,000,000: then the scan ends instead, with a message that gives the reason and how to scan it anyway, rather than start again at a fraction of the speed.
+- **The numbers, measured, with the machine's load next to them.** A throughput figure without the load it was taken under is not a claim about anything, the same code on the same tree has measured 116,793 items/s on an idle machine and ~47,000/s on a busy one. Measured with the engines of the 5.0 releases, before the native engine, on an Apple Silicon MacBook running a normal desktop session (`load average 3.1–4.6`, i.e. *not* a quiet benchmark box): a **whole-disk scan of `/` covered 1,411,715 items in 16.4 s (~86,000 items/s)**, and a home folder of **458,661 items took 9.1 s**. The persistent index stores a node in **183 bytes on disk** (164 after compaction), and `readTree` hands the UI its 250,000-node cap in **~790 ms**. Expect better on an idle machine and worse under load; the relationships between these numbers are the stable part, not the absolute values.
+- **Snapshots are automatic**, one is saved after every successful scan, so Trends needs zero setup. Totals + top-level entries live in `snapshots.json` (a few KB each, capped at 200 per folder); the time slider's shallow trees (≤ 3 levels, ~100 KB budget each) sit in separate per-root files so the main history file stays tiny.
+- **The scheduler is a 60-second `setInterval`**, not `node-cron`, hour-level granularity doesn't justify a dependency. Schedules fire while the app runs (the desktop app keeps running in the tray).
 - **Duplicate detection is staged** (size → first 64 KB hash → full SHA-256) so scans with hundreds of thousands of files finish hashing in seconds, and only true content matches are reported.
-- **Compare collapses subtrees** — a deleted or added folder shows as one row, not thousands of file rows.
+- **Compare collapses subtrees**, a deleted or added folder shows as one row, not thousands of file rows.
 
 ## 📜 Licence
 
-TreeMap is MIT-licensed — see [LICENSE](LICENSE). The desktop app also bundles code by others. Two parts of it carry their licences in the app's resources folder: **gdu** (MIT), as `gdu/LICENSE.md`, and **TreeMap's native scan core**, whose Rust crates and standard library are listed with their licence texts in `THIRD_PARTY_NOTICES.txt` — the same file as [`native/THIRD_PARTY_NOTICES.txt`](native/THIRD_PARTY_NOTICES.txt) here, generated from `Cargo.lock` and the pinned Rust toolchain by `scripts/rust-notices.js` (see [native/README.md](native/README.md#third-party-notices)).
+TreeMap is MIT-licensed, see [LICENSE](LICENSE). The desktop app also bundles code by others. Two parts of it carry their licences in the app's resources folder: **gdu** (MIT), as `gdu/LICENSE.md`, and **TreeMap's native scan core**, whose Rust crates and standard library are listed with their licence texts in `THIRD_PARTY_NOTICES.txt`, the same file as [`native/THIRD_PARTY_NOTICES.txt`](native/THIRD_PARTY_NOTICES.txt) here, generated from `Cargo.lock` and the pinned Rust toolchain by `scripts/rust-notices.js` (see [native/README.md](native/README.md#third-party-notices)).
 
-gdu is a Go program, and the Go modules and Go standard library linked into it ship their licence texts beside it as `gdu/THIRD_PARTY_NOTICES.txt` — the same file as [`build/gdu/THIRD_PARTY_NOTICES.txt`](build/gdu/THIRD_PARTY_NOTICES.txt) here, written from gdu's own build information by `scripts/gdu-notices.js`.
+gdu is a Go program, and the Go modules and Go standard library linked into it ship their licence texts beside it as `gdu/THIRD_PARTY_NOTICES.txt`, the same file as [`build/gdu/THIRD_PARTY_NOTICES.txt`](build/gdu/THIRD_PARTY_NOTICES.txt) here, written from gdu's own build information by `scripts/gdu-notices.js`.
 
-The desktop app is built on **Electron** (MIT) and **Chromium**, and ships their licences as `LICENSE.electron.txt` and `LICENSES.chromium.html` — Chromium's credits page, with the licence of every component Chromium is built from. On macOS they are in the resources folder (`TreeMap.app/Contents/Resources`): electron-builder leaves both out of a Mac bundle, so `scripts/afterPack.js` puts them there from the Electron release zip, checked against the Electron inside the app, and refuses to finish a build without them. On Windows and Linux they sit beside the TreeMap executable, where electron-builder keeps them.
+The desktop app is built on **Electron** (MIT) and **Chromium**, and ships their licences as `LICENSE.electron.txt` and `LICENSES.chromium.html`: Chromium's credits page, with the licence of every component Chromium is built from. On macOS they are in the resources folder (`TreeMap.app/Contents/Resources`): electron-builder leaves both out of a Mac bundle, so `scripts/afterPack.js` puts them there from the Electron release zip, checked against the Electron inside the app, and refuses to finish a build without them. On Windows and Linux they sit beside the TreeMap executable, where electron-builder keeps them.
 
 <br>
 

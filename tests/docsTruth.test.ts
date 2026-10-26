@@ -739,7 +739,7 @@ test('the README says what Held-Up Space sees and that an open file it cannot ch
   const readme = read('README.md');
   const para = lineStarting(readme, '**Held-up space**');
   assert.doesNotMatch(para, /counted, not guessed/, 'nothing counts the programs TreeMap cannot see');
-  assert.match(para, /It sees only the programs running under your account — every program when TreeMap runs as root — and an open file it cannot check, or a program of yours whose open files it cannot read, is \*\*counted and said, never claimed\*\* either way — except on Linux under a `\/proc` mounted with `hidepid=2`, where such a program is not listed at all, so nothing counts it\./,
+  assert.match(para, /It sees only the programs running under your account \(every program when TreeMap runs as root\), and an open file it cannot check, or a program of yours whose open files it cannot read, is \*\*counted and said, never claimed\*\* either way, except on Linux under a `\/proc` mounted with `hidepid=2`, where such a program is not listed at all, so nothing counts it\./,
     'the one place no count is kept is said (BQL-a review F3.5)');
   // The README's exception is PLATFORM_NOTES' Linux row's own: a pid /proc does not list never reaches the walk.
   const linuxRow = from(read('docs', 'PLATFORM_NOTES.md'), '## Linux').split('\n').find((l) => l.startsWith('| Zombie handles | `/proc` + kernel\'s `(deleted)` marker |')) ?? '';
