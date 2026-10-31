@@ -1321,7 +1321,7 @@ test('no sentence on any page promises a way back "any time", and every promise 
 /** What the server and the docs tell an agent or a reader about deletes, as [file, text] — and `more` files besides. */
 function agentTexts(more: string[] = []): Array<[string, string]> {
   const root = path.join(__dirname, '..');
-  return ['src/mcp/server.ts', 'src/api/metaRoutes.ts', 'src/api/openapi.ts', 'src/services/cloud/providers.ts', 'README.md', 'AGENTS.md', 'SECURITY.md', ...more]
+  return ['src/mcp/server.ts', 'src/api/metaRoutes.ts', 'src/api/openapi.ts', 'src/services/cloud/providers.ts', 'README.md', 'docs/FEATURES.md', 'docs/API.md', 'docs/ARCHITECTURE.md', 'docs/RELEASING.md', 'AGENTS.md', 'SECURITY.md', ...more]
     .map((file) => [file, readFileSync(path.join(root, file), 'utf8')]);
 }
 

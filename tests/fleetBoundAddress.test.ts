@@ -55,10 +55,13 @@ test('GET /api/fleet names only addresses the running listener is bound to — n
   }
 });
 
-test('README and SECURITY.md say the listener binds one private address', () => {
+test('README, docs/FEATURES.md and SECURITY.md say the listener binds one private address', () => {
   const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  const features = fs.readFileSync(path.join(__dirname, '..', 'docs', 'FEATURES.md'), 'utf8');
   const security = fs.readFileSync(path.join(__dirname, '..', 'SECURITY.md'), 'utf8');
   assert.doesNotMatch(readme, /binds your specific private IPv4 addresses/);
+  assert.doesNotMatch(features, /binds your specific private IPv4 addresses/);
+  assert.match(features, /binds one of this machine's private IPv4 addresses/, 'control: the Fleet paragraph is read');
   assert.doesNotMatch(security, /bound to your private LAN addresses only/);
   assert.match(security, /bound to one of this machine's private network addresses/);
 });

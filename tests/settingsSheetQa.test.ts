@@ -395,12 +395,14 @@ test('the empty Time Capsule view names what is copied and what is not (D72)', (
   assertCapsuleSentence('The Time Capsule view', text);
 });
 
-test('the README describes the capsule the same way (D72)', () => {
-  const readme = readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
-  const start = readme.indexOf('### 🗄️ Undo Vault');
-  assert.notEqual(start, -1, 'the README has an Undo Vault section');
-  const para = readme.slice(start, readme.indexOf('</td>', start)).replace(/\*/g, '');
-  assertCapsuleSentence('The README', plain(para));
+test('docs/FEATURES.md describes the capsule the same way (D72)', () => {
+  const features = readFileSync(path.join(__dirname, '..', 'docs', 'FEATURES.md'), 'utf8');
+  const start = features.indexOf('## 🗄️ Undo Vault');
+  assert.notEqual(start, -1, 'docs/FEATURES.md has an Undo Vault section');
+  const end = features.indexOf('\n## ', start + 1);
+  assert.notEqual(end, -1, 'and a section after it');
+  const para = features.slice(start, end).replace(/\*/g, '');
+  assertCapsuleSentence('docs/FEATURES.md', plain(para));
 });
 
 /* ══════════════ D71 + D10 — "How TreeMap measures space" says what the totals count ══════════════ */

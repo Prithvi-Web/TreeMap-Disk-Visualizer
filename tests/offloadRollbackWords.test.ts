@@ -31,6 +31,7 @@ const PLACES: [string, string][] = [
   ['the OpenAPI document', read('src/api/openapi.ts')],
   ['AGENTS.md', read('AGENTS.md')],
   ['README.md', read('README.md')],
+  ['docs/FEATURES.md', read('docs/FEATURES.md')],
   ['the capabilities manifest (GET /api/capabilities)', read('src/api/metaRoutes.ts')],
 ];
 

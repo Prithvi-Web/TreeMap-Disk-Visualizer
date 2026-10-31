@@ -140,7 +140,7 @@ test('DESIGN §14 says a dist build compiles the module for the machine it runs 
 
 /* ─────────────── README: where a failed native walk says why ─────────────── */
 
-test('the README says where each end of a failed native walk says why: the engine line for a walk again, the scan\'s own message for a refusal (review F1.4)', () => {
+test('docs/ARCHITECTURE.md says where each end of a failed native walk says why: the engine line for a walk again, the scan\'s own message for a refusal (review F1.4)', () => {
   // The code: in startScan's native catch, P4-14's refusal is thrown before
   // the walker's reason is recorded (noteFallback, why.push), so the scan
   // ends with it as its error and no engine line carries it; only a walk
@@ -155,9 +155,9 @@ test('the README says where each end of a failed native walk says why: the engin
   assert.ok(refusal instanceof Error, 'past T_mem the refusal is an error the scan ends with');
   assert.match(refusal.message, /To scan it anyway/, 'and it says how to scan it anyway');
 
-  const readme = read('README.md');
+  const readme = read('docs', 'ARCHITECTURE.md');
   const start = readme.indexOf('**The native scan engine lists a whole folder');
-  assert.ok(start >= 0, 'the README has its native engine paragraph');
+  assert.ok(start >= 0, 'docs/ARCHITECTURE.md has its native engine paragraph');
   const para = readme.slice(start, readme.indexOf('\n', start));
   assert.doesNotMatch(para, /Either way the Dashboard's engine line says why/, 'not the engine line for both ends');
   assert.match(para, /the built-in walker scans again from the start, and the Dashboard's engine line says why/, 'a walk again: the engine line');
@@ -561,7 +561,7 @@ test('no source or contract document says a fast rescan reuses the listing of ev
   ]) {
     assert.notDeepEqual(stale(sample), [], `the sweep sees the old rule in: ${JSON.stringify(sample)}`);
   }
-  const files = [...filesUnder('src', ['.ts', '.js', '.html']), 'AGENTS.md', 'README.md', ...filesUnder(path.join('docs', 'engine'), ['.md'])];
+  const files = [...filesUnder('src', ['.ts', '.js', '.html']), 'AGENTS.md', 'README.md', path.join('docs', 'FEATURES.md'), path.join('docs', 'ARCHITECTURE.md'), path.join('docs', 'API.md'), ...filesUnder(path.join('docs', 'engine'), ['.md'])];
   assert.ok(files.includes(path.join('src', 'services', 'diskScanner.ts')) && files.includes(path.join('src', 'ui', 'markup', '010-view-dashboard.html')), 'the sweep reads the scanner and the markup');
   const said = files.flatMap((file) => stale(read(file)).map((source) => `${file}: ${source}`));
   assert.deepEqual(said, [], 'each states the rule a reused listing is held to, or says nothing of which listings are reused');
@@ -606,7 +606,7 @@ test('AGENTS.md says what a dry run keeps, and what an Autopilot run that can on
   assert.match(text, /An Autopilot run that can only preview \(a policy never approved, or set to preview every run\) scans the same way, but it is still a run: it adds its run record to `autopilot\.json`, starts the policy's cooldown, and spends an approval's one-time allowance \(`approvedBytes`\)\./);
 });
 
-test('the spec and the README say what GET /api/scans leaves out, as AGENTS.md and the route do (C12 review F2.1)', () => {
+test('the spec and docs/API.md say what GET /api/scans leaves out, as AGENTS.md and the route do (C12 review F2.1)', () => {
   // GET /api/openapi.json is the machine-readable equivalent AGENTS.md names,
   // and it said the endpoint lists every completed scan in memory, a dry
   // run's included; the README's row said the same.
@@ -614,9 +614,9 @@ test('the spec and the README say what GET /api/scans leaves out, as AGENTS.md a
   const e = ENDPOINTS.find((x) => x.method === 'get' && x.path === '/api/scans');
   assert.ok(e, 'GET /api/scans is described');
   assert.match(e.summary, claim, 'the spec says which scans it leaves out');
-  const row = /^\| `GET \/api\/scans` \| (.*) \|$/m.exec(read('README.md'));
-  assert.ok(row, 'the README lists GET /api/scans');
-  assert.match(row[1], claim, 'and the README says the same');
+  const row = /^\| `GET \/api\/scans` \| (.*) \|$/m.exec(read('docs', 'API.md'));
+  assert.ok(row, 'docs/API.md lists GET /api/scans');
+  assert.match(row[1], claim, 'and docs/API.md says the same');
   assert.match(read('src', 'api', 'insightRoutes.ts'), /\.filter\(\(s\) => s\.status === 'complete' && s\.store && isRecorded\(s\)\)/, 'which is what the route does');
 });
 
@@ -712,7 +712,7 @@ test('AGENTS.md lists the offload\'s refusal of a destination TreeMap cannot wri
   assert.match(section, /dry run included \(`400 DEST_NOT_WRITABLE`\); on\s+Windows/, 'AGENTS.md says a dry run refuses it, and names Windows as the exception');
 });
 
-test('AGENTS.md, the README and the OpenAPI document say what an orphan is as packageEcosystemScanner classifies it — no project file beside it, its interpreter gone, or a superseded Homebrew keg — never that nothing will ever rebuild it, that nothing can still use it, or that its project is gone (BQG-5 item 15, review F1.2)', () => {
+test('AGENTS.md, docs/FEATURES.md and the OpenAPI document say what an orphan is as packageEcosystemScanner classifies it — no project file beside it, its interpreter gone, or a superseded Homebrew keg — never that nothing will ever rebuild it, that nothing can still use it, or that its project is gone (BQG-5 item 15, review F1.2)', () => {
   const scanner = read('src', 'services', 'packageEcosystemScanner.ts');
   // The premise: the three ways the scanner calls a folder an orphan. The first is that no project file is
   // beside it — which says nothing of whether a project, or the scripts beside it, still use it.
@@ -721,10 +721,10 @@ test('AGENTS.md, the README and the OpenAPI document say what an orphan is as pa
   assert.match(scanner, /Superseded — /, 'a superseded Homebrew keg');
   const agents = read('AGENTS.md');
   const section = from(agents, '`GET /api/packages/orphans`').split('\n   - ')[0];
-  const readme = read('README.md');
-  const readmeLine = readme.split('\n').find((l) => l.startsWith('**Package orphans**')) ?? '';
+  const features = read('docs', 'FEATURES.md');
+  const featuresLine = features.split('\n').find((l) => l.startsWith('**Package orphans**')) ?? '';
   const summary = String(ENDPOINTS.find((e) => e.path === '/api/packages/orphans')?.summary ?? '');
-  for (const [what, text] of [['AGENTS.md', section], ['the README', readmeLine], ['the OpenAPI summary', summary]] as const) {
+  for (const [what, text] of [['AGENTS.md', section], ['docs/FEATURES.md', featuresLine], ['the OpenAPI summary', summary]] as const) {
     const flat = text.replace(/\s+/g, ' ');
     assert.doesNotMatch(flat, /nothing will ever rebuild|nothing can still use/, `${what} claims nothing the scanner does not establish of every orphan`);
     assert.doesNotMatch(flat, /(owning project|project that owned (it|them|this)) (is )?gone/i, `${what} never says an orphan's project is gone: only that no project file is beside it`);
@@ -732,12 +732,13 @@ test('AGENTS.md, the README and the OpenAPI document say what an orphan is as pa
   }
 });
 
-test('the README says what Held-Up Space sees and that an open file it cannot check is counted, as the report and the spec do — never that the processes it cannot see are counted (BQL item 11)', () => {
+test('docs/FEATURES.md says what Held-Up Space sees and that an open file it cannot check is counted, as the report and the spec do — never that the processes it cannot see are counted (BQL item 11)', () => {
   // The README said "Processes it cannot see are counted, not guessed at": nothing counted them. lsof and
   // /proc show a program's open files only to the account it runs as (or to root), and what the probes
   // could not decide went uncounted, so the panel said "Nothing is stuck" over files it never checked.
-  const readme = read('README.md');
-  const para = lineStarting(readme, '**Held-up space**');
+  // The paragraph now lives in docs/FEATURES.md, the README's long form.
+  const features = read('docs', 'FEATURES.md');
+  const para = lineStarting(features, '**Held-up space**');
   assert.doesNotMatch(para, /counted, not guessed/, 'nothing counts the programs TreeMap cannot see');
   assert.match(para, /It sees only the programs running under your account \(every program when TreeMap runs as root\), and an open file it cannot check, or a program of yours whose open files it cannot read, is \*\*counted and said, never claimed\*\* either way, except on Linux under a `\/proc` mounted with `hidepid=2`, where such a program is not listed at all, so nothing counts it\./,
     'the one place no count is kept is said (BQL-a review F3.5)');

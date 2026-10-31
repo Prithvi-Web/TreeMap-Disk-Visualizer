@@ -224,7 +224,7 @@ test('the page never says "Time Capsule" — not on screen, not in an aria-label
 });
 
 test('the docs a person reads never say "Time Capsule": README, AGENTS, SECURITY, the bug report form and the pictures they show', () => {
-  const docs = ['README.md', 'AGENTS.md', 'SECURITY.md', '.github/ISSUE_TEMPLATE/bug_report.md'];
+  const docs = ['README.md', 'docs/FEATURES.md', 'docs/API.md', 'docs/ARCHITECTURE.md', 'docs/RELEASING.md', 'AGENTS.md', 'SECURITY.md', '.github/ISSUE_TEMPLATE/bug_report.md'];
   const pictures = new Set(readdirSync(ROOT).filter((name) => name.endsWith('.svg')));
   for (const m of read('README.md').matchAll(/src="([^"]+\.svg)"/g)) pictures.add(m[1]);
   assert.ok(pictures.has('views.svg'), 'the README\'s picture of the views is read');
@@ -325,7 +325,7 @@ test('the routes, the setting keys, the capsule\'s folder and the view id keep t
   // No URL opens a view — the page reads no location.hash — so nothing may promise that an old #capsule
   // bookmark opens the Undo Vault (eighth browser pass K52): loading one shows the Dashboard.
   if (!/location\.hash/.test(INDEX)) {
-    const promised = ['README.md', 'AGENTS.md', 'CHANGELOG.md', 'SECURITY.md', 'docs/PLATFORM_NOTES.md'].filter((f) => /#capsule\b/i.test(read(f)));
+    const promised = ['README.md', 'docs/FEATURES.md', 'docs/API.md', 'AGENTS.md', 'CHANGELOG.md', 'SECURITY.md', 'docs/PLATFORM_NOTES.md'].filter((f) => /#capsule\b/i.test(read(f)));
     assert.deepEqual(promised, [], 'no document says a #capsule link opens the Undo Vault, since nothing reads the address\'s hash');
   }
   assert.ok(INDEX.includes('data-view="capsule"'), 'and the sidebar still opens it by that id');

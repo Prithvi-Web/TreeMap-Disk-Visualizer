@@ -34,6 +34,7 @@ const read = (...p: string[]) => readFileSync(path.join(root, ...p), 'utf8').rep
 
 const YML = read('.github', 'workflows', 'release.yml');
 const README = read('README.md');
+const RELEASING = read('docs', 'RELEASING.md');
 const HANDOFF = read('HANDOFF.md');
 const CHANGELOG = read('CHANGELOG.md');
 const INSTALL_NOTE = read('.github', 'INSTALL-NOTE.md');
@@ -798,8 +799,10 @@ test('publish: one PATCH that makes the release public and lets GitHub choose La
 // ---------------------------------------------------------------------------
 // The words around it.
 
-test('README tells the owner how to repair a release and never to delete one that has installers', () => {
-  const publish = section(README, 'Publish a new version', '</details>');
+test('docs/RELEASING.md, which the README links, tells the owner how to repair a release and never to delete one that has installers', () => {
+  assert.match(README, /\]\(docs\/RELEASING\.md\)/, 'the README points the owner at it');
+  const publish = RELEASING.slice(RELEASING.indexOf('# 🤖 Publish a new version'));
+  assert.ok(RELEASING.startsWith('# 🤖 Publish a new version'), 'the page is the release recipe');
   assert.match(publish, /\*\*Edit a release, never delete it\.\*\*/, 'the rule, in bold');
   assert.match(publish, /attached to the release itself, not to the tag/, 'and why');
   assert.match(publish, /Run workflow\*\*, leave \*Use workflow from\* at `main`, type the tag/, 'the repair path, click by click');
@@ -811,7 +814,7 @@ test('README tells the owner how to repair a release and never to delete one tha
   assert.match(publish, /Create Tag/, 'how to make the tag in GitHub Desktop');
   assert.match(publish, /\*\*notes\*\* job says what to fix/, 'what to do with a red run');
   assert.match(publish, /added under them only if they are missing/, 'the repair keeps the notes, with the one qualifier');
-  assert.equal((README.match(/Edit a release, never delete it/g) ?? []).length, 1, 'said once, where releases are cut');
+  assert.equal((RELEASING.match(/Edit a release, never delete it/g) ?? []).length, 1, 'said once, where releases are cut');
 });
 
 test("HANDOFF's release recipe counts the assets the workflow lists and carries the repair path", () => {

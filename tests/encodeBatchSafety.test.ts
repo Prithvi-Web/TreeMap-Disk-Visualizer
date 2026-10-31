@@ -147,8 +147,8 @@ test('a video open in another program keeps its original, gone ones are skipped,
   }
 });
 
-test('README names only the encoder TreeMap uses, and says where Shrink video is not offered (hunt C63)', () => {
-  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+test('docs/FEATURES.md names only the encoder TreeMap uses, and says where Shrink video is not offered (hunt C63)', () => {
+  const readme = fs.readFileSync(path.join(__dirname, '..', 'docs', 'FEATURES.md'), 'utf8');
   const shrink = readme.split('\n').find((l) => l.startsWith('**Shrink video**')) ?? '';
   assert.ok(shrink, 'the Shrink video paragraph is there');
   assert.doesNotMatch(shrink, /NVENC|AMF|QSV/, 'no encoder TreeMap never runs is named');
@@ -169,14 +169,14 @@ test('where the open-file check cannot run, the Trash step goes ahead and the or
   });
 });
 
-test('README and AGENTS.md say what the open-file check before the Trash step can and cannot see, never that every open file keeps its original (review F1.7)', () => {
-  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+test('docs/FEATURES.md and AGENTS.md say what the open-file check before the Trash step can and cannot see, never that every open file keeps its original (review F1.7)', () => {
+  const readme = fs.readFileSync(path.join(__dirname, '..', 'docs', 'FEATURES.md'), 'utf8');
   const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8');
   const shrink = readme.split('\n').find((l) => l.startsWith('**Shrink video**')) ?? '';
   const start = agents.indexOf('`POST /api/compression/encode` —');
   const encode = agents.slice(start, agents.indexOf('\n   - ', start)).replace(/\s+/g, ' ');
   assert.ok(shrink && start > 0, 'both paragraphs are there');
-  for (const [doc, text] of [['README', shrink], ['AGENTS.md', encode]]) {
+  for (const [doc, text] of [['docs/FEATURES.md', shrink], ['AGENTS.md', encode]]) {
     assert.doesNotMatch(text, /A file (another program|a program) holds open keeps its original/, `${doc}: no promise the check cannot keep`);
     assert.match(text, /[Rr]ight before the Trash step/, `${doc}: when the check runs`);
     assert.match(text, /cannot see every program/, `${doc}: what it may miss`);

@@ -19,9 +19,9 @@ test('the cap is a share of free space plus what the Vault holds (control)', () 
   assert.equal(capFor(80e9, 0, 10), 8e9, '1 TB disk, 80 GB free, nothing held: 8 GB, not 100 GB');
 });
 
-test('SECURITY.md and README say what the Undo Vault\'s percentage is of', () => {
+test('SECURITY.md and docs/FEATURES.md say what the Undo Vault\'s percentage is of', () => {
   const security = fs.readFileSync(path.join(__dirname, '..', 'SECURITY.md'), 'utf8');
-  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  const readme = fs.readFileSync(path.join(__dirname, '..', 'docs', 'FEATURES.md'), 'utf8');
   assert.doesNotMatch(security, /Capped at 10% of the disk/);
   assert.match(security, /10% of the free space on its disk, counting what it already holds/);
   assert.match(readme, /a size cap \(by default 10% of the free space on its disk, counting what it already holds\)/);

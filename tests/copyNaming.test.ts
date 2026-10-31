@@ -777,7 +777,7 @@ test('every sentence the server writes names the feature "Clean Up" — never "C
 });
 
 /** The documents a person reads beside the app. */
-const DOCS = ['README.md', 'SECURITY.md', 'AGENTS.md'];
+const DOCS = ['README.md', 'docs/FEATURES.md', 'docs/API.md', 'SECURITY.md', 'AGENTS.md'];
 
 test('README, SECURITY and AGENTS name the feature "Clean Up" as the page does: "the Clean Up cart", "the Clean Up target" (G18 review F1.2)', () => {
   for (const doc of DOCS) {

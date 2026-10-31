@@ -23,6 +23,9 @@ const root = path.join(__dirname, '..');
 const read = (...p: string[]) => readFileSync(path.join(root, ...p), 'utf8').replace(/\r\n/g, '\n');
 
 const README = read('README.md');
+// The long write-ups the README links to: every view in detail, and how the app is built.
+const FEATURES = read('docs', 'FEATURES.md');
+const ARCHITECTURE = read('docs', 'ARCHITECTURE.md');
 const CHANGELOG = read('CHANGELOG.md');
 const SECURITY = read('SECURITY.md');
 const COC = read('CODE_OF_CONDUCT.md');
@@ -428,22 +431,26 @@ test('SECURITY.md describes the update flow each platform has', () => {
   assert.match(item!, /next time you quit/, 'and installs at the next quit unless restarted now');
 });
 
-test('the generated page is the only index.html, and the README steers contributors at src/ui', () => {
+test('the generated page is the only index.html, and docs/ARCHITECTURE.md, which the README links, steers contributors at src/ui', () => {
   assert.ok(!existsSync(path.join(root, 'index.html')), 'no stale index.html at the repo root');
-  const layout = section(README, '## 🗂️ Project layout', '\n## ');
+  assert.match(README, /\]\(docs\/ARCHITECTURE\.md\)/, 'the README links the project layout');
+  const layout = section(ARCHITECTURE, '## 🗂️ Project layout', '\n## ');
   assert.match(layout, /src\/ui\//, 'the layout block lists src/ui/');
   assert.match(layout, /scripts\/build-ui\.js/, 'and the build that stitches it');
   assert.match(layout, /public\/[\s\S]*?index\.html[^\n]*(generated|never edit)/i, 'public/index.html is marked generated');
   assert.match(README, /generated from `src\/ui\/`/, 'the "How it\'s built" line says the page is generated');
 });
 
-test('every image the README embeds exists, and every screenshot in demo/ is used', () => {
-  const refs = [...README.matchAll(/<img src="([^"]+)"/g)].map((m) => m[1]).filter((s) => !/^https?:/.test(s));
-  assert.ok(refs.length > 0);
-  for (const r of refs) assert.ok(existsSync(path.join(root, r)), `README embeds ${r}, which exists`);
+test('every image the README and docs/FEATURES.md embed exists, and every screenshot in demo/ is used', () => {
+  // Each doc's src is relative to its own folder; resolved, they are compared as repo paths.
+  const refs = ([['README.md', README], [path.join('docs', 'FEATURES.md'), FEATURES]] as const).flatMap(([doc, text]) =>
+    [...text.matchAll(/<img src="([^"]+)"/g)].map((m) => m[1]).filter((s) => !/^https?:/.test(s))
+      .map((s) => ({ doc, src: s, at: path.relative(root, path.join(root, path.dirname(doc), s)).split(path.sep).join('/') })));
+  assert.ok(refs.some((r) => r.doc === 'README.md') && refs.some((r) => r.doc !== 'README.md'), 'control: both docs embed images');
+  for (const r of refs) assert.ok(existsSync(path.join(root, r.at)), `${r.doc} embeds ${r.src}, which exists`);
   const demo = readdirSync(path.join(root, 'demo')).filter((f) => /\.(jpe?g|png|webp|gif)$/i.test(f));
   assert.ok(demo.length > 0, 'demo/ holds screenshots');
-  for (const f of demo) assert.ok(refs.includes(`demo/${f}`), `demo/${f} is shown somewhere in the README`);
+  for (const f of demo) assert.ok(refs.some((r) => r.at === `demo/${f}`), `demo/${f} is shown in the README or docs/FEATURES.md`);
 });
 
 
@@ -479,7 +486,7 @@ test('the CHANGELOG states the limitations a downloader will hit', () => {
   assert.doesNotMatch(entry, /right[- ]click[^.]{0,40}\bOpen\b/i, 'never the bypass Apple removed');
 });
 
-test('the README says what runs when the native engine cannot, with the thresholds nativeMemory.ts holds', () => {
+test('docs/ARCHITECTURE.md says what runs when the native engine cannot, with the thresholds nativeMemory.ts holds', () => {
   // The paragraph used to say only "where the native module cannot load, the
   // built-in walker runs" — before gdu came first in that chain, and before
   // P4-14 (Track U U-32) stopped a large tree from being walked again from
@@ -489,9 +496,9 @@ test('the README says what runs when the native engine cannot, with the threshol
   const margin = Number(/export const T_MEM_MARGIN = ([\d.]+);/.exec(src)?.[1]);
   assert.ok(Number.isFinite(tMem) && Number.isFinite(margin) && margin > 0, 'T_MEM_ENTRIES and T_MEM_MARGIN are read from nativeMemory.ts');
   const grouped = (n: number): string => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  const start = README.indexOf('**The native scan engine lists a whole folder');
-  assert.ok(start >= 0, 'the README has its native engine paragraph');
-  const para = README.slice(start, README.indexOf('\n', start));
+  const start = ARCHITECTURE.indexOf('**The native scan engine lists a whole folder');
+  assert.ok(start >= 0, 'docs/ARCHITECTURE.md has its native engine paragraph');
+  const para = ARCHITECTURE.slice(start, ARCHITECTURE.indexOf('\n', start));
   assert.match(para, /cannot load, gdu runs/, 'gdu comes before the walker when the module cannot load');
   assert.doesNotMatch(para, /cannot load, the built-in walker runs/, 'not the chain before gdu came first');
   assert.ok(para.includes(`counted more than ${grouped(tMem)} items`), `a walk past T_mem (${grouped(tMem)}) is not restarted`);

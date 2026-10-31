@@ -1369,8 +1369,8 @@ test('the approve endpoint\'s texts say what approval lets a policy do as it is 
     assert.match(said, /enabled/, said);
   }
   assert.match(op.responses['409'].description, /APPROVAL_NOT_ASKED \([^)]*already approved/, op.responses['409'].description);
-  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
-  const row = readme.split('\n').find((l) => l.includes('`POST /api/autopilot/policies/:id/approve`')) ?? '';
+  const api = fs.readFileSync(path.join(__dirname, '..', 'docs', 'API.md'), 'utf8');
+  const row = api.split('\n').find((l) => l.includes('`POST /api/autopilot/policies/:id/approve`')) ?? '';
   assert.doesNotMatch(row, /start deleting/, row);
   assert.match(row, /Only ever preview/, row);
 });
